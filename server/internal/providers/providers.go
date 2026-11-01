@@ -71,6 +71,8 @@ type CheckResult struct {
 	ResetAt        *time.Time
 	CooldownUntil  *time.Time
 	Message        string
+	// HTTPStatus is the health endpoint's status code, when one was called.
+	HTTPStatus int
 }
 
 // MaxRetryAfter caps any wait an upstream asks for. A larger value is

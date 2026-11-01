@@ -179,18 +179,18 @@ func (s *Spec) Check(ctx context.Context, c *http.Client, baseURL, secret string
 	low := strings.ToLower(string(body))
 
 	if h.OKAnyway != nil && h.OKAnyway.matchesAny(resp.StatusCode, resp.Header, body, low, parse) {
-		return &CheckResult{Valid: true, Message: "key works, but quota cannot be read with it"}, nil
+		return &CheckResult{HTTPStatus: resp.StatusCode, Valid: true, Message: "key works, but quota cannot be read with it"}, nil
 	}
 	if h.Invalid != nil && h.Invalid.matchesAny(resp.StatusCode, resp.Header, body, low, parse) {
-		return &CheckResult{Valid: false, Message: errorMessage(body, parsed)}, nil
+		return &CheckResult{HTTPStatus: resp.StatusCode, Valid: false, Message: errorMessage(body, parsed)}, nil
 	}
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return &CheckResult{Valid: false, Message: errorMessage(body, parsed)}, nil
+		return &CheckResult{HTTPStatus: resp.StatusCode, Valid: false, Message: errorMessage(body, parsed)}, nil
 	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("health check returned %d: %s", resp.StatusCode, errorMessage(body, parsed))
 	}
-	r := &CheckResult{Valid: true}
+	r := &CheckResult{Valid: true, HTTPStatus: resp.StatusCode}
 	if qp := h.Quota; qp != nil {
 		limit, hasLimit := sumPaths(parsed, qp.Limit)
 		remaining, hasRemaining := sumPaths(parsed, qp.Remaining)
@@ -381,9 +381,12 @@ func parseTime(v any, format string) *time.Time {
 		if !ok {
 			return nil
 		}
+		// Providers send either a full timestamp or a plain date (2026-11-23).
 		p, err := time.Parse(time.RFC3339, s)
 		if err != nil {
-			return nil
+			if p, err = time.Parse("2006-01-02", s); err != nil {
+				return nil
+			}
 		}
 		t = p
 	default:

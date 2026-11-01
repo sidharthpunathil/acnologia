@@ -27,6 +27,7 @@ type leaseDTO struct {
 	Auth      authDTO   `json:"auth"`
 	BaseURL   string    `json:"base_url"`
 	ExpiresAt time.Time `json:"expires_at"`
+	Exclusive bool      `json:"exclusive"`
 }
 
 type authDTO struct {
@@ -101,13 +102,19 @@ func writeNoKey(w http.ResponseWriter, err error) bool {
 // limit the lease holds a slot until it is reported or expires, so set a
 // ttl close to how long you need the key.
 func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration) (*leaseDTO, error) {
+	return s.issueLeaseOpts(ctx, a, sv, exclude, ttl, wait, false)
+}
+
+// issueLeaseOpts can also reserve the key exclusively: Cogito then hands it
+// to no one else, through leases or the proxy, until the lease ends.
+func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration, exclusive bool) (*leaseDTO, error) {
 	ex := map[int64]bool{}
 	for _, id := range exclude {
 		ex[id] = true
 	}
 	// A lease returns the plaintext secret, so hidden keys go only to apps a
 	// superadmin cleared for them.
-	p, err := s.Pool.PickWait(ctx, sv, a.ID, a.LeaseHidden, ex, wait)
+	p, err := s.Pool.PickWaitOpts(ctx, sv, a.ID, a.LeaseHidden, ex, wait, exclusive)
 	if err != nil {
 		s.Store.AddEvent(ctx, store.NewEvent{Kind: "error", ServiceID: sv.ID, AppID: a.ID, StatusCode: 503, Detail: "lease: " + err.Error()})
 		var nk *pool.NoKeyError
@@ -129,6 +136,9 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 		p.Release()
 		return nil, err
 	}
+	if exclusive {
+		_ = s.Store.MarkLeaseExclusive(ctx, l.ID)
+	}
 	s.Pool.HoldLease(p, l.ID, l.ExpiresAt)
 	// A lease is charged as one request: Cogito cannot see what the app does with the key.
 	cost := costPerRequest(sv, providers.Get(sv.Provider))
@@ -137,7 +147,39 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 	return &leaseDTO{
 		LeaseID: l.ID, KeyID: p.Key.ID, Service: sv.Slug, Secret: p.Secret,
 		Auth: authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)}, BaseURL: sv.BaseURL, ExpiresAt: l.ExpiresAt,
+		Exclusive: exclusive,
 	}, nil
+}
+
+// renewLease extends an open lease so long jobs keep their key.
+func (s *Server) renewLease(ctx context.Context, a *store.App, id string, ttl time.Duration) (time.Time, error) {
+	if ttl <= 0 {
+		ttl = 2 * time.Minute
+	}
+	if ttl > 24*time.Hour {
+		ttl = 24 * time.Hour
+	}
+	exp := time.Now().UTC().Add(ttl)
+	if err := s.Store.RenewLease(ctx, id, a.ID, exp); err != nil {
+		return time.Time{}, errors.New("lease not found, already reported, or expired")
+	}
+	s.Pool.RenewLease(id, exp)
+	return exp, nil
+}
+
+func (s *Server) v1Renew(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TTLSec int `json:"ttl_sec"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	exp, err := s.renewLease(r.Context(), appFrom(r), chi.URLParam(r, "id"), time.Duration(body.TTLSec)*time.Second)
+	if err != nil {
+		writeErr(w, 404, "lease_not_found", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "expires_at": exp})
 }
 
 func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +193,7 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 		ExcludeKeyIDs []int64 `json:"exclude_key_ids"`
 		TTLSec        int     `json:"ttl_sec"`
 		WaitSec       int     `json:"wait_sec"`
+		Exclusive     bool    `json:"exclusive"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -163,7 +206,7 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wait := time.Duration(min(max(body.WaitSec, 0), 60)) * time.Second
-	l, err := s.issueLease(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second, wait)
+	l, err := s.issueLeaseOpts(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second, wait, body.Exclusive)
 	if err != nil {
 		if !writeNoKey(w, err) {
 			writeStoreErr(w, err)

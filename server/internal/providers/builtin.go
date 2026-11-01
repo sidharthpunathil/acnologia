@@ -29,7 +29,9 @@ func Builtins() []Builtin {
 				BaseURL:  "https://serpapi.com",
 				Auth:     Auth{Type: "query", Name: "api_key"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 3600, MaxAttempts: 5},
-				Quota:    QuotaInfo{Unit: "searches", CountsPerRequest: true},
+				// Cached and failed searches are free, so quota is read from the
+				// account endpoint rather than counted per request.
+				Quota: QuotaInfo{Unit: "searches"},
 				Rules: []Rule{
 					{Name: "Out of searches", Match: Match{BodyContains: []string{"run out of searches", "plan searches"}}, Outcome: QuotaExhausted},
 					{Name: "Hourly cap", Match: Match{BodyContains: []string{"past hour", "hourly"}}, Outcome: RateLimited, RetryAfter: &RetryAfter{Source: "next_hour"}},
@@ -42,10 +44,16 @@ func Builtins() []Builtin {
 					Quota: &QuotaPaths{
 						Limit:     []string{"searches_per_month", "extra_credits"},
 						Remaining: []string{"total_searches_left"},
-						Window:    &QuotaWindow{Limit: "account_rate_limit_per_hour", Used: "last_hour_searches", Period: "hour"},
+						ResetAt:   "plan_renewal_date", ResetFormat: "iso8601",
+						// this_hour_searches is the running hour; last_hour_searches is the previous one.
+						Window: &QuotaWindow{Limit: "account_rate_limit_per_hour", Used: "this_hour_searches", Period: "hour"},
 					},
 				},
-				Examples: []Example{{Name: "Google search", Method: "GET", Path: "/search.json", Query: map[string]string{"engine": "google", "q": "coffee"}, Safe: false}},
+				Examples: []Example{
+					{Name: "Google search", Method: "GET", Path: "/search.json", Query: map[string]string{"engine": "google", "q": "coffee"}, Safe: false},
+					// The Locations API is free, so live checks can test a real request.
+					{Name: "Locations", Method: "GET", Path: "/locations.json", Query: map[string]string{"q": "Austin", "limit": "3"}, Safe: true},
+				},
 				Tests: []Fixture{
 					{Name: "success", Status: 200, Body: `{"search_metadata":{"status":"Success"}}`, Expect: OK},
 					{Name: "out of searches", Status: 429, Body: `{"error":"Your account has run out of searches."}`, Expect: QuotaExhausted},

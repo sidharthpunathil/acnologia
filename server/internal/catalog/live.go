@@ -45,9 +45,11 @@ func LiveCheck(ctx context.Context, spec *providers.Spec, secret string) LiveRep
 		case err != nil:
 			rep.Health.Detail = scrub(err.Error(), secret)
 		case !res.Valid:
+			rep.Health.Status = res.HTTPStatus
 			rep.Health.Detail = "key rejected: " + scrub(res.Message, secret)
 		default:
 			rep.Health.OK = true
+			rep.Health.Status = res.HTTPStatus
 			rep.Health.Detail = strings.TrimSpace("ok " + res.Message)
 			rep.Health.QuotaLimit, rep.Health.QuotaRemaining = res.QuotaLimit, res.QuotaRemaining
 		}

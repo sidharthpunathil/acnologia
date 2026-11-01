@@ -352,8 +352,8 @@ func TestMCP(t *testing.T) {
 	auth := []string{"Authorization", "Bearer " + tok}
 	var res map[string]any
 	e.do(http.DefaultClient, "POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, 200, &res, auth...)
-	if len(res["result"].(map[string]any)["tools"].([]any)) != 5 {
-		t.Fatal("expected 5 tools")
+	if len(res["result"].(map[string]any)["tools"].([]any)) < 6 {
+		t.Fatal("expected the core tools plus generated service tools")
 	}
 	e.do(http.DefaultClient, "POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
 		"params": map[string]any{"name": "proxy_request", "arguments": map[string]any{"service": "serpapi", "path": "/search.json", "query": map[string]string{"q": "mcp"}}}}, 200, &res, auth...)

@@ -94,8 +94,9 @@ type Picked struct {
 	Key    *store.Key
 	Secret string
 
-	once    sync.Once
-	release func()
+	once      sync.Once
+	release   func()
+	exclusive bool
 }
 
 // Release frees the key's concurrency slot. Safe to call more than once.
@@ -113,6 +114,10 @@ func (pk *Picked) Release() {
 // vouched for the service's target, so they never reach a host or an app
 // token holder that only an admin controls.
 func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool) (*Picked, error) {
+	return p.pick(ctx, svc, appID, allowHidden, exclude, false)
+}
+
+func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, exclusive bool) (*Picked, error) {
 	allowHidden = allowHidden && svc.TargetTrusted
 	l := p.lock(svc.ID)
 	l.Lock()
@@ -138,6 +143,11 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, allowH
 			continue
 		}
 		if lim := k.ConcurrencyLimit(svc); lim > 0 && p.slots.count(k.ID) >= lim {
+			busy = true
+			continue
+		}
+		// Exclusive leases own a key outright; exclusive requests need an idle key.
+		if p.slots.exclusiveHeld(k.ID) || (exclusive && p.slots.count(k.ID) > 0) {
 			busy = true
 			continue
 		}
@@ -182,7 +192,7 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	}
 	p.slots.acquire(k.ID)
 	keyID, svcID := k.ID, svc.ID
-	return &Picked{Key: k, Secret: secret, release: func() { p.slots.release(keyID, svcID) }}, nil
+	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: func() { p.slots.release(keyID, svcID) }}, nil
 }
 
 func allowed(k *store.Key, appID int64) bool {

@@ -753,6 +753,7 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, "check_failed", err.Error())
 		return
 	}
+	s.fillInFlight(nk)
 	writeJSON(w, 200, nk)
 }
 

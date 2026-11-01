@@ -43,6 +43,9 @@ func main() {
 		fmt.Println(genKey())
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		os.Exit(runMCPBridge(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "ctl" {
 		os.Exit(ctl.Run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}

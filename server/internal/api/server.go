@@ -127,6 +127,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/keys/{id}/insights", s.keyInsights)
 		r.Get("/events", s.listEvents)
 		r.Get("/apps", s.listApps)
+		r.Get("/apps/{id}/mcp", s.getAppMCP)
 		r.Get("/providers/{slug}", s.getProvider)
 		r.Post("/providers/validate", s.validateProvider)
 		r.Get("/ai/status", s.aiStatus)
@@ -158,6 +159,7 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/apps/{id}", s.updateApp)
 			r.Delete("/apps/{id}", s.deleteApp)
 			r.Post("/apps/{id}/rotate-token", s.rotateAppToken)
+			r.Put("/apps/{id}/mcp", s.putAppMCP)
 			r.Put("/services/{id}/logo", s.putServiceLogo)
 			r.Delete("/services/{id}/logo", s.deleteServiceLogo)
 			r.Post("/providers", s.createProvider)
@@ -209,6 +211,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/services", s.v1Services)
 		r.Post("/lease", s.v1Lease)
 		r.Post("/leases/{id}/report", s.v1Report)
+		r.Post("/leases/{id}/renew", s.v1Renew)
 	})
 
 	r.With(s.requireApp).HandleFunc("/proxy/{service}/*", s.proxy)

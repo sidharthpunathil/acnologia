@@ -39,50 +39,10 @@ type rpcErr struct {
 
 const mcpProtocol = "2025-06-18"
 
-var mcpTools = []map[string]any{
-	{
-		"name":        "list_services",
-		"description": "List the API services this app can use and whether each has a key available right now.",
-		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
-	},
-	{
-		"name":        "pool_status",
-		"description": "Check whether a service currently has an available key.",
-		"inputSchema": obj(map[string]any{"service": str("Service slug, for example serpapi")}, "service"),
-	},
-	{
-		"name":        "get_key",
-		"description": "Lease an API key for a service. Returns the secret, where to put it (query param or header), and a lease_id. Always call report_key when done: on services with a concurrency limit the lease reserves the key until reported.",
-		"inputSchema": obj(map[string]any{
-			"service":         str("Service slug"),
-			"exclude_key_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Key ids to skip"},
-			"ttl_sec":         map[string]any{"type": "integer", "description": "How long to hold the key. On concurrency limited services the key is reserved for you until you report or this expires."},
-			"wait_sec":        map[string]any{"type": "integer", "description": "Wait up to this many seconds (max 60) for a key when all are busy"},
-		}, "service"),
-	},
-	{
-		"name":        "report_key",
-		"description": "Report how a leased key performed. Use outcome rate_limited, busy, quota_exhausted, invalid or banned with rotate=true to get the next key.",
-		"inputSchema": obj(map[string]any{
-			"lease_id":        str("Lease id from get_key"),
-			"outcome":         map[string]any{"type": "string", "enum": []string{"ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error"}},
-			"retry_after_sec": map[string]any{"type": "integer"},
-			"message":         str("Error text from the provider"),
-			"rotate":          map[string]any{"type": "boolean", "description": "Return a new lease when the outcome is a failure"},
-		}, "lease_id", "outcome"),
-	},
-	{
-		"name":        "proxy_request",
-		"description": "Call a service through Cogito. Cogito picks a key, injects it, and retries with the next key on rate limits. Example: service=serpapi, path=/search.json, query={\"q\":\"coffee\",\"engine\":\"google\"}.",
-		"inputSchema": obj(map[string]any{
-			"service": str("Service slug"),
-			"method":  map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "PATCH", "DELETE"}, "default": "GET"},
-			"path":    str("Path on the provider, for example /search.json or /v1/text-to-speech/{voice_id}"),
-			"query":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
-			"body":    map[string]any{"description": "JSON body for POST/PUT/PATCH"},
-		}, "service", "path"),
-	},
-}
+type mcpCtxKey int
+
+// mcpLimitKey carries the app's max result size (KB) into tool handlers.
+const mcpLimitKey mcpCtxKey = 1
 
 func obj(props map[string]any, required ...string) map[string]any {
 	return map[string]any{"type": "object", "properties": props, "required": required}
@@ -128,6 +88,12 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (any, *rpcErr) {
+	a := ctx.Value(appKey).(*store.App)
+	st, err := s.Store.GetMCPSettings(ctx, a.ID)
+	if err != nil {
+		return nil, &rpcErr{-32603, "could not load MCP settings"}
+	}
+	ctx = context.WithValue(ctx, mcpLimitKey, st.MaxResultKB)
 	switch req.Method {
 	case "initialize":
 		var p struct {
@@ -138,16 +104,27 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if v == "" {
 			v = mcpProtocol
 		}
+		caps := map[string]any{"tools": map[string]any{"listChanged": false}}
+		if st.Resources {
+			caps["resources"] = map[string]any{"listChanged": false, "subscribe": false}
+		}
+		if st.Prompts {
+			caps["prompts"] = map[string]any{"listChanged": false}
+		}
+		instr := "Cogito hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself."
+		if strings.TrimSpace(st.Instructions) != "" {
+			instr += "\n\n" + strings.TrimSpace(st.Instructions)
+		}
 		return map[string]any{
 			"protocolVersion": v,
-			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]any{"name": "cogito", "version": s.Cfg.Version},
-			"instructions":    "Cogito hands out API keys from a pool and rotates them on rate limits. Prefer proxy_request; use get_key and report_key when you must call the provider yourself.",
+			"capabilities":    caps,
+			"serverInfo":      map[string]any{"name": "cogito", "title": "Cogito: " + a.Name, "version": s.Cfg.Version},
+			"instructions":    instr,
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": mcpTools}, nil
+		return map[string]any{"tools": s.mcpTools(ctx, a, st)}, nil
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -156,12 +133,67 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, &rpcErr{-32602, "invalid params"}
 		}
-		out, err := s.mcpCall(ctx, r, p.Name, p.Arguments)
+		t := findTool(s.mcpTools(ctx, a, st), p.Name)
+		if t == nil {
+			return nil, &rpcErr{-32602, "unknown or disabled tool: " + p.Name}
+		}
+		var out map[string]any
+		var err error
+		switch t.Set {
+		case setService:
+			out, err = s.callServiceTool(ctx, r, t, p.Arguments)
+		case setInsights, setManage:
+			out, err = s.mcpAdminCall(ctx, a, p.Name, p.Arguments)
+		default:
+			out, err = s.mcpCall(ctx, r, p.Name, p.Arguments)
+		}
 		if err != nil {
 			return map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}, nil
+	case "resources/list":
+		if !st.Resources {
+			return nil, &rpcErr{-32601, "resources are off for this app"}
+		}
+		return map[string]any{"resources": s.mcpResources(ctx, a)}, nil
+	case "resources/templates/list":
+		if !st.Resources {
+			return nil, &rpcErr{-32601, "resources are off for this app"}
+		}
+		return map[string]any{"resourceTemplates": []map[string]any{{"uriTemplate": "cogito://services/{slug}", "name": "service", "title": "A service", "mimeType": "application/json"}}}, nil
+	case "resources/read":
+		if !st.Resources {
+			return nil, &rpcErr{-32601, "resources are off for this app"}
+		}
+		var p struct {
+			URI string `json:"uri"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		res, err := s.mcpReadResource(ctx, a, p.URI)
+		if err != nil {
+			return nil, &rpcErr{-32002, err.Error()}
+		}
+		return res, nil
+	case "prompts/list":
+		if !st.Prompts {
+			return nil, &rpcErr{-32601, "prompts are off for this app"}
+		}
+		return map[string]any{"prompts": mcpPrompts}, nil
+	case "prompts/get":
+		if !st.Prompts {
+			return nil, &rpcErr{-32601, "prompts are off for this app"}
+		}
+		var p struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		res, err := s.mcpGetPrompt(ctx, a, st, p.Name, p.Arguments)
+		if err != nil {
+			return nil, &rpcErr{-32602, err.Error()}
+		}
+		return res, nil
 	}
 	return nil, &rpcErr{-32601, "method not found: " + req.Method}
 }
@@ -178,6 +210,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		RetryAfterSec int               `json:"retry_after_sec"`
 		Message       string            `json:"message"`
 		Rotate        bool              `json:"rotate"`
+		Exclusive     *bool             `json:"exclusive"`
 		Method        string            `json:"method"`
 		Path          string            `json:"path"`
 		Query         map[string]string `json:"query"`
@@ -233,7 +266,12 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if hit := s.appLimitHit(ctx, a); hit != nil {
 			return nil, fmt.Errorf("this app reached its %s limit, it resets %s", strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339))
 		}
-		l, err := s.issueLease(ctx, a, sv, args.ExcludeKeyIDs, time.Duration(args.TTLSec)*time.Second, time.Duration(min(max(args.WaitSec, 0), 60))*time.Second)
+		st, _ := s.Store.GetMCPSettings(ctx, a.ID)
+		exclusive := st.ExclusiveDefault
+		if args.Exclusive != nil {
+			exclusive = *args.Exclusive
+		}
+		l, err := s.issueLeaseOpts(ctx, a, sv, args.ExcludeKeyIDs, time.Duration(args.TTLSec)*time.Second, time.Duration(min(max(args.WaitSec, 0), 60))*time.Second, exclusive)
 		if err != nil {
 			var nk *pool.NoKeyError
 			if errors.As(err, &nk) {
@@ -242,6 +280,12 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 			return nil, err
 		}
 		return toMap(l), nil
+	case "renew_key":
+		exp, err := s.renewLease(ctx, a, args.LeaseID, time.Duration(args.TTLSec)*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "expires_at": exp}, nil
 	case "report_key":
 		next, _, err := s.report(ctx, a, args.LeaseID, reportInput{Outcome: args.Outcome, RetryAfterSec: args.RetryAfterSec, Message: args.Message, Rotate: args.Rotate})
 		if err != nil {
@@ -287,7 +331,9 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	if err != nil {
 		return nil, fmt.Errorf("bad path or query: %v", err)
 	}
-	req.RemoteAddr = orig.RemoteAddr
+	if orig != nil {
+		req.RemoteAddr = orig.RemoteAddr
+	}
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -295,7 +341,10 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	rctx.URLParams.Add("service", service)
 	rctx.URLParams.Add("*", strings.TrimPrefix(path, "/"))
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
-	const limit = 200 << 10
+	limit := 200 << 10
+	if kb, ok := ctx.Value(mcpLimitKey).(int); ok && kb > 0 {
+		limit = min(kb, 2048) << 10
+	}
 	// Keep at most limit+1 bytes: the HTTP proxy streams, but MCP buffers.
 	rec := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), max: limit + 1}
 	s.proxy(rec, req)
