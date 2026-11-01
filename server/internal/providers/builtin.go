@@ -68,9 +68,10 @@ func Builtins() []Builtin {
 				Quota:    QuotaInfo{Unit: "characters"},
 				Rules: []Rule{
 					{Name: "Character quota exceeded", Match: Match{BodyContains: []string{"quota_exceeded", "exceeds your quota"}}, Outcome: QuotaExhausted},
-					{Name: "Too many concurrent requests", Match: Match{BodyContains: []string{"too_many_concurrent_requests"}}, Outcome: RateLimited, RetryAfter: &RetryAfter{Source: "fixed", Value: "5"}},
+					{Name: "Too many concurrent requests", Match: Match{BodyContains: []string{"too_many_concurrent_requests"}}, Outcome: Busy, RetryAfter: &RetryAfter{Source: "fixed", Value: "1"}},
 					{Name: "System busy (not the key's fault)", Match: Match{BodyContains: []string{"system_busy"}}, Outcome: Error},
-					{Name: "Invalid or suspended key", Match: Match{BodyContains: []string{"invalid_api_key", "detected_unusual_activity", "account_suspended"}}, Outcome: Invalid},
+					{Name: "Suspended account", Match: Match{BodyContains: []string{"detected_unusual_activity", "account_suspended"}}, Outcome: Banned},
+					{Name: "Invalid key", Match: Match{BodyContains: []string{"invalid_api_key"}}, Outcome: Invalid},
 					{Name: "Key lacks a permission", Match: Match{Status: []int{401, 403}, BodyContains: []string{"missing_permissions"}}, Outcome: OK},
 				},
 				UseStandardRules: true,
@@ -83,7 +84,8 @@ func Builtins() []Builtin {
 				Tests: []Fixture{
 					{Name: "success", Status: 200, Body: `ID3`, Expect: OK},
 					{Name: "quota exceeded", Status: 401, Body: `{"detail":{"status":"quota_exceeded","message":"This request exceeds your quota."}}`, Expect: QuotaExhausted},
-					{Name: "concurrency limit", Status: 429, Body: `{"detail":{"status":"too_many_concurrent_requests","message":"Too many"}}`, Expect: RateLimited},
+					{Name: "concurrency limit", Status: 429, Body: `{"detail":{"status":"too_many_concurrent_requests","message":"Too many"}}`, Expect: Busy},
+					{Name: "suspended account", Status: 401, Body: `{"detail":{"status":"detected_unusual_activity","message":"Unusual activity detected"}}`, Expect: Banned},
 					{Name: "system busy", Status: 429, Body: `{"detail":{"status":"system_busy","message":"busy"}}`, Expect: Error},
 					{Name: "invalid key", Status: 401, Body: `{"detail":{"status":"invalid_api_key","message":"Invalid API key"}}`, Expect: Invalid},
 					{Name: "validation error is not the key's fault", Status: 422, Body: `{"detail":[{"msg":"field required"}]}`, Expect: OK},

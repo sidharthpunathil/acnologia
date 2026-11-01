@@ -117,6 +117,12 @@ type serviceInput struct {
 	Icon        *string `json:"icon"`
 	MaxConc     *int    `json:"max_concurrency"`
 	QueueSec    *int    `json:"queue_timeout_sec"`
+	// EgressID routes traffic through an egress proxy; 0 connects directly.
+	EgressID *int64 `json:"egress_id"`
+	// CacheTTLSec overrides the provider's cache TTL; -1 goes back to the provider default.
+	CacheTTLSec *int64 `json:"cache_ttl_sec"`
+	// CostPerRequest overrides the provider's USD price; -1 goes back to the provider default.
+	CostPerRequest *float64 `json:"cost_per_request"`
 }
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
@@ -148,6 +154,30 @@ func (in serviceInput) apply(sv *store.Service) string {
 	}
 	if in.QueueSec != nil {
 		sv.QueueTimeoutSec = *in.QueueSec
+	}
+	if in.EgressID != nil {
+		sv.EgressID = nil
+		if *in.EgressID > 0 {
+			sv.EgressID = in.EgressID
+		}
+	}
+	if in.CacheTTLSec != nil {
+		if *in.CacheTTLSec < -1 || *in.CacheTTLSec > 86400 {
+			return "cache_ttl_sec must be between 0 and 86400, or -1 for the provider default"
+		}
+		sv.CacheTTLSec = nil
+		if *in.CacheTTLSec >= 0 {
+			sv.CacheTTLSec = in.CacheTTLSec
+		}
+	}
+	if in.CostPerRequest != nil {
+		if *in.CostPerRequest != -1 && (*in.CostPerRequest < 0 || *in.CostPerRequest > 100) {
+			return "cost_per_request must be between 0 and 100 USD, or -1 for the provider default"
+		}
+		sv.CostPerRequest = nil
+		if *in.CostPerRequest >= 0 {
+			sv.CostPerRequest = in.CostPerRequest
+		}
 	}
 	sv.BaseURL = strings.TrimRight(sv.BaseURL, "/")
 	switch {
@@ -208,6 +238,9 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid", msg)
 		return
 	}
+	if !s.checkServiceRefs(w, r, sv, "") {
+		return
+	}
 	sv.TargetTrusted = isSuper(r)
 	created, err := s.Store.CreateService(r.Context(), sv)
 	if err != nil {
@@ -228,15 +261,18 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	before := targetOf(sv)
+	before, oldSlug := targetOf(sv), sv.Slug
 	if msg := in.apply(sv); msg != "" {
 		writeErr(w, 400, "invalid", msg)
+		return
+	}
+	if !s.checkServiceRefs(w, r, sv, oldSlug) {
 		return
 	}
 	// Where keys are sent decides who can read them. A superadmin saving the
 	// service vouches for its target; anyone else changing it revokes that,
 	// so hidden keys stop flowing until a superadmin confirms.
-	if isSuper(r) && (in.BaseURL != nil || in.AuthType != nil || in.AuthName != nil || in.Provider != nil) {
+	if isSuper(r) && (in.BaseURL != nil || in.AuthType != nil || in.AuthName != nil || in.Provider != nil || in.EgressID != nil) {
 		// The superadmin submitted the target fields (the edit form sends
 		// them), so they saw and confirmed where keys go.
 		sv.TargetTrusted = true
@@ -252,6 +288,8 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.update", sv.Slug, "")
+	// Settings decide what may be served from cache, so start fresh.
+	s.Cache.PurgePrefix(servicePrefix(sv.ID))
 	_ = s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r), s.Pool.InFlight())
 	s.fillLogos(r.Context(), sv)
 	writeJSON(w, 200, sv)
@@ -259,7 +297,11 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 
 // targetOf is everything that decides where and how a key leaves the box.
 func targetOf(sv *store.Service) string {
-	return sv.BaseURL + "\x00" + sv.AuthType + "\x00" + sv.AuthName + "\x00" + sv.Provider
+	egressID := int64(0)
+	if sv.EgressID != nil {
+		egressID = *sv.EgressID
+	}
+	return sv.BaseURL + "\x00" + sv.AuthType + "\x00" + sv.AuthName + "\x00" + sv.Provider + "\x00" + strconv.FormatInt(egressID, 10)
 }
 
 func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
@@ -331,6 +373,8 @@ type keyInput struct {
 	QuotaLimit *int64   `json:"quota_limit"`
 	// MaxConc overrides the service concurrency limit; -1 clears the override.
 	MaxConc *int64 `json:"max_concurrency"`
+	// EgressID sends this key's traffic through an egress proxy; 0 falls back to the service's.
+	EgressID *int64 `json:"egress_id"`
 }
 
 func (s *Server) validateKey(in keyInput, r *http.Request) (int, string) {
@@ -535,9 +579,32 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 		}
 		p.SecretEnc, p.SecretFP, p.Hint = enc, s.Pool.Box.Fingerprint(secret), crypto.Hint(secret)
 	}
+	if in.EgressID != nil {
+		if *in.EgressID > 0 {
+			if _, err := s.Store.GetEgress(r.Context(), *in.EgressID); err != nil {
+				writeErr(w, 400, "unknown_egress", "no egress proxy with that id")
+				return
+			}
+		}
+		// A proxy sees where a key goes; hidden keys follow superadmin decisions only.
+		if k.Hidden && !isSuper(r) {
+			writeErr(w, 403, "forbidden", "only a superadmin can route hidden keys through a proxy")
+			return
+		}
+	}
 	if err := s.Store.UpdateKey(r.Context(), k.ID, p); err != nil {
 		writeStoreErr(w, err)
 		return
+	}
+	if in.EgressID != nil {
+		var id *int64
+		if *in.EgressID > 0 {
+			id = in.EgressID
+		}
+		if err := s.Store.SetKeyEgress(r.Context(), k.ID, id); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
 	}
 	detail := []string{}
 	if in.Secret != nil {
@@ -548,6 +615,9 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Status != nil {
 		detail = append(detail, "status="+*in.Status)
+	}
+	if in.EgressID != nil {
+		detail = append(detail, "egress="+strconv.FormatInt(*in.EgressID, 10))
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "key.update", fmt.Sprintf("%s/%s", sv.Slug, k.Label), strings.Join(detail, ", "))
 	nk, err := s.Store.GetKey(r.Context(), k.ID)
@@ -599,6 +669,10 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, pool.ErrUntrustedTarget) {
 		writeErr(w, 409, "untrusted_target", err.Error())
+		return
+	}
+	if errors.Is(err, pool.ErrBanned) {
+		writeErr(w, 409, "key_banned", err.Error())
 		return
 	}
 	detail := "ok"
@@ -658,9 +732,18 @@ type appInput struct {
 	Mode            *string   `json:"mode"`
 	Active          *bool     `json:"active"`
 	LeaseHidden     *bool     `json:"lease_hidden"`
+	// Limits replaces all four limits; a null field means no limit.
+	Limits *store.AppLimits `json:"limits"`
 }
 
 func (in appInput) apply(r *http.Request, a *store.App) (int, string) {
+	if l := in.Limits; l != nil {
+		if (l.DailyRequests != nil && *l.DailyRequests < 0) || (l.MonthlyRequests != nil && *l.MonthlyRequests < 0) ||
+			(l.DailyBudget != nil && *l.DailyBudget < 0) || (l.MonthlyBudget != nil && *l.MonthlyBudget < 0) {
+			return 400, "limits must not be negative"
+		}
+		a.Limits = *l
+	}
 	if in.LeaseHidden != nil {
 		// Leasing hands out the plaintext secret, so only a superadmin may let
 		// an app lease hidden keys.
@@ -722,6 +805,13 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	if a.Limits.Any() {
+		if err := s.Store.SetAppLimits(r.Context(), created.ID, a.Limits); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		created.Limits = a.Limits
+	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "app.create", created.Name, "")
 	writeJSON(w, 201, map[string]any{"app": created, "token": tok})
 }
@@ -747,6 +837,12 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.UpdateApp(r.Context(), a); err != nil {
 		writeStoreErr(w, err)
 		return
+	}
+	if in.Limits != nil {
+		if err := s.Store.SetAppLimits(r.Context(), a.ID, a.Limits); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "app.update", a.Name, "")
 	writeJSON(w, 200, a)

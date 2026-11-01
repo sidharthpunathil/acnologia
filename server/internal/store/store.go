@@ -263,8 +263,10 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	// Apps are not trusted with hidden keys until a superadmin says so.
-	_, err = addColumn(db, "apps", "lease_hidden", "INTEGER NOT NULL DEFAULT 0")
-	return err
+	if _, err = addColumn(db, "apps", "lease_hidden", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return migrateV2(db)
 }
 
 func addColumn(db *sql.DB, table, col, def string) (bool, error) {

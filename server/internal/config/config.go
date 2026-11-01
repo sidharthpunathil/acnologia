@@ -20,31 +20,40 @@ type Config struct {
 	EventRetentionDays int
 	HealthInterval     time.Duration
 	MaxBodyBytes       int64
-	BootstrapEmail     string
-	BootstrapPassword  string
-	Version            string
-	AnthropicAPIKey    string
-	AIModel            string
-	GitHubToken        string
+	// CacheBytes caps the in-memory response cache; 0 turns caching off.
+	CacheBytes int64
+	// EgressEchoURL answers with the caller's IP, used to test egress proxies.
+	EgressEchoURL string
+	// WebhookAllowPrivate lets webhooks reach private and loopback addresses.
+	WebhookAllowPrivate bool
+	BootstrapEmail      string
+	BootstrapPassword   string
+	Version             string
+	AnthropicAPIKey     string
+	AIModel             string
+	GitHubToken         string
 }
 
 func Load(version string) Config {
 	return Config{
-		Addr:               env("COGITO_ADDR", ":8080"),
-		DataDir:            env("COGITO_DATA_DIR", "./data"),
-		MasterKey:          os.Getenv("COGITO_MASTER_KEY"),
-		PublicURL:          strings.TrimRight(os.Getenv("COGITO_PUBLIC_URL"), "/"),
-		SecureCookies:      envBool("COGITO_SECURE_COOKIES", false),
-		TrustProxyHeaders:  envBool("COGITO_TRUST_PROXY_HEADERS", false),
-		EventRetentionDays: envInt("COGITO_EVENT_RETENTION_DAYS", 30),
-		HealthInterval:     envDuration("COGITO_HEALTH_INTERVAL", 6*time.Hour),
-		MaxBodyBytes:       int64(envInt("COGITO_MAX_BODY_MB", 50)) << 20,
-		BootstrapEmail:     os.Getenv("COGITO_BOOTSTRAP_EMAIL"),
-		BootstrapPassword:  os.Getenv("COGITO_BOOTSTRAP_PASSWORD"),
-		Version:            version,
-		AnthropicAPIKey:    os.Getenv("ANTHROPIC_API_KEY"),
-		AIModel:            env("COGITO_AI_MODEL", "claude-opus-5-5"),
-		GitHubToken:        os.Getenv("GITHUB_TOKEN"),
+		Addr:                env("COGITO_ADDR", ":8080"),
+		DataDir:             env("COGITO_DATA_DIR", "./data"),
+		MasterKey:           os.Getenv("COGITO_MASTER_KEY"),
+		PublicURL:           strings.TrimRight(os.Getenv("COGITO_PUBLIC_URL"), "/"),
+		SecureCookies:       envBool("COGITO_SECURE_COOKIES", false),
+		TrustProxyHeaders:   envBool("COGITO_TRUST_PROXY_HEADERS", false),
+		EventRetentionDays:  envInt("COGITO_EVENT_RETENTION_DAYS", 30),
+		HealthInterval:      envDuration("COGITO_HEALTH_INTERVAL", 6*time.Hour),
+		MaxBodyBytes:        int64(envInt("COGITO_MAX_BODY_MB", 50)) << 20,
+		CacheBytes:          int64(envInt("COGITO_CACHE_MB", 64)) << 20,
+		WebhookAllowPrivate: envBool("COGITO_WEBHOOK_ALLOW_PRIVATE", false),
+		EgressEchoURL:       env("COGITO_EGRESS_ECHO_URL", "https://www.cloudflare.com/cdn-cgi/trace"),
+		BootstrapEmail:      os.Getenv("COGITO_BOOTSTRAP_EMAIL"),
+		BootstrapPassword:   os.Getenv("COGITO_BOOTSTRAP_PASSWORD"),
+		Version:             version,
+		AnthropicAPIKey:     os.Getenv("ANTHROPIC_API_KEY"),
+		AIModel:             env("COGITO_AI_MODEL", "claude-opus-5-5"),
+		GitHubToken:         os.Getenv("GITHUB_TOKEN"),
 	}
 }
 

@@ -230,6 +230,9 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			return nil, err
 		}
+		if hit := s.appLimitHit(ctx, a); hit != nil {
+			return nil, fmt.Errorf("this app reached its %s limit, it resets %s", strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339))
+		}
 		l, err := s.issueLease(ctx, a, sv, args.ExcludeKeyIDs, time.Duration(args.TTLSec)*time.Second, time.Duration(min(max(args.WaitSec, 0), 60))*time.Second)
 		if err != nil {
 			var nk *pool.NoKeyError

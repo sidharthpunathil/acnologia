@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/cogito-keys/cogito/internal/crypto"
+	"github.com/cogito-keys/cogito/internal/egress"
+	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/providers"
 	"github.com/cogito-keys/cogito/internal/store"
 )
@@ -50,6 +52,10 @@ type Pool struct {
 	Store  *store.Store
 	Box    *crypto.Box
 	Client *http.Client
+	// Notify receives key and pool events for webhooks; nil is fine.
+	Notify *notify.Notifier
+	// Egress routes health checks through a key's or service's proxy; nil connects directly.
+	Egress *egress.Manager
 
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
@@ -260,9 +266,22 @@ func (p *Pool) Apply(ctx context.Context, svc *store.Service, k *store.Key, r pr
 		zero := 0
 		e.ConsecutiveFails = &zero
 		e.MarkOK = true
-		if providers.Get(svc.Provider).CountsPerRequest() {
+		// A quota header beats counting: it is the provider's own number.
+		if providers.Get(svc.Provider).CountsPerRequest() && r.Quota.Remaining == nil {
 			e.DecrementQuota = true
 		}
+	case providers.Busy:
+		// The account is healthy, just at its concurrency cap: step aside
+		// briefly without climbing the backoff ladder.
+		d := r.RetryAfter
+		if d <= 0 {
+			d = time.Second
+		}
+		until := now.Add(min(d, maxBusyCooldown))
+		e.CooldownUntil, e.LastError = &until, ptr("busy: "+r.Message)
+	case providers.Banned:
+		st := store.StatusBanned
+		e.Status, e.LastError = &st, ptr("account suspended: "+r.Message)
 	case providers.RateLimited:
 		fails := k.ConsecutiveFails + 1
 		d := r.RetryAfter
@@ -281,6 +300,9 @@ func (p *Pool) Apply(ctx context.Context, svc *store.Service, k *store.Key, r pr
 	case providers.QuotaExhausted:
 		st := store.StatusExhausted
 		reset := r.ResetAt
+		if reset == nil {
+			reset = r.Quota.ResetAt
+		}
 		if reset == nil && k.QuotaResetAt != nil && k.QuotaResetAt.After(now) {
 			reset = k.QuotaResetAt
 		}
@@ -297,11 +319,21 @@ func (p *Pool) Apply(ctx context.Context, svc *store.Service, k *store.Key, r pr
 	case providers.Error:
 		e.LastError = ptr("upstream error: " + r.Message)
 	}
-	return p.Store.ApplyEffect(ctx, k.ID, e)
+	applyQuotaReading(&e, r, now)
+	err := p.Store.ApplyEffect(ctx, k.ID, e)
+	p.notifyEffect(svc, k, e, r.Message)
+	return err
 }
 
-// Check runs the provider health check and stores the result.
+// Check runs the provider health check, stores the result and reports any
+// change of the key's state to webhooks.
 func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) error {
+	err := p.check(ctx, svc, k)
+	p.notifyAfterCheck(ctx, svc, k)
+	return err
+}
+
+func (p *Pool) check(ctx context.Context, svc *store.Service, k *store.Key) error {
 	secret, err := p.Box.Decrypt(k.SecretEnc)
 	if err != nil {
 		return err
@@ -313,7 +345,14 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 	if k.Hidden && !svc.TargetTrusted {
 		return ErrUntrustedTarget
 	}
-	res, err := spec.Check(ctx, p.Client, svc.BaseURL, secret)
+	if k.Status == store.StatusBanned {
+		return ErrBanned
+	}
+	client, err := p.checkClient(ctx, svc, k)
+	if err != nil {
+		return err
+	}
+	res, err := spec.Check(ctx, client, svc.BaseURL, secret)
 	e := store.KeyEffect{Checked: true}
 	if err != nil {
 		// Transport errors quote the request URL, which carries query-auth keys.

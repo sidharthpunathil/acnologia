@@ -34,7 +34,7 @@ func TestRetryAfter(t *testing.T) {
 		}
 	}
 	r := eleven.Classify(429, http.Header{}, []byte(`{"detail":{"status":"too_many_concurrent_requests"}}`))
-	if r.RetryAfter.Seconds() != 5 {
+	if r.Outcome != Busy || r.RetryAfter.Seconds() != 1 {
 		t.Fatalf("concurrency cooldown = %v", r.RetryAfter)
 	}
 	g := Get("unknown-provider").Classify(429, h, nil)

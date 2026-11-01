@@ -33,11 +33,38 @@ type Defaults struct {
 	MaxAttempts     int    `json:"max_attempts"`
 	MaxConcurrency  int    `json:"max_concurrency"`
 	QueueTimeoutSec int    `json:"queue_timeout_sec"`
+	// CacheTTLSec caches successful GET responses for this long; 0 is off.
+	CacheTTLSec int `json:"cache_ttl_sec,omitempty"`
+	// Circuit breaker: after BreakerThreshold provider errors (5xx, network)
+	// within BreakerWindowSec, stop sending traffic for BreakerResetSec.
+	// 0 uses the defaults (10 in 60s, 30s); a negative threshold turns it off.
+	BreakerThreshold int `json:"breaker_threshold,omitempty"`
+	BreakerWindowSec int `json:"breaker_window_sec,omitempty"`
+	BreakerResetSec  int `json:"breaker_reset_sec,omitempty"`
 }
 
 type QuotaInfo struct {
 	Unit             string `json:"unit"`
 	CountsPerRequest bool   `json:"counts_per_request"`
+	// Headers reads quota from every response, so keys stay current without
+	// health checks.
+	Headers *QuotaHeaders `json:"headers,omitempty"`
+	// CostPerRequest is the USD price of one successful request, used for
+	// spend tracking and app budgets.
+	CostPerRequest float64 `json:"cost_per_request,omitempty"`
+	// FreeTier describes the provider's free allowance, for the catalog.
+	FreeTier string `json:"free_tier,omitempty"`
+}
+
+// QuotaHeaders names the response headers that carry quota. Some providers
+// send several windows in one header ("1, 1999" for per second and per
+// month); Index picks the entry to use.
+type QuotaHeaders struct {
+	Limit       string `json:"limit,omitempty"`
+	Remaining   string `json:"remaining,omitempty"`
+	Reset       string `json:"reset,omitempty"`
+	ResetFormat string `json:"reset_format,omitempty"` // seconds | unix | unix_ms | iso8601 | http_date
+	Index       int    `json:"index,omitempty"`
 }
 
 // Rule maps an upstream response to an outcome. Rules are tried in order.
@@ -139,10 +166,41 @@ func (s *Spec) Validate() []string {
 	if d.QueueTimeoutSec < 0 || d.QueueTimeoutSec > 300 {
 		add("defaults.queue_timeout_sec must be 0 to 300")
 	}
+	if d.CacheTTLSec < 0 || d.CacheTTLSec > 86400 {
+		add("defaults.cache_ttl_sec must be 0 to 86400")
+	}
+	if d.BreakerThreshold > 1000 {
+		add("defaults.breaker_threshold must be at most 1000")
+	}
+	if d.BreakerWindowSec < 0 || d.BreakerWindowSec > 3600 {
+		add("defaults.breaker_window_sec must be 0 to 3600")
+	}
+	if d.BreakerResetSec < 0 || d.BreakerResetSec > 3600 {
+		add("defaults.breaker_reset_sec must be 0 to 3600")
+	}
+	if s.Quota.CostPerRequest < 0 || s.Quota.CostPerRequest > 100 {
+		add("quota.cost_per_request must be 0 to 100 USD")
+	}
+	if len(s.Quota.FreeTier) > 200 {
+		add("quota.free_tier must be at most 200 characters")
+	}
+	if qh := s.Quota.Headers; qh != nil {
+		if qh.Limit == "" && qh.Remaining == "" && qh.Reset == "" {
+			add("quota.headers needs at least one of limit, remaining or reset")
+		}
+		switch qh.ResetFormat {
+		case "", "seconds", "unix", "unix_ms", "iso8601", "http_date":
+		default:
+			add("quota.headers.reset_format must be seconds, unix, unix_ms, iso8601 or http_date")
+		}
+		if qh.Index < 0 || qh.Index > 5 {
+			add("quota.headers.index must be 0 to 5")
+		}
+	}
 	for i, r := range s.Rules {
 		label := fmt.Sprintf("rules[%d] %q", i, r.Name)
 		if _, ok := ParseOutcome(string(r.Outcome)); !ok {
-			add("%s: outcome must be ok, rate_limited, quota_exhausted, invalid or error", label)
+			add("%s: outcome must be ok, rate_limited, busy, quota_exhausted, invalid, banned or error", label)
 		}
 		if r.Match.empty() {
 			add("%s: match needs at least one condition", label)

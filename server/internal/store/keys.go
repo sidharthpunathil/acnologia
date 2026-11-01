@@ -11,16 +11,16 @@ import (
 
 const keyCols = `id, service_id, label, secret_enc, hint, tier, hidden, restricted, status, weight, priority, cooldown_until,
 consecutive_fails, quota_limit, quota_remaining, quota_reset_at, usage_total, usage_today, last_used_at, last_error,
-last_checked_at, notes, created_at, max_concurrency, last_ok_at`
+last_checked_at, notes, created_at, max_concurrency, last_ok_at, egress_id`
 
 func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	var k Key
 	var hidden, restricted int
-	var cd, ql, qr, qra, lu, lc, mc, lok sql.NullInt64
+	var cd, ql, qr, qra, lu, lc, mc, lok, eg sql.NullInt64
 	var created int64
 	err := row.Scan(&k.ID, &k.ServiceID, &k.Label, &k.SecretEnc, &k.Hint, &k.Tier, &hidden, &restricted, &k.Status,
 		&k.Weight, &k.Priority, &cd, &k.ConsecutiveFails, &ql, &qr, &qra, &k.UsageTotal, &k.UsageToday, &lu,
-		&k.LastError, &lc, &k.Notes, &created, &mc, &lok)
+		&k.LastError, &lc, &k.Notes, &created, &mc, &lok, &eg)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -32,6 +32,7 @@ func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	k.LastUsedAt, k.LastCheckedAt = toTime(lu), toTime(lc)
 	k.MaxConcurrency = toInt(mc)
 	k.LastOKAt = toTime(lok)
+	k.EgressID = toInt(eg)
 	k.CreatedAt = time.Unix(created, 0).UTC()
 	k.AppIDs = []int64{}
 	k.computeEffective(time.Now())

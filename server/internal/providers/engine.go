@@ -52,14 +52,14 @@ func (s *Spec) ClassifyExplain(status int, h http.Header, body []byte) (Result, 
 		if !r.Match.matches(status, h, body, low, parse) {
 			continue
 		}
-		res := Result{Outcome: r.Outcome, Message: errorMessage(body, parse())}
+		res := Result{Outcome: r.Outcome, Message: errorMessage(body, parse()), Quota: s.ReadQuota(h)}
 		res.RetryAfter = r.RetryAfter.resolve(h, parse)
 		return res, r.Name
 	}
 	if status >= 500 {
-		return Result{Outcome: Error, Message: errorMessage(body, parse())}, "default 5xx"
+		return Result{Outcome: Error, Message: errorMessage(body, parse()), Quota: s.ReadQuota(h)}, "default 5xx"
 	}
-	return Result{Outcome: OK}, ""
+	return Result{Outcome: OK, Quota: s.ReadQuota(h)}, ""
 }
 
 func (m Match) matches(status int, h http.Header, body []byte, low string, parse func() any) bool {

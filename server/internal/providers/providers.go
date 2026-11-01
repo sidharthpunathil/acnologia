@@ -17,25 +17,52 @@ const (
 	QuotaExhausted Outcome = "quota_exhausted"
 	Invalid        Outcome = "invalid"
 	Error          Outcome = "error"
+	// Busy means the key is healthy but at the provider's concurrency cap.
+	// Rotate now, cool briefly, and do not escalate the backoff.
+	Busy Outcome = "busy"
+	// Banned means the provider suspended the account. Terminal until an
+	// operator resets the key; health checks never revive it.
+	Banned Outcome = "banned"
 )
+
+// Outcomes lists every outcome, in the order the dashboard shows them.
+var Outcomes = []Outcome{OK, RateLimited, Busy, QuotaExhausted, Invalid, Banned, Error}
 
 func ParseOutcome(s string) (Outcome, bool) {
 	switch o := Outcome(s); o {
-	case OK, RateLimited, QuotaExhausted, Invalid, Error:
+	case OK, RateLimited, Busy, QuotaExhausted, Invalid, Banned, Error:
 		return o, true
 	}
 	return "", false
 }
 
 // Rotates reports whether the outcome is the key's fault, so another key may succeed.
-func (o Outcome) Rotates() bool { return o == RateLimited || o == QuotaExhausted || o == Invalid }
+func (o Outcome) Rotates() bool {
+	return o == RateLimited || o == Busy || o == QuotaExhausted || o == Invalid || o == Banned
+}
+
+// ProviderFault reports whether the outcome says the provider itself is
+// failing, which is what the circuit breaker counts.
+func (o Outcome) ProviderFault() bool { return o == Error }
 
 type Result struct {
 	Outcome    Outcome
 	RetryAfter time.Duration
 	ResetAt    *time.Time
 	Message    string
+	// Quota is what the response headers said about the key's quota, when
+	// the spec names quota headers.
+	Quota QuotaReading
 }
+
+// QuotaReading is quota state read from response headers. Nil fields were absent.
+type QuotaReading struct {
+	Limit     *int64
+	Remaining *int64
+	ResetAt   *time.Time
+}
+
+func (q QuotaReading) Empty() bool { return q.Limit == nil && q.Remaining == nil && q.ResetAt == nil }
 
 type CheckResult struct {
 	Valid          bool

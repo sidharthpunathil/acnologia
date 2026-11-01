@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,8 +15,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/cogito-keys/cogito/internal/breaker"
 	"github.com/cogito-keys/cogito/internal/crypto"
+	"github.com/cogito-keys/cogito/internal/pool"
 	"github.com/cogito-keys/cogito/internal/providers"
+	"github.com/cogito-keys/cogito/internal/respcache"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -170,7 +175,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 405, "method_not_allowed", "the proxy forwards GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS")
 		return
 	}
-	sv, ok := s.serviceForApp(w, r, chi.URLParam(r, "service"))
+	slug := chi.URLParam(r, "service")
+	targets, ok := s.proxyTargets(w, r, slug)
 	if !ok {
 		return
 	}
@@ -186,21 +192,130 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	// The escaped form keeps %2F and friends as the client sent them.
 	path := r.URL.EscapedPath()
-	if i := strings.Index(path, "/proxy/"+chi.URLParam(r, "service")); i >= 0 {
-		path = strings.TrimPrefix(path[i+len("/proxy/"+chi.URLParam(r, "service")):], "/")
+	if i := strings.Index(path, "/proxy/"+slug); i >= 0 {
+		path = strings.TrimPrefix(path[i+len("/proxy/"+slug):], "/")
 	} else {
 		path = chi.URLParam(r, "*")
 	}
-	if _, err := upstreamURL(sv.BaseURL, path, nil); err != nil {
-		writeErr(w, 400, "bad_path", err.Error())
+	for _, sv := range targets {
+		if _, err := upstreamURL(sv.BaseURL, path, nil); err != nil {
+			writeErr(w, 400, "bad_path", err.Error())
+			return
+		}
+	}
+	if s.appLimited(w, r, a) {
 		return
 	}
-	prov := providers.Get(sv.Provider)
-	tried := map[int64]bool{}
-	var last *http.Response
-	var lastBody []byte
-	var lastKey int64
+	idemKey := idempotencyKey(r, a.ID, slug, path)
+	if idemKey != "" {
+		if e, ok := s.Cache.Get(idemKey); ok {
+			writeCached(w, e, "replay")
+			return
+		}
+	}
 
+	var last *serviceResult
+	var failErr error
+	for i, sv := range targets {
+		prov := providers.Get(sv.Provider)
+		cacheKey, ttl := "", cacheTTL(sv, prov)
+		if ttl > 0 && r.Method == http.MethodGet && !noCache(r) {
+			cacheKey = responseCacheKey(sv.ID, r, path)
+			if e, ok := s.Cache.Get(cacheKey); ok {
+				w.Header().Set("X-Cogito-Service", sv.Slug)
+				writeCached(w, e, "hit")
+				s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "cache_hit", ServiceID: sv.ID, AppID: a.ID, StatusCode: e.Status, Detail: r.Method + " /" + path})
+				_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, true)
+				return
+			}
+		}
+		bcfg := breakerSettings(prov)
+		if ok, ra := s.Breakers.Allow(sv.ID, bcfg); !ok {
+			failErr = &serviceDownError{Service: sv.Name, RetryAfter: ra}
+			continue
+		}
+		res := s.proxyService(w, r, a, sv, prov, path, body, bcfg, capture{cacheKey: cacheKey, ttl: ttl, idemKey: idemKey})
+		if res.served {
+			_ = s.Store.RecordAppUsage(r.Context(), a.ID, res.cost, false)
+			return
+		}
+		if res.resp == nil {
+			failErr = res.err
+			continue
+		}
+		last = res
+		// In a group, a failure that another account or region could avoid
+		// moves on to the next member. A request the provider rejected as
+		// malformed would fail everywhere, so it is relayed as is.
+		if i < len(targets)-1 && (res.outcome.Rotates() || res.outcome.ProviderFault()) {
+			continue
+		}
+		break
+	}
+	if last != nil {
+		_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, false)
+		w.Header().Set("X-Cogito-Service", last.service)
+		if idemKey != "" && last.resp.StatusCode < 500 {
+			s.Cache.Set(idemKey, &respcache.Entry{Status: last.resp.StatusCode, Header: last.resp.Header.Clone(), Body: last.body, KeyID: last.keyID}, idempotencyTTL)
+		}
+		relay(w, last.resp, last.keyID, last.attempts, last.body)
+		return
+	}
+	var down *serviceDownError
+	switch {
+	case errors.As(failErr, &down):
+		retry := max(int(math.Ceil(down.RetryAfter.Seconds())), 1)
+		w.Header().Set("Retry-After", itoa(retry))
+		writeJSON(w, 503, map[string]any{"error": apiError{Code: "service_unavailable",
+			Message: down.Service + " keeps failing, so Cogito paused traffic to it"}, "retry_after_sec": retry})
+	case errors.Is(failErr, errUpstreamUnreachable):
+		writeErr(w, 502, "upstream_unreachable", "could not reach "+targets[len(targets)-1].Name)
+	case failErr != nil:
+		if !writeNoKey(w, failErr) {
+			writeStoreErr(w, failErr)
+		}
+	default:
+		writeErr(w, 503, "no_key_available", "no service could take this request")
+	}
+}
+
+// serviceResult is how one service handled a proxied request.
+type serviceResult struct {
+	served   bool // the response was already written to the client
+	cost     float64
+	service  string
+	resp     *http.Response // final upstream answer to relay, body already read
+	body     []byte
+	keyID    int64
+	attempts int
+	outcome  providers.Outcome
+	err      error // why no upstream answer exists: no key, or unreachable
+}
+
+// capture says which caches a successful response should be stored in.
+type capture struct {
+	cacheKey string
+	ttl      time.Duration
+	idemKey  string
+}
+
+func (c capture) any() bool { return c.cacheKey != "" || c.idemKey != "" }
+
+var errUpstreamUnreachable = errors.New("upstream unreachable")
+
+// proxyService tries the request on one service, rotating keys on failures
+// that are a key's fault.
+func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.App, sv *store.Service, prov *providers.Spec,
+	path string, body []byte, bcfg breaker.Settings, cap capture) *serviceResult {
+	out := &serviceResult{service: sv.Slug}
+	verdict := false // whether the breaker heard about this service
+	defer func() {
+		if !verdict {
+			s.Breakers.Abort(sv.ID)
+		}
+	}()
+	cost := costPerRequest(sv, prov)
+	tried := map[int64]bool{}
 	queue := time.Duration(sv.QueueTimeoutSec) * time.Second
 	for attempt := 1; attempt <= sv.MaxAttempts; attempt++ {
 		waitStart := time.Now()
@@ -210,58 +325,80 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		picked, err := s.Pool.PickWait(r.Context(), sv, a.ID, a.LeaseHidden, tried, queue)
 		waited := time.Since(waitStart)
 		if err != nil && r.Context().Err() != nil {
-			return // client went away while queued
+			out.served = true // client went away while queued; nothing to write
+			return out
 		}
 		if err != nil {
-			if last != nil {
-				break // out of keys, relay the last upstream answer
+			if out.resp != nil {
+				return out // out of keys, relay the last upstream answer
 			}
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, AppID: a.ID, StatusCode: 503, Detail: "proxy: " + err.Error()})
-			if !writeNoKey(w, err) {
-				writeStoreErr(w, err)
+			var nk *pool.NoKeyError
+			if errors.As(err, &nk) && !nk.Busy {
+				s.Pool.EmitPoolEmpty(sv, err)
 			}
-			return
+			out.err = err
+			return out
 		}
 		k := picked.Key
 		tried[k.ID] = true
+		client, err := s.upstreamClient(r.Context(), sv, k)
+		if err != nil {
+			picked.Release()
+			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, Detail: "egress: " + err.Error()})
+			out.err = errUpstreamUnreachable
+			return out
+		}
 		ctx, cancel := context.WithCancel(r.Context())
 		req, err := buildUpstream(ctx, r, sv, path, body, picked.Secret)
 		if err != nil {
 			cancel()
 			picked.Release()
 			writeErr(w, 400, "bad_request", err.Error())
-			return
+			out.served = true
+			return out
 		}
 		start := time.Now()
-		resp, err := s.UpClient.Do(req)
+		resp, err := client.Do(req)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			cancel()
 			picked.Release()
-			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + scrub(err.Error(), picked.Secret)})
-			if last != nil {
-				break // relay the earlier answer instead of hiding it behind a 502
+			msg := scrub(err.Error(), picked.Secret)
+			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + msg})
+			if r.Context().Err() == nil {
+				s.Breakers.Failure(sv.ID, bcfg, "could not connect: "+msg)
+				verdict = true
 			}
-			writeErr(w, 502, "upstream_unreachable", "could not reach "+sv.Name)
-			return
+			if out.resp == nil {
+				out.err = errUpstreamUnreachable
+			}
+			return out // relay an earlier answer instead of hiding it behind a 502
 		}
 		detail := r.Method + " /" + path
 		if waited >= 100*time.Millisecond {
 			detail += " (queued " + waited.Round(10*time.Millisecond).String() + " for a free key)"
 		}
-		s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "proxy", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, LatencyMS: latency,
-			Detail: detail})
+		ev := store.NewEvent{Kind: "proxy", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, LatencyMS: latency, Detail: detail}
+		if resp.StatusCode < 400 {
+			ev.Cost = cost
+		}
+		s.Store.AddEvent(r.Context(), ev)
 
 		if resp.StatusCode < 400 {
-			_ = s.Pool.Apply(r.Context(), sv, k, providers.Result{Outcome: providers.OK})
+			s.Breakers.Success(sv.ID)
+			verdict = true
+			_ = s.Pool.Apply(r.Context(), sv, k, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(resp.Header)})
+			w.Header().Set("X-Cogito-Service", sv.Slug)
 			// The slot stays held until the (possibly streamed) body is fully
 			// sent, or the upstream goes quiet for proxyIdleTimeout.
 			func() {
 				defer picked.Release()
 				defer cancel()
-				relayStream(w, resp, k.ID, attempt, cancel, picked.Secret)
+				s.deliver(w, resp, k, attempt, cancel, picked.Secret, cap)
 			}()
-			return
+			out.served, out.cost = true, cost
+			return out
 		}
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		resp.Body.Close()
@@ -269,17 +406,53 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		picked.Release()
 		res := prov.Classify(resp.StatusCode, resp.Header, rb)
 		res.Message = scrub(res.Message, picked.Secret)
+		if res.Outcome.ProviderFault() {
+			s.Breakers.Failure(sv.ID, bcfg, fmt.Sprintf("%d: %s", resp.StatusCode, res.Message))
+		} else {
+			s.Breakers.Success(sv.ID)
+		}
+		verdict = true
 		_ = s.Pool.Apply(r.Context(), sv, k, res)
 		if res.Outcome != providers.OK {
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: string(res.Outcome), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, Detail: res.Message})
 		}
 		scrubHeaders(resp.Header, picked.Secret)
-		last, lastBody, lastKey = resp, rb, k.ID
+		out.resp, out.body, out.keyID, out.attempts, out.outcome, out.err = resp, rb, k.ID, len(tried), res.Outcome, nil
 		if !res.Outcome.Rotates() {
-			break
+			return out
 		}
 	}
-	relay(w, last, lastKey, len(tried), lastBody)
+	return out
+}
+
+// deliver sends a successful upstream response to the client. When the
+// response may be cached it is buffered (up to maxCachedBody) and stored;
+// larger bodies stream through untouched.
+func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Key, attempt int, cancel context.CancelFunc, secret string, cap capture) {
+	if !cap.any() || !s.Cache.Enabled() {
+		relayStream(w, resp, k.ID, attempt, cancel, secret)
+		return
+	}
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxCachedBody+1))
+	if err != nil || len(buf) > maxCachedBody {
+		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
+		w.Header().Set("X-Cogito-Cache", "bypass")
+		relayStream(w, resp, k.ID, attempt, cancel, secret)
+		return
+	}
+	resp.Body.Close()
+	scrubHeaders(resp.Header, secret)
+	entry := &respcache.Entry{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: buf, KeyID: k.ID}
+	if cap.cacheKey != "" && cacheable(resp, buf, k, secret) {
+		s.Cache.Set(cap.cacheKey, entry, cap.ttl)
+		w.Header().Set("X-Cogito-Cache", "miss")
+	} else if cap.cacheKey != "" {
+		w.Header().Set("X-Cogito-Cache", "bypass")
+	}
+	if cap.idemKey != "" {
+		s.Cache.Set(cap.idemKey, entry, idempotencyTTL)
+	}
+	relay(w, resp, k.ID, attempt, buf)
 }
 
 // droppedResponseHeaders never pass from an upstream to the client. Besides

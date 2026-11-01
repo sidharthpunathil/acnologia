@@ -47,6 +47,7 @@ type KeyCounts struct {
 	Cooling   int `json:"cooling"`
 	Exhausted int `json:"exhausted"`
 	Invalid   int `json:"invalid"`
+	Banned    int `json:"banned"`
 	Disabled  int `json:"disabled"`
 	Backup    int `json:"backup"`
 	Busy      int `json:"busy"`
@@ -81,6 +82,12 @@ type Service struct {
 	// TargetTrusted is false after someone other than a superadmin set the
 	// base URL or auth placement. Hidden keys are never sent to such a target.
 	TargetTrusted bool `json:"target_trusted"`
+	// EgressID routes this service's traffic through an outbound proxy.
+	EgressID *int64 `json:"egress_id"`
+	// CacheTTLSec overrides the provider's response cache TTL; nil uses the spec.
+	CacheTTLSec *int64 `json:"cache_ttl_sec"`
+	// CostPerRequest overrides the provider's USD price per request; nil uses the spec.
+	CostPerRequest *float64 `json:"cost_per_request"`
 }
 
 const (
@@ -88,6 +95,9 @@ const (
 	StatusDisabled  = "disabled"
 	StatusExhausted = "exhausted"
 	StatusInvalid   = "invalid"
+	// StatusBanned marks a key whose account the provider suspended. Only an
+	// operator reset brings it back.
+	StatusBanned = "banned"
 	StatusCooling   = "cooling"
 )
 
@@ -126,6 +136,9 @@ type Key struct {
 	ValidityReason string `json:"validity_reason"`
 	// QuotaUnit comes from the provider spec, for example searches or characters.
 	QuotaUnit string `json:"quota_unit"`
+	// EgressID routes this key's traffic through an outbound proxy,
+	// overriding the service's.
+	EgressID *int64 `json:"egress_id"`
 
 	SecretEnc []byte `json:"-"`
 }
@@ -159,6 +172,11 @@ func (k *Key) computeEffective(at time.Time) {
 		if k.ValidityReason == "" {
 			k.ValidityReason = "the provider rejected this key"
 		}
+	case k.Status == StatusBanned:
+		k.Validity, k.ValidityReason = "invalid", k.LastError
+		if k.ValidityReason == "" {
+			k.ValidityReason = "the provider suspended this account"
+		}
 	case k.LastOKAt != nil:
 		k.Validity, k.ValidityReason = "valid", "last worked "+ago(at, *k.LastOKAt)
 	default:
@@ -183,6 +201,8 @@ type App struct {
 	// LeaseHidden lets the app lease hidden keys. Only a superadmin can set
 	// it, and a token rotation by anyone else clears it.
 	LeaseHidden bool `json:"lease_hidden"`
+	// Limits caps the app's upstream requests and spend.
+	Limits AppLimits `json:"limits"`
 }
 
 func (a *App) CanUse(slug string) bool {

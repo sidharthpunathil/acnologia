@@ -95,7 +95,7 @@ func (w *Worker) healthChecks(ctx context.Context) {
 			continue
 		}
 		for _, k := range keys {
-			if k.Status == store.StatusDisabled || (k.Hidden && !sv.TargetTrusted) {
+			if k.Status == store.StatusDisabled || k.Status == store.StatusBanned || (k.Hidden && !sv.TargetTrusted) {
 				continue
 			}
 			// A check is one more request; do not push a capped key over its limit.

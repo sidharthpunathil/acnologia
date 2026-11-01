@@ -7,13 +7,16 @@ import (
 	"time"
 )
 
-const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev, target_trusted`
+const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev, target_trusted, egress_id, cache_ttl_sec, cost_per_request`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
 	var created int64
+	var egress, ttl sql.NullInt64
+	var cost sql.NullFloat64
 	err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.Provider, &s.Category, &s.Description, &s.BaseURL,
-		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev, &s.TargetTrusted)
+		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev, &s.TargetTrusted,
+		&egress, &ttl, &cost)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -21,14 +24,19 @@ func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 		return nil, err
 	}
 	s.CreatedAt = time.Unix(created, 0).UTC()
+	s.EgressID, s.CacheTTLSec = toInt(egress), toInt(ttl)
+	if cost.Valid {
+		s.CostPerRequest = &cost.Float64
+	}
 	return &s, nil
 }
 
 func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error) {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO services(slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec,target_trusted)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO services(slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec,target_trusted,egress_id,cache_ttl_sec,cost_per_request)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
-		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now(), sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted))
+		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now(), sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted),
+		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest))
 	if err != nil {
 		return nil, err
 	}
@@ -37,9 +45,10 @@ func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error
 }
 
 func (s *Store) UpdateService(ctx context.Context, sv *Service) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=?,target_trusted=? WHERE id=?`,
+	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=?,target_trusted=?,egress_id=?,cache_ttl_sec=?,cost_per_request=? WHERE id=?`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
-		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted), sv.ID)
+		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted),
+		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest), sv.ID)
 	return err
 }
 
@@ -123,6 +132,8 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 			c.Exhausted++
 		case k.Status == StatusInvalid:
 			c.Invalid++
+		case k.Status == StatusBanned:
+			c.Banned++
 		case k.Status == StatusDisabled:
 			c.Disabled++
 		}

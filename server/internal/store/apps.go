@@ -8,15 +8,16 @@ import (
 	"time"
 )
 
-const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden`
+const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden, daily_requests, monthly_requests, daily_budget, monthly_budget`
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var a App
 	var allowed string
 	var active, leaseHidden int
 	var created int64
-	var last sql.NullInt64
-	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden); err != nil {
+	var last, dr, mr sql.NullInt64
+	var db, mb sql.NullFloat64
+	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden, &dr, &mr, &db, &mb); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -28,6 +29,13 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	a.LeaseHidden = leaseHidden == 1
 	a.CreatedAt = time.Unix(created, 0).UTC()
 	a.LastUsedAt = toTime(last)
+	a.Limits.DailyRequests, a.Limits.MonthlyRequests = toInt(dr), toInt(mr)
+	if db.Valid {
+		a.Limits.DailyBudget = &db.Float64
+	}
+	if mb.Valid {
+		a.Limits.MonthlyBudget = &mb.Float64
+	}
 	return &a, nil
 }
 

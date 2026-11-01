@@ -173,7 +173,7 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for _, k := range keys {
-		if k.Status == store.StatusDisabled || (k.Hidden && !sv.TargetTrusted) {
+		if k.Status == store.StatusDisabled || k.Status == store.StatusBanned || (k.Hidden && !sv.TargetTrusted) {
 			mu.Lock()
 			sum.Skipped++
 			mu.Unlock()

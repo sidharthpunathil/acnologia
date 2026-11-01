@@ -110,6 +110,10 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 	p, err := s.Pool.PickWait(ctx, sv, a.ID, a.LeaseHidden, ex, wait)
 	if err != nil {
 		s.Store.AddEvent(ctx, store.NewEvent{Kind: "error", ServiceID: sv.ID, AppID: a.ID, StatusCode: 503, Detail: "lease: " + err.Error()})
+		var nk *pool.NoKeyError
+		if errors.As(err, &nk) && !nk.Busy {
+			s.Pool.EmitPoolEmpty(sv, err)
+		}
 		return nil, err
 	}
 	if ttl <= 0 || ttl > 24*time.Hour {
@@ -126,7 +130,10 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 		return nil, err
 	}
 	s.Pool.HoldLease(p, l.ID, l.ExpiresAt)
-	s.Store.AddEvent(ctx, store.NewEvent{Kind: "lease", ServiceID: sv.ID, KeyID: p.Key.ID, AppID: a.ID})
+	// A lease is charged as one request: Cogito cannot see what the app does with the key.
+	cost := costPerRequest(sv, providers.Get(sv.Provider))
+	s.Store.AddEvent(ctx, store.NewEvent{Kind: "lease", ServiceID: sv.ID, KeyID: p.Key.ID, AppID: a.ID, Cost: cost})
+	_ = s.Store.RecordAppUsage(ctx, a.ID, cost, false)
 	return &leaseDTO{
 		LeaseID: l.ID, KeyID: p.Key.ID, Service: sv.Slug, Secret: p.Secret,
 		Auth: authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)}, BaseURL: sv.BaseURL, ExpiresAt: l.ExpiresAt,
@@ -150,6 +157,9 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 	}
 	sv, ok := s.serviceForApp(w, r, body.Service)
 	if !ok {
+		return
+	}
+	if s.appLimited(w, r, a) {
 		return
 	}
 	wait := time.Duration(min(max(body.WaitSec, 0), 60)) * time.Second

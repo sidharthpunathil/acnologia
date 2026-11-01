@@ -15,6 +15,8 @@ type NewEvent struct {
 	StatusCode int
 	LatencyMS  int64
 	Detail     string
+	// Cost is the USD price of the upstream call, 0 when free or unknown.
+	Cost float64
 }
 
 func nz(v int64) any {
@@ -26,8 +28,8 @@ func nz(v int64) any {
 
 func (s *Store) AddEvent(ctx context.Context, e NewEvent) {
 	e.Detail = truncate(e.Detail, 500)
-	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,status_code,latency_ms,detail) VALUES(?,?,?,?,?,?,?,?)`,
-		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), e.StatusCode, e.LatencyMS, e.Detail)
+	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,status_code,latency_ms,detail,cost) VALUES(?,?,?,?,?,?,?,?,?)`,
+		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), e.StatusCode, e.LatencyMS, e.Detail, e.Cost)
 }
 
 type EventFilter struct {
@@ -149,8 +151,8 @@ type DayStat struct {
 func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT date(ts,'unixepoch') d,
 		SUM(CASE WHEN kind='lease' OR (kind='proxy' AND status_code<400) THEN 1 ELSE 0 END),
-		SUM(CASE WHEN kind='error' OR kind='invalid' THEN 1 ELSE 0 END),
-		SUM(CASE WHEN kind IN ('rate_limited','quota_exhausted') THEN 1 ELSE 0 END)
+		SUM(CASE WHEN kind IN ('error','invalid','banned') THEN 1 ELSE 0 END),
+		SUM(CASE WHEN kind IN ('rate_limited','busy','quota_exhausted') THEN 1 ELSE 0 END)
 		FROM events WHERE key_id=? AND ts>=? GROUP BY d ORDER BY d`, keyID, time.Now().AddDate(0, 0, -days).Unix())
 	if err != nil {
 		return nil, err

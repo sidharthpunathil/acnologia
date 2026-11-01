@@ -45,6 +45,10 @@ func isSuper(r *http.Request) bool {
 
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && strings.HasPrefix(tok, "cogadm_") {
+			s.tokenUser(w, r, tok, next)
+			return
+		}
 		c, err := r.Cookie(sessionCookie)
 		if err != nil || c.Value == "" {
 			writeErr(w, 401, "unauthenticated", "sign in first")

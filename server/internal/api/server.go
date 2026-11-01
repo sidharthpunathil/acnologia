@@ -20,9 +20,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/cogito-keys/cogito/internal/agent"
+	"github.com/cogito-keys/cogito/internal/breaker"
+	"github.com/cogito-keys/cogito/internal/egress"
+	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
 	"github.com/cogito-keys/cogito/internal/pool"
+	"github.com/cogito-keys/cogito/internal/respcache"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -33,20 +37,35 @@ type Server struct {
 	Catalog  *catalog.Catalog
 	Agent    *agent.Agent
 	UpClient *http.Client
-	WebFS    fs.FS
-	LLMsTxt  []byte
-	limiter  *loginLimiter
+	// Breakers pause traffic to services whose provider keeps failing.
+	Breakers *breaker.Set
+	// Cache holds cached GET responses and idempotent replays.
+	Cache   *respcache.Cache
+	WebFS   fs.FS
+	LLMsTxt []byte
+	limiter *loginLimiter
 	// userMu serializes check-then-write user changes (first setup, keeping
 	// one superadmin) so concurrent requests cannot both pass the check.
 	userMu sync.Mutex
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
-	return &Server{
+	s := &Server{
 		Cfg: cfg, Store: st, Pool: p, Catalog: cat, Agent: ag, WebFS: web, LLMsTxt: llms,
 		UpClient: newUpstreamClient(),
+		Breakers: breaker.New(),
+		Cache:    respcache.New(cfg.CacheBytes),
 		limiter:  newLoginLimiter(),
 	}
+	s.Breakers.OnChange = func(id int64, down bool, reason string) { go s.onBreakerChange(id, down, reason) }
+	// main wires these up with their workers; tests and embedders get working defaults.
+	if p.Egress == nil {
+		p.Egress = egress.New(st, p.Box, egress.NewTransport(nil))
+	}
+	if p.Notify == nil {
+		p.Notify = notify.New(st, p.Box, catalog.SafeClient(15*time.Second))
+	}
+	return s
 }
 
 func (s *Server) Router() http.Handler {
@@ -79,7 +98,17 @@ func (s *Server) Router() http.Handler {
 	r.Route("/api/admin", func(r chi.Router) {
 		r.Use(jsonOnly, s.requireUser)
 		r.Get("/me", s.me)
-		r.Patch("/me", s.updateMe)
+		// Account and token management need a real sign-in, not an API token.
+		r.With(s.sessionOnly).Patch("/me", s.updateMe)
+		r.With(s.sessionOnly).Get("/tokens", s.listTokens)
+		r.With(s.sessionOnly).Post("/tokens", s.createToken)
+		r.With(s.sessionOnly).Delete("/tokens/{id}", s.deleteToken)
+		r.Get("/webhooks", s.listWebhooks)
+		r.Get("/egress", s.listEgress)
+		r.Get("/groups", s.listGroups)
+		r.Get("/apps/{id}/usage", s.appUsage)
+		r.Get("/services/{id}/breaker", s.serviceBreaker)
+		r.Get("/cache", s.cacheStats)
 		r.Get("/overview", s.overview)
 		r.Get("/providers", s.listProviders)
 		r.Get("/services", s.listServices)
@@ -126,6 +155,19 @@ func (s *Server) Router() http.Handler {
 			r.Post("/ai/runs", s.aiCreateRun)
 			r.Post("/ai/runs/{id}/cancel", s.aiCancelRun)
 			r.Post("/ai/runs/{id}/publish", s.aiPublishRun)
+			r.Post("/webhooks", s.createWebhook)
+			r.Patch("/webhooks/{id}", s.updateWebhook)
+			r.Delete("/webhooks/{id}", s.deleteWebhook)
+			r.Post("/webhooks/{id}/test", s.testWebhook)
+			r.Post("/egress", s.createEgress)
+			r.Patch("/egress/{id}", s.updateEgress)
+			r.Delete("/egress/{id}", s.deleteEgress)
+			r.Post("/egress/{id}/test", s.testEgress)
+			r.Post("/groups", s.createGroup)
+			r.Patch("/groups/{id}", s.updateGroup)
+			r.Delete("/groups/{id}", s.deleteGroup)
+			r.Post("/services/{id}/breaker/reset", s.resetServiceBreaker)
+			r.Post("/services/{id}/cache/purge", s.purgeServiceCache)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleSuperadmin))

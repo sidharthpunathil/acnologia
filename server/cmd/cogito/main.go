@@ -22,7 +22,9 @@ import (
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
 	"github.com/cogito-keys/cogito/internal/crypto"
+	"github.com/cogito-keys/cogito/internal/egress"
 	"github.com/cogito-keys/cogito/internal/llmstxt"
+	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/pool"
 	"github.com/cogito-keys/cogito/internal/store"
 	"github.com/cogito-keys/cogito/internal/webui"
@@ -107,6 +109,16 @@ func run() error {
 	if err := p.RestoreLeases(ctx); err != nil {
 		return err
 	}
+	// Webhook URLs are chosen in the dashboard, so by default they may not
+	// reach private networks (cloud metadata, internal admin panels).
+	hookClient := catalog.SafeClient(15 * time.Second)
+	if cfg.WebhookAllowPrivate {
+		hookClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	p.Notify = notify.New(st, box, hookClient)
+	go p.Notify.Run(ctx)
+	p.Egress = egress.New(st, box, egress.NewTransport(nil))
+	p.Egress.EchoURL = cfg.EgressEchoURL
 	srv := api.New(cfg, st, p, cat, ag, webui.FS(), llmstxt.Content)
 	w := &worker.Worker{Store: st, Pool: p, HealthInterval: cfg.HealthInterval,
 		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour}
