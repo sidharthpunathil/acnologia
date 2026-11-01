@@ -78,10 +78,23 @@ function TopBar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
         <IconAction label="Open the docs menu" icon={RiMenuLine} onClick={onMenu} className="-ms-1.5 lg:hidden" />
         {/* On wide screens this slot is as wide as the sidebar plus its gap, so search starts over the page column. */}
         <div className="flex min-w-0 shrink-0 items-center lg:w-[16.75rem]">
-          <Link to="/docs" aria-label="Acnologia docs home" className={cx("-mx-1.5 flex items-center gap-2.5 rounded-xl px-1.5 py-1", FOCUS)}>
+          {/* The brand goes home (the dashboard when signed in); the Docs label goes to the docs index. */}
+          <Link
+            to={signedIn ? "/" : "/docs"}
+            aria-label={signedIn ? "Acnologia home" : "Acnologia docs home"}
+            className={cx("-mx-1.5 flex items-center rounded-xl px-1.5 py-1", FOCUS)}
+          >
             <Brand size={26} />
-            <span aria-hidden className="hidden h-5 w-px bg-separator-border sm:block" />
-            <span className="hidden text-body-medium text-text-secondary sm:block">Docs</span>
+          </Link>
+          <span aria-hidden className="ms-2.5 hidden h-5 w-px bg-separator-border sm:block" />
+          <Link
+            to="/docs"
+            className={cx(
+              "ms-1 hidden rounded-lg px-1.5 py-1 text-body-medium text-text-secondary transition-colors duration-150 hover:text-text-primary sm:block",
+              FOCUS,
+            )}
+          >
+            Docs
           </Link>
         </div>
 
