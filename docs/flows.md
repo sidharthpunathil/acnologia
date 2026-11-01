@@ -380,15 +380,20 @@ Confirmations:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> waiting: delete_key, delete_service,<br/>delete_app or rotate_app_token called
+    [*] --> waiting: a delete or rotate_app_token<br/>tool is called
     waiting --> approved: you press Confirm<br/>(the action runs now)
     waiting --> cancelled: you press Cancel
     waiting --> expired: you send another message
 ```
 
-Tools by role: members get read tools (overview, providers, services, keys,
-key details, apps, events, AI run status). Admins and superadmins also get
-create and update tools for services, keys and apps, health checks, key reset,
-starting the AI provider builder, and the confirm gated deletes and token
-rotation. There is no tool to reveal a stored key, manage users or read the
-audit log.
+Tools by role:
+
+| Role | Tools |
+|---|---|
+| member and up | overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, get_ai_run |
+| admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), create_webhook, update_webhook, test_webhook, create_egress_proxy, update_egress_proxy, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, start_provider_build |
+| admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group |
+
+There is no tool to reveal a stored key, manage users or read the audit log.
+New app tokens and webhook signing secrets are shown to you once and never
+sent to Claude; egress proxy URLs are redacted from the stored chat like keys.

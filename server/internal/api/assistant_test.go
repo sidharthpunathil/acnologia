@@ -207,3 +207,46 @@ func TestAssistantAppTokenGoesToUserOnly(t *testing.T) {
 		t.Fatal("the app token was persisted")
 	}
 }
+
+func TestAssistantReadToolsReachTheirRoutes(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "k1"})
+	appID, _ := e.app(map[string]any{"name": "site"})
+	calls := []string{}
+	n := 0
+	add := func(name, input string) {
+		n++
+		calls = append(calls, `{"type":"tool_use","id":"tu_`+itoa(n)+`","name":"`+name+`","input":`+input+`}`)
+	}
+	for _, name := range []string{"overview", "list_providers", "list_services", "list_keys", "list_apps", "list_events",
+		"list_webhooks", "list_egress_proxies", "list_groups", "cache_stats"} {
+		add(name, `{}`)
+	}
+	add("get_provider", `{"slug":"serpapi"}`)
+	add("key_details", `{"key_id":1}`)
+	add("app_usage", `{"app_id":`+itoa(int(appID))+`}`)
+	add("service_breaker", `{"service":"serpapi"}`)
+	f := &fakeClaude{replies: []string{`{"content":[` + strings.Join(calls, ",") + `],"stop_reason":"tool_use"}`, text("done")}}
+	e.api.chatModel = f.converse
+	id := e.newChat(e.super)
+	var out chatResp
+	e.do(e.super, "POST", "/api/admin/chat/threads/"+itoa(int(id))+"/messages", map[string]any{"text": "look around"}, 200, &out)
+	tools := 0
+	for _, it := range out.Items {
+		if it.Kind == "tool" {
+			tools++
+			if !it.OK {
+				t.Errorf("%s failed: %s", it.Tool, it.Summary)
+			}
+		}
+	}
+	if tools != n {
+		t.Fatalf("ran %d of %d tools", tools, n)
+	}
+	// Every tool has a description and a known role.
+	for _, tl := range chatTools {
+		if tl.Desc == "" || !tl.Role.Valid() || (tl.Confirm && tl.Describe == nil) {
+			t.Errorf("tool %s is incomplete", tl.Name)
+		}
+	}
+}

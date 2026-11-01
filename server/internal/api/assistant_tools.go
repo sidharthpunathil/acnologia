@@ -33,7 +33,10 @@ type chatTool struct {
 	// the user cannot take.
 	Role    store.Role
 	Confirm bool
-	Run     func(cs *chatSession, in map[string]any) toolOut
+	// SecretFields are input fields holding credentials (a proxy URL with a
+	// password), redacted from the stored conversation like key secrets.
+	SecretFields []string
+	Run          func(cs *chatSession, in map[string]any) toolOut
 	// Describe explains a destructive action for the confirmation card.
 	Describe func(cs *chatSession, in map[string]any) (string, error)
 }
@@ -42,8 +45,10 @@ type chatTool struct {
 // redacted from the stored conversation.
 func (t *chatTool) secretsIn(in map[string]any) []string {
 	out := []string{}
-	if s, ok := in["secret"].(string); ok && strings.TrimSpace(s) != "" {
-		out = append(out, strings.TrimSpace(s))
+	for _, f := range append([]string{"secret"}, t.SecretFields...) {
+		if s, ok := in[f].(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
 	}
 	if ks, ok := in["keys"].([]any); ok {
 		for _, k := range ks {
@@ -208,6 +213,7 @@ func (cs *chatSession) simple(method, path string, body any, summary string, sha
 
 func init() {
 	none := map[string]any{}
+	defer func() { chatTools = append(chatTools, opsTools()...) }()
 	chatTools = []*chatTool{
 		{
 			Name: "overview", Role: store.RoleMember, Props: none,
@@ -406,16 +412,21 @@ func init() {
 				"max_attempts":      map[string]any{"type": "integer"},
 				"max_concurrency":   map[string]any{"type": "integer"},
 				"queue_timeout_sec": map[string]any{"type": "integer"},
+				"egress_id":         map[string]any{"type": "integer", "description": "egress proxy id from list_egress_proxies; 0 for none"},
+				"cache_ttl_sec":     map[string]any{"type": "integer", "description": "cache successful GET responses this long; 0 turns caching off"},
+				"cost_per_request":  map[string]any{"type": "number", "description": "cost of one request, used for app budgets"},
 			},
-			Desc: "Change a service's settings.",
+			Desc: "Change a service's settings: name, base URL, rotation strategy, cooldown, attempts, concurrency, egress proxy, response cache and cost per request.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				sv, err := cs.resolveService(argStr(in, "service"))
 				if err != nil {
 					return toolFail(err.Error())
 				}
-				body := pick(in, "name", "description", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec")
+				body := pick(in, "name", "description", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
+					"egress_id", "cache_ttl_sec", "cost_per_request")
 				return cs.simple("PATCH", fmt.Sprintf("/api/admin/services/%d", sv.ID), body, "Updated service "+sv.Slug, func(m map[string]any) any {
-					return pick(m, "id", "slug", "name", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec", "target_trusted")
+					return pick(m, "id", "slug", "name", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
+						"target_trusted", "egress_id", "cache_ttl_sec", "cost_per_request")
 				})
 			},
 		},
@@ -465,12 +476,13 @@ func init() {
 				"quota_limit":     map[string]any{"type": "integer", "description": "-1 clears"},
 				"max_concurrency": map[string]any{"type": "integer", "description": "-1 uses the service default"},
 				"secret":          map[string]any{"type": "string", "description": "only to replace the key with a new secret the user gave"},
+				"egress_id":       map[string]any{"type": "integer", "description": "egress proxy for this key; 0 uses the service's"},
 			}),
 			Desc: "Change a key: label, account details, status (active or disabled), tier, notes, weight, priority, quota limit, concurrency, or replace its secret.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "key_id")
 				body := pick(in, "label", "account_name", "account_email", "account_phone", "account_ref", "tier", "notes",
-					"status", "weight", "priority", "quota_limit", "max_concurrency", "secret")
+					"status", "weight", "priority", "quota_limit", "max_concurrency", "secret", "egress_id")
 				return cs.simple("PATCH", fmt.Sprintf("/api/admin/keys/%d", id), body, fmt.Sprintf("Updated key %d", id), func(m map[string]any) any {
 					return pick(m, keyFields...)
 				})
@@ -549,13 +561,18 @@ func init() {
 				"mode":             map[string]any{"type": "string", "enum": []string{"proxy", "lease", "both"}},
 				"allowed_services": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"active":           map[string]any{"type": "boolean"},
+				"limits": map[string]any{"type": "object", "description": "replaces all limits; omit a field or set it null for no limit",
+					"properties": map[string]any{
+						"daily_requests": map[string]any{"type": "integer"}, "monthly_requests": map[string]any{"type": "integer"},
+						"daily_budget": map[string]any{"type": "number"}, "monthly_budget": map[string]any{"type": "number"},
+					}},
 			},
-			Desc: "Change an app's name, mode, allowed services, or turn it on or off.",
+			Desc: "Change an app's name, mode, allowed services, request and budget limits, or turn it on or off.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "app_id")
-				body := pick(in, "name", "description", "mode", "allowed_services", "active")
+				body := pick(in, "name", "description", "mode", "allowed_services", "active", "limits")
 				return cs.simple("PATCH", fmt.Sprintf("/api/admin/apps/%d", id), body, fmt.Sprintf("Updated app %d", id), func(m map[string]any) any {
-					return pick(m, "id", "name", "mode", "allowed_services", "active")
+					return pick(m, "id", "name", "mode", "allowed_services", "active", "limits")
 				})
 			},
 		},
