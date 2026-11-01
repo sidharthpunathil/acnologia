@@ -54,6 +54,10 @@ interface Draft {
   secret: string;
   /** Empty string means use the service default. */
   max_concurrency: string;
+  account_name: string;
+  account_email: string;
+  account_phone: string;
+  account_ref: string;
 }
 
 function draftOf(k: Key): Draft {
@@ -70,8 +74,14 @@ function draftOf(k: Key): Draft {
     quota_limit: k.quota_limit === null ? "" : String(k.quota_limit),
     secret: "",
     max_concurrency: k.max_concurrency === null || k.max_concurrency === undefined ? "" : String(k.max_concurrency),
+    account_name: k.account_name ?? "",
+    account_email: k.account_email ?? "",
+    account_phone: k.account_phone ?? "",
+    account_ref: k.account_ref ?? "",
   };
 }
+
+const ACCOUNT_FIELDS = ["account_name", "account_email", "account_phone", "account_ref"] as const;
 
 const sameIds = (a: number[], b: number[]) => a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
 
@@ -133,6 +143,15 @@ export function KeyEditModal({
     if (mc !== (k.max_concurrency ?? null)) patch.max_concurrency = mc === null ? -1 : mc;
     const egressLocked = k.hidden && !canHidden;
     if (!egressLocked && egressId !== (k.egress_id ?? 0)) patch.egress_id = egressId;
+    const email = d.account_email.trim();
+    if (email && !email.includes("@")) {
+      toast.error("Account email needs an @.");
+      return;
+    }
+    for (const f of ACCOUNT_FIELDS) {
+      const v = d[f].trim();
+      if (v !== (k[f] ?? "")) patch[f] = v;
+    }
 
     if (Object.keys(patch).length === 0) {
       onClose();
@@ -250,6 +269,27 @@ export function KeyEditModal({
               empty="No apps yet. Create an app first, then allow it here."
             />
           )}
+        </div>
+
+        <div role="group" aria-labelledby="edit-key-account" className="space-y-4 rounded-xl border border-line p-4">
+          <div>
+            <h3 id="edit-key-account" className="text-[13px] font-medium text-ink">Account</h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted">Who this key belongs to. Only admins can see these details.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Name">
+              <Input value={d.account_name} maxLength={200} autoComplete="off" onChange={(e) => set("account_name", e.target.value)} />
+            </Field>
+            <Field label="Email">
+              <Input type="email" value={d.account_email} maxLength={254} autoComplete="off" onChange={(e) => set("account_email", e.target.value)} />
+            </Field>
+            <Field label="Phone">
+              <Input type="tel" value={d.account_phone} maxLength={40} autoComplete="off" onChange={(e) => set("account_phone", e.target.value)} />
+            </Field>
+            <Field label="Other" hint="Username, account ID or anything else that identifies the account">
+              <Input value={d.account_ref} maxLength={200} autoComplete="off" onChange={(e) => set("account_ref", e.target.value)} />
+            </Field>
+          </div>
         </div>
 
         <Field label="Notes">

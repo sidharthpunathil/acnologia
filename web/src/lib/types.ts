@@ -122,6 +122,12 @@ export interface Key {
   quota_unit: string;
   /** Egress proxy for this key; null falls back to the service's. */
   egress_id?: number | null;
+  /** Who the key belongs to. Members get empty strings, since this is personal data. */
+  account_name?: string;
+  account_email?: string;
+  account_phone?: string;
+  /** Any other identifier, such as a username, account ID or workspace. */
+  account_ref?: string;
 }
 
 export type Validity = "valid" | "invalid" | "unknown";
@@ -181,6 +187,10 @@ export interface NewKeyInput {
   priority: number;
   notes: string;
   app_ids: number[];
+  account_name?: string;
+  account_email?: string;
+  account_phone?: string;
+  account_ref?: string;
 }
 
 export type KeyPatch = Partial<{
@@ -199,6 +209,10 @@ export type KeyPatch = Partial<{
   quota_limit: number | null;
   /** -1 clears the override (use the service default). */
   max_concurrency: number;
+  account_name: string;
+  account_email: string;
+  account_phone: string;
+  account_ref: string;
 }>;
 
 export type AppMode = "proxy" | "lease" | "both";
@@ -587,4 +601,49 @@ export interface AiRules {
   rules: string;
   updated_at: string | null;
   updated_by: string;
+}
+
+export interface ChatThread {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatAi {
+  enabled: boolean;
+  model: string;
+  /** Why the assistant is off, in plain words. Empty when enabled. */
+  reason: string;
+}
+
+export type ChatItemKind = "user" | "assistant" | "tool" | "confirm" | "error";
+
+export type ChatPendingStatus = "waiting" | "approved" | "cancelled" | "expired";
+
+export interface ChatItem {
+  id: string;
+  kind: ChatItemKind;
+  text?: string;
+  tool?: string;
+  /** Tool input, already redacted by the server. */
+  input?: Record<string, unknown>;
+  ok: boolean;
+  summary?: string;
+  /** JSON text of the tool result, cut to 4000 characters. */
+  detail?: string;
+  /** One time app token. Only in the response that created it. */
+  secret?: string;
+  pending?: { id: string; status: ChatPendingStatus };
+  /** An in app path, such as /services/3. */
+  link?: string;
+  ts: string;
+}
+
+export interface ChatReply {
+  thread: ChatThread;
+  /** Only the items this request created or changed. */
+  items: ChatItem[];
+  /** The full transcript. */
+  all: ChatItem[];
 }

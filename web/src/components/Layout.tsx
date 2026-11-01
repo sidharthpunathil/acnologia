@@ -15,6 +15,7 @@ import {
   MoreHorizontal,
   Settings,
   ShieldCheck,
+  Sparkles,
   UserRound,
   Users,
   type LucideIcon,
@@ -187,6 +188,7 @@ export function Layout() {
 
   const all: Array<NavItem & { show: boolean }> = [
     { to: "/", label: "Catalog", icon: LayoutGrid, show: true, end: true },
+    { to: "/assistant", label: "Assistant", icon: Sparkles, show: true },
     { to: "/keys", label: "Keys", icon: KeyRound, show: true },
     { to: "/providers", label: "Providers", icon: Blocks, show: true },
     { to: "/apps", label: "Apps", icon: Boxes, show: true },

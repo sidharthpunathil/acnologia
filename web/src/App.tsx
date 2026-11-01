@@ -25,6 +25,7 @@ import { DocsPage } from "./pages/Docs";
 import { WebhooksPage } from "./pages/Webhooks";
 import { EgressPage } from "./pages/Egress";
 import { GroupsPage } from "./pages/Groups";
+import { AssistantPage } from "./pages/Assistant";
 
 function RequireRole({ ok, children }: { ok: boolean; children: ReactNode }) {
   return ok ? <>{children}</> : <Navigate to="/" replace />;
@@ -77,6 +78,8 @@ export function App() {
         <Route path="/docs" element={<DocsPage />} />
         <Route element={<Layout />}>
           <Route index element={<CatalogPage />} />
+          <Route path="assistant" element={<AssistantPage />} />
+          <Route path="assistant/:threadId" element={<AssistantPage />} />
           <Route path="keys" element={<KeysPage />} />
           <Route path="services/:id" element={<ServicePage />} />
           <Route path="providers" element={<ProvidersPage />} />

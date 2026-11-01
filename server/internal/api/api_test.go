@@ -62,6 +62,7 @@ type env struct {
 	upURL string
 	super *http.Client
 	st    *store.Store
+	api   *Server
 }
 
 func newEnv(t *testing.T) *env {
@@ -85,7 +86,7 @@ func newEnv(t *testing.T) *env {
 		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Cogito {{BASE_URL}}"))
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)
-	e := &env{t: t, srv: srv, up: up, upURL: ups.URL, super: client(), st: st}
+	e := &env{t: t, srv: srv, up: up, upURL: ups.URL, super: client(), st: st, api: s}
 	e.do(e.super, "POST", "/api/auth/setup", map[string]any{"email": "root@x.io", "password": "supersecret1"}, 200, nil)
 	var svc store.Service
 	e.do(e.super, "POST", "/api/admin/services", map[string]any{"provider": "serpapi", "slug": "serpapi", "base_url": ups.URL}, 201, &svc)

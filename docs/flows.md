@@ -12,6 +12,7 @@ Mermaid and render on GitHub.
 - [Dashboard sign in](#dashboard-sign-in)
 - [MCP](#mcp)
 - [AI provider builder](#ai-provider-builder)
+- [Assistant chat](#assistant-chat)
 
 ## Proxy request
 
@@ -324,3 +325,70 @@ stateDiagram-v2
 
 Auto publish defaults to on for new providers and off for updates of existing
 ones. The test key is encrypted while the run is active and wiped when it ends.
+
+## Assistant chat
+
+The Assistant page is a chat where Claude manages Cogito for you. Every action
+is a tool call that the server turns into a request to its own dashboard API,
+**made as you** (your session), so it gets exactly your role, the same
+validation, and the same audit log entries as clicking in the UI.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as You
+    participant C as /api/admin/chat
+    participant Cl as Claude API
+    participant D as Dashboard API (in process)
+    participant DB as SQLite
+
+    U->>C: POST /threads/{id}/messages<br/>"add these serpapi keys: sk_1 (alice@x.io), sk_2"
+    C->>DB: load thread (yours only), decrypt
+    loop until Claude answers (max 12 steps)
+        C->>Cl: history + tools allowed for your role
+        Cl-->>C: text and tool calls
+        alt read or change tool
+            C->>D: e.g. GET /services, POST /services/1/keys<br/>with your session cookie
+            D-->>C: result (role checks, validation, audit)
+            C->>C: trim the result for the model,<br/>keep app tokens for you only
+        else delete or rotate tool
+            C->>C: record a pending action,<br/>show a Confirm card, do nothing yet
+        end
+        C->>Cl: tool results
+    end
+    C->>C: replace pasted key secrets with their last<br/>four characters everywhere in the thread
+    C->>DB: save thread encrypted
+    C-->>U: new transcript items (and a new app token once, if any)
+```
+
+Typical "add keys" path the assistant follows:
+
+```mermaid
+flowchart TD
+    Ask(["provider name + keys"]) --> LS[list_services]
+    LS --> One{"services for<br/>that provider?"}
+    One -->|one| Add[add_keys with account fields]
+    One -->|several| Which[ask which service]
+    One -->|none| LP[list_providers]
+    LP --> Known{"provider known?"}
+    Known -->|yes| CS[create_service] --> Add
+    Known -->|no| Build["offer start_provider_build<br/>or a generic service"]
+    Add --> Check["keys are health checked<br/>in the background"]
+```
+
+Confirmations:
+
+```mermaid
+stateDiagram-v2
+    [*] --> waiting: delete_key, delete_service,<br/>delete_app or rotate_app_token called
+    waiting --> approved: you press Confirm<br/>(the action runs now)
+    waiting --> cancelled: you press Cancel
+    waiting --> expired: you send another message
+```
+
+Tools by role: members get read tools (overview, providers, services, keys,
+key details, apps, events, AI run status). Admins and superadmins also get
+create and update tools for services, keys and apps, health checks, key reset,
+starting the AI provider builder, and the confirm gated deletes and token
+rotation. There is no tool to reveal a stored key, manage users or read the
+audit log.

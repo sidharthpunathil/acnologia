@@ -344,6 +344,7 @@ func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillInFlight(keys...)
+	maskAccounts(r, keys...)
 	writeJSON(w, 200, map[string]any{"keys": keys})
 }
 
@@ -379,11 +380,60 @@ type keyInput struct {
 	MaxConc *int64 `json:"max_concurrency"`
 	// EgressID sends this key's traffic through an egress proxy; 0 falls back to the service's.
 	EgressID *int64 `json:"egress_id"`
+	// Who the key belongs to. Personal data: shown to admins and up only.
+	AccountName  *string `json:"account_name"`
+	AccountEmail *string `json:"account_email"`
+	AccountPhone *string `json:"account_phone"`
+	AccountRef   *string `json:"account_ref"`
+}
+
+// accountPatch trims the account fields that were sent.
+func (in keyInput) accountPatch() store.AccountPatch {
+	t := func(v *string) *string {
+		if v == nil {
+			return nil
+		}
+		x := strings.TrimSpace(*v)
+		return &x
+	}
+	return store.AccountPatch{Name: t(in.AccountName), Email: t(in.AccountEmail), Phone: t(in.AccountPhone), Ref: t(in.AccountRef)}
+}
+
+// validAccount checks lengths and the email shape.
+func (in keyInput) validAccount() string {
+	p := in.accountPatch()
+	for _, f := range []struct {
+		v   *string
+		max int
+		n   string
+	}{{p.Name, 200, "account_name"}, {p.Email, 254, "account_email"}, {p.Phone, 40, "account_phone"}, {p.Ref, 200, "account_ref"}} {
+		if f.v != nil && len(*f.v) > f.max {
+			return fmt.Sprintf("%s must be at most %d characters", f.n, f.max)
+		}
+	}
+	if p.Email != nil && *p.Email != "" && (!strings.Contains(*p.Email, "@") || strings.ContainsAny(*p.Email, " \t\n")) {
+		return "account_email must look like name@example.com"
+	}
+	return ""
+}
+
+// maskAccounts hides who keys belong to from members: the account fields
+// are personal data (email, phone).
+func maskAccounts(r *http.Request, keys ...*store.Key) {
+	if u := userFrom(r); u != nil && u.Role.AtLeast(store.RoleAdmin) {
+		return
+	}
+	for _, k := range keys {
+		k.AccountName, k.AccountEmail, k.AccountPhone, k.AccountRef = "", "", "", ""
+	}
 }
 
 func (s *Server) validateKey(in keyInput, r *http.Request) (int, string) {
 	if in.Hidden != nil && *in.Hidden && !isSuper(r) {
 		return 403, "only a superadmin can hide keys"
+	}
+	if msg := in.validAccount(); msg != "" {
+		return 400, msg
 	}
 	if in.Tier != nil && *in.Tier != "primary" && *in.Tier != "backup" {
 		return 400, "tier must be primary or backup"
@@ -478,6 +528,15 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 		if in.Notes != nil {
 			nk.Notes = *in.Notes
 		}
+		if a := in.accountPatch(); true {
+			deref := func(v *string) string {
+				if v == nil {
+					return ""
+				}
+				return *v
+			}
+			nk.Account = store.KeyAccount{Name: deref(a.Name), Email: deref(a.Email), Phone: deref(a.Phone), Ref: deref(a.Ref)}
+		}
 		if in.QuotaLimit != nil && *in.QuotaLimit >= 0 {
 			nk.QuotaLimit = in.QuotaLimit
 		}
@@ -558,7 +617,7 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	p := store.KeyPatch{
 		Label: in.Label, Tier: in.Tier, Hidden: in.Hidden, Restricted: in.Restricted, AppIDs: in.AppIDs,
-		Status: in.Status, Weight: in.Weight, Priority: in.Priority, Notes: in.Notes,
+		Status: in.Status, Weight: in.Weight, Priority: in.Priority, Notes: in.Notes, Account: in.accountPatch(),
 	}
 	if in.QuotaLimit != nil {
 		q := in.QuotaLimit

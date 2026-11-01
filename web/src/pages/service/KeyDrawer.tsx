@@ -14,7 +14,7 @@ import { useNow } from "../../hooks/useNow";
 import { Modal } from "../../components/Modal";
 import { EntityLogo, ServiceLogo } from "../../components/EntityLogo";
 import { StatusPill } from "../../components/StatusPill";
-import { ActivityChart, QuotaMeter, ValidityBadge, providerGivesReset, validityText } from "../../components/KeyBits";
+import { ActivityChart, QuotaMeter, ValidityBadge, accountLabel, providerGivesReset, validityText } from "../../components/KeyBits";
 import { usePoll } from "../../hooks/usePoll";
 import { useProviders } from "../../stores/providers";
 import { KindBadge } from "../../components/EventsList";
@@ -285,6 +285,14 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
                 <Fact label="Quota" wide>
                   <QuotaMeter k={k} unit={unit} now={now} resetExact={providerGivesReset(provider)} />
                 </Fact>
+                {accountLabel(k) && (
+                  <>
+                    <Fact label="Account name">{k.account_name ? <span className="wrap-anywhere">{k.account_name}</span> : <span className="text-muted">Not set</span>}</Fact>
+                    <Fact label="Account email">{k.account_email ? <span className="wrap-anywhere">{k.account_email}</span> : <span className="text-muted">Not set</span>}</Fact>
+                    <Fact label="Account phone">{k.account_phone ? <span className="wrap-anywhere">{k.account_phone}</span> : <span className="text-muted">Not set</span>}</Fact>
+                    <Fact label="Other identifier">{k.account_ref ? <span className="wrap-anywhere">{k.account_ref}</span> : <span className="text-muted">Not set</span>}</Fact>
+                  </>
+                )}
                 {k.last_error && (
                   <Fact label="Last error" wide>
                     <span className="wrap-anywhere text-red-700">{k.last_error}</span>

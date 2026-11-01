@@ -40,6 +40,8 @@ func (s *Server) listAllKeys(w http.ResponseWriter, r *http.Request) {
 	wantSvc, _ := strconv.ParseInt(q.Get("service_id"), 10, 64)
 	wantValidity := q.Get("validity")
 	rows := []keyRow{}
+	// Members cannot see or search who a key belongs to.
+	canSeeAccounts := userFrom(r).Role.AtLeast(store.RoleAdmin)
 	for _, sv := range svcs {
 		if wantSvc != 0 && sv.ID != wantSvc {
 			continue
@@ -50,12 +52,17 @@ func (s *Server) listAllKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.fillInFlight(keys...)
+		maskAccounts(r, keys...)
 		hc := providers.Get(sv.Provider).Health != nil
 		for _, k := range keys {
 			if wantValidity != "" && k.Validity != wantValidity {
 				continue
 			}
-			if search != "" && !strings.Contains(strings.ToLower(k.Label+" "+k.Hint+" "+sv.Name+" "+sv.Slug+" "+k.Notes), search) {
+			hay := k.Label + " " + k.Hint + " " + sv.Name + " " + sv.Slug + " " + k.Notes
+			if canSeeAccounts {
+				hay += " " + k.AccountName + " " + k.AccountEmail + " " + k.AccountPhone + " " + k.AccountRef
+			}
+			if search != "" && !strings.Contains(strings.ToLower(hay), search) {
 				continue
 			}
 			rows = append(rows, keyRow{Key: k, ServiceSlug: sv.Slug, ServiceName: sv.Name, ServiceLogoURL: sv.LogoURL, HasHealthCheck: hc})
@@ -113,6 +120,7 @@ func (s *Server) keyInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	s.fillInFlight(k)
+	maskAccounts(r, k)
 	s.fillLogos(ctx, sv)
 	evs, err := s.Store.ListEvents(ctx, store.EventFilter{KeyID: k.ID, Limit: 50})
 	if err != nil {

@@ -24,6 +24,7 @@ flowchart LR
         Engine["providers engine<br/>classify, health check"]
         Catalog["catalog<br/>provider specs, logos"]
         AIB["AI provider builder<br/>(agent runs)"]
+        Chat["assistant chat<br/>tools call the dashboard API"]
         Worker["worker<br/>housekeeping, health"]
         Store[("SQLite<br/>cogito.db")]
         Box["crypto box<br/>AES-256-GCM"]
@@ -46,6 +47,9 @@ flowchart LR
     Engine -->|health checks| Upstream
     Worker --> Pool & Store
     AIB --> Claude
+    Admin --> Chat
+    Chat -->|"in-process calls<br/>as the user"| Admin
+    Chat --> Claude
     AIB --> Catalog
     Catalog --> Store
 ```
@@ -58,11 +62,11 @@ All server code lives under `server/`.
 |---|---|
 | `cmd/cogito` | Entry point. Loads config, opens the store, verifies the master key, seeds providers, restores lease slots, starts the worker and the HTTP server. Also `cogito version` and `cogito gen-master-key`. |
 | `internal/config` | Reads `COGITO_*` environment variables and an optional `.env` file. See [configuration](configuration.md). |
-| `internal/api` | Every HTTP handler: routing and middleware (`server.go`), sessions and login (`auth.go`), dashboard API (`admin.go`, `providers.go`, `insights.go`, `ai.go`), consumer API (`consumer.go`), proxy (`proxy.go`) and MCP (`mcp.go`). |
+| `internal/api` | Every HTTP handler: routing and middleware (`server.go`), sessions and login (`auth.go`), dashboard API (`admin.go`, `providers.go`, `insights.go`, `ai.go`), the assistant chat and its tools (`assistant.go`, `assistant_tools.go`), consumer API (`consumer.go`), proxy (`proxy.go`) and MCP (`mcp.go`). |
 | `internal/pool` | Picks a key for a request, holds per key concurrency slots, applies outcomes (cooldown, exhausted, invalid) and runs health checks. |
 | `internal/providers` | The provider spec format and engine: classifying upstream responses into outcomes, running health checks, auth placement, fixture tests, and the built in SerpAPI, ElevenLabs and generic specs. |
 | `internal/catalog` | Provider records on top of the store: validation, publishing with version history, service defaults, live checks, logo discovery and the SSRF safe HTTP client. |
-| `internal/agent` | The AI provider builder: a background run that drives Claude with tools to research a provider and produce a spec. |
+| `internal/agent` | The AI provider builder: a background run that drives Claude with tools to research a provider and produce a spec. Also the shared Claude client used by "Fill with AI" and the assistant. |
 | `internal/store` | SQLite persistence. Schema, migrations and one file per entity. |
 | `internal/crypto` | The master key, AES-256-GCM encryption of secrets, keyed fingerprints for duplicate detection, token hashing, secret scrubbing. |
 | `internal/worker` | Periodic housekeeping and background health checks. |
@@ -107,6 +111,7 @@ erDiagram
     apps ||--o{ leases : "borrows"
     services ||--o{ events : logs
     agent_runs ||--o{ agent_steps : records
+    users ||--o{ chat_threads : owns
 
     users {
         int id
@@ -142,6 +147,7 @@ erDiagram
         bool hidden
         bool restricted
         string status
+        string account_email
     }
     apps {
         int id
@@ -164,6 +170,12 @@ erDiagram
         int app_id
         string detail
     }
+    chat_threads {
+        int id
+        int user_id
+        string title
+        blob data
+    }
     agent_runs {
         int id
         string kind
@@ -179,6 +191,10 @@ Notes:
   Session and app tokens are stored as SHA-256 hashes.
 - **Key ids are never reused.** A high water mark in `meta.keys_seq` makes sure
   a new key cannot inherit a deleted key's events, leases or slots.
+- **`chat_threads`** holds assistant conversations, one owner each, with the
+  transcript encrypted by the same master key as the stored keys.
+- **Key account fields** (`account_name`, `account_email`, `account_phone`,
+  `account_ref`) record who each key belongs to.
 - **`audit`** records every dashboard change and sign in. **`meta`** holds
   small settings such as `master_key_check` and `usage_day`.
 - Foreign keys are on, so deleting a service removes its keys and leases, and

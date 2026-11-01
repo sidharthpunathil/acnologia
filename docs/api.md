@@ -86,10 +86,10 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `DELETE /services/{id}` | a | Delete with its keys. Admins cannot delete a service holding hidden keys. |
 | `POST /services/{id}/check` | a | Health check every key in the service. |
 | `GET /services/{id}/keys` | m | Keys (hidden ones only for superadmins). Never includes secrets. |
-| `POST /services/{id}/keys` | a | Add up to 1000 keys: `{keys: [{secret, label, tier, hidden, restricted, app_ids, weight, priority, notes, quota_limit, max_concurrency}]}`. `hidden` needs a superadmin. |
+| `POST /services/{id}/keys` | a | Add up to 1000 keys: `{keys: [{secret, label, tier, hidden, restricted, app_ids, weight, priority, notes, quota_limit, max_concurrency, account_name, account_email, account_phone, account_ref}]}`. `hidden` needs a superadmin. |
 | `GET /keys` | m | All keys across services, with filters `q`, `service_id`, `validity` and `sort`. |
 | `GET /keys/{id}/insights` | m | One key with recent events and 14 days of activity. |
-| `PATCH /keys/{id}` | a | Edit a key or replace its secret. `egress_id` routes it through a proxy (0 falls back to the service's); only a superadmin can set it on hidden keys. |
+| `PATCH /keys/{id}` | a | Edit a key (including its account fields) or replace its secret. `egress_id` routes it through a proxy (0 falls back to the service's); only a superadmin can set it on hidden keys. |
 | `DELETE /keys/{id}` | a | Delete a key. |
 | `POST /keys/{id}/check`, `POST /keys/{id}/reset` | a | Health check now; reset to active and clear errors. |
 | `POST /keys/check-all` | a | Health check every key. |
@@ -113,6 +113,10 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /ai/runs` | a | Start a run: `{kind, provider_slug, context, urls, test_key, auto_publish, create_service}`. |
 | `POST /ai/runs/{id}/cancel`, `POST /ai/runs/{id}/publish` | a | Cancel; publish a run waiting for review. |
 | `POST /ai/assist` | a | "Fill with AI" for dashboard forms. |
+| `GET /chat/threads`, `POST /chat/threads` | m | Your assistant conversations (never other users'), and whether AI is enabled. |
+| `GET /chat/threads/{id}`, `DELETE /chat/threads/{id}` | m | One conversation's transcript; delete it. |
+| `POST /chat/threads/{id}/messages` | m | `{text}`. Runs the assistant until it answers; returns the new transcript items. 409 while a previous message is still running, 503 when AI is off. |
+| `POST /chat/threads/{id}/confirm` | m | `{pending_id, approve}`. Runs or cancels an action waiting for confirmation, then lets the assistant reply. |
 | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` | s | User management. A password reset ends that user's sessions; the last active superadmin cannot be removed. |
 | `GET /audit` | s | Audit log (max 1000 rows). |
 
@@ -121,3 +125,25 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | Route | Role | Purpose |
 |---|:-:|---|
 | `GET /providers/{slug}`, `GET /services/{id}` | m | Logo bytes, served with `nosniff` and a sandbox CSP. A service falls back to its provider's logo. |
+
+### Key account fields
+
+Every key can record who it belongs to: `account_name`, `account_email`,
+`account_phone` and `account_ref` (any other identifier, such as a username or
+account id). All are optional strings (max 200, 254, 40 and 200 characters;
+the email must contain `@`). They count as personal data: members receive them
+empty, and only admins and superadmins can search by them on the Keys page.
+
+### Assistant transcript items
+
+`messages` and `confirm` return `{thread, items, all}`: `items` are the
+entries this request created or changed, `all` the full transcript. Each item:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `user`, `assistant`, `tool`, `confirm` or `error` |
+| `text` | message text, or what a confirmation will do |
+| `tool`, `input`, `ok`, `summary`, `detail` | for tool calls: name, input (secrets redacted), success, one line summary, result JSON |
+| `pending` | for confirmations: `{id, status}` with status `waiting`, `approved`, `cancelled` or `expired` |
+| `secret` | a new app token, present only in the response that created it |
+| `link` | an in-app path to what the tool touched |

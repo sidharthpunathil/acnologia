@@ -111,6 +111,23 @@ database files 0600.
 - The SDKs scrub the secret from failure reports and redact it when a lease or
   client is printed.
 
+## Assistant chat
+
+- Tools call the dashboard API in process with your own session, so the
+  assistant can never do more than you can, and its changes appear in the
+  audit log under your name. Members are offered read tools only.
+- Deleting keys, services or apps and rotating app tokens run only after you
+  press Confirm; a confirmation expires when you send another message.
+- There is no tool that reveals a stored key secret. Tool results sent to
+  Claude never contain secrets, and new app tokens are shown to you once and
+  never sent to Claude or stored.
+- Keys you paste are sent to Claude (Anthropic) so it can add them. Once added,
+  every copy in the thread, including your own message, is replaced by the
+  key's last four characters. Threads are encrypted at rest with the master
+  key and visible only to their owner.
+- Key account fields (email, phone, name) are personal data: members see them
+  empty, and they are not written to events or the audit log.
+
 ## Web protections
 
 - **CSRF**: every mutating dashboard call must send `Content-Type:
@@ -143,6 +160,7 @@ database files 0600.
 | Late lease report | refused 10 minutes after expiry |
 | MCP proxied response | 200 KB |
 | AI runs | 2 at a time, 40 turns, 30 minutes, 5 live checks, 3 submits |
+| Assistant | 12 model steps per message, 20,000 character messages, one message at a time per chat |
 
 The client IP comes from the socket unless `COGITO_TRUST_PROXY_HEADERS=true`.
 Behind a reverse proxy, enable it, or every client shares one login limit.

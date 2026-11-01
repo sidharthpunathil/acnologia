@@ -133,6 +133,12 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
   - Go: [`sdk/go`](sdk/go)
   - PHP: [`sdk/php`](sdk/php)
   - Ruby: [`sdk/ruby`](sdk/ruby)
+- **Assistant**: a chat page where Claude does the work through tool calls,
+  as you and with your permissions. Say "add these SerpAPI keys" and paste
+  them; it finds or creates the service and adds them. Deletes and token
+  rotations wait for your Confirm. See [the flow](docs/flows.md#assistant-chat).
+- **Key accounts**: each key can record the name, email, phone or any other
+  identifier of the account it belongs to (admins only; hidden from members).
 - **Audit log** of every dashboard change and every secret reveal.
 - **Admin API tokens and `cogito ctl`**: scoped `cogadm_` tokens for scripts
   and CI, and a command line client in the same binary

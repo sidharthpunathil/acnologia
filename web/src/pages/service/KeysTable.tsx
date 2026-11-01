@@ -8,7 +8,7 @@ import { ApiError, errorMessage } from "../../lib/api";
 import { StatusPill } from "../../components/StatusPill";
 import { ConfirmButton } from "../../components/ConfirmButton";
 import { Badge, IconButton, Spinner, cx } from "../../components/ui";
-import { QuotaMeter, TimeAgo, ValidityBadge, validityText } from "../../components/KeyBits";
+import { AccountLine, QuotaMeter, TimeAgo, ValidityBadge, validityText } from "../../components/KeyBits";
 import { withLiveStatus } from "./keyUtil";
 
 export interface KeyPerms {
@@ -215,6 +215,7 @@ export function KeysTable({
                     <span className="min-w-0 truncate font-medium text-ink">{k.label || "Untitled"}</span>
                     <KeyBadges k={k} apps={apps} />
                   </div>
+                  <AccountLine k={k} className="mt-0.5" />
                   <div className="mt-0.5 truncate font-mono text-[11px] text-muted">
                     {k.hint}
                     {k.tier === "primary" && k.priority ? ` · p${k.priority}` : ""}
@@ -260,6 +261,7 @@ export function KeysTable({
                     <span className="min-w-0 break-words font-medium text-ink">{k.label || "Untitled"}</span>
                     <KeyBadges k={k} apps={apps} />
                   </div>
+                  <AccountLine k={k} wrap className="mt-0.5" />
                   <div className="mt-0.5 font-mono text-[11px] text-muted">{k.hint}</div>
                 </div>
                 <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-faint" aria-hidden="true" />

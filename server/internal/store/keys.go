@@ -11,7 +11,7 @@ import (
 
 const keyCols = `id, service_id, label, secret_enc, hint, tier, hidden, restricted, status, weight, priority, cooldown_until,
 consecutive_fails, quota_limit, quota_remaining, quota_reset_at, usage_total, usage_today, last_used_at, last_error,
-last_checked_at, notes, created_at, max_concurrency, last_ok_at, egress_id`
+last_checked_at, notes, created_at, max_concurrency, last_ok_at, egress_id, account_name, account_email, account_phone, account_ref`
 
 func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	var k Key
@@ -20,7 +20,7 @@ func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	var created int64
 	err := row.Scan(&k.ID, &k.ServiceID, &k.Label, &k.SecretEnc, &k.Hint, &k.Tier, &hidden, &restricted, &k.Status,
 		&k.Weight, &k.Priority, &cd, &k.ConsecutiveFails, &ql, &qr, &qra, &k.UsageTotal, &k.UsageToday, &lu,
-		&k.LastError, &lc, &k.Notes, &created, &mc, &lok, &eg)
+		&k.LastError, &lc, &k.Notes, &created, &mc, &lok, &eg, &k.AccountName, &k.AccountEmail, &k.AccountPhone, &k.AccountRef)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -134,6 +134,7 @@ type NewKey struct {
 	AppIDs     []int64
 	CreatedBy  int64
 	MaxConc    *int64
+	Account    KeyAccount
 }
 
 var ErrDuplicate = errors.New("duplicate")
@@ -155,10 +156,12 @@ func (s *Store) CreateKey(ctx context.Context, nk NewKey) (*Key, error) {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(k,v) VALUES('keys_seq',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprint(newID)); err != nil {
 		return nil, err
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO keys(id,service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	res, err := tx.ExecContext(ctx, `INSERT INTO keys(id,service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency,
+		account_name,account_email,account_phone,account_ref)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		newID, nk.ServiceID, nk.Label, nk.SecretEnc, nk.SecretFP, nk.Hint, nk.Tier, b2i(nk.Hidden), b2i(nk.Restricted),
-		nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now(), fromInt(nk.MaxConc))
+		nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now(), fromInt(nk.MaxConc),
+		nk.Account.Name, nk.Account.Email, nk.Account.Phone, nk.Account.Ref)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrDuplicate
@@ -202,6 +205,17 @@ type KeyPatch struct {
 	Notes      *string
 	QuotaLimit **int64
 	MaxConc    **int64
+	Account    AccountPatch
+}
+
+// KeyAccount says who a key belongs to. Every field is optional.
+type KeyAccount struct {
+	Name, Email, Phone, Ref string
+}
+
+// AccountPatch changes the account fields that are set.
+type AccountPatch struct {
+	Name, Email, Phone, Ref *string
 }
 
 func (s *Store) UpdateKey(ctx context.Context, id int64, p KeyPatch) error {
@@ -257,6 +271,13 @@ func (s *Store) UpdateKey(ctx context.Context, id int64, p KeyPatch) error {
 	}
 	if p.MaxConc != nil {
 		steps = append(steps, func() error { return set(`max_concurrency=?`, fromInt(*p.MaxConc)) })
+	}
+	for col, v := range map[string]*string{"account_name": p.Account.Name, "account_email": p.Account.Email,
+		"account_phone": p.Account.Phone, "account_ref": p.Account.Ref} {
+		if v != nil {
+			col, v := col, *v
+			steps = append(steps, func() error { return set(col+`=?`, v) })
+		}
 	}
 	for _, st := range steps {
 		if err := st(); err != nil {

@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS keys(
   created_at INTEGER NOT NULL,
   max_concurrency INTEGER,
   last_ok_at INTEGER,
+  account_name TEXT NOT NULL DEFAULT '',
+  account_email TEXT NOT NULL DEFAULT '',
+  account_phone TEXT NOT NULL DEFAULT '',
+  account_ref TEXT NOT NULL DEFAULT '',
   UNIQUE(service_id, secret_fp)
 );
 CREATE INDEX IF NOT EXISTS keys_service ON keys(service_id);
@@ -188,6 +192,15 @@ CREATE TABLE IF NOT EXISTS agent_runs(
   created_at INTEGER NOT NULL,
   finished_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS chat_threads(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  data BLOB NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_threads_user ON chat_threads(user_id, updated_at);
 CREATE TABLE IF NOT EXISTS agent_steps(
   run_id INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
@@ -265,6 +278,11 @@ func migrate(db *sql.DB) error {
 	// Apps are not trusted with hidden keys until a superadmin says so.
 	if _, err = addColumn(db, "apps", "lease_hidden", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
+	}
+	for _, col := range []string{"account_name", "account_email", "account_phone", "account_ref"} {
+		if _, err = addColumn(db, "keys", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
 	}
 	return migrateV2(db)
 }

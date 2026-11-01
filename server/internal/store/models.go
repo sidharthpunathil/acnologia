@@ -125,7 +125,13 @@ type Key struct {
 	LastError        string     `json:"last_error"`
 	LastCheckedAt    *time.Time `json:"last_checked_at"`
 	Notes            string     `json:"notes"`
-	CreatedAt        time.Time  `json:"created_at"`
+	// Account says who the key belongs to: the provider account's holder name,
+	// email, phone, or any other identifier (Ref). All optional.
+	AccountName  string    `json:"account_name"`
+	AccountEmail string    `json:"account_email"`
+	AccountPhone string    `json:"account_phone"`
+	AccountRef   string    `json:"account_ref"`
+	CreatedAt    time.Time `json:"created_at"`
 	// MaxConcurrency overrides the service default when set; 0 means unlimited.
 	MaxConcurrency *int64 `json:"max_concurrency"`
 	InFlight       int    `json:"in_flight"`

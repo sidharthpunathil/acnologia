@@ -14,7 +14,7 @@ import { useNow } from "../hooks/useNow";
 import { useTitle } from "../hooks/useTitle";
 import { EntityLogo, ServiceLogo } from "../components/EntityLogo";
 import { StatusPill } from "../components/StatusPill";
-import { QuotaMeter, TimeAgo, ValidityBadge, providerGivesReset, validityText } from "../components/KeyBits";
+import { AccountLine, QuotaMeter, TimeAgo, ValidityBadge, providerGivesReset, validityText } from "../components/KeyBits";
 import { usePoll } from "../hooks/usePoll";
 import { Button, Callout, Empty, IconButton, PageHeader, PageSkeleton, Select, Spinner, cx } from "../components/ui";
 import { InUse } from "./service/KeysTable";
@@ -154,7 +154,7 @@ export function KeysPage() {
     () =>
       live.filter((k) => {
         if (serviceId && String(k.service_id) !== serviceId) return false;
-        if (needle && ![k.label, k.hint, k.service_name, k.service_slug, k.notes].some((f) => f?.toLowerCase().includes(needle))) return false;
+        if (needle && ![k.label, k.hint, k.service_name, k.service_slug, k.notes, k.account_name, k.account_email, k.account_phone, k.account_ref].some((f) => f?.toLowerCase().includes(needle))) return false;
         return true;
       }),
     [live, serviceId, needle],
@@ -295,7 +295,7 @@ export function KeysPage() {
                 type="search"
                 value={q}
                 onChange={(e) => setParam({ q: e.target.value })}
-                placeholder="Search by label, hint, service or note"
+                placeholder="Search by label, account, service or note"
                 aria-label="Search keys"
                 enterKeyHint="search"
                 className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20"
@@ -389,6 +389,7 @@ export function KeysPage() {
                             <RowLogo k={k} />
                             <div className="min-w-0">
                               <div className="truncate font-medium text-ink">{k.label || "Untitled"}</div>
+                              <AccountLine k={k} />
                               <div className="truncate font-mono text-[11px] text-muted">
                                 {k.hint} · {k.service_name}
                               </div>
@@ -438,6 +439,7 @@ export function KeysPage() {
                         <RowLogo k={k} />
                         <div className="min-w-0 flex-1">
                           <div className="break-words font-medium text-ink">{k.label || "Untitled"}</div>
+                          <AccountLine k={k} wrap />
                           <div className="wrap-anywhere font-mono text-[11px] text-muted">
                             {k.hint} · {k.service_name}
                           </div>

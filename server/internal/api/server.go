@@ -3,6 +3,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -48,6 +50,11 @@ type Server struct {
 	// userMu serializes check-then-write user changes (first setup, keeping
 	// one superadmin) so concurrent requests cannot both pass the check.
 	userMu sync.Mutex
+	// routerOnce builds the router used by the assistant's in-process calls.
+	routerOnce sync.Once
+	routerH    http.Handler
+	// chatModel replaces the Claude call in tests.
+	chatModel func(ctx context.Context, system string, msgs []anthropic.BetaMessageParam, tools []anthropic.BetaToolUnionParam) (*anthropic.BetaMessage, error)
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -126,6 +133,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/ai/rules", s.aiGetRules)
 		r.Get("/ai/runs", s.aiListRuns)
 		r.Get("/ai/runs/{id}", s.aiGetRun)
+		// Assistant chat: every user has their own threads. Tools inside run
+		// with the user's own role.
+		r.Get("/chat/threads", s.chatList)
+		r.Post("/chat/threads", s.chatCreate)
+		r.Get("/chat/threads/{id}", s.chatGet)
+		r.Delete("/chat/threads/{id}", s.chatDelete)
+		r.Post("/chat/threads/{id}/messages", s.chatSend)
+		r.Post("/chat/threads/{id}/confirm", s.chatConfirm)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleAdmin))

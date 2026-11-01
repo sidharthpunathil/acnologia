@@ -39,6 +39,31 @@ export function validityText(k: Pick<Key, "validity" | "validity_reason" | "last
   return "Not checked or used yet";
 }
 
+/** The one account field worth showing in a list: email, else name, else phone, else the other identifier. */
+export function accountLabel(k: Pick<Key, "account_name" | "account_email" | "account_phone" | "account_ref">): string {
+  return (k.account_email || k.account_name || k.account_phone || k.account_ref || "").trim();
+}
+
+/** A small muted line under a key label naming the account it belongs to. Renders nothing when unknown. */
+export function AccountLine({
+  k,
+  wrap,
+  className,
+}: {
+  k: Pick<Key, "account_name" | "account_email" | "account_phone" | "account_ref">;
+  /** Wrap long values instead of cutting them off, for cards on narrow screens. */
+  wrap?: boolean;
+  className?: string;
+}) {
+  const text = accountLabel(k);
+  if (!text) return null;
+  return (
+    <div className={cx("text-[11px] text-muted", wrap ? "wrap-anywhere" : "truncate", className)} title={text}>
+      {text}
+    </div>
+  );
+}
+
 /**
  * Whether a provider reports real quota reset times. Undefined when the provider
  * is not loaded yet, so callers can hedge.

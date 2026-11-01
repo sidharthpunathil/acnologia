@@ -11,10 +11,13 @@ import { Button, Field, Input, Select, Textarea, Toggle } from "../../components
 interface Parsed {
   label: string;
   secret: string;
+  /** Set when the line was "secret, email". */
+  email: string;
 }
 
 /**
  * One key per line. "label,secret" sets a label; a bare line is just the secret.
+ * "secret,email" sets the account email instead, when the part after the comma has an @.
  * Blank lines and lines starting with # are ignored. Duplicate secrets are dropped.
  */
 export function parseKeys(text: string, startIndex: number, slug: string): { keys: Parsed[]; dupes: number } {
@@ -26,10 +29,18 @@ export function parseKeys(text: string, startIndex: number, slug: string): { key
     if (!line || line.startsWith("#")) continue;
     let label = "";
     let secret = line;
+    let email = "";
     const comma = line.indexOf(",");
     if (comma > 0) {
-      label = line.slice(0, comma).trim();
-      secret = line.slice(comma + 1).trim();
+      const first = line.slice(0, comma).trim();
+      const rest = line.slice(comma + 1).trim();
+      if (rest.includes("@")) {
+        secret = first;
+        email = rest;
+      } else {
+        label = first;
+        secret = rest;
+      }
     }
     if (!secret) continue;
     if (seen.has(secret)) {
@@ -37,7 +48,7 @@ export function parseKeys(text: string, startIndex: number, slug: string): { key
       continue;
     }
     seen.add(secret);
-    keys.push({ label: label || `${slug} ${startIndex + keys.length + 1}`, secret });
+    keys.push({ label: label || `${slug} ${startIndex + keys.length + 1}`, secret, email });
   }
   return { keys, dupes };
 }
@@ -66,6 +77,7 @@ export function AddKeysModal({
   const [weight, setWeight] = useState(1);
   const [priority, setPriority] = useState(0);
   const [notes, setNotes] = useState("");
+  const [account, setAccount] = useState({ name: "", email: "", phone: "", ref: "" });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -78,6 +90,7 @@ export function AddKeysModal({
     setWeight(1);
     setPriority(0);
     setNotes("");
+    setAccount({ name: "", email: "", phone: "", ref: "" });
   }, [open]);
 
   const parsed = useMemo(() => parseKeys(text, existingCount, service.slug), [text, existingCount, service.slug]);
@@ -86,6 +99,11 @@ export function AddKeysModal({
     e.preventDefault();
     if (!parsed.keys.length) {
       toast.error("Paste at least one key.");
+      return;
+    }
+    const batchEmail = account.email.trim();
+    if (batchEmail && !batchEmail.includes("@")) {
+      toast.error("Account email needs an @.");
       return;
     }
     const payload: NewKeyInput[] = parsed.keys.map((p) => ({
@@ -98,6 +116,11 @@ export function AddKeysModal({
       priority,
       notes,
       app_ids: restricted ? appIds : [],
+      account_name: account.name.trim(),
+      // An email on the line wins over the one for the whole batch.
+      account_email: p.email || batchEmail,
+      account_phone: account.phone.trim(),
+      account_ref: account.ref.trim(),
     }));
     setBusy(true);
     try {
@@ -117,7 +140,7 @@ export function AddKeysModal({
       onClose={onClose}
       wide
       title={`Add keys to ${service.name}`}
-      description="Paste one key per line. To name a key, write label,secret."
+      description="Paste one key per line. To name a key, write label,secret. To set its account email, write secret,email."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -138,7 +161,7 @@ export function AddKeysModal({
             spellCheck={false}
             autoComplete="off"
             className="font-mono text-[13px]"
-            placeholder={"a1b2c3d4e5f6...\nmain account,f6e5d4c3b2a1...\n# lines starting with # are ignored"}
+            placeholder={"a1b2c3d4e5f6...\nmain account,f6e5d4c3b2a1...\n9f8e7d6c5b4a...,ops@example.com\n# lines starting with # are ignored"}
           />
           <div className="mt-1.5 font-mono text-[11px] text-muted">
             {plural(parsed.keys.length, "key")} detected
@@ -149,6 +172,7 @@ export function AddKeysModal({
               {parsed.keys.slice(0, 12).map((p, i) => (
                 <span key={i} className="wrap-anywhere rounded-md bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-muted">
                   {p.label} · ...{p.secret.slice(-4)}
+                  {p.email && ` · ${p.email}`}
                 </span>
               ))}
               {parsed.keys.length > 12 && <span className="font-mono text-[11px] text-faint">+{parsed.keys.length - 12} more</span>}
@@ -189,6 +213,29 @@ export function AddKeysModal({
               empty="No apps yet. Create an app first, then allow it here."
             />
           )}
+        </div>
+
+        <div role="group" aria-labelledby="add-keys-account" className="space-y-4 rounded-xl border border-line p-4">
+          <div>
+            <h3 id="add-keys-account" className="text-[13px] font-medium text-ink">Account (optional)</h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted">
+              Applied to every key in this batch. An email written on a line wins for that key. Only admins can see these details.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Name">
+              <Input value={account.name} maxLength={200} autoComplete="off" onChange={(e) => setAccount({ ...account, name: e.target.value })} />
+            </Field>
+            <Field label="Email">
+              <Input type="email" value={account.email} maxLength={254} autoComplete="off" onChange={(e) => setAccount({ ...account, email: e.target.value })} />
+            </Field>
+            <Field label="Phone">
+              <Input type="tel" value={account.phone} maxLength={40} autoComplete="off" onChange={(e) => setAccount({ ...account, phone: e.target.value })} />
+            </Field>
+            <Field label="Other" hint="Username, account ID or anything else that identifies the account">
+              <Input value={account.ref} maxLength={200} autoComplete="off" onChange={(e) => setAccount({ ...account, ref: e.target.value })} />
+            </Field>
+          </div>
         </div>
 
         <Field label="Notes" hint="Applied to every key in this batch.">
