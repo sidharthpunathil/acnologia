@@ -62,10 +62,10 @@ var mcpTools = []map[string]any{
 	},
 	{
 		"name":        "report_key",
-		"description": "Report how a leased key performed. Use outcome rate_limited, quota_exhausted or invalid with rotate=true to get the next key.",
+		"description": "Report how a leased key performed. Use outcome rate_limited, busy, quota_exhausted, invalid or banned with rotate=true to get the next key.",
 		"inputSchema": obj(map[string]any{
 			"lease_id":        str("Lease id from get_key"),
-			"outcome":         map[string]any{"type": "string", "enum": []string{"ok", "rate_limited", "quota_exhausted", "invalid", "error"}},
+			"outcome":         map[string]any{"type": "string", "enum": []string{"ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error"}},
 			"retry_after_sec": map[string]any{"type": "integer"},
 			"message":         str("Error text from the provider"),
 			"rotate":          map[string]any{"type": "boolean", "description": "Return a new lease when the outcome is a failure"},

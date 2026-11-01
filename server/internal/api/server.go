@@ -21,10 +21,10 @@ import (
 
 	"github.com/cogito-keys/cogito/internal/agent"
 	"github.com/cogito-keys/cogito/internal/breaker"
-	"github.com/cogito-keys/cogito/internal/egress"
-	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
+	"github.com/cogito-keys/cogito/internal/egress"
+	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/pool"
 	"github.com/cogito-keys/cogito/internal/respcache"
 	"github.com/cogito-keys/cogito/internal/store"

@@ -39,6 +39,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		tot.Cooling += c.Cooling
 		tot.Exhausted += c.Exhausted
 		tot.Invalid += c.Invalid
+		tot.Banned += c.Banned
 		tot.Disabled += c.Disabled
 		tot.Backup += c.Backup
 		tot.Busy += c.Busy
@@ -49,15 +50,18 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	since := time.Now().Add(-24 * time.Hour)
 	reqs, _ := s.Store.CountEvents(ctx, since, isSuper(r), "lease", "proxy")
-	rls, _ := s.Store.CountEvents(ctx, since, isSuper(r), "rate_limited", "quota_exhausted")
+	rls, _ := s.Store.CountEvents(ctx, since, isSuper(r), "rate_limited", "busy", "quota_exhausted")
+	hits, _ := s.Store.CountEvents(ctx, since, isSuper(r), "cache_hit")
+	spend, _ := s.Store.SpendSince(ctx, since, isSuper(r))
 	evs, _ := s.Store.ListEvents(ctx, store.EventFilter{Limit: 15})
 	writeJSON(w, 200, map[string]any{
 		"services": len(svcs), "keys": map[string]int{
 			"total": tot.Total, "active": tot.Available, "cooling": tot.Cooling, "exhausted": tot.Exhausted,
-			"invalid": tot.Invalid, "disabled": tot.Disabled, "backup": tot.Backup, "busy": tot.Busy,
+			"invalid": tot.Invalid, "banned": tot.Banned, "disabled": tot.Disabled, "backup": tot.Backup, "busy": tot.Busy,
 		},
 		"in_flight":    inflight,
 		"requests_24h": reqs, "rate_limits_24h": rls, "recent_events": maskEvents(r, evs),
+		"cache_hits_24h": hits, "spend_24h": spend, "cache": s.Cache.Stats(),
 	})
 }
 

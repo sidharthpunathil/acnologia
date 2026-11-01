@@ -19,13 +19,13 @@ const specGuide = `You are the provider engineer inside Cogito, a self-hosted AP
 
 # What the spec does
 - base_url and auth: where requests go and where the key is placed (query param, header, or bearer token). The proxy puts the key there for every request.
-- defaults: strategy (round_robin, fill_first, least_used, most_quota, random), cooldown_sec (base cooldown after a rate limit, doubled on repeats), max_attempts (keys tried per proxied request), max_concurrency (parallel requests allowed per key; 0 = unlimited; set it when the provider documents a concurrency cap), queue_timeout_sec (how long a request waits for a free key when all are busy; 0 to 30 is sensible when max_concurrency is set).
-- quota: unit (searches, characters, credits, requests, tokens) and counts_per_request (true only when each successful request spends exactly one unit).
+- defaults: strategy (round_robin, fill_first, least_used, most_quota, random), cooldown_sec (base cooldown after a rate limit, doubled on repeats), max_attempts (keys tried per proxied request), max_concurrency (parallel requests allowed per key; 0 = unlimited; set it when the provider documents a concurrency cap), queue_timeout_sec (how long a request waits for a free key when all are busy; 0 to 30 is sensible when max_concurrency is set), cache_ttl_sec (seconds to cache successful GET responses; set 3600 or so for search and lookup APIs whose results are stable, leave 0 for anything that generates content or changes state), breaker_threshold / breaker_window_sec / breaker_reset_sec (circuit breaker on provider errors; leave them out for the defaults of 10 errors in 60s pausing 30s).
+- quota: unit (searches, characters, credits, requests, tokens), counts_per_request (true only when each successful request spends exactly one unit), cost_per_request (USD for one successful request at the entry paid price, used for spend tracking and budgets; omit if pricing is not per request), free_tier (one short sentence on the free allowance, hedged when it changes often), headers (when every response carries quota headers: {limit: "X-RateLimit-Limit", remaining: "X-RateLimit-Remaining", reset: "X-RateLimit-Reset", reset_format: seconds | unix | unix_ms | iso8601 | http_date, index: n}. index picks entry n of a comma list such as "1, 2000" for per second and per month windows; use the longest window. Cogito then tracks quota from live traffic without a health check).
 - rules: ordered list, first match wins, evaluated on error responses. Each rule: name, match, outcome, optional retry_after.
   - match fields are ANDed; values inside a list are ORed; text matching is case insensitive substring.
     status: [codes] (empty = any status >= 400; rules never see 2xx/3xx unless status lists such a code),
     body_contains: ["..."], body_regex: "...", json_path: "error.code" with json_equals: "RATE_LIMITED", header_present: "X-Header".
-  - outcome: ok (the key is fine, for example a validation error), rate_limited (temporary, key cools down), quota_exhausted (key is out until its quota resets), invalid (key revoked, wrong or suspended), error (provider side failure, key not penalized).
+  - outcome: ok (the key is fine, for example a validation error), rate_limited (temporary, key cools down with growing backoff), busy (the account is at its concurrency cap: rotate now and cool about a second without backoff; use it for "too many concurrent requests"), quota_exhausted (key is out until its quota resets), invalid (key revoked or wrong), banned (the provider suspended the account for abuse or unusual activity; terminal until an operator resets it, health checks never revive it), error (provider side failure, key not penalized, counts toward the circuit breaker).
   - retry_after: {source: header, value: "Retry-After"} | {source: fixed, value: "60"} | {source: next_hour} | {source: body_json, value: "error.retry_after_seconds"} | {source: none}.
 - use_standard_rules: true appends 429 rate_limited (Retry-After header), 402 quota_exhausted, 401/403 invalid, 5xx error after your rules. Keep it true unless the provider uses those codes differently.
 - health: an endpoint that tells whether a key works and how much quota is left WITHOUT spending quota (account, usage, subscription or user endpoints). method, path, query, invalid (match for a rejected key; status may be omitted to match a 200 body), ok_anyway (match meaning the key works but cannot read quota), quota: {limit: [paths summed], remaining: [paths summed], used: [paths] (remaining = limit - used when remaining is empty), reset_at: path, reset_format: unix | unix_ms | iso8601, window: {limit: path, used: path, period: minute | hour | day} for short caps}. Paths are dot paths, numeric segments index arrays. Omit health entirely if no free endpoint exists.
@@ -53,8 +53,10 @@ slug (lowercase, hyphens), name (official product name), category (one or two wo
 func examplesBlock() string {
 	var b strings.Builder
 	b.WriteString("# Worked examples: Cogito's built-in providers\n")
+	// A few varied examples teach the format; all twelve would only add tokens.
+	show := map[string]bool{"serpapi": true, "elevenlabs": true, "brave-search": true, "tavily": true}
 	for _, bi := range providers.Builtins() {
-		if bi.Slug == "generic" {
+		if !show[bi.Slug] {
 			continue
 		}
 		p := map[string]any{"slug": bi.Slug, "name": bi.Name, "category": bi.Category, "description": bi.Description,

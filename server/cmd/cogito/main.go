@@ -22,6 +22,7 @@ import (
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
 	"github.com/cogito-keys/cogito/internal/crypto"
+	"github.com/cogito-keys/cogito/internal/ctl"
 	"github.com/cogito-keys/cogito/internal/egress"
 	"github.com/cogito-keys/cogito/internal/llmstxt"
 	"github.com/cogito-keys/cogito/internal/notify"
@@ -41,6 +42,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "gen-master-key" {
 		fmt.Println(genKey())
 		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "ctl" {
+		os.Exit(ctl.Run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	if err := run(); err != nil {

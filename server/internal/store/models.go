@@ -97,8 +97,8 @@ const (
 	StatusInvalid   = "invalid"
 	// StatusBanned marks a key whose account the provider suspended. Only an
 	// operator reset brings it back.
-	StatusBanned = "banned"
-	StatusCooling   = "cooling"
+	StatusBanned  = "banned"
+	StatusCooling = "cooling"
 )
 
 type Key struct {

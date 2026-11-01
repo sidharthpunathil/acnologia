@@ -19,7 +19,7 @@ type Builtin struct {
 }
 
 func Builtins() []Builtin {
-	return []Builtin{
+	return append([]Builtin{
 		{
 			Slug: "serpapi", Name: "SerpAPI", Category: "Search", Color: "#1a73e8",
 			Description: "Google, Bing, YouTube and 50+ search engines as JSON. Monthly search quota with an hourly cap.",
@@ -108,5 +108,5 @@ func Builtins() []Builtin {
 				},
 			},
 		},
-	}
+	}, searchBuiltins()...)
 }

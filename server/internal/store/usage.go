@@ -140,3 +140,15 @@ func CheckLimits(l AppLimits, u AppUsage, at time.Time) *LimitHit {
 	}
 	return nil
 }
+
+// SpendSince sums the USD cost of events since a time. Hidden keys' spend is
+// left out unless includeHidden is set, so admins cannot infer them.
+func (s *Store) SpendSince(ctx context.Context, since time.Time, includeHidden bool) (float64, error) {
+	q := `SELECT COALESCE(SUM(e.cost),0) FROM events e WHERE e.ts>=?`
+	if !includeHidden {
+		q += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+	}
+	var v float64
+	err := s.DB.QueryRowContext(ctx, q, since.Unix()).Scan(&v)
+	return v, err
+}
