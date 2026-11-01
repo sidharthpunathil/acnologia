@@ -37,6 +37,7 @@ import type {
   ProviderSaveResult,
   ValidateResult,
 } from "./types";
+import type { MCPSettingsInput, MCPView } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -237,3 +238,9 @@ export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return "Something went wrong. Try again.";
 }
+
+/** Per app MCP settings. Reading needs any signed in user; saving needs admin. */
+export const mcpApi = {
+  get: (appId: number) => request<MCPView>("GET", `/api/admin/apps/${appId}/mcp`),
+  put: (appId: number, body: MCPSettingsInput) => request<MCPView>("PUT", `/api/admin/apps/${appId}/mcp`, body),
+};

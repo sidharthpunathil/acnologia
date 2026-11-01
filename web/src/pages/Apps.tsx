@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useTitle } from "../hooks/useTitle";
-import { Boxes, Pencil, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { Boxes, Pencil, Plug, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useApps } from "../stores/apps";
+import { enabledCount, useMcp } from "../stores/mcp";
+import { AppMcpPanel } from "./AppMcpPanel";
 import { useServices } from "../stores/services";
 import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
@@ -340,6 +342,17 @@ function AppUsageLine({ app, now }: { app: App; now: number }) {
   );
 }
 
+/** "MCP: 11 tools" once the app's MCP view has loaded. Shares the panel's cache. */
+function McpSummary({ app }: { app: App }) {
+  const view = useMcp((s) => s.views[app.id]);
+  const load = useMcp((s) => s.load);
+  useEffect(() => {
+    void load(app.id);
+  }, [app.id, load]);
+  if (!view) return null;
+  return <> · MCP: {plural(enabledCount(view), "tool")}</>;
+}
+
 export function AppsPage() {
   useTitle("Apps");
   const { apps, loaded, error, fetch, update, remove, rotate } = useApps();
@@ -351,6 +364,7 @@ export function AppsPage() {
   const [editing, setEditing] = useState<App | null>(null);
   const [token, setToken] = useState<{ result: AppWithToken; rotated: boolean } | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [mcpApp, setMcpApp] = useState<App | null>(null);
 
   useEffect(() => {
     fetch().catch(() => undefined);
@@ -440,41 +454,48 @@ export function AppsPage() {
                   <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
                     {a.token_prefix}... · {a.allowed_services?.length ? a.allowed_services.map((s) => nameBySlug[s] ?? s).join(", ") : "all services"} ·{" "}
                     <span title={dateTime(a.last_used_at)}>used {relTime(a.last_used_at, now)}</span>
+                    <McpSummary app={a} />
                   </div>
                   <AppUsageLine app={a} now={now} />
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1">
-                  <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} ariaLabel={a.active ? `${a.name} is active` : `${a.name} is paused`} />
-                  {manage && (
-                    <>
-                      <span className="mx-1 h-5 w-px bg-line" />
-                      <IconButton label="Rotate token" onClick={() => void doRotate(a)} disabled={busyId === a.id}>
-                        <RefreshCw className="h-4 w-4" />
-                      </IconButton>
-                      <IconButton
-                        label="Edit app"
-                        onClick={() => {
-                          setEditing(a);
-                          setFormOpen(true);
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </IconButton>
-                      <ConfirmButton
-                        iconOnly
-                        label="Delete app"
-                        confirmLabel="Delete"
-                        onConfirm={async () => {
-                          try {
-                            await remove(a.id);
-                            toast.success(`Deleted ${a.name}`);
-                          } catch (e) {
-                            toast.error(errorMessage(e));
-                          }
-                        }}
-                      />
-                    </>
-                  )}
+                  <Button size="sm" variant="ghost" icon={<Plug className="h-3.5 w-3.5" />} onClick={() => setMcpApp(a)} aria-label={`MCP settings for ${a.name}`} className="mr-1">
+                    MCP
+                  </Button>
+                  {/* Kept together so a narrow row wraps as a group, not one icon at a time. */}
+                  <div className="flex items-center gap-1">
+                    <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} ariaLabel={a.active ? `${a.name} is active` : `${a.name} is paused`} />
+                    {manage && (
+                      <>
+                        <span className="mx-1 h-5 w-px bg-line" />
+                        <IconButton label="Rotate token" onClick={() => void doRotate(a)} disabled={busyId === a.id}>
+                          <RefreshCw className="h-4 w-4" />
+                        </IconButton>
+                        <IconButton
+                          label="Edit app"
+                          onClick={() => {
+                            setEditing(a);
+                            setFormOpen(true);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </IconButton>
+                        <ConfirmButton
+                          iconOnly
+                          label="Delete app"
+                          confirmLabel="Delete"
+                          onConfirm={async () => {
+                            try {
+                              await remove(a.id);
+                              toast.success(`Deleted ${a.name}`);
+                            } catch (e) {
+                              toast.error(errorMessage(e));
+                            }
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             </li>
@@ -488,6 +509,7 @@ export function AppsPage() {
         onClose={() => setFormOpen(false)}
         onCreated={(r) => setToken({ result: r, rotated: false })}
       />
+      <AppMcpPanel app={mcpApp} canEdit={manage} onClose={() => setMcpApp(null)} />
       <TokenModal result={token?.result ?? null} rotated={token?.rotated ?? false} onClose={() => setToken(null)} />
     </div>
   );

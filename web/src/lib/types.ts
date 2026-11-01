@@ -647,3 +647,44 @@ export interface ChatReply {
   /** The full transcript. */
   all: ChatItem[];
 }
+
+/** Tool groups an app's MCP server can expose. */
+export type MCPToolSet = "core" | "service_tools" | "insights" | "manage";
+
+/** Per app MCP settings, from GET /api/admin/apps/{id}/mcp. */
+export interface MCPSettings {
+  core: boolean;
+  service_tools: boolean;
+  insights: boolean;
+  manage: boolean;
+  resources: boolean;
+  prompts: boolean;
+  /** get_key reserves the key for the caller unless the call says otherwise. */
+  exclusive_default: boolean;
+  /** Cap on tool result bodies sent to the model, 1 to 2048. */
+  max_result_kb: number;
+  /** Appended to the server instructions on initialize, max 8000 characters. */
+  instructions: string;
+  /** Tool names hidden one by one. */
+  disabled_tools: string[];
+  updated_at: string | null;
+}
+
+/** Body for PUT /api/admin/apps/{id}/mcp. */
+export type MCPSettingsInput = Omit<MCPSettings, "updated_at">;
+
+export interface MCPTool {
+  name: string;
+  title: string;
+  description: string;
+  set: MCPToolSet;
+  enabled: boolean;
+}
+
+export interface MCPView {
+  settings: MCPSettings;
+  /** Every tool in the sets that are on, including ones switched off one by one. */
+  tools: MCPTool[];
+  /** Full URL of the HTTP MCP endpoint, ending in /mcp. */
+  endpoint: string;
+}
