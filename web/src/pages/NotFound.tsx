@@ -1,8 +1,9 @@
 import { useLocation } from "react-router-dom";
-import { RiCompass3Line, RiArrowLeftLine } from "@remixicon/react";
+import { RiArrowLeftLine } from "@remixicon/react";
 import { useTitle } from "@/hooks/useTitle";
 import { EmptyState } from "@/components/acn/empty-state";
 import { RouterButtonLink } from "@/components/acn/button-link";
+import { LostPathArt } from "@/components/foundations/illustrations";
 
 export function NotFoundPage() {
   useTitle("Not found");
@@ -10,7 +11,7 @@ export function NotFoundPage() {
   return (
     <EmptyState
       as="h1"
-      icon={RiCompass3Line}
+      art={LostPathArt}
       title="Page not found"
       className="py-16 sm:py-24"
       body={

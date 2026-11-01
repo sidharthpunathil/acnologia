@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  RiBarChartBoxLine,
-  RiPlugLine,
-  RiRefreshLine,
-  RiSparkling2Line,
-} from "@remixicon/react";
+import { RiBarChartBoxLine, RiRefreshLine, RiSparkling2Line } from "@remixicon/react";
+import { AcnProxy } from "@/components/foundations/icons/acn";
 import type { Key } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
 import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
@@ -18,6 +14,7 @@ import { compact, num, plural } from "../lib/format";
 import { fetchUsage, usd, type AiUsageRow, type ProviderUsageRow, type UsageReport } from "../lib/usage";
 import { Callout, EmptyState, PageHeader, Section, StatTile } from "@/components/acn";
 import { SpendChartCard, dayLabel } from "./usage/SpendChartCard";
+import { UnpluggedArt } from "@/components/foundations/illustrations";
 
 type Range = "7" | "30" | "90";
 const RANGES: { id: Range; label: string }[] = [
@@ -411,8 +408,9 @@ function ProviderSection({ data }: { data: UsageReport }) {
         )}
         {rows.length === 0 ? (
           <EmptyState
+            art={UnpluggedArt}
             compact
-            icon={RiPlugLine}
+            icon={AcnProxy}
             title="No provider requests in this range"
             body="Call a service through /proxy or lease a key from an app. Spend shows up here once providers have cost_per_request set."
           />

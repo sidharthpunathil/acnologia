@@ -5,7 +5,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   RiAlertLine,
   RiArrowDownLine,
@@ -16,7 +16,8 @@ import {
 import { useTitle } from "@/hooks/useTitle";
 import { ApiError, errorMessage } from "@/lib/api";
 import type { ChatItem, ChatThread } from "@/lib/types";
-import { useAssistant } from "@/stores/assistant";
+import { NEW_DRAFT, useAssistant, type DraftAttachment } from "@/stores/assistant";
+import { useAuth } from "@/stores/auth";
 import { toast } from "@/stores/toast";
 import { Callout } from "@/components/acn/callout";
 import { Button } from "@/components/base/buttons/button";
@@ -32,6 +33,7 @@ import { QUIET_BUTTON } from "@/components/application/agent-chat/agent-chat-mes
 import {
   AssistantText,
   ConfirmCard,
+  collapseBlank,
   ErrorItem,
   GUTTER,
   Steps,
@@ -107,6 +109,34 @@ async function readDropped(files: File[]): Promise<{ text: string; names: string
   return { text: parts.join("\n"), names, skipped };
 }
 
+/**
+ * The last chat you had open, per signed in user, so leaving the Assistant
+ * and coming back (the top bar links to bare /assistant) lands on it again.
+ * Only the id is stored; drafts stay in memory because they can hold keys.
+ */
+const lastKey = (userId: number | undefined) => (userId === undefined ? null : `acn.assistant.last.${userId}`);
+function readLast(key: string | null): number | null {
+  if (!key) return null;
+  try {
+    const v = window.localStorage.getItem(key);
+    return v && /^\d+$/.test(v) ? Number(v) : null;
+  } catch {
+    return null;
+  }
+}
+function writeLast(key: string | null, id: number | null) {
+  if (!key) return;
+  try {
+    if (id === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, String(id));
+  } catch {
+    // Storage blocked: coming back starts a new chat, as before.
+  }
+}
+
+/** Route state: `fresh` asks for a blank chat, `restored` marks the redirect to the last one. */
+type RouteState = { fresh?: boolean; restored?: boolean } | null;
+
 const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Phones get the Chats list as a bottom sheet; wider screens a centred dialog. */
@@ -126,6 +156,10 @@ export function AssistantPage() {
   const param = useParams().threadId;
   const routeId = param && /^\d+$/.test(param) ? Number(param) : null;
   const navigate = useNavigate();
+  const routeState = useLocation().state as RouteState;
+  const fresh = !!routeState?.fresh;
+  const restored = !!routeState?.restored;
+  const storeKey = lastKey(useAuth((s) => s.user?.id));
   const {
     threads,
     ai,
@@ -144,10 +178,27 @@ export function AssistantPage() {
     send,
     confirm,
     answer: answerAsk,
+    drafts,
+    setDraftText,
+    setDraftAttachment,
   } = useAssistant();
-  const [text, setText] = useState("");
-  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  // The draft lives in the store by thread, so it survives leaving the page.
+  // Setters write to the thread open at call time: a failed first send
+  // restores its text to the chat it just created.
+  const draftKey = currentId === null ? NEW_DRAFT : String(currentId);
+  const text = drafts[draftKey]?.text ?? "";
+  const attachment = drafts[draftKey]?.attachment ?? null;
+  const keyNow = () => {
+    const id = useAssistant.getState().currentId;
+    return id === null ? NEW_DRAFT : String(id);
+  };
+  const setText = (v: string | ((cur: string) => string)) => setDraftText(keyNow(), v);
+  const setAttachment = (v: DraftAttachment | null | ((cur: Attachment | null) => Attachment | null)) =>
+    setDraftAttachment(keyNow(), v);
   const [dragging, setDragging] = useState(false);
+  // After Edit on a message whose keys only the vault holds: say so under the composer.
+  const [vaultNote, setVaultNote] = useState(false);
+  useEffect(() => setVaultNote(false), [currentId]);
   const dragDepth = useRef(0);
   const [sheet, setSheet] = useState(false);
   const asSheet = useSheet();
@@ -203,16 +254,29 @@ export function AssistantPage() {
     fetch().catch(() => {});
   }, [fetch]);
 
+  // Bare /assistant goes back to the last chat you had open; only New chat
+  // (route state `fresh`) asks for a blank one.
+  const resumeId = routeId === null && !fresh ? readLast(storeKey) : null;
   useEffect(() => {
+    if (resumeId !== null) {
+      navigate(`/assistant/${resumeId}`, { replace: true, state: { restored: true } });
+      return;
+    }
     open(routeId).catch((e) => {
-      toast.error(
-        e instanceof ApiError && e.status === 404
-          ? "That chat no longer exists."
-          : errorMessage(e),
-      );
-      navigate("/assistant", { replace: true });
+      const gone = e instanceof ApiError && e.status === 404;
+      if (gone && routeId !== null && readLast(storeKey) === routeId) writeLast(storeKey, null);
+      // A remembered chat deleted elsewhere just gives a blank chat; a link to one says so.
+      if (!(gone && restored)) toast.error(gone ? "That chat no longer exists." : errorMessage(e));
+      navigate("/assistant", { replace: true, state: { fresh: true } });
     });
-  }, [routeId, open, navigate]);
+  }, [routeId, resumeId, restored, storeKey, open, navigate]);
+
+  // Remember the chat on screen: a thread once it has loaded, or nothing for a new chat.
+  useEffect(() => {
+    if (resumeId !== null || loadingThread) return;
+    if (currentId !== null) writeLast(storeKey, currentId);
+    else if (routeId === null) writeLast(storeKey, null);
+  }, [currentId, loadingThread, routeId, resumeId, storeKey]);
 
   // On a mouse and keyboard screen, start with the cursor in the composer. Deferred
   // past the layout's own focus move on navigation.
@@ -278,14 +342,17 @@ export function AssistantPage() {
 
   const newChat = () => {
     setSheet(false);
-    navigate("/assistant");
+    setDraftText(NEW_DRAFT, "");
+    setDraftAttachment(NEW_DRAFT, null);
+    navigate("/assistant", { state: { fresh: true } });
     window.setTimeout(() => box.current?.focus(), 0);
   };
 
   const onDelete = async (t: ChatThread) => {
     try {
       await remove(t.id);
-      if (routeId === t.id) navigate("/assistant", { replace: true });
+      if (readLast(storeKey) === t.id) writeLast(storeKey, null);
+      if (routeId === t.id) navigate("/assistant", { replace: true, state: { fresh: true } });
       toast.success("Chat deleted");
     } catch (e) {
       toast.error(errorMessage(e));
@@ -298,6 +365,7 @@ export function AssistantPage() {
     const att = override === undefined ? attachment : null;
     const msg = [typed, att?.text.trim()].filter(Boolean).join("\n\n");
     if (!msg || busy || off) return;
+    setVaultNote(false);
     if (override === undefined) {
       setText("");
       setAttachment(null);
@@ -356,6 +424,29 @@ export function AssistantPage() {
   };
   const edit = () => {
     if (!lastUser) return;
+    const hadKeys = !!lastUser.key_list?.length || !!lastUser.keys;
+    if (lastRaw === undefined && hadKeys) {
+      // The browser never had these keys (only the vault does), so Edit
+      // brings back the words alone. Older messages hold key hints inline:
+      // drop those lines too.
+      const prose = collapseBlank(
+        lastUser.key_list?.length
+          ? (lastUser.text ?? "")
+          : (lastUser.text ?? "")
+              .split("\n")
+              .filter((l) => !/(?:\.\.\.|\u2026)[A-Za-z0-9_-]{2,8}\b/.test(l))
+              .join("\n"),
+      );
+      setText(prose);
+      setVaultNote(true);
+      window.setTimeout(() => {
+        const el = box.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }, 0);
+      return;
+    }
     const raw = lastRaw ?? lastUser.text ?? "";
     const att = toAttachment(raw, "Your last message");
     if (att && att.keys >= 3) {
@@ -466,7 +557,7 @@ export function AssistantPage() {
     if (row.kind === "tools")
       return (
         <div key={row.key} className={cx(spacing, GUTTER)}>
-          <Steps items={row.items} seconds={runSeconds(row)} fresh={delayFor} />
+          <Steps items={row.items} seconds={runSeconds(row)} fresh={delayFor} live={working && i === rows.length - 1} />
           <ToolCards items={row.items} />
         </div>
       );
@@ -481,6 +572,7 @@ export function AssistantPage() {
         <UserBubble
           text={it.text ?? ""}
           keys={it.keys}
+          keyList={it.key_list}
           onEdit={it.id === lastUser?.id && !working ? edit : undefined}
         />
       );
@@ -639,7 +731,7 @@ export function AssistantPage() {
                   {error}
                 </Callout>
               )}
-              {!loaded || loadingThread ? (
+              {!loaded || loadingThread || resumeId !== null ? (
                 <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading chat">
                   <Skeleton className="ms-auto h-10 w-1/2 rounded-2xl" />
                   <div className="flex gap-3">
@@ -698,6 +790,8 @@ export function AssistantPage() {
               onChange={setText}
               onSubmit={(e) => void submit(e)}
               busy={busy}
+              working={working}
+              note={vaultNote ? "Keys stay in the vault; paste them again to replace them." : undefined}
               off={off}
               model={ai?.model}
               attachment={attachment}

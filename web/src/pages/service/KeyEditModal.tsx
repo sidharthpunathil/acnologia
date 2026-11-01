@@ -1,6 +1,8 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { RiDiceLine } from "@remixicon/react";
 import type { App, Key, KeyPatch, KeyStatus, Tier } from "../../lib/types";
 import { useKeys } from "../../stores/keys";
+import { useInsights } from "../../stores/insights";
 import { toast } from "../../stores/toast";
 import { errorMessage } from "../../lib/api";
 import { MultiSelect } from "../../components/MultiSelect";
@@ -14,6 +16,8 @@ import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { SwitchCard } from "@/components/base/switch/switch-card";
 import { Textarea } from "@/components/base/textarea/textarea";
 import { cx } from "@/utils/cx";
+import { Tip } from "./parts";
+import { randomLabel } from "./keyUtil";
 
 /** Egress proxy picker for one key. 0 follows the service's proxy. Loads the proxy list itself. */
 function KeyEgressField({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
@@ -115,6 +119,46 @@ function draftOf(k: Key): Draft {
   };
 }
 
+/**
+ * The key's label with a dice button inside the field that fills a random,
+ * readable label nobody else in the service uses. The input keeps focus and
+ * the new text is selected, so typing replaces it.
+ */
+function LabelField({ value, onChange, taken }: { value: string; onChange: (v: string) => void; taken: string[] }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const roll = () => {
+    // The current value counts as taken too, so every click gives a new label.
+    onChange(randomLabel([...taken, value]));
+    // After React writes the new value, so the selection covers all of it.
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.select();
+    });
+  };
+  return (
+    <Input
+      label="Label"
+      ref={ref}
+      value={value}
+      onChange={onChange}
+      trailingAddon={
+        <Tip label="Random label">
+          <button
+            type="button"
+            aria-label="Random label"
+            // Keep focus in the field on a click; keyboard presses move it back in roll().
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={roll}
+            className="-my-1 -me-1 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary outline-none transition-colors duration-150 ease hover:bg-background-tertiary-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+          >
+            <RiDiceLine className="size-4" aria-hidden />
+          </button>
+        </Tip>
+      }
+    />
+  );
+}
+
 const ACCOUNT_FIELDS = ["account_name", "account_email", "account_phone", "account_ref"] as const;
 
 const sameIds = (a: number[], b: number[]) => a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
@@ -133,6 +177,21 @@ export function KeyEditModal({
   onClose: () => void;
 }) {
   const update = useKeys((s) => s.update);
+  // Labels the random label must avoid: the service's other keys. The Keys page
+  // may not have loaded this service's pool, so load it and use the insight rows meanwhile.
+  const siblings = useKeys((s) => (k ? s.byService[k.service_id] : undefined));
+  const fetchKeys = useKeys((s) => s.fetch);
+  const insightRows = useInsights((s) => s.rows);
+  const serviceId = k?.service_id;
+  const poolLoaded = siblings !== undefined;
+  useEffect(() => {
+    if (serviceId !== undefined && !poolLoaded) fetchKeys(serviceId).catch(() => undefined);
+  }, [serviceId, poolLoaded, fetchKeys]);
+  const takenLabels = useMemo(() => {
+    if (!k) return [];
+    const pool = siblings ?? insightRows.filter((x) => x.service_id === k.service_id);
+    return pool.filter((x) => x.id !== k.id).map((x) => x.label);
+  }, [k, siblings, insightRows]);
   const [d, setD] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   // Kept outside Draft so this field stays independent of the other key fields.
@@ -220,7 +279,7 @@ export function KeyEditModal({
       <ModalBody>
         <form id="edit-key-form" onSubmit={submit} className="space-y-6 pb-1">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input label="Label" value={d.label} onChange={(v) => set("label", v)} />
+            <LabelField value={d.label} onChange={(v) => set("label", v)} taken={takenLabels} />
             <Select label="Status" selectedKey={d.status} onSelectionChange={(v) => set("status", v as KeyStatus)} className="w-full">
               {statusOptions.map((st) => (
                 <SelectItem key={st} id={st}>

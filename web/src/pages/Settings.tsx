@@ -5,11 +5,11 @@ import {
   RiCheckboxCircleLine,
   RiFlaskLine,
   RiHistoryLine,
-  RiKey2Line,
   RiLockLine,
   RiShieldCheckLine,
   RiTerminalBoxLine,
 } from "@remixicon/react";
+import { AcnKeyVault } from "@/components/foundations/icons/acn";
 import { api, errorMessage } from "@/lib/api";
 import { can } from "@/lib/perms";
 import { dateTime, relTime, sentence } from "@/lib/format";
@@ -37,7 +37,7 @@ Never auto publish a provider without at least one test per rule.`;
 const GUARDRAILS = [
   { icon: RiFlaskLine, text: "The engine validates every spec and runs its tests before it can go live." },
   { icon: RiLockLine, text: "The AI writes data only. It cannot run code on this server." },
-  { icon: RiKey2Line, text: "Test keys stay encrypted during a run and are wiped when it ends." },
+  { icon: AcnKeyVault, text: "Test keys stay encrypted during a run and are wiped when it ends." },
   { icon: RiHistoryLine, text: "A run stops after 40 turns. A failed submit goes back to the agent at most 3 times." },
   { icon: RiCheckboxCircleLine, text: "Every publish is a new provider version, so you can roll back any change in one click." },
 ];

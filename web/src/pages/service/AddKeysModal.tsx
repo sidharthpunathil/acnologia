@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { RiCheckboxCircleLine, RiKey2Line } from "@remixicon/react";
+import { RiCheckboxCircleLine } from "@remixicon/react";
+import { AcnApiKey } from "@/components/foundations/icons/acn";
 import type { App, NewKeyInput, Service, Tier } from "../../lib/types";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
@@ -191,7 +192,7 @@ export function AddKeysModal({
       <ModalHeader
         title={`Add keys to ${service.name}`}
         description="Paste keys in any shape: one per line, comma or space separated, label then key, an env file, CSV with a header, or JSON. You see what was found before anything is saved."
-        icon={RiKey2Line}
+        icon={AcnApiKey}
         showCloseButton={!busy}
       />
       <ModalBody>

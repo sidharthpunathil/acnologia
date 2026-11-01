@@ -1,9 +1,10 @@
 import { useCallback, useDeferredValue, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { RiArrowRightSLine, RiCloseLine, RiErrorWarningLine, RiFileTextLine, RiFileUploadLine, RiUploadCloud2Line } from "@remixicon/react";
+import { RiArrowRightSLine, RiErrorWarningLine, RiFileTextLine, RiFileUploadLine, RiUploadCloud2Line } from "@remixicon/react";
 import { maskLine, maskSecret, MAX_IGNORED, MAX_KEYS, mergeParsed, parseKeys, type ParseResult } from "../lib/keyparse";
 import { num, plural } from "../lib/format";
 import { Button } from "@/components/base/buttons/button";
 import { SpinnerGlyph } from "@/components/base/spinner/spinner";
+import { Tag, TagGroup } from "@/components/base/tag-group/tag-group";
 import { cx } from "@/utils/cx";
 
 const MAX_FILE = 1024 * 1024;
@@ -216,23 +217,20 @@ export function KeyPasteArea({
       )}
 
       {input.files.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Files added">
-          {input.files.map((f) => (
-            <li key={f.id} className="flex max-w-full items-center gap-1 rounded-lg bg-background-tertiary-default py-0.5 ps-2 pe-0.5 font-mono text-caption-2-regular text-text-secondary">
-              <RiFileTextLine className="size-3.5 shrink-0" aria-hidden />
-              <span className="min-w-0 truncate text-text-primary">{f.name}</span>
-              <span className="shrink-0">· {plural(f.parsed.keys.length, "key")}</span>
-              <button
-                type="button"
-                onClick={() => input.removeFile(f.id)}
-                aria-label={`Remove ${f.name}`}
-                className="ms-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-foreground-icon-secondary outline-none transition-colors hover:bg-background-tertiary-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-              >
-                <RiCloseLine className="size-3.5" aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
+        // A tag group: Tab enters it once, arrows move between files, and Delete or the x removes one.
+        <TagGroup
+          aria-label="Files added"
+          size="small"
+          items={input.files}
+          onRemove={(ids) => ids.forEach((fid) => input.removeFile(Number(fid)))}
+          className="mt-2"
+        >
+          {(f) => (
+            <Tag id={f.id} textValue={`${f.name}, ${plural(f.parsed.keys.length, "key")}`} icon={RiFileTextLine} className="font-mono">
+              {f.name} <span className="text-text-secondary">· {plural(f.parsed.keys.length, "key")}</span>
+            </Tag>
+          )}
+        </TagGroup>
       )}
     </div>
   );

@@ -2,19 +2,14 @@ import {
   RiBarChartBoxLine,
   RiBookOpenLine,
   RiChat3Line,
-  RiGitBranchLine,
-  RiGlobalLine,
-  RiKey2Line,
-  RiLayoutGridLine,
-  RiPlugLine,
   RiPulseLine,
   RiSettings3Line,
   RiShieldCheckLine,
-  RiStackLine,
   RiTeamLine,
   RiUser3Line,
   RiWebhookLine,
 } from "@remixicon/react";
+import { AcnApiKey, AcnAppToken, AcnEgress, AcnKeyPool, AcnProviderSpec, AcnServiceGroup } from "@/components/foundations/icons/acn";
 import type { KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { can } from "@/lib/perms";
@@ -41,17 +36,17 @@ export const ACCOUNT_ITEM: NavItem = { to: "/account", label: "Your account", ic
 export function navItems(role: Role | undefined): NavItem[] {
   const all: Array<NavItem & { show: boolean }> = [
     // The top bar (and the phone tab bar) keeps the three pages used every day.
-    { to: "/", label: "Catalog", icon: RiLayoutGridLine, show: true, end: true },
-    { to: "/keys", label: "Keys", icon: RiKey2Line, show: true },
+    { to: "/", label: "Catalog", icon: AcnKeyPool, show: true, end: true },
+    { to: "/keys", label: "Keys", icon: AcnApiKey, show: true },
     { to: "/assistant", label: "Assistant", icon: RiChat3Line, show: true },
     // Everything else lives in the account menu, grouped.
-    { to: "/providers", label: "Providers", icon: RiPlugLine, show: true, group: "Workspace" },
-    { to: "/apps", label: "Apps", icon: RiStackLine, show: true, group: "Workspace" },
+    { to: "/providers", label: "Providers", icon: AcnProviderSpec, show: true, group: "Workspace" },
+    { to: "/apps", label: "Apps", icon: AcnAppToken, show: true, group: "Workspace" },
     { to: "/activity", label: "Activity", icon: RiPulseLine, show: true, group: "Workspace" },
     { to: "/usage", label: "Usage", icon: RiBarChartBoxLine, show: true, group: "Workspace" },
-    { to: "/groups", label: "Service groups", icon: RiGitBranchLine, show: true, group: "Manage" },
+    { to: "/groups", label: "Service groups", icon: AcnServiceGroup, show: true, group: "Manage" },
     { to: "/webhooks", label: "Webhooks", icon: RiWebhookLine, show: true, group: "Manage" },
-    { to: "/egress", label: "Egress proxies", icon: RiGlobalLine, show: true, group: "Manage" },
+    { to: "/egress", label: "Egress proxies", icon: AcnEgress, show: true, group: "Manage" },
     { to: "/settings", label: "Settings", icon: RiSettings3Line, show: true, group: "Admin" },
     { to: "/users", label: "Users", icon: RiTeamLine, show: can.users(role), group: "Admin" },
     { to: "/audit", label: "Audit", icon: RiShieldCheckLine, show: can.audit(role), group: "Admin" },

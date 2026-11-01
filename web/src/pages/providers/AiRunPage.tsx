@@ -4,7 +4,6 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import {
   RiArrowDownSLine,
-  RiArrowLeftLine,
   RiBrainLine,
   RiCheckboxCircleLine,
   RiCloseCircleLine,
@@ -17,6 +16,7 @@ import {
   RiStopLine,
   RiToolsLine,
 } from "@remixicon/react";
+import { AcnAiBuilder } from "@/components/foundations/icons/acn";
 import { useTitle } from "../../hooks/useTitle";
 import { FadeText, plainText } from "../../components/FadeText";
 import { ApiError, errorMessage } from "../../lib/api";
@@ -33,6 +33,7 @@ import { toast } from "../../stores/toast";
 import { useNow } from "../../hooks/useNow";
 import { CodeBlock } from "../../components/CodeBlock";
 import { ProviderLogo } from "../../components/EntityLogo";
+import { Breadcrumb, BreadcrumbItem } from "@/components/base/breadcrumb/breadcrumb";
 import { Button, ButtonLink } from "@/components/base/buttons/button";
 import { Chip, type ChipColor } from "@/components/base/badges/chip";
 import { Badge } from "@/components/base/badges/badge";
@@ -43,6 +44,7 @@ import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, EmptyState, PageSkeleton, Section, StatTile } from "@/components/acn";
 import { LiveReportView, TestReportList } from "./ProviderEditor";
 import { OutcomeBadge } from "./SpecTabs";
+import { LostPathArt } from "@/components/foundations/illustrations";
 
 type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
 
@@ -310,6 +312,7 @@ export function AiRunPage() {
   if (notFound)
     return (
       <EmptyState
+        art={LostPathArt}
         title={<h1 className="text-headline-semibold">Run not found</h1>}
         body="It may have been removed, or the link is wrong."
         action={
@@ -348,12 +351,11 @@ export function AiRunPage() {
 
   return (
     <div>
-      <Link
-        to="/providers/ai"
-        className="mb-5 inline-flex items-center gap-1 rounded-md text-body-2-medium text-text-secondary outline-none transition-colors duration-150 ease hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-      >
-        <RiArrowLeftLine className="size-4" aria-hidden /> AI builder
-      </Link>
+      <Breadcrumb className="mb-5">
+        <BreadcrumbItem href="/providers">Providers</BreadcrumbItem>
+        <BreadcrumbItem href="/providers/ai">AI builder</BreadcrumbItem>
+        <BreadcrumbItem current>Run #{run.id}</BreadcrumbItem>
+      </Breadcrumb>
 
       <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
@@ -423,7 +425,7 @@ export function AiRunPage() {
         </Callout>
       )}
       {run.summary && (
-        <Callout tone={run.status === "published" ? "success" : "neutral"} icon={RiSparkling2Line} className="mt-6">
+        <Callout tone={run.status === "published" ? "success" : "neutral"} icon={AcnAiBuilder} className="mt-6">
           {run.summary}
         </Callout>
       )}

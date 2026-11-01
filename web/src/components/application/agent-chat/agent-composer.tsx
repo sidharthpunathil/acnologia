@@ -1,5 +1,4 @@
 import { RiArrowUpLine, RiSparklingLine } from "@remixicon/react";
-import { useReducedMotion } from "motion/react";
 import {
   useLayoutEffect,
   useRef,
@@ -26,8 +25,10 @@ import { cx } from "@/utils/cx";
  * status row carries a hint and the model instead of message counts.
  *
  * While a turn runs, ComposerLoader draws its band of light around the rim.
- * With reduced motion the band stays off; the spinner in the send control
- * still says the agent is busy.
+ * The loader paints the pill surface and its shadow, so the form never paints
+ * its own: it keeps only the border and focus ring, and the light can fade in
+ * and out underneath it. With reduced motion the loader holds a still glow
+ * instead of a travelling band.
  */
 
 export interface AgentComposerProps {
@@ -35,8 +36,10 @@ export interface AgentComposerProps {
   value: string;
   onValueChange: (value: string) => void;
   onSubmit: (event?: FormEvent) => void;
-  /** A turn is running: the send control spins and the rim lights up. */
+  /** Sending is blocked: the send control spins. */
   busy: boolean;
+  /** The agent is working on this chat's turn: the rim lights up. Defaults to `busy`. */
+  working?: boolean;
   /** The agent is unavailable: the field is disabled. */
   disabled?: boolean;
   /** Something other than text is ready to send, such as an attachment. */
@@ -58,6 +61,7 @@ export function AgentComposer({
   onValueChange,
   onSubmit,
   busy,
+  working = busy,
   disabled = false,
   hasContent = false,
   placeholder = "Ask me anything",
@@ -68,7 +72,6 @@ export function AgentComposer({
   textareaRef,
   className,
 }: AgentComposerProps) {
-  const reduceMotion = useReducedMotion();
   const inner = useRef<HTMLTextAreaElement | null>(null);
   const setRef = (el: HTMLTextAreaElement | null) => {
     inner.current = el;
@@ -98,18 +101,15 @@ export function AgentComposer({
 
   return (
     <div className={cx("flex w-full flex-col gap-1.5", className)}>
-      <ComposerLoader active={busy && !reduceMotion} radius={24}>
+      <ComposerLoader active={working} radius={24}>
         <form
           onSubmit={(event) => {
             event.preventDefault();
             onSubmit(event);
           }}
           className={cx(
-            "flex w-full flex-col rounded-3xl border transition-[border-color,box-shadow] duration-150 ease-out",
-            // ComposerLoader paints the surface and runs its light behind the
-            // form, so the form steps aside while busy and lets it show.
-            busy ? "border-transparent bg-transparent" : "border-border-button-default bg-background-primary-default shadow-xs",
-            !disabled && !busy && "focus-within:border-border-button-hover",
+            "flex w-full flex-col rounded-3xl border border-border-button-default bg-transparent shadow-none transition-[border-color] duration-150 ease-out",
+            !disabled && "focus-within:border-border-button-hover",
           )}
         >
           {attachment}

@@ -4,10 +4,12 @@ import {
   RiFlowChart,
   RiKey2Line,
   RiShieldCheckLine,
+  RiShieldKeyholeLine,
 } from "@remixicon/react";
 import { maskSecret, parseKeys } from "@/lib/keyparse";
 import { useNow } from "@/hooks/useNow";
 import type { ChatThread } from "@/lib/types";
+import type { DraftAttachment } from "@/stores/assistant";
 import { CloseButton } from "@/components/base/buttons/close-button";
 import { Kbd } from "@/components/base/kbd/kbd";
 import { AgentChatHistory, compactAge } from "@/components/application/agent-chat/agent-chat-history";
@@ -120,18 +122,7 @@ export function LiveStatus({ step, startedAt }: { step?: string; startedAt?: str
 const KEYISH = /[A-Za-z0-9_-]{24,}/;
 
 /** Keys pasted or dropped, held beside the composer instead of inside it. */
-export interface Attachment {
-  /** The raw text, sent with the message. Never shown. */
-  text: string;
-  /** Where it came from: "Pasted" or file names. */
-  source: string;
-  keys: number;
-  labeled: number;
-  /** Masked first few, such as "acct-1 …c21e". */
-  preview: string[];
-  /** Hints of every key, for Show all. */
-  all: string[];
-}
+export type Attachment = DraftAttachment;
 
 /** Paste this many keys, or a long block holding any, and it becomes an attachment. */
 export const ATTACH_MIN_KEYS = 3;
@@ -223,6 +214,8 @@ export function Composer({
   onChange,
   onSubmit,
   busy,
+  working,
+  note,
   off,
   model,
   attachment,
@@ -234,6 +227,10 @@ export function Composer({
   onChange: (v: string) => void;
   onSubmit: (e?: FormEvent) => void;
   busy: boolean;
+  /** This chat's turn is running: the composer rim lights up. */
+  working: boolean;
+  /** A line that replaces the hint, such as why Edit left the keys out. */
+  note?: string;
   off: boolean;
   model?: string;
   attachment: Attachment | null;
@@ -260,6 +257,7 @@ export function Composer({
       onValueChange={onChange}
       onSubmit={onSubmit}
       busy={busy}
+      working={working}
       disabled={off}
       hasContent={!!attachment}
       placeholder={off ? "The assistant is off" : "Ask anything, or paste or drop keys to add"}
@@ -268,7 +266,12 @@ export function Composer({
       statusId="assistant-hint"
       status={
         <p className="text-caption-1-regular text-text-tertiary [text-wrap:balance]">
-          {keyish ? (
+          {note ? (
+            <span className="text-text-secondary">
+              <RiShieldKeyholeLine className="me-1.5 inline size-3.5 align-[-3px] text-status-purple-text" aria-hidden />
+              {note}
+            </span>
+          ) : keyish ? (
             <span className="text-text-secondary">Claude sees keys only as placeholders. This chat keeps their last 4 characters.</span>
           ) : (
             <>

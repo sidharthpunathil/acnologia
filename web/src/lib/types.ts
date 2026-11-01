@@ -648,6 +648,11 @@ export interface ChatItem {
   link?: string;
   /** Keys found in a user message. Their secrets stay in the server's vault; text shows only hints. */
   keys?: number;
+  /**
+   * The keys in a user message, as label and hint only. When present, `text`
+   * is just the prose: key lines removed and blank runs collapsed.
+   */
+  key_list?: { label: string; hint: string }[];
   /** A provider build the turn follows (kind build). */
   build?: ChatBuild;
   /** A structured question for the user (kind ask). */

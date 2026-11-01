@@ -12,6 +12,20 @@ export async function mockChat(page: Page, now: number): Promise<void> {
     { id: 5, title: "Set up a proxy app for the marketing site", created_at: t(2000), updated_at: t(1990) },
   ];
   const items = [
+    // Keys the server moved to the vault: the text is only the prose, the keys come as label and hint.
+    {
+      id: "u0",
+      kind: "user",
+      ok: true,
+      ts: t(8),
+      text: "tavily api key add\nhttps://app.tavily.com/home",
+      keys: 2,
+      key_list: [
+        { label: "sidharthpunathil", hint: "...Qus6" },
+        { label: "", hint: "...8f2a" },
+      ],
+    },
+    { id: "a0", kind: "assistant", ok: true, ts: t(8), text: "Added both keys to `tavily`. Both work." },
     { id: "u1", kind: "user", ok: true, ts: t(6), text: "Add these SerpAPI keys:\nacct-7, 3f9a...c21e\nacct-8, 77b2...0aa4\nacct-9, d01c...91fe" },
     { id: "a1", kind: "assistant", ok: true, ts: t(6), text: "I'll add the three keys to your `serpapi` service and check each one." },
     {

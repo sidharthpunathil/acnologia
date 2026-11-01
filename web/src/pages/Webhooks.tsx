@@ -25,6 +25,7 @@ import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, EmptyState, PageHeader, PageSkeleton } from "@/components/acn";
 import { cx } from "@/utils/cx";
+import { UnpluggedArt } from "@/components/foundations/illustrations";
 
 const FORMATS: WebhookFormat[] = ["json", "slack", "discord", "telegram"];
 
@@ -382,6 +383,7 @@ export function WebhooksPage() {
         <EmptyState title="Webhooks are not available" body={error} />
       ) : hooks.length === 0 ? (
         <EmptyState
+          art={UnpluggedArt}
           icon={RiWebhookLine}
           title="No webhooks yet"
           body={manage ? "Add one to hear about exhausted keys, open breakers and other events as they happen." : "Ask an admin to add one."}

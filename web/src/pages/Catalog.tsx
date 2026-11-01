@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { Link } from "react-aria-components";
-import { RiAddLine, RiLayoutGridLine, RiSparkling2Line } from "@remixicon/react";
+import { RiAddLine } from "@remixicon/react";
+import { AcnAiBuilder, AcnKeyPool, categoryIcon } from "@/components/foundations/icons/acn";
 import { useTitle } from "../hooks/useTitle";
 import { useServices } from "../stores/services";
 import { useProviders } from "../stores/providers";
@@ -20,6 +21,7 @@ import { cx } from "@/utils/cx";
 import { AddServiceModal } from "./AddServiceModal";
 import { Callout, EmptyState, PageHeader } from "@/components/acn";
 import { CARD } from "./service/parts";
+import { SearchArt, ShelfArt } from "@/components/foundations/illustrations";
 
 const ALL = "__all";
 
@@ -224,9 +226,10 @@ export function CatalogPage() {
 
       {services.length === 0 ? (
         <EmptyState
+          art={ShelfArt}
           className="mt-12"
           as="h2"
-          icon={RiLayoutGridLine}
+          icon={AcnKeyPool}
           title="No services yet"
           body={
             can.manage(role)
@@ -243,7 +246,7 @@ export function CatalogPage() {
                   to="/providers/ai"
                   className="inline-flex h-9 items-center gap-1.5 rounded-2lg border border-border-button-default bg-background-primary-default px-3 text-body-medium text-text-primary shadow-xs outline-none transition-colors duration-150 hover:bg-background-primary-hover focus-visible:ring-2 focus-visible:ring-border-focus-ring"
                 >
-                  <RiSparkling2Line className="size-5 text-accent-fg" aria-hidden /> Build a provider with AI
+                  <AcnAiBuilder className="size-5 text-accent-fg" aria-hidden /> Build a provider with AI
                 </RouterLink>
               </>
             ) : undefined
@@ -254,7 +257,7 @@ export function CatalogPage() {
           <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
             <TabList aria-label="Categories" className="min-w-max">
               {tabs.map((t) => (
-                <Tab key={t.id} id={t.id} count={t.count}>
+                <Tab key={t.id} id={t.id} count={t.count} icon={t.id === ALL ? undefined : categoryIcon(t.id)}>
                   {t.label}
                 </Tab>
               ))}
@@ -263,6 +266,7 @@ export function CatalogPage() {
           <TabPanel id={activeTab} className="focus-visible:ring-offset-4">
             {shown.length === 0 ? (
               <EmptyState
+                art={SearchArt}
                 className="mt-10"
                 as="h2"
                 title={`Nothing matches "${q}"`}

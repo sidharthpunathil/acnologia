@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
-import { RiAddLine, RiApps2Line, RiPencilLine, RiPlugLine, RiRefreshLine } from "@remixicon/react";
+import { RiAddLine, RiPencilLine, RiPlugLine } from "@remixicon/react";
+import { AcnAppToken, AcnKeyRotate } from "@/components/foundations/icons/acn";
 import { Focusable } from "react-aria-components";
 import { useTitle } from "../hooks/useTitle";
 import { useApps } from "../stores/apps";
@@ -28,10 +29,12 @@ import { Textarea } from "@/components/base/textarea/textarea";
 import { Select, SelectItem } from "@/components/base/select/select";
 import { Switch } from "@/components/base/switch/switch";
 import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Meter, type MeterTone } from "@/components/base/meter/meter";
 import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
 import { cx } from "@/utils/cx";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, EmptyState, PageHeader, PageSkeleton } from "@/components/acn";
+import { TokenCardArt } from "@/components/foundations/illustrations";
 
 type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
 
@@ -349,6 +352,26 @@ function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null;
   );
 }
 
+/** How full a limit is: amber from 80%, red once it is reached. */
+function limitTone(pct: number): MeterTone {
+  return pct >= 100 ? "error" : pct >= 80 ? "warning" : "accent";
+}
+
+/** One capped limit as a small labelled meter. The usage line above carries the exact numbers. */
+function LimitMeter({ label, used, limit, text }: { label: string; used: number; limit: number; text: string }) {
+  // A limit of 0 refuses every call, so it reads as full.
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 100;
+  return (
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-3 font-mono text-caption-1-regular text-text-secondary tabular-nums">
+        <span className="truncate">{label}</span>
+        <span className="shrink-0">{Math.floor(pct)}%</span>
+      </div>
+      <Meter aria-label={`${label} used`} value={pct} valueLabel={text} tone={limitTone(pct)} size="sm" className="mt-1" />
+    </div>
+  );
+}
+
 /** Today's and this month's requests and spend for one app, loaded when its row renders. */
 function AppUsageLine({ app, now }: { app: App; now: number }) {
   const [r, setR] = useState<AppUsageReport | null>(null);
@@ -368,6 +391,13 @@ function AppUsageLine({ app, now }: { app: App; now: number }) {
   const of = (n: number | null | undefined, fmt: (v: number) => string) => (n === null || n === undefined ? "" : ` of ${fmt(n)}`);
   const hitKey = hit?.limit as LimitKey | undefined;
   const hitLabel = hitKey && LIMIT_LABEL[hitKey] ? LIMIT_LABEL[hitKey] : "Usage";
+  const used: Record<LimitKey, { n: number; fmt: (v: number) => string }> = {
+    daily_requests: { n: u.today_requests, fmt: compact },
+    monthly_requests: { n: u.month_requests, fmt: compact },
+    daily_budget: { n: u.today_cost, fmt: (v) => usd(v) },
+    monthly_budget: { n: u.month_cost, fmt: (v) => usd(v) },
+  };
+  const capped = LIMIT_KEYS.filter((k) => l?.[k] !== null && l?.[k] !== undefined);
   return (
     <div className="mt-2 flex flex-col gap-1.5">
       {hit && (
@@ -389,6 +419,15 @@ function AppUsageLine({ app, now }: { app: App; now: number }) {
           {of(l?.monthly_budget, (v) => usd(v))}
         </span>
       </div>
+      {capped.length > 0 && (
+        <div className="mt-1 grid max-w-md grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+          {capped.map((k) => {
+            const limit = l[k] as number;
+            const { n, fmt } = used[k];
+            return <LimitMeter key={k} label={LIMIT_LABEL[k]} used={n} limit={limit} text={`${fmt(n)} of ${fmt(limit)}`} />;
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -472,7 +511,8 @@ export function AppsPage() {
         <EmptyState title="Apps are not available" body={error} />
       ) : sorted.length === 0 ? (
         <EmptyState
-          icon={RiApps2Line}
+          art={TokenCardArt}
+          icon={AcnAppToken}
           title="No apps yet"
           body={
             manage
@@ -531,7 +571,7 @@ export function AppsPage() {
                     {manage && (
                       <>
                         <span aria-hidden className="mx-1 h-5 w-px bg-separator-border" />
-                        <TipButton icon={RiRefreshLine} label="Rotate token" onClick={() => void doRotate(a)} disabled={busyId === a.id} />
+                        <TipButton icon={AcnKeyRotate} label="Rotate token" onClick={() => void doRotate(a)} disabled={busyId === a.id} />
                         <TipButton
                           icon={RiPencilLine}
                           label="Edit app"

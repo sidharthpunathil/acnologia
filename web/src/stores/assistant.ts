@@ -3,6 +3,31 @@ import { api } from "../lib/api";
 import { maskSecret, parseKeys } from "../lib/keyparse";
 import type { ChatAi, ChatAnswer, ChatItem, ChatReply, ChatThread, ChatTurn } from "../lib/types";
 
+/** Keys pasted or dropped, held beside the composer instead of inside it. */
+export interface DraftAttachment {
+  /** The raw text, sent with the message. Never shown. */
+  text: string;
+  /** Where it came from: "Pasted" or file names. */
+  source: string;
+  keys: number;
+  labeled: number;
+  /** Masked first few, such as "acct-1 …c21e". */
+  preview: string[];
+  /** Hints of every key, for Show all. */
+  all: string[];
+}
+
+/** An unsent message: the text in the composer and any keys attached to it. */
+export interface ChatDraft {
+  text: string;
+  attachment: DraftAttachment | null;
+}
+
+/** The draft slot for a chat not created yet. */
+export const NEW_DRAFT = "new";
+
+type Update<T> = T | ((cur: T) => T);
+
 interface AssistantStore {
   threads: ChatThread[];
   ai: ChatAi | null;
@@ -29,6 +54,14 @@ interface AssistantStore {
    * Memory only, never stored.
    */
   lastSent: Record<number, string>;
+  /**
+   * Unsent composer text and attachments by thread id (or NEW_DRAFT), so
+   * leaving the page or switching chats keeps them. Memory only, never
+   * stored: a draft can hold pasted API keys.
+   */
+  drafts: Record<string, ChatDraft>;
+  setDraftText: (key: string, text: Update<string>) => void;
+  setDraftAttachment: (key: string, attachment: Update<DraftAttachment | null>) => void;
   fetch: () => Promise<void>;
   open: (id: number | null) => Promise<void>;
   create: () => Promise<ChatThread>;
@@ -142,6 +175,19 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     turn: null,
     secrets: {},
     lastSent: {},
+    drafts: {},
+
+    setDraftText: (key, text) => {
+      const cur = get().drafts[key] ?? { text: "", attachment: null };
+      const next = typeof text === "function" ? text(cur.text) : text;
+      set({ drafts: { ...get().drafts, [key]: { ...cur, text: next } } });
+    },
+
+    setDraftAttachment: (key, attachment) => {
+      const cur = get().drafts[key] ?? { text: "", attachment: null };
+      const next = typeof attachment === "function" ? attachment(cur.attachment) : attachment;
+      set({ drafts: { ...get().drafts, [key]: { ...cur, attachment: next } } });
+    },
 
     fetch: async () => {
       try {
@@ -154,8 +200,28 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     },
 
     open: async (id) => {
-      // A thread made by create() is already current and has nothing to load yet.
-      if (id === get().currentId) return;
+      // A thread made by create() is already current and has nothing to load
+      // yet. The same applies when you come back to the open thread from
+      // another page: it is still in memory, and a turn that was running then
+      // is still followed (polling restarts if it had stopped).
+      if (id === get().currentId) {
+        if (id === null || get().sending === id || get().loadingThread) return;
+        if (get().turn?.active) {
+          poll(id);
+          return;
+        }
+        // Idle: catch up quietly on anything that changed while you were away.
+        api
+          .getChatThread(id)
+          .then((res) => {
+            if (get().currentId !== id || get().sending === id || get().turn?.active) return;
+            keepSecrets(res.items ?? []);
+            set({ items: withSecrets(res.items ?? []), turn: res.turn ?? null });
+            if (res.turn?.active) poll(id);
+          })
+          .catch(() => {});
+        return;
+      }
       set({ currentId: id, items: [], turn: null, loadingThread: id !== null });
       if (id === null) return;
       try {
@@ -181,7 +247,8 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     remove: async (id) => {
       await api.deleteChatThread(id);
       const { [id]: _, ...rest } = get().lastSent;
-      set({ threads: get().threads.filter((t) => t.id !== id), lastSent: rest });
+      const { [String(id)]: _draft, ...drafts } = get().drafts;
+      set({ threads: get().threads.filter((t) => t.id !== id), lastSent: rest, drafts });
       if (get().currentId === id) set({ currentId: null, items: [], turn: null });
     },
 

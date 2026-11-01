@@ -15,7 +15,6 @@ import {
 import type { ColorPickerProps as AriaColorPickerProps } from "react-aria-components";
 import { Popover, PopoverTrigger } from "@/components/base/popover/popover";
 import type { PopoverProps } from "@/components/base/popover/popover";
-import { useTemplateCopy } from "@/components/foundations/template-copy/template-copy";
 import { cx } from "@/utils/cx";
 
 /**
@@ -60,8 +59,6 @@ interface EditorProps {
 
 /** The controls, bound to the nearest React Aria ColorPicker. */
 function Editor({ showAlpha = false, swatches, className }: EditorProps) {
-  const localize = useTemplateCopy();
-
   return (
     <div className={cx("flex w-[228px] max-w-full flex-col gap-2.5", className)}>
       <AriaColorArea
@@ -94,7 +91,7 @@ function Editor({ showAlpha = false, swatches, className }: EditorProps) {
 
       <div className="flex items-center gap-2">
         <AriaColorSwatch className="relative size-8 shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgb(0_0_0/0.06)]" />
-        <AriaColorField aria-label={localize("Hex color")} className="min-w-0 flex-1">
+        <AriaColorField aria-label="Hex color" className="min-w-0 flex-1">
           <AriaInput
             dir="ltr"
             spellCheck={false}
@@ -116,7 +113,7 @@ function Editor({ showAlpha = false, swatches, className }: EditorProps) {
       </div>
 
       {swatches?.length ? (
-        <AriaColorSwatchPicker aria-label={localize("Presets")} className="grid grid-cols-7 gap-1.5 pt-0.5">
+        <AriaColorSwatchPicker aria-label="Presets" className="grid grid-cols-7 gap-1.5 pt-0.5">
           {swatches.map((swatch) => (
             <AriaColorSwatchPickerItem
               key={swatch}
@@ -176,8 +173,7 @@ export function ColorWell({
   wellClassName,
   ...props
 }: ColorWellProps) {
-  const localize = useTemplateCopy();
-  const label = localize(ariaLabel);
+  const label = ariaLabel;
 
   return (
     <AriaColorPicker {...props}>

@@ -13,6 +13,9 @@ import { Avatar } from "@/components/base/avatar/avatar";
 import { Button } from "@/components/base/buttons/button";
 import { Chip } from "@/components/base/badges/chip";
 import { Input } from "@/components/base/input/input";
+import { Label } from "@/components/base/input/label";
+import { RadioGroup } from "@/components/base/radio/radio";
+import { RadioCard } from "@/components/base/radio/radio-card";
 import { Select, SelectItem } from "@/components/base/select/select";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
@@ -21,6 +24,7 @@ import { EmptyState } from "@/components/acn/empty-state";
 import { PageHeader } from "@/components/acn/page-header";
 import { PageSkeleton } from "@/components/acn/page-skeleton";
 import { Modal } from "@/components/Modal";
+import { PeopleArt } from "@/components/foundations/illustrations";
 
 const ROLES: Role[] = ["member", "admin", "superadmin"];
 
@@ -92,19 +96,19 @@ function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void
           autoComplete="off"
           inputClassName="font-mono"
         />
-        <Select
-          label="Role"
-          hint={ROLE_HELP[form.role]}
-          selectedKey={form.role}
-          onSelectionChange={(k) => k != null && setForm({ ...form, role: k as Role })}
-          triggerClassName="w-full"
-        >
+        {/* Three roles, each with a line on what it can do: cards show every choice and its trade off at once. */}
+        <RadioGroup value={form.role} onChange={(v) => setForm({ ...form, role: v as Role })} className="gap-1.5">
+          <Label>Role</Label>
           {ROLES.map((r) => (
-            <SelectItem key={r} id={r}>
-              {r}
-            </SelectItem>
+            <RadioCard
+              key={r}
+              value={r}
+              title={r}
+              // The card truncates its description to one line; these need to wrap.
+              description={<span className="block whitespace-normal text-body-2-regular">{ROLE_HELP[r]}</span>}
+            />
           ))}
-        </Select>
+        </RadioGroup>
       </form>
     </Modal>
   );
@@ -216,6 +220,7 @@ export function UsersPage() {
 
       {sorted.length <= 1 && (
         <EmptyState
+          art={PeopleArt}
           className="mb-4"
           icon={RiTeamLine}
           title="Just you so far"

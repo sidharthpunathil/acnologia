@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Focusable } from "react-aria-components";
-import { RiAddLine, RiGlobalLine, RiPencilLine, RiRadarLine } from "@remixicon/react";
+import { RiAddLine, RiPencilLine, RiRadarLine } from "@remixicon/react";
+import { AcnEgress } from "@/components/foundations/icons/acn";
 import { useTitle } from "../hooks/useTitle";
 import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
@@ -19,6 +20,7 @@ import { Chip } from "@/components/base/badges/chip";
 import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, EmptyState, PageHeader, PageSkeleton } from "@/components/acn";
+import { UnpluggedArt } from "@/components/foundations/illustrations";
 
 const SCHEMES = ["http://", "https://", "socks5://", "socks5h://"];
 
@@ -228,7 +230,8 @@ export function EgressPage() {
         <EmptyState title="Egress proxies are not available" body={error} />
       ) : proxies.length === 0 ? (
         <EmptyState
-          icon={RiGlobalLine}
+          art={UnpluggedArt}
+          icon={AcnEgress}
           title="No egress proxies yet"
           body={manage ? "Add a proxy to send upstream calls from another address or region." : "Ask an admin to add one."}
           action={

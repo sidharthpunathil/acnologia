@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AcnKeyLease, AcnProxy } from "@/components/foundations/icons/acn";
 import { moreSnippets, type MoreLang } from "./snippets-more";
 import { Link } from "react-router-dom";
 import type { ProviderSpec, Service } from "../../lib/types";
@@ -285,13 +286,19 @@ export function IntegratePanel({ service }: { service: Service }) {
     <div className="space-y-5">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className={modeCard(mode === "proxy")}>
-          <h3 className="text-body-medium text-text-primary">Proxy mode</h3>
+          <h3 className="flex items-center gap-2 text-body-medium text-text-primary">
+            <AcnProxy className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+            Proxy mode
+          </h3>
           <p className="mt-1 text-body-2-regular text-text-secondary">
             Call Acnologia instead of the provider. It adds a key, retries a rate limit with the next key up to {service.max_attempts} times, and your app never sees a secret.
           </p>
         </div>
         <div className={modeCard(mode === "lease")}>
-          <h3 className="text-body-medium text-text-primary">Lease mode</h3>
+          <h3 className="flex items-center gap-2 text-body-medium text-text-primary">
+            <AcnKeyLease className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+            Lease mode
+          </h3>
           <p className="mt-1 text-body-2-regular text-text-secondary">
             Lease a key, call the provider yourself, then report how it went so Acnologia can rest the key and rotate.
           </p>

@@ -4,6 +4,7 @@ import { useTemplateCopy } from "@/components/foundations/template-copy/template
 
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { useReducedMotion } from "motion/react";
 import { cx } from "@/utils/cx";
 
 /**
@@ -26,6 +27,10 @@ import { cx } from "@/utils/cx";
  *
  * `active` fades the whole effect in and out (450ms), so toggling it on
  * send / reply reads as the composer lighting up rather than snapping.
+ *
+ * Acnologia: the light is only mounted while active (and through its fade
+ * out), so an idle composer runs no animation at all. With reduced motion
+ * the band does not travel: the rim holds a faint, still glow instead.
  */
 
 export interface ComposerLoaderProps {
@@ -72,6 +77,9 @@ export interface ComposerLoaderProps {
   className?: string;
 }
 
+/** How long the light takes to fade in or out, ms. */
+const FADE_MS = 450;
+
 /**
  * Acnologia: the band rides the violet accent ramp and the chart tokens
  * instead of the upstream teal and pink hex values, so it follows the theme.
@@ -107,6 +115,28 @@ export function ComposerLoader({
   const gradientId = `bui-cl-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   const clipRef = useRef<HTMLSpanElement>(null);
   const [box, setBox] = useState({ w: 640, h: 52 });
+  const reduceMotion = useReducedMotion() ?? false;
+
+  // Mount the light, then raise its opacity a frame later so it fades in;
+  // lower it, then unmount once the fade has run so nothing animates at rest.
+  const [mounted, setMounted] = useState(active);
+  const [lit, setLit] = useState(active);
+  useEffect(() => {
+    if (active) {
+      setMounted(true);
+      let inner = 0;
+      const outer = requestAnimationFrame(() => {
+        inner = requestAnimationFrame(() => setLit(true));
+      });
+      return () => {
+        cancelAnimationFrame(outer);
+        cancelAnimationFrame(inner);
+      };
+    }
+    setLit(false);
+    const timer = window.setTimeout(() => setMounted(false), FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [active]);
 
   useEffect(() => {
     const el = clipRef.current;
@@ -181,6 +211,22 @@ export function ComposerLoader({
     });
   };
 
+  /** A whole-rim stroke with no dash and no animation, for reduced motion. */
+  const still = (width: number, blur: number, opacity: number) => (
+    <rect
+      x={0}
+      y={0}
+      width={box.w}
+      height={box.h}
+      rx={rx}
+      fill="none"
+      stroke={`url(#${gradientId})`}
+      strokeWidth={width}
+      filter={`url(#${gradientId}-b${String(blur).replace(".", "_")})`}
+      style={{ opacity }}
+    />
+  );
+
   /** One feGaussianBlur per blur radius the layers use. The region is
    *  widened well past the stroke so the blur never clips at the filter
    *  bounds. */
@@ -213,35 +259,47 @@ export function ComposerLoader({
         className="pointer-events-none absolute inset-0 overflow-hidden"
         style={{
           borderRadius: cornerRadius,
-          opacity: active ? 1 : 0,
-          transition: "opacity 450ms ease",
+          opacity: lit ? 1 : 0,
+          transition: `opacity ${FADE_MS}ms ease`,
           mixBlendMode: blend,
         }}
       >
-        <svg
-          width="100%"
-          height="100%"
-          viewBox={`0 0 ${box.w} ${box.h}`}
-          preserveAspectRatio="none"
-          style={{ opacity: intensity }}
-        >
-          <defs>
-            <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" style={{ stopColor: c0 }} />
-              <stop offset="30%" style={{ stopColor: c1 }} />
-              <stop offset="50%" style={{ stopColor: mid }} />
-              <stop offset="70%" style={{ stopColor: c2 }} />
-              <stop offset="100%" style={{ stopColor: c3 }} />
-            </linearGradient>
-            {[14, 6, CRISP_BLUR].map(blurFilter)}
-          </defs>
-          {/* wide bloom bleeding inward (outer half clipped by the pill) */}
-          {bloom > 0 && stroke(bloom * 2, 14, bloomStrength, band * 0.9, bloom + 16)}
-          {/* tight glow */}
-          {!bloomOnly && stroke(line * 3.2, 6, 0.8, band * 0.95, 10)}
-          {/* crisp refraction line, tip leading */}
-          {!bloomOnly && stroke(line, CRISP_BLUR, 1, band, 0)}
-        </svg>
+        {mounted && (
+          <svg
+            width="100%"
+            height="100%"
+            viewBox={`0 0 ${box.w} ${box.h}`}
+            preserveAspectRatio="none"
+            style={{ opacity: intensity }}
+          >
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" style={{ stopColor: c0 }} />
+                <stop offset="30%" style={{ stopColor: c1 }} />
+                <stop offset="50%" style={{ stopColor: mid }} />
+                <stop offset="70%" style={{ stopColor: c2 }} />
+                <stop offset="100%" style={{ stopColor: c3 }} />
+              </linearGradient>
+              {[14, 6, CRISP_BLUR].map(blurFilter)}
+            </defs>
+            {reduceMotion ? (
+              // Reduced motion: no travelling band, a still glow around the whole rim.
+              <>
+                {bloom > 0 && still(bloom * 2, 14, bloomStrength * 0.6)}
+                {!bloomOnly && still(line * 2, 6, 0.45)}
+              </>
+            ) : (
+              <>
+                {/* wide bloom bleeding inward (outer half clipped by the pill) */}
+                {bloom > 0 && stroke(bloom * 2, 14, bloomStrength, band * 0.9, bloom + 16)}
+                {/* tight glow */}
+                {!bloomOnly && stroke(line * 3.2, 6, 0.8, band * 0.95, 10)}
+                {/* crisp refraction line, tip leading */}
+                {!bloomOnly && stroke(line, CRISP_BLUR, 1, band, 0)}
+              </>
+            )}
+          </svg>
+        )}
       </span>
 
       <div className="relative">{children}</div>

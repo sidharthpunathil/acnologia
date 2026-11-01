@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { RiDeleteBinLine, RiEraserLine, RiPencilLine, RiRestartLine } from "@remixicon/react";
+import { AcnCircuitBreaker } from "@/components/foundations/icons/acn";
 import { useAuth } from "../../stores/auth";
 import { can } from "../../lib/perms";
 import type { Service, ServiceInput, Strategy } from "../../lib/types";
@@ -19,6 +20,9 @@ import { Button } from "@/components/base/buttons/button";
 import { AlertDialog, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
 import { NumberField } from "@/components/base/number-field/number-field";
 import { Select, SelectItem } from "@/components/base/select/select";
+import { RadioGroup } from "@/components/base/radio/radio";
+import { RadioCard } from "@/components/base/radio/radio-card";
+import { Label } from "@/components/base/input/label";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { applyServiceFields } from "../AddServiceModal";
 
@@ -320,6 +324,7 @@ function BreakerCard({ service, canManage }: { service: Service; canManage: bool
     <Section
       title={
         <span className="flex flex-wrap items-center gap-2">
+          <AcnCircuitBreaker className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
           Circuit breaker
           {st && (
             <Chip variant="caption" color={BREAKER_TONE[st.state]} className="rounded-full px-2 py-0.5 font-mono">
@@ -443,17 +448,28 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         title="Rotation and concurrency"
         description="How Acnologia picks the next key, how long a rate limited key rests, and how many requests one key can serve at once."
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="flex min-w-0 flex-col gap-1">
-            <Select label="Strategy" selectedKey={strategy} isDisabled={!canManage} onSelectionChange={(k) => setStrategy(k as Strategy)} className="w-full">
-              {STRATEGIES.map((st) => (
-                <SelectItem key={st} id={st}>
-                  {STRATEGY_LABEL[st]}
-                </SelectItem>
-              ))}
-            </Select>
-            <p className="text-caption-1-regular text-text-secondary">{STRATEGY_HELP[strategy]}</p>
+        {/* Cards, not a select: each strategy's rule sits beside its name, so they compare at a glance. */}
+        <RadioGroup
+          value={strategy}
+          isDisabled={!canManage}
+          onChange={(v) => setStrategy(v as Strategy)}
+          className="gap-1.5"
+        >
+          <Label>Strategy</Label>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {STRATEGIES.map((st) => (
+              <RadioCard
+                key={st}
+                value={st}
+                title={STRATEGY_LABEL[st]}
+                // RadioCard truncates its description; this inner span lets the rule wrap instead.
+                description={<span className="whitespace-normal text-caption-1-regular">{STRATEGY_HELP[st]}</span>}
+                className="items-start"
+              />
+            ))}
           </div>
+        </RadioGroup>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <NumberField
             label="Cooldown (seconds)"
             hint="Doubles with each failure in a row, up to 1 hour."

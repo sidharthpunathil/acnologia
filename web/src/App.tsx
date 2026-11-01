@@ -31,6 +31,8 @@ import { EgressPage } from "./pages/Egress";
 import { GroupsPage } from "./pages/Groups";
 import { UsagePage } from "./pages/Usage";
 import { AssistantPage } from "./pages/Assistant";
+import { IconGalleryPage } from "./pages/dev/IconGallery";
+import { IllustrationGallery } from "./components/foundations/illustrations/gallery";
 
 function RequireRole({ ok, children }: { ok: boolean; children: ReactNode }) {
   return ok ? <>{children}</> : <Navigate to="/" replace />;
@@ -125,6 +127,8 @@ export function App() {
             }
           />
           <Route path="account" element={<AccountPage />} />
+          <Route path="dev/icons" element={<IconGalleryPage />} />
+          <Route path="dev/illustrations" element={<IllustrationGallery />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

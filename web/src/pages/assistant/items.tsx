@@ -13,9 +13,11 @@ import {
   RiCloseLine,
   RiFileCopyLine,
   RiForbidLine,
+  RiInformationLine,
   RiKey2Line,
   RiPencilLine,
   RiRefreshLine,
+  RiShieldKeyholeLine,
   RiTimeLine,
 } from "@remixicon/react";
 import { safeAppPath } from "@/lib/url";
@@ -23,7 +25,9 @@ import type { ChatEntity, ChatItem } from "@/lib/types";
 import { toast } from "@/stores/toast";
 import { Mark as BrandMark } from "@/components/acn/brand";
 import { Callout } from "@/components/acn/callout";
+import { Chip } from "@/components/base/badges/chip";
 import { Button } from "@/components/base/buttons/button";
+import { Popover, PopoverTrigger } from "@/components/base/popover/popover";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { CodeBlock } from "@/components/CodeBlock";
 import { SecretBox, copyText } from "@/components/CopyButton";
@@ -35,7 +39,7 @@ import {
   MessageAction,
   QUIET_BUTTON,
 } from "@/components/application/agent-chat/agent-chat-message";
-import { LogRow } from "@/components/application/agent-log/agent-log";
+import { LogRow, ShimmerText } from "@/components/application/agent-log/agent-log";
 import { cx } from "@/utils/cx";
 import { linkify } from "./cards";
 
@@ -166,22 +170,149 @@ function CopyAction({ text }: { text: string }) {
   );
 }
 
-export function UserBubble({ text, keys, onEdit }: { text: string; keys?: number; onEdit?: () => void }) {
+/** At most one blank line between paragraphs, and none at the ends. */
+export function collapseBlank(text: string): string {
+  return text.replace(/\r\n?/g, "\n").replace(/\n[ \t]*(?:\n[ \t]*)+/g, "\n\n").trim();
+}
+
+const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
+
+/** "https://www.app.tavily.com/home/" becomes "app.tavily.com/home", cut to a readable length. */
+function shortUrl(href: string): string {
+  let shown = href;
+  try {
+    const u = new URL(href);
+    shown = `${u.hostname.replace(/^www\./, "")}${u.pathname === "/" ? "" : u.pathname.replace(/\/$/, "")}${u.search}`;
+  } catch {
+    // Not a URL after all: show it as typed.
+  }
+  return shown.length > 40 ? `${shown.slice(0, 39)}\u2026` : shown;
+}
+
+/** Plain text with web addresses as links that open in a new tab. */
+function autolink(text: string): ReactNode {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    // Trailing punctuation ends the sentence, not the address.
+    const href = m[0].replace(/[.,;:!?)\]]+$/, "");
+    const at = m.index ?? 0;
+    if (at > last) out.push(text.slice(last, at));
+    out.push(
+      <a
+        key={at}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={href}
+        className="rounded-sm text-text-primary underline decoration-border-button-hover underline-offset-4 outline-none hover:decoration-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+      >
+        {shortUrl(href)}
+      </a>,
+    );
+    last = at + href.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/** Keys shown before "+N more". */
+const KEYS_SHOWN = 8;
+
+/** "...Qus6" or "…Qus6" from the server, shown as "···Qus6". */
+function hintTail(hint: string): string {
+  const tail = hint.replace(/^[.\u2026\u00b7\s]+/, "");
+  return tail ? `\u00b7\u00b7\u00b7${tail}` : "";
+}
+
+/**
+ * The keys a message carried, under its prose: a shield, how many are in the
+ * vault, an explainer, and one chip per key with its label and last
+ * characters. The secrets themselves never reach the browser.
+ */
+function SecuredKeys({ keys, divided }: { keys: { label: string; hint: string }[]; divided: boolean }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? keys : keys.slice(0, KEYS_SHOWN);
+  const more = keys.length - KEYS_SHOWN;
+  return (
+    <div className={cx("whitespace-normal", divided && "mt-2.5 border-t border-separator-border pt-2.5")}>
+      <div className="flex items-center gap-1.5 text-caption-1-medium text-text-secondary">
+        <RiShieldKeyholeLine className="size-3.5 shrink-0 text-status-purple-text" aria-hidden />
+        <span>
+          {keys.length} {keys.length === 1 ? "key" : "keys"} secured
+        </span>
+        <PopoverTrigger>
+          <button
+            type="button"
+            aria-label="How keys are kept"
+            className="-m-1 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-foreground-icon-tertiary outline-none transition-colors duration-150 pointer-coarse:size-8 hover:text-foreground-icon-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+          >
+            <RiInformationLine className="size-3.5" aria-hidden />
+          </button>
+          <Popover placement="bottom" showArrow aria-label="How keys are kept" className="w-64" dialogClassName="px-2.5 py-2">
+            <p className="text-caption-1-regular text-text-secondary">
+              Encrypted in the vault. Claude only sees placeholders like{" "}
+              <span className="font-mono text-text-primary">[key k3 ...c21e]</span>, never the key.
+            </p>
+          </Popover>
+        </PopoverTrigger>
+      </div>
+      <ul className="mt-1.5 flex flex-wrap gap-1" aria-label="Secured keys">
+        {shown.map((k, i) => (
+          <li key={i} className="min-w-0 max-w-full">
+            <Chip variant="caption" color="soft" className="max-w-full gap-1.5 justify-start">
+              <RiKey2Line className="size-3 shrink-0 text-status-purple-text" aria-hidden />
+              <span className="min-w-0 truncate text-text-primary">{k.label.trim() || "Key"}</span>
+              {hintTail(k.hint) && <span className="shrink-0 font-mono text-text-tertiary">{hintTail(k.hint)}</span>}
+            </Chip>
+          </li>
+        ))}
+        {more > 0 && (
+          <li>
+            <button
+              type="button"
+              onClick={() => setAll(!all)}
+              aria-expanded={all}
+              className="inline-flex cursor-pointer items-center rounded-md px-1.5 py-1 text-caption-1-medium text-text-secondary outline-none transition-colors duration-150 hover:bg-background-secondary-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+            >
+              {all ? "Show less" : `+${more} more`}
+            </button>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+export function UserBubble({
+  text,
+  keys,
+  keyList,
+  onEdit,
+}: {
+  text: string;
+  keys?: number;
+  keyList?: { label: string; hint: string }[];
+  onEdit?: () => void;
+}) {
+  const prose = collapseBlank(text);
   // A message with many keys stays compact: the server keeps only their hints anyway.
-  const long = text.length > 600;
+  const long = prose.length > 600;
   const [open, setOpen] = useState(false);
+  const secured = !!keyList?.length;
   return (
     <AgentMessage
       role="user"
       actions={onEdit ? <MessageAction icon={RiPencilLine} label="Edit" aria-label="Edit your last message" onClick={onEdit} /> : null}
     >
-      {keys ? (
+      {/* Older messages carry their key hints inline; newer ones list them below. */}
+      {keys && !secured ? (
         <span className="mb-1 flex items-center gap-1.5 font-mono text-caption-1-regular text-text-secondary">
           <RiKey2Line className="size-3 shrink-0" aria-hidden />
           {keys} {keys === 1 ? "key" : "keys"}, sent to Claude as placeholders
         </span>
       ) : null}
-      {long && !open ? `${text.slice(0, 600)}…` : text}
+      {prose && autolink(long && !open ? `${prose.slice(0, 600)}\u2026` : prose)}
       {long && (
         <button
           type="button"
@@ -192,6 +323,7 @@ export function UserBubble({ text, keys, onEdit }: { text: string; keys?: number
           {open ? "Show less" : "Show all"}
         </button>
       )}
+      {secured && <SecuredKeys keys={keyList} divided={!!prose} />}
     </AgentMessage>
   );
 }
@@ -318,15 +450,19 @@ function plural(n: number, one: string, many: string) {
  * A run of tool calls folded into one quiet line, "Worked for 6s, 2 actions",
  * that opens to the steps on Agent Log's tree guide. It starts open when a
  * step holds a one time token. The panel uses Accordion's height and blur
- * recipe on a React Aria Disclosure.
+ * recipe on a React Aria Disclosure. While the run is still going (`live`),
+ * the line reads "Working" with Agent Log's shimmer instead of a past tense
+ * total.
  */
 export function Steps({
   items,
   seconds,
   fresh,
+  live = false,
 }: {
   items: ChatItem[];
   seconds: number | null;
+  live?: boolean;
   fresh: (it: ChatItem) => number | undefined;
 }) {
   const hasSecret = items.some((it) => it.secret);
@@ -340,7 +476,7 @@ export function Steps({
         className="-ms-1 inline-flex min-h-7 cursor-pointer pointer-coarse:min-h-10 items-center gap-1 rounded-md px-1 text-body-2-regular text-text-secondary outline-none transition-colors duration-150 hover:text-text-primary data-[focus-visible]:ring-2 data-[focus-visible]:ring-border-focus-ring"
       >
         <span>
-          {seconds !== null && seconds >= 1 ? `Worked for ${seconds}s` : "Worked"}
+          {live ? <ShimmerText>Working</ShimmerText> : seconds !== null && seconds >= 1 ? `Worked for ${seconds}s` : "Worked"}
           <span className="text-text-tertiary">, {plural(items.length, "action", "actions")}</span>
           {failed > 0 && <span className="text-text-error-primary">, {failed} failed</span>}
         </span>

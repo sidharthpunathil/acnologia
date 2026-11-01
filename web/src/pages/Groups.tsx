@@ -6,9 +6,9 @@ import {
   RiArrowRightSLine,
   RiArrowUpLine,
   RiCloseLine,
-  RiGitBranchLine,
   RiPencilLine,
 } from "@remixicon/react";
+import { AcnServiceGroup } from "@/components/foundations/icons/acn";
 import { useTitle } from "../hooks/useTitle";
 import { useServices } from "../stores/services";
 import { useAuth } from "../stores/auth";
@@ -30,6 +30,7 @@ import { hintTextClassName } from "@/components/base/input/hint-text";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, EmptyState, PageHeader, PageSkeleton } from "@/components/acn";
 import { cx } from "@/utils/cx";
+import { FallbackArt } from "@/components/foundations/illustrations";
 
 const MIN_MEMBERS = 2;
 const MAX_MEMBERS = 20;
@@ -427,7 +428,8 @@ export function GroupsPage() {
         <EmptyState title="Service groups are not available" body={error} />
       ) : groups.length === 0 ? (
         <EmptyState
-          icon={RiGitBranchLine}
+          art={FallbackArt}
+          icon={AcnServiceGroup}
           title="No service groups yet"
           body={manage ? "Group services that take the same requests, so a call falls back to the next one when a provider runs dry." : "Ask an admin to create one."}
           action={

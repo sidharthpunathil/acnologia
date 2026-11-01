@@ -10,10 +10,8 @@ import {
   RiCloseCircleLine,
   RiExternalLinkLine,
   RiHistoryLine,
-  RiKey2Line,
-  RiPlugLine,
-  RiSparkling2Line,
 } from "@remixicon/react";
+import { AcnAiBuilder, AcnApiKey, AcnProviderSpec } from "@/components/foundations/icons/acn";
 import { ApiError, api, errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { dateTime, plural, relTime, slugify } from "../../lib/format";
@@ -26,9 +24,11 @@ import { toast } from "../../stores/toast";
 import { ProviderLogo } from "../../components/EntityLogo";
 import { LogoEditor } from "../../components/LogoEditor";
 import { AiFillButton, AiFillPanel, useAiFill } from "../../components/AiFill";
+import { Breadcrumb, BreadcrumbItem } from "@/components/base/breadcrumb/breadcrumb";
 import { Button } from "@/components/base/buttons/button";
 import { LinkButton } from "@/components/base/buttons/link-button";
 import { Chip } from "@/components/base/badges/chip";
+import { ColorWell } from "@/components/base/color-picker/color-picker";
 import { Input } from "@/components/base/input/input";
 import { Select, SelectItem } from "@/components/base/select/select";
 import { Textarea } from "@/components/base/textarea/textarea";
@@ -45,6 +45,7 @@ import { cx } from "@/utils/cx";
 import { ConnectionTab, ExamplesTab, HealthTab, JsonTab, OutcomeBadge, RulesTab, TestsTab } from "./SpecTabs";
 import { RouteButton, SourceBadge } from "./ProvidersPage";
 import { AddServiceModal } from "../AddServiceModal";
+import { LostPathArt } from "@/components/foundations/illustrations";
 
 type TabId = "overview" | "connection" | "rules" | "health" | "examples" | "tests" | "json" | "versions" | "live";
 
@@ -312,7 +313,7 @@ function OverviewTab({
           />
           <Input
             label="Color"
-            hint="A six digit hex value. Fills the lettermark when there is no logo."
+            hint="Pick it from the swatch, or type a six digit hex value. Fills the lettermark when there is no logo."
             className={cx("rounded-xl", ai.flash("color"))}
             value={draft.color}
             isDisabled={readOnly}
@@ -321,12 +322,23 @@ function OverviewTab({
             inputClassName="font-mono"
             inputDir="ltr"
             leadingAddon={
-              // Preview of the colour; the value itself is data, so it rides an inline style.
-              <span
-                aria-hidden
-                className="ms-1 size-5 shrink-0 rounded-md border border-border-button-default"
-                style={{ backgroundColor: HEX.test(draft.color) ? draft.color : "transparent" }}
-              />
+              readOnly ? (
+                // Preview of the colour; the value itself is data, so it rides an inline style.
+                <span
+                  aria-hidden
+                  className="ms-1 size-5 shrink-0 rounded-full border border-border-button-default"
+                  style={{ backgroundColor: HEX.test(draft.color) ? draft.color : "transparent" }}
+                />
+              ) : (
+                // Pick by eye, or type the hex in the field. Until the field holds a valid hex the
+                // well starts from a neutral grey and stays faded.
+                <ColorWell
+                  aria-label="Pick a color"
+                  value={HEX.test(draft.color) ? draft.color : "hsl(0, 0%, 50%)"}
+                  onChange={(c) => set("color", c.toString("hex").toLowerCase())}
+                  wellClassName={cx("ms-1 size-6", !HEX.test(draft.color) && "opacity-40")}
+                />
+              )
             }
           />
         </div>
@@ -540,7 +552,7 @@ function LiveCheckTab({ slug, dirty, readOnly }: { slug: string; dirty: boolean;
           className="sm:mt-6"
           disabled={!secret.trim() || readOnly || busy}
           aria-busy={busy || undefined}
-          leadingIcon={busy ? ButtonSpinner : RiKey2Line}
+          leadingIcon={busy ? ButtonSpinner : AcnApiKey}
         >
           Run live check
         </Button>
@@ -705,8 +717,9 @@ export function ProviderEditorPage() {
   if (notFound)
     return (
       <EmptyState
+        art={LostPathArt}
         as="h1"
-        icon={RiPlugLine}
+        icon={AcnProviderSpec}
         title="Provider not found"
         body="It may have been deleted, or the link is wrong."
         action={
@@ -767,7 +780,7 @@ export function ProviderEditorPage() {
     );
 
   const actions = readOnly ? undefined : isNew ? (
-    <RouteButton to="/providers/ai" variant="secondary" leadingIcon={RiSparkling2Line}>
+    <RouteButton to="/providers/ai" variant="secondary" leadingIcon={AcnAiBuilder}>
       Build with AI instead
     </RouteButton>
   ) : (
@@ -775,7 +788,7 @@ export function ProviderEditorPage() {
       <Button variant="secondary" leadingIcon={RiAddLine} onClick={() => setAddingService(true)}>
         Add service
       </Button>
-      <RouteButton to={`/providers/ai?provider=${encodeURIComponent(draft.slug)}`} variant="primary" leadingIcon={RiSparkling2Line}>
+      <RouteButton to={`/providers/ai?provider=${encodeURIComponent(draft.slug)}`} variant="primary" leadingIcon={AcnAiBuilder}>
         Improve with AI
       </RouteButton>
     </>
@@ -783,8 +796,11 @@ export function ProviderEditorPage() {
 
   return (
     <div className={(dirty || isNew) && !readOnly ? "pb-28" : undefined}>
+      <Breadcrumb className="mb-3">
+        <BreadcrumbItem href="/providers">Providers</BreadcrumbItem>
+        <BreadcrumbItem current>{isNew ? "New provider" : draft.name || draft.slug}</BreadcrumbItem>
+      </Breadcrumb>
       <PageHeader
-        back={{ href: "/providers", label: "Providers" }}
         leading={<ProviderLogo provider={{ name: draft.name || "New", color: draft.color, logo_url: detail?.logo_url ?? null }} size="lg" />}
         title={isNew ? draft.name || "New provider" : draft.name}
         meta={meta}

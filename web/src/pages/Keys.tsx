@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
-import { RiArrowRightSLine, RiCloseLine, RiKey2Line, RiPulseLine, RiRefreshLine } from "@remixicon/react";
+import { RiArrowRightSLine, RiCloseLine, RiPulseLine, RiRefreshLine } from "@remixicon/react";
+import { AcnApiKey } from "@/components/foundations/icons/acn";
 import type { KeyRow, KeySummary, Validity } from "../lib/types";
 import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
@@ -16,6 +17,7 @@ import { EntityLogo, ServiceLogo } from "../components/EntityLogo";
 import { AccountLine, QuotaMeter, TimeAgo, providerGivesReset, quotaInfo } from "../components/KeyBits";
 import { usePoll } from "../hooks/usePoll";
 import { Button } from "@/components/base/buttons/button";
+import { Pagination } from "@/components/base/pagination/pagination";
 import { ProgressTrack } from "@/components/base/progress/progress";
 import { SearchField } from "@/components/base/search-field/search-field";
 import { Select, SelectItem } from "@/components/base/select/select";
@@ -28,6 +30,7 @@ import { KeyDrawer } from "./service/KeyDrawer";
 import { withLiveStatus } from "./service/keyUtil";
 import { Callout, EmptyState, PageHeader, StatTile, type StatTone } from "@/components/acn";
 import { ActionIcon, CARD, Tip } from "./service/parts";
+import { KeyRingArt, SearchArt } from "@/components/foundations/illustrations";
 
 type Sort = "last_used" | "quota" | "validity" | "label";
 type Only = "" | "low_quota" | "unused_7d";
@@ -38,6 +41,9 @@ const SORTS: { id: Sort; label: string }[] = [
   { id: "validity", label: "Problems first" },
   { id: "label", label: "Name" },
 ];
+
+/** Rows per page. Every row re-renders each second for its live times, so long pools page. */
+const PAGE_SIZE = 50;
 
 const WEEK = 7 * 24 * 3600 * 1000;
 const t = (iso: string | null) => (iso ? Date.parse(iso) || 0 : 0);
@@ -77,6 +83,8 @@ export function KeysPage() {
   const [checking, setChecking] = useState<number | null>(null);
   const [lastCheck, setLastCheck] = useState<{ message: string; clean: boolean } | null>(null);
   const [openKey, setOpenKey] = useState<KeyRow | null>(null);
+  const [page, setPage] = useState(1);
+  const listTop = useRef<HTMLDivElement>(null);
 
   const q = params.get("q") ?? "";
   const serviceId = params.get("service") ?? "";
@@ -163,6 +171,18 @@ export function KeysPage() {
     else list.sort((a, b) => t(b.last_used_at) - t(a.last_used_at));
     return list;
   }, [scoped, validity, only, sort, now]);
+
+  // A new filter or sort starts from the first page.
+  useEffect(() => setPage(1), [q, serviceId, validity, only, sort]);
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const paged = pageCount > 1 ? shown.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE) : shown;
+  const goTo = (p: number) => {
+    setPage(p);
+    // Bring the top of the list back into view when the pager sits below the fold.
+    const el = listTop.current;
+    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start" });
+  };
 
   const filtered = !!(q || serviceId || validity || only);
   const clear = () => setParams(sort !== "last_used" ? new URLSearchParams({ sort }) : new URLSearchParams(), { replace: true });
@@ -251,8 +271,9 @@ export function KeysPage() {
         </Callout>
       ) : rows.length === 0 ? (
         <EmptyState
+          art={KeyRingArt}
           as="h2"
-          icon={RiKey2Line}
+          icon={AcnApiKey}
           title="No keys yet"
           body={manage ? "Add a service from the catalog, then paste in its keys. They all show up here with their health and quota." : "No keys have been added yet. Ask an admin to add some."}
           action={
@@ -330,8 +351,11 @@ export function KeysPage() {
             </div>
           </div>
 
-          <div className="mt-3 flex min-h-8 items-center justify-between gap-3 font-mono text-caption-1-regular text-text-secondary">
-            <span aria-live="polite">{filtered ? `${plural(shown.length, "key")} match` : `${plural(shown.length, "key")}`}</span>
+          <div ref={listTop} className="mt-3 flex min-h-8 scroll-mt-4 items-center justify-between gap-3 font-mono text-caption-1-regular text-text-secondary">
+            <span aria-live="polite">
+              {filtered ? `${plural(shown.length, "key")} match` : `${plural(shown.length, "key")}`}
+              {pageCount > 1 && ` · ${num((curPage - 1) * PAGE_SIZE + 1)}–${num((curPage - 1) * PAGE_SIZE + paged.length)} shown`}
+            </span>
             {filtered && (
               <Button variant="ghost" size="small" leadingIcon={RiCloseLine} onClick={clear}>
                 Clear filters
@@ -341,6 +365,7 @@ export function KeysPage() {
 
           {shown.length === 0 ? (
             <EmptyState
+              art={SearchArt}
               className="mt-3"
               as="h2"
               title="No keys match these filters"
@@ -377,7 +402,7 @@ export function KeysPage() {
                       <span className="sr-only">Open</span>
                     </TableColumn>
                   </TableHeader>
-                  <TableBody items={shown}>
+                  <TableBody items={paged}>
                     {(k) => (
                       <TableRow
                         id={k.id}
@@ -424,7 +449,7 @@ export function KeysPage() {
 
               {/* Phones and tablets: cards. */}
               <ul className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:hidden">
-                {shown.map((k) => (
+                {paged.map((k) => (
                   <li key={k.id}>
                     <button
                       type="button"
@@ -456,6 +481,7 @@ export function KeysPage() {
                   </li>
                 ))}
               </ul>
+              <Pagination page={curPage} totalPages={pageCount} onChange={goTo} aria-label="Key pages" className="mt-4" />
             </>
           )}
         </>

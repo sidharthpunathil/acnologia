@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
-import { RiAddLine, RiFileList3Line, RiInformationLine, RiKey2Line, RiPulseLine, RiRefreshLine } from "@remixicon/react";
+import {
+  RiAddLine,
+  RiFileList3Line,
+  RiInformationLine,
+  RiPulseLine,
+  RiRefreshLine,
+} from "@remixicon/react";
+import { AcnKeyPool } from "@/components/foundations/icons/acn";
 import { useTitle } from "../../hooks/useTitle";
 import { useServices } from "../../stores/services";
 import { useProviders } from "../../stores/providers";
@@ -20,6 +27,7 @@ import { isBusy } from "../../components/StatusPill";
 import { providerGivesReset } from "../../components/KeyBits";
 import { ServiceLogo } from "../../components/EntityLogo";
 import { EventsList } from "../../components/EventsList";
+import { Breadcrumb, BreadcrumbItem } from "@/components/base/breadcrumb/breadcrumb";
 import { Button } from "@/components/base/buttons/button";
 import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
@@ -35,6 +43,7 @@ import { ServiceSettings } from "./ServiceSettings";
 import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
+import { KeyRingArt, LostPathArt, PulseArt } from "@/components/foundations/illustrations";
 
 type Tab = "keys" | "activity" | "integrate" | "settings";
 
@@ -145,6 +154,7 @@ export function ServicePage() {
   if (notFound)
     return (
       <EmptyState
+        art={LostPathArt}
         as="h1"
         title="Service not found"
         body="It may have been deleted, or the link is wrong."
@@ -180,8 +190,11 @@ export function ServicePage() {
 
   return (
     <div>
+      <Breadcrumb className="mb-3">
+        <BreadcrumbItem href="/">Catalog</BreadcrumbItem>
+        <BreadcrumbItem current>{service.name}</BreadcrumbItem>
+      </Breadcrumb>
       <PageHeader
-        back={{ href: "/", label: "Catalog" }}
         leading={
           <>
             <ServiceLogo service={service} size="md" className="mt-0.5 sm:hidden" />
@@ -289,8 +302,9 @@ export function ServicePage() {
             rowSkeleton("Loading keys")
           ) : keys.length === 0 ? (
             <EmptyState
+              art={KeyRingArt}
               as="h2"
-              icon={RiKey2Line}
+              icon={AcnKeyPool}
               title="No keys in this pool yet"
               body={
                 perms.manage
@@ -326,6 +340,7 @@ export function ServicePage() {
             rowSkeleton("Loading activity")
           ) : events.length === 0 ? (
             <EmptyState
+              art={PulseArt}
               as="h2"
               icon={RiFileList3Line}
               title="No activity yet"

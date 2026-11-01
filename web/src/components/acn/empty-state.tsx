@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
 import { cx } from "@/utils/cx";
+import type { Illustration } from "@/components/foundations/illustrations/frame";
 import { IconSlot, type IconLike } from "./icon";
 
 export interface EmptyStateProps {
   /** A Remix icon ref (preferred) or an element. */
   icon?: IconLike;
+  /** A spot illustration ref from foundations/illustrations. Shown above the title in place of the icon. */
+  art?: Illustration;
   title: ReactNode;
   body?: ReactNode;
   action?: ReactNode;
@@ -17,8 +20,8 @@ export interface EmptyStateProps {
   className?: string;
 }
 
-/** Icon tile, title, a line of help and an action slot. */
-export function EmptyState({ icon, title, body, action, dashed = true, compact, as: Title = "div", className }: EmptyStateProps) {
+/** Illustration or icon tile, title, a line of help and an action slot. */
+export function EmptyState({ icon, art: Art, title, body, action, dashed = true, compact, as: Title = "div", className }: EmptyStateProps) {
   return (
     <div
       className={cx(
@@ -28,15 +31,20 @@ export function EmptyState({ icon, title, body, action, dashed = true, compact, 
         className,
       )}
     >
-      {icon != null && icon !== false && (
-        <div
-          className={cx(
-            "flex items-center justify-center border border-border-button-default bg-background-primary-default text-foreground-icon-secondary shadow-xs",
-            compact ? "mb-2 size-8 rounded-lg" : "mb-4 size-11 rounded-xl",
-          )}
-        >
-          <IconSlot icon={icon} className={compact ? "size-4" : "size-5"} />
-        </div>
+      {Art ? (
+        <Art className={compact ? "mb-2 h-[60px] w-[75px]" : "mb-4 h-24 w-[120px]"} />
+      ) : (
+        icon != null &&
+        icon !== false && (
+          <div
+            className={cx(
+              "flex items-center justify-center border border-border-button-default bg-background-primary-default text-foreground-icon-secondary shadow-xs",
+              compact ? "mb-2 size-8 rounded-lg" : "mb-4 size-11 rounded-xl",
+            )}
+          >
+            <IconSlot icon={icon} className={compact ? "size-4" : "size-5"} />
+          </div>
+        )
       )}
       <Title className={cx("text-text-primary", compact ? "text-body-2-semibold" : "text-headline-semibold")}>{title}</Title>
       {body && (

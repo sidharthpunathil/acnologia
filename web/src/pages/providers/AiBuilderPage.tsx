@@ -3,15 +3,14 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Focusable } from "react-aria-components";
 import {
   RiAddLine,
-  RiArrowLeftLine,
   RiArrowRightSLine,
   RiCloseLine,
   RiGitBranchLine,
   RiLink,
   RiShieldCheckLine,
-  RiSparkling2Line,
   RiTerminalBoxLine,
 } from "@remixicon/react";
+import { AcnAiBuilder } from "@/components/foundations/icons/acn";
 import { useTitle } from "../../hooks/useTitle";
 import { useAi, ACTIVE_STATUSES, CLEARABLE_STATUSES } from "../../stores/ai";
 import { useProviders } from "../../stores/providers";
@@ -23,6 +22,7 @@ import { relTime, sentence } from "../../lib/format";
 import { ProviderLogo } from "../../components/EntityLogo";
 import { KeyPasteArea, KeyPreview, useKeyInput } from "../../components/KeyPaste";
 import { FadeText, plainText } from "../../components/FadeText";
+import { Breadcrumb, BreadcrumbItem } from "@/components/base/breadcrumb/breadcrumb";
 import { Button } from "@/components/base/buttons/button";
 import { IconButton } from "@/components/base/buttons/icon-button";
 import { Input } from "@/components/base/input/input";
@@ -36,6 +36,7 @@ import { cx } from "@/utils/cx";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, ConfirmButton, EmptyState, Section } from "@/components/acn";
 import { RunStatusBadge } from "./AiRunPage";
+import { SpecSheetArt } from "@/components/foundations/illustrations";
 
 function UrlList({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
   return (
@@ -188,16 +189,15 @@ export function AiBuilderPage() {
 
   return (
     <div>
-      <Link
-        to={updateSlug ? `/providers/${encodeURIComponent(updateSlug)}` : "/providers"}
-        className="mb-5 inline-flex items-center gap-1 rounded-md text-body-2-medium text-text-secondary outline-none transition-colors duration-150 ease hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-      >
-        <RiArrowLeftLine className="size-4" aria-hidden /> <span className={updateSlug ? "font-mono" : undefined}>{updateSlug || "Providers"}</span>
-      </Link>
+      <Breadcrumb className="mb-5">
+        <BreadcrumbItem href="/providers">Providers</BreadcrumbItem>
+        {updateSlug && <BreadcrumbItem href={`/providers/${encodeURIComponent(updateSlug)}`}>{provider?.name ?? updateSlug}</BreadcrumbItem>}
+        <BreadcrumbItem current>{updateSlug ? "Improve with AI" : "AI builder"}</BreadcrumbItem>
+      </Breadcrumb>
 
       <header className="mb-8 flex items-start gap-4">
         <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border-button-default bg-background-tertiary-default text-status-purple-text">
-          <RiSparkling2Line className="size-6" aria-hidden />
+          <AcnAiBuilder className="size-6" aria-hidden />
         </div>
         <div className="min-w-0">
           <h1 className="break-words font-mono text-title-1-medium text-text-primary">
@@ -327,7 +327,7 @@ export function AiBuilderPage() {
               variant="primary"
               disabled={!enabled || busy}
               aria-busy={busy || undefined}
-              leadingIcon={busy ? ButtonSpinner : RiSparkling2Line}
+              leadingIcon={busy ? ButtonSpinner : AcnAiBuilder}
               className="hidden w-full lg:inline-flex"
             >
               {submitLabel}
@@ -342,7 +342,7 @@ export function AiBuilderPage() {
                 variant="primary"
                 disabled={!enabled || busy}
                 aria-busy={busy || undefined}
-                leadingIcon={busy ? ButtonSpinner : RiSparkling2Line}
+                leadingIcon={busy ? ButtonSpinner : AcnAiBuilder}
                 className="h-11 w-full"
               >
                 {submitLabel}
@@ -375,7 +375,7 @@ export function AiBuilderPage() {
             ))}
           </div>
         ) : runs.length === 0 ? (
-          <EmptyState compact icon={RiSparkling2Line} title="No runs yet" body="Your first build shows up here with every step it took." />
+          <EmptyState art={SpecSheetArt} compact icon={AcnAiBuilder} title="No runs yet" body="Your first build shows up here with every step it took." />
         ) : (
           <ul className="divide-y divide-separator-border overflow-hidden rounded-3xl border border-border-button-default bg-background-primary-default">
             {runs.slice(0, 20).map((r) => (

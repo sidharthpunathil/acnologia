@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RiShieldKeyholeLine } from "@remixicon/react";
+import { AcnKeyVault } from "@/components/foundations/icons/acn";
 import type { Key } from "../../lib/types";
 import { useKeys } from "../../stores/keys";
 import { errorMessage } from "../../lib/api";
@@ -28,7 +28,7 @@ export function RevealModal({ k, onClose }: { k: Key | null; onClose: () => void
 
   return (
     <Modal isOpen={!!k} onOpenChange={(o) => !o && onClose()} size="sm">
-      <ModalHeader title={`Secret for ${k?.label || "key"}`} description={<span className="font-mono">{k?.hint}</span>} icon={RiShieldKeyholeLine} />
+      <ModalHeader title={`Secret for ${k?.label || "key"}`} description={<span className="font-mono">{k?.hint}</span>} icon={AcnKeyVault} />
       <ModalBody className="space-y-3">
         <Callout tone="warning">The audit log records this reveal. Treat the secret like a password.</Callout>
         {err ? (

@@ -256,6 +256,7 @@ export interface InputProps
       | "leadingIcon"
       | "trailingIcon"
       | "leadingAddon"
+      | "trailingAddon"
       | "fieldClassName"
       | "groupRef"
       | "ref"
@@ -287,6 +288,7 @@ export function Input({
   leadingIcon,
   trailingIcon,
   leadingAddon,
+  trailingAddon,
   fieldClassName,
   ref,
   groupRef,
@@ -323,6 +325,7 @@ export function Input({
             leadingIcon={leadingIcon}
             trailingIcon={trailingIcon}
             leadingAddon={leadingAddon}
+            trailingAddon={trailingAddon}
             fieldClassName={fieldClassName}
           />
           {isInvalid && errorMessage != null ? (

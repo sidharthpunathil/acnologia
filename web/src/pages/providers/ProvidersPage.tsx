@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useTitle } from "../../hooks/useTitle";
 import { Link, useNavigate } from "react-router-dom";
-import { RiAddLine, RiPlugLine, RiSearchLine, RiSparkling2Line } from "@remixicon/react";
+import { RiAddLine, RiSearchLine } from "@remixicon/react";
+import { AcnAiBuilder, AcnProviderSpec, categoryIcon } from "@/components/foundations/icons/acn";
 import { useProviders } from "../../stores/providers";
 import { useAuth } from "../../stores/auth";
 import { can } from "../../lib/perms";
@@ -17,6 +18,7 @@ import { Callout } from "@/components/acn/callout";
 import { EmptyState } from "@/components/acn/empty-state";
 import { PageHeader } from "@/components/acn/page-header";
 import { PageSkeleton } from "@/components/acn/page-skeleton";
+import { SearchArt, SpecSheetArt } from "@/components/foundations/illustrations";
 
 /**
  * ButtonLink that routes on the client. A plain click goes through the
@@ -42,7 +44,7 @@ export function SourceBadge({ source }: { source: Provider["source"] }) {
   if (source === "ai")
     return (
       <Chip variant="caption" color="purple" title="Written by the AI builder" className="gap-1 font-mono">
-        <RiSparkling2Line className="size-3" aria-hidden />
+        <AcnAiBuilder className="size-3" aria-hidden />
         ai
       </Chip>
     );
@@ -63,6 +65,7 @@ function ProviderCard({ p }: { p: Provider }) {
   const disabled = p.status === "disabled";
   // No keys yet: keep the card quiet until it is hovered or focused.
   const idle = (p.keys_count ?? 0) === 0;
+  const CategoryMark = categoryIcon(p.category);
   return (
     <Link
       to={`/providers/${encodeURIComponent(p.slug)}`}
@@ -90,8 +93,11 @@ function ProviderCard({ p }: { p: Provider }) {
             <span className={cx("truncate text-body-medium", disabled || idle ? "text-text-secondary" : "text-text-primary")}>{p.name}</span>
             {disabled && <Chip variant="caption" color="yellow">disabled</Chip>}
           </div>
-          <div className="mt-0.5 truncate font-mono text-caption-1-regular text-text-secondary">
-            {p.slug} · {p.category || "Other"} · v{p.version}
+          <div className="mt-0.5 flex min-w-0 items-center gap-1 font-mono text-caption-1-regular text-text-secondary">
+            <CategoryMark className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">
+              {p.slug} · {p.category || "Other"} · v{p.version}
+            </span>
           </div>
         </div>
       </div>
@@ -164,7 +170,7 @@ export function ProvidersPage() {
       <RouteButton to="/providers/new" variant="secondary" leadingIcon={RiAddLine}>
         New provider
       </RouteButton>
-      <RouteButton to="/providers/ai" variant="primary" leadingIcon={RiSparkling2Line}>
+      <RouteButton to="/providers/ai" variant="primary" leadingIcon={AcnAiBuilder}>
         Build with AI
       </RouteButton>
     </>
@@ -209,20 +215,22 @@ export function ProvidersPage() {
         <TabPanel id={tab}>
         {providers.length === 0 ? (
           <EmptyState
+            art={SpecSheetArt}
             className="mt-8"
-            icon={RiPlugLine}
+            icon={AcnProviderSpec}
             title="No providers yet"
             body="A provider tells Acnologia how an API signals rate limits and quota. Build one with AI from a name or docs URL, or write the rules yourself."
             action={actions}
           />
         ) : shown.length === 0 ? (
           <EmptyState
+            art={SearchArt}
             className="mt-8"
             title={q ? `Nothing matches "${q}"` : "None in this group yet"}
             body={manage ? "Try another search, or build the provider with AI." : "Try another search."}
             action={
               manage ? (
-                <RouteButton to="/providers/ai" variant="primary" leadingIcon={RiSparkling2Line}>
+                <RouteButton to="/providers/ai" variant="primary" leadingIcon={AcnAiBuilder}>
                   Build with AI
                 </RouteButton>
               ) : undefined

@@ -8,12 +8,14 @@ import { errorMessage } from "@/lib/api";
 import { dateTime, plural, relTime } from "@/lib/format";
 import { Button } from "@/components/base/buttons/button";
 import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Pagination } from "@/components/base/pagination/pagination";
 import { SearchField } from "@/components/base/search-field/search-field";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
 import { EmptyState } from "@/components/acn/empty-state";
 import { PageHeader } from "@/components/acn/page-header";
 import { PageSkeleton } from "@/components/acn/page-skeleton";
+import { PulseArt, SearchArt } from "@/components/foundations/illustrations";
 
 function actionColor(action: string): ChipColor {
   if (action.includes("reveal")) return "yellow";
@@ -22,12 +24,16 @@ function actionColor(action: string): ChipColor {
   return "neutral";
 }
 
+/** Entries per page: about one screen of the table on a laptop. */
+const PAGE_SIZE = 25;
+
 export function AuditPage() {
   useTitle("Audit");
   const { audit, auditLoaded, fetchAudit } = useUsers();
   const now = useNow(30000);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(1);
 
   const load = async () => {
     setBusy(true);
@@ -51,6 +57,11 @@ export function AuditPage() {
     return audit.filter((a) => [a.user_email, a.action, a.target, a.detail].some((f) => f?.toLowerCase().includes(n)));
   }, [audit, q]);
 
+  // A refresh or a filter can leave fewer pages than the one we were on.
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount);
+  const pageRows = useMemo(() => shown.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE), [shown, current]);
+
   if (!auditLoaded) return <PageSkeleton variant="list" />;
 
   return (
@@ -66,7 +77,10 @@ export function AuditPage() {
       />
       <SearchField
         value={q}
-        onChange={setQ}
+        onChange={(v) => {
+          setQ(v);
+          setPage(1);
+        }}
         placeholder="Filter by person, action or target"
         aria-label="Filter the audit log"
         enterKeyHint="search"
@@ -77,50 +91,62 @@ export function AuditPage() {
       </p>
       {shown.length === 0 ? (
         <EmptyState
+          art={audit.length ? SearchArt : PulseArt}
           icon={RiShieldCheckLine}
           title={audit.length ? "No entries match" : "Nothing audited yet"}
           body={audit.length ? "Try another filter." : "Changes to services, keys, apps and people, plus every secret reveal, are recorded here."}
         />
       ) : (
-        <div className="overflow-hidden rounded-3xl border border-border-button-default bg-background-primary-default">
-          <Table aria-label="Audit log" size="sm" className="table-fixed [&_th]:border-t-0">
-            <TableHeader>
-              <TableColumn className="w-28 sm:w-44">Action</TableColumn>
-              <TableColumn isRowHeader>What</TableColumn>
-              <TableColumn className="hidden w-28 text-end sm:table-cell">When</TableColumn>
-            </TableHeader>
-            <TableBody>
-              {shown.map((a) => (
-                <TableRow key={a.id} id={a.id}>
-                  <TableCell className="align-top">
-                    <div className="flex flex-col items-start gap-1">
-                      <Chip variant="caption" color={actionColor(a.action)} className="max-w-full truncate font-mono">
-                        {a.action}
-                      </Chip>
-                      {/* On phones the time sits under the action, so each entry is one line shorter. */}
-                      <span className="font-mono text-caption-2-regular text-text-tertiary sm:hidden" title={dateTime(a.ts)}>
-                        {relTime(a.ts, now)}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <div className="min-w-0 text-body-2-regular text-text-primary">
-                      <span className="text-body-2-medium wrap-anywhere">{a.user_email || "system"}</span>
-                      {a.target && <span className="font-mono text-caption-1-regular wrap-anywhere text-text-secondary"> · {a.target}</span>}
-                    </div>
-                    {a.detail && (
-                      <div className="line-clamp-2 text-caption-1-regular wrap-anywhere text-text-secondary" title={a.detail}>
-                        {a.detail}
+        <div className="flex flex-col gap-4">
+          <div className="overflow-hidden rounded-3xl border border-border-button-default bg-background-primary-default">
+            <Table aria-label="Audit log" size="sm" className="table-fixed [&_th]:border-t-0">
+              <TableHeader>
+                <TableColumn className="w-28 sm:w-44">Action</TableColumn>
+                <TableColumn isRowHeader>What</TableColumn>
+                <TableColumn className="hidden w-28 text-end sm:table-cell">When</TableColumn>
+              </TableHeader>
+              <TableBody>
+                {pageRows.map((a) => (
+                  <TableRow key={a.id} id={a.id}>
+                    <TableCell className="align-top">
+                      <div className="flex flex-col items-start gap-1">
+                        <Chip variant="caption" color={actionColor(a.action)} className="max-w-full truncate font-mono">
+                          {a.action}
+                        </Chip>
+                        {/* On phones the time sits under the action, so each entry is one line shorter. */}
+                        <span className="font-mono text-caption-2-regular text-text-tertiary sm:hidden" title={dateTime(a.ts)}>
+                          {relTime(a.ts, now)}
+                        </span>
                       </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden whitespace-nowrap text-end align-top sm:table-cell">
-                    <span className="font-mono text-caption-1-regular text-text-tertiary" title={dateTime(a.ts)}>{relTime(a.ts, now)}</span>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <div className="min-w-0 text-body-2-regular text-text-primary">
+                        <span className="text-body-2-medium wrap-anywhere">{a.user_email || "system"}</span>
+                        {a.target && <span className="font-mono text-caption-1-regular wrap-anywhere text-text-secondary"> · {a.target}</span>}
+                      </div>
+                      {a.detail && (
+                        <div className="line-clamp-2 text-caption-1-regular wrap-anywhere text-text-secondary" title={a.detail}>
+                          {a.detail}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-end align-top sm:table-cell">
+                      <span className="font-mono text-caption-1-regular text-text-tertiary" title={dateTime(a.ts)}>{relTime(a.ts, now)}</span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <Pagination
+            page={current}
+            totalPages={pageCount}
+            onChange={(p) => {
+              setPage(p);
+              window.scrollTo({ top: 0 });
+            }}
+            aria-label="Audit log pages"
+          />
         </div>
       )}
     </div>

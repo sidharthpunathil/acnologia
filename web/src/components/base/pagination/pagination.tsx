@@ -1,7 +1,5 @@
 "use client";
 
-import { useTemplateCopy } from "@/components/foundations/template-copy/template-copy";
-
 import { useEffect, useRef, useState } from "react";
 import { RiArrowLeftLine, RiArrowRightLine } from "@remixicon/react";
 import { Button } from "@/components/base/buttons/button";
@@ -75,10 +73,12 @@ const cell = "flex size-8 shrink-0 items-center justify-center rounded-lg text-b
  *  somewhere around 380–420px depending on totalPages' digit count. */
 const COMPACT_WIDTH = 420;
 
-function useIsCompact() {
+function useIsCompact(mounted: boolean) {
   const ref = useRef<HTMLElement>(null);
   const [isCompact, setIsCompact] = useState(false);
 
+  // Re-run once the nav mounts: it renders nothing for a single page, so a
+  // list that grows past one page would otherwise never be observed.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -87,7 +87,7 @@ function useIsCompact() {
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [mounted]);
 
   return [ref, isCompact] as const;
 }
@@ -102,12 +102,11 @@ export function Pagination({
   nextLabel = "Next",
   "aria-label": ariaLabel = "Pagination",
 }: PaginationProps) {
-  const localize = useTemplateCopy();
-  const [navRef, isCompact] = useIsCompact();
+  const [navRef, isCompact] = useIsCompact(totalPages > 1);
   if (totalPages <= 1) return null;
   const pages = paginationRange(page, totalPages, isCompact ? 0 : siblingCount);
 
-  return localize((
+  return (
     <nav
       ref={navRef}
       aria-label={ariaLabel}
@@ -170,5 +169,5 @@ export function Pagination({
         {isCompact ? undefined : nextLabel}
       </Button>
     </nav>
-  ));
+  );
 }

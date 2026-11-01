@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   RiArrowRightSLine,
   RiDeleteBinLine,
@@ -20,6 +20,7 @@ import { AccountLine, OnChange, QuotaMeter, TimeAgo, ValidityLine, quotaInfo } f
 import { Chip } from "@/components/base/badges/chip";
 import { Dropdown, DropdownDivider, DropdownItem, DropdownPopover, DropdownTrigger } from "@/components/base/dropdown/dropdown";
 import { AlertDialog } from "@/components/base/modal/modal";
+import { Pagination } from "@/components/base/pagination/pagination";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
 import { cx } from "@/utils/cx";
@@ -259,6 +260,9 @@ export function KeyHealth({ k, now, serviceMax, clamp = true }: { k: Key; now: n
   );
 }
 
+/** Rows per page. Every row re-renders each second for its live times, so long pools page. */
+const PAGE_SIZE = 50;
+
 export function KeysTable({
   keys,
   apps,
@@ -283,7 +287,18 @@ export function KeysTable({
   onEdit: (k: Key) => void;
   onReveal: (k: Key) => void;
 }) {
-  const rows = keys.map((k) => withLiveStatus(k, now));
+  const [page, setPage] = useState(1);
+  const top = useRef<HTMLDivElement>(null);
+  const pageCount = Math.max(1, Math.ceil(keys.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const pageKeys = pageCount > 1 ? keys.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE) : keys;
+  const rows = pageKeys.map((k) => withLiveStatus(k, now));
+  const goTo = (p: number) => {
+    setPage(p);
+    // Bring the top of the list back into view when the pager sits below the fold.
+    const el = top.current;
+    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start" });
+  };
   const hasActions = perms.manage || perms.reveal;
   const open = (k: Key) => {
     // Let people select text in a row without opening the drawer.
@@ -291,7 +306,7 @@ export function KeysTable({
     onOpen(k);
   };
   return (
-    <>
+    <div ref={top} className="scroll-mt-4">
       {/* Large screens: a table. Enter or a click on a row opens the key. */}
       <div className={cx(CARD, "hidden overflow-hidden lg:block")}>
         <Table
@@ -397,6 +412,7 @@ export function KeysTable({
           </li>
         ))}
       </ul>
-    </>
+      <Pagination page={curPage} totalPages={pageCount} onChange={goTo} aria-label="Key pages" className="mt-4" />
+    </div>
   );
 }
