@@ -181,6 +181,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/ai/runs", s.aiCreateRun)
 			r.Post("/ai/runs/{id}/cancel", s.aiCancelRun)
 			r.Post("/ai/runs/{id}/publish", s.aiPublishRun)
+			r.Delete("/ai/runs", s.aiClearRuns)
+			r.Delete("/ai/runs/{id}", s.aiDeleteRun)
 			r.Post("/webhooks", s.createWebhook)
 			r.Patch("/webhooks/{id}", s.updateWebhook)
 			r.Delete("/webhooks/{id}", s.deleteWebhook)

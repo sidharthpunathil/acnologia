@@ -13,7 +13,7 @@ import {
   RiTerminalBoxLine,
 } from "@remixicon/react";
 import { useTitle } from "../../hooks/useTitle";
-import { useAi, ACTIVE_STATUSES } from "../../stores/ai";
+import { useAi, ACTIVE_STATUSES, CLEARABLE_STATUSES } from "../../stores/ai";
 import { useProviders } from "../../stores/providers";
 import { useAuth } from "../../stores/auth";
 import { toast } from "../../stores/toast";
@@ -34,7 +34,7 @@ import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
 import { cx } from "@/utils/cx";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
-import { Callout, EmptyState, Section } from "@/components/acn";
+import { Callout, ConfirmButton, EmptyState, Section } from "@/components/acn";
 import { RunStatusBadge } from "./AiRunPage";
 
 function UrlList({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
@@ -99,7 +99,7 @@ export function AiBuilderPage() {
   const navigate = useNavigate();
   const role = useAuth((s) => s.user?.role);
   const manage = can.manage(role);
-  const { status, statusError, fetchStatus, runs, runsLoaded, fetchRuns, start } = useAi();
+  const { status, statusError, fetchStatus, runs, runsLoaded, fetchRuns, start, remove, clearFinished } = useAi();
   const provider = useProviders((s) => (updateSlug ? s.providers.find((p) => p.slug === updateSlug) : undefined));
   const ensureProviders = useProviders((s) => s.ensure);
 
@@ -122,6 +122,24 @@ export function AiBuilderPage() {
 
   // Titles and descriptions arrive a moment after a run starts, so refresh while any run is still going.
   const anyActive = runs.some((r) => ACTIVE_STATUSES.has(r.status));
+  const clearable = runs.filter((r) => CLEARABLE_STATUSES.has(r.status)).length;
+
+  const deleteRun = async (id: number) => {
+    try {
+      await remove(id);
+      toast.success(`Deleted run #${id}`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+  const clearRuns = async () => {
+    try {
+      const n = await clearFinished();
+      toast.success(n === 1 ? "Cleared 1 run" : `Cleared ${n} runs`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
   useEffect(() => {
     if (!anyActive) return;
     const t = window.setInterval(() => fetchRuns().catch(() => undefined), 4000);
@@ -340,6 +358,15 @@ export function AiBuilderPage() {
             Recent runs
           </h2>
           {runsLoaded && <Badge className="font-mono tabular-nums">{runs.length}</Badge>}
+          {manage && clearable > 0 && (
+            <ConfirmButton
+              className="ml-auto"
+              label="Clear finished"
+              confirmLabel={clearable === 1 ? "Clear 1 run" : `Clear ${clearable} runs`}
+              description="Deletes failed, cancelled and published runs with their steps. Runs waiting for review stay. Published providers and Usage spend are not affected."
+              onConfirm={clearRuns}
+            />
+          )}
         </div>
         {!runsLoaded ? (
           <div className="flex flex-col gap-2">
@@ -352,7 +379,7 @@ export function AiBuilderPage() {
         ) : (
           <ul className="divide-y divide-separator-border overflow-hidden rounded-3xl border border-border-button-default bg-background-primary-default">
             {runs.slice(0, 20).map((r) => (
-              <li key={r.id}>
+              <li key={r.id} className="group/row relative">
                 <Link
                   to={`/providers/ai/${r.id}`}
                   className={cx(
@@ -377,11 +404,30 @@ export function AiBuilderPage() {
                       {r.usage?.cost_usd ? ` · $${r.usage.cost_usd.toFixed(2)}` : ""}
                     </div>
                   </div>
+                  {manage && !ACTIVE_STATUSES.has(r.status) && (
+                    // Reserves room for the delete button, which sits over the row outside the link.
+                    <span className="size-8 shrink-0" aria-hidden />
+                  )}
                   <RiArrowRightSLine
                     className="size-4 shrink-0 text-foreground-icon-tertiary transition-transform duration-150 ease-out group-hover:translate-x-0.5 motion-reduce:transition-none"
                     aria-hidden
                   />
                 </Link>
+                {manage && !ACTIVE_STATUSES.has(r.status) && (
+                  <div className="absolute right-11 top-1/2 -translate-y-1/2">
+                    <ConfirmButton
+                      iconOnly
+                      label={`Delete run #${r.id}`}
+                      confirmLabel="Delete run"
+                      description={
+                        r.status === "needs_review"
+                          ? "Deletes this run and its unpublished draft."
+                          : "Deletes this run and its steps. Providers it published stay."
+                      }
+                      onConfirm={() => deleteRun(r.id)}
+                    />
+                  </div>
+                )}
               </li>
             ))}
           </ul>

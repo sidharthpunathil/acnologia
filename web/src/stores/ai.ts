@@ -22,6 +22,10 @@ interface AiStore {
   /** Fetches the run and only the steps after the last one seen. */
   poll: (id: number) => Promise<RunState>;
   cancel: (id: number) => Promise<void>;
+  /** Deletes one finished run. */
+  remove: (id: number) => Promise<void>;
+  /** Deletes every failed, cancelled and published run; returns how many. */
+  clearFinished: () => Promise<number>;
   publish: (id: number) => Promise<void>;
 }
 
@@ -32,6 +36,8 @@ let pollTicket = 0;
 const appliedTicket: Record<number, number> = {};
 
 export const ACTIVE_STATUSES = new Set(["queued", "running", "testing"]);
+/** Runs "Clear finished" removes. Runs waiting for review keep their draft. */
+export const CLEARABLE_STATUSES = new Set(["failed", "cancelled", "published"]);
 
 export const useAi = create<AiStore>((set, get) => {
   const putRun = (r: AgentRun) => {
@@ -67,6 +73,18 @@ export const useAi = create<AiStore>((set, get) => {
     fetchRuns: async () => {
       const res = await api.listRuns();
       set({ runs: res.runs ?? [], runsLoaded: true });
+    },
+
+    remove: async (id) => {
+      await api.deleteRun(id);
+      const { [id]: _gone, ...rest } = get().byId;
+      set({ runs: get().runs.filter((r) => r.id !== id), byId: rest });
+    },
+
+    clearFinished: async () => {
+      const res = await api.clearRuns();
+      await get().fetchRuns();
+      return res.deleted;
     },
 
     start: async (input) => {

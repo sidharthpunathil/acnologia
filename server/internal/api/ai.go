@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -115,6 +116,40 @@ func (s *Server) aiCancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, _ := s.Store.GetRun(r.Context(), id)
 	writeJSON(w, 200, run)
+}
+
+func (s *Server) aiDeleteRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	run, err := s.Store.GetRun(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if err := s.Store.DeleteRun(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrRunBusy) {
+			writeErr(w, 409, "run_busy", err.Error())
+			return
+		}
+		writeStoreErr(w, err)
+		return
+	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "ai.run.delete", run.Title, "")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) aiClearRuns(w http.ResponseWriter, r *http.Request) {
+	n, err := s.Store.ClearRuns(r.Context())
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	if n > 0 {
+		s.Store.AddAudit(r.Context(), userFrom(r), "ai.run.clear", fmt.Sprintf("%d runs", n), "")
+	}
+	writeJSON(w, 200, map[string]int64{"deleted": n})
 }
 
 func (s *Server) aiPublishRun(w http.ResponseWriter, r *http.Request) {

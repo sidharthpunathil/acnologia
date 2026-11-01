@@ -281,3 +281,35 @@ func (s *Store) RenameRun(ctx context.Context, id int64, title, description, ifT
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
+
+// busyRunStatuses are the statuses a run can be deleted out from under.
+const busyRunStatuses = `('queued','running','testing','publishing')`
+
+// ErrRunBusy means the run is still working and cannot be deleted yet.
+var ErrRunBusy = errors.New("run is still in progress; cancel it first")
+
+// DeleteRun removes one finished run and its steps. Spend stays in ai_usage.
+func (s *Store) DeleteRun(ctx context.Context, id int64) error {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM agent_runs WHERE id=? AND status NOT IN `+busyRunStatuses, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		return nil
+	}
+	if _, err := s.GetRun(ctx, id); err != nil {
+		return err
+	}
+	return ErrRunBusy
+}
+
+// ClearRuns removes every run that has finished for good: failed, cancelled
+// and published. Runs waiting for review keep their draft. It returns how
+// many runs it removed.
+func (s *Store) ClearRuns(ctx context.Context) (int64, error) {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM agent_runs WHERE status IN ('failed','cancelled','published')`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

@@ -181,6 +181,8 @@ export const api = {
   createRun: (body: AgentRunInput) => request<AgentRun>("POST", "/api/admin/ai/runs", body),
   getRun: (id: number, after = 0) =>
     request<{ run: AgentRun; steps: AgentStep[] }>("GET", `/api/admin/ai/runs/${id}${qs({ after })}`),
+  deleteRun: (id: number) => request<unknown>("DELETE", `/api/admin/ai/runs/${id}`),
+  clearRuns: () => request<{ deleted: number }>("DELETE", "/api/admin/ai/runs"),
   cancelRun: (id: number) => request<unknown>("POST", `/api/admin/ai/runs/${id}/cancel`),
   aiAssist: (form: AssistForm, instruction: string, current: object) =>
     request<AssistResult>("POST", "/api/admin/ai/assist", { form, instruction, current }),
