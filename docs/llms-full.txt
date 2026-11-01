@@ -95,6 +95,8 @@ Content-Type: application/json
 }
 ```
 
+`auth.type` is `query` (parameter `auth.name`), `header` (header `auth.name`) or `bearer` (header `auth.name`, default `Authorization`, value `Bearer <secret>`). When `auth.prefix` is present, send `prefix + secret` instead (for example `Token <secret>`).
+
 503 when nothing is available:
 
 ```json
@@ -128,6 +130,8 @@ Only `outcome` is required.
 ```
 
 With `rotate: true` the response carries a new lease on a different key in `next`, or `null` when none is available. With `rotate: false`, `next` is `null`.
+
+Rules: report within 10 minutes after `expires_at` (later reports get 410), only once per lease (a second report gets 409), and only while the app may still use the service (403 otherwise). `retry_after_sec` is capped at 86400. Do not put the secret in `message`; Cogito removes it anyway because messages are shown on the dashboard.
 
 ### Outcomes
 
@@ -164,6 +168,8 @@ Response: the provider's status, headers and body, plus:
 X-Cogito-Key-Id: 14      which key served the request
 X-Cogito-Attempts: 2     how many keys were tried
 ```
+
+Allowed methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS (others get 405). A path containing a literal `?` or `#`, or a `.` or `..` segment, gets 400 `bad_path`; percent encoded characters such as `%2F` are forwarded as sent. Provider redirects are returned to you rather than followed, with the key removed from response headers. Responses carry `Content-Security-Policy: sandbox`, so they cannot run script on the Cogito origin.
 
 If no key is available the proxy answers 503 `no_key_available` with `retry_after_sec`, like the lease endpoint. On a service with a concurrency limit, a request that finds every key busy waits in a queue for up to the service `queue_timeout_sec` (ElevenLabs default 30s); if no slot frees up in time the proxy answers 503 `all_keys_busy`. The proxy never sends more than a key's limit in parallel, so you do not need your own throttling.
 

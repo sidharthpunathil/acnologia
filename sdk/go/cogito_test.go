@@ -314,10 +314,15 @@ func TestApply(t *testing.T) {
 		header, want string
 		query        string
 	}{
-		{Auth{"query", "api_key"}, "", "", "api_key=s"},
-		{Auth{"header", "xi-api-key"}, "Xi-Api-Key", "s", ""},
-		{Auth{"bearer", ""}, "Authorization", "Bearer s", ""},
-		{Auth{"bearer", "X-Token"}, "X-Token", "Bearer s", ""},
+		{Auth{Type: "query", Name: "api_key"}, "", "", "api_key=s"},
+		{Auth{Type: "header", Name: "xi-api-key"}, "Xi-Api-Key", "s", ""},
+		{Auth{Type: "bearer"}, "Authorization", "Bearer s", ""},
+		{Auth{Type: "bearer", Name: "X-Token"}, "X-Token", "Bearer s", ""},
+		{Auth{Type: "query", Name: "key", Prefix: "pk_"}, "", "", "key=pk_s"},
+		{Auth{Type: "header", Name: "Authorization", Prefix: "Token "}, "Authorization", "Token s", ""},
+		{Auth{Type: "header", Prefix: "Token "}, "Authorization", "Token s", ""},
+		{Auth{Type: "bearer", Prefix: "Key "}, "Authorization", "Key s", ""},
+		{Auth{Type: "bearer", Name: "X-Token", Prefix: "Token "}, "X-Token", "Token s", ""},
 	}
 	for _, tc := range cases {
 		l := &Lease{Secret: "s", Auth: tc.auth, BaseURL: "https://x.test/"}
@@ -332,6 +337,22 @@ func TestApply(t *testing.T) {
 		if req.URL.String() != "https://x.test/v1/a"+map[bool]string{true: "?" + tc.query, false: ""}[tc.query != ""] {
 			t.Errorf("url %s", req.URL)
 		}
+	}
+}
+
+func TestLeaseParsesAuthPrefix(t *testing.T) {
+	var w leaseWire
+	if err := json.Unmarshal([]byte(`{"lease_id":"l","secret":"s","auth":{"type":"header","name":"Authorization","prefix":"Token "}}`), &w); err != nil {
+		t.Fatal(err)
+	}
+	l := New("http://x.test", "t").leaseFromWire(&w)
+	if l.Auth.Prefix != "Token " {
+		t.Fatalf("prefix %q", l.Auth.Prefix)
+	}
+	req, _ := http.NewRequest("GET", "https://x.test/", nil)
+	l.Apply(req)
+	if got := req.Header.Get("Authorization"); got != "Token s" {
+		t.Fatalf("header %q", got)
 	}
 }
 

@@ -57,13 +57,15 @@ Array bodies are sent as JSON; strings are sent as is.
 
 `$cog->lease($service, $excludeKeyIds = [], $ttlSec = null, $waitSec = null)` returns a
 `Cogito\Lease` with `leaseId`, `keyId`, `service`, `secret`, `auth`
-(`['type' => ..., 'name' => ...]`), `baseUrl` and `expiresAt`. It throws
+(`['type' => ..., 'name' => ..., 'prefix' => ...]`), `baseUrl` and `expiresAt`. It throws
 `Cogito\Exception\NoKeyAvailable` (with `retryAfter`) when the pool is drained.
 
 `$lease->apply($query, $headers)` returns `['query' => ..., 'headers' => ...]`
 with the secret placed where `auth.type` says: `query` adds a query param
 (SerpAPI `api_key`), `header` adds a header (ElevenLabs `xi-api-key`), `bearer`
-sets `Authorization: Bearer ...`. `$lease->url($path, $query)` builds a provider URL.
+sets `Authorization: Bearer ...`. A non empty `auth.prefix` goes in front of the
+secret for every type; for `bearer` it replaces `Bearer ` (so `'Token '` gives
+`Authorization: Token ...`). `$lease->url($path, $query)` builds a provider URL.
 
 `$lease->report($outcome, $statusCode, $retryAfterSec, $message, $rotate)`
 reports `ok`, `rate_limited`, `quota_exhausted`, `invalid` or `error`, and

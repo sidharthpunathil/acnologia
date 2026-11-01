@@ -73,7 +73,7 @@ with open("hello.mp3", "wb") as f:
 ## Lease mode
 
 `cog.lease(service, exclude_key_ids=None, ttl_sec=None, wait_sec=None)` returns a `Lease` with
-`lease_id`, `key_id`, `service`, `secret`, `auth` (`type` and `name`),
+`lease_id`, `key_id`, `service`, `secret`, `auth` (`type`, `name` and `prefix`),
 `base_url` and `expires_at`. When every key is cooling down it raises
 `NoKeyAvailable` with `retry_after` in seconds.
 
@@ -85,6 +85,9 @@ placed where the provider expects it:
 | `query` | treats the dict as query params, adds `auth.name` (SerpAPI: `api_key`) |
 | `header` | treats the dict as headers, adds `auth.name` (ElevenLabs: `xi-api-key`) |
 | `bearer` | sets header `auth.name` (default `Authorization`) to `Bearer <secret>` |
+
+A non empty `auth.prefix` goes in front of the secret for every type; for
+`bearer` it replaces `Bearer ` (so `"Token "` gives `Authorization: Token <secret>`).
 
 `lease.request_kwargs(params=..., headers=...)` returns `{"params", "headers"}`
 with the secret already in the right one, and `lease.url(path)` joins the

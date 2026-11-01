@@ -13,6 +13,28 @@ module Cogito
   OUTCOMES = %w[ok rate_limited quota_exhausted invalid error].freeze
   # Longest wait_sec the server accepts.
   MAX_WAIT_SEC = 60
+  # Cap on a report message built from an exception.
+  MAX_REPORT_MESSAGE = 500
+
+  # Replace the lease secret (raw and URL encoded) with "[key]" and truncate.
+  # Errors from query auth services often carry the full request URL, key
+  # included, and a report must not copy it to the server.
+  def self.scrub_message(message, secret)
+    out = message.to_s
+    if secret && !secret.empty?
+      [secret, URI.encode_www_form_component(secret), percent_encode(secret)].uniq.each do |s|
+        out = out.gsub(s, "[key]")
+      end
+    end
+    out[0, MAX_REPORT_MESSAGE]
+  end
+
+  # RFC 3986 percent encoding (like PHP rawurlencode): every byte outside
+  # A-Z a-z 0-9 - . _ ~ becomes %XX.
+  def self.percent_encode(str)
+    str.to_s.b.gsub(/[^A-Za-z0-9\-._~]/n) { |c| format("%%%02X", c.ord) }.force_encoding(Encoding::US_ASCII)
+  end
+  private_class_method :percent_encode
 
   # Non 2xx response from the consumer API, or a transport failure (status 0).
   class Error < StandardError
@@ -118,7 +140,7 @@ module Cogito
       @service = data["service"].to_s
       @secret = data["secret"].to_s
       auth = data["auth"].is_a?(Hash) ? data["auth"] : {}
-      @auth = { "type" => auth["type"].to_s, "name" => auth["name"].to_s }.freeze
+      @auth = { "type" => auth["type"].to_s, "name" => auth["name"].to_s, "prefix" => auth["prefix"].to_s }.freeze
       @base_url = data["base_url"].to_s
       @expires_at = data["expires_at"]
       @reported = false
@@ -133,14 +155,18 @@ module Cogito
     end
 
     # Return [query, headers] copies with the secret placed where auth.type says.
+    # A non empty auth "prefix" goes in front of the secret for every type; for
+    # bearer it replaces the default "Bearer " prefix.
     def apply(query: {}, headers: {})
       q = query.dup
       h = headers.dup
       name = @auth["name"]
+      prefix = @auth["prefix"].to_s
+      value = "#{prefix}#{@secret}"
       case @auth["type"]
-      when "query" then q[name] = @secret
-      when "header" then h[name] = @secret
-      when "bearer" then h[name.empty? ? "Authorization" : name] = "Bearer #{@secret}"
+      when "query" then q[name] = value
+      when "header" then h[name.empty? ? "Authorization" : name] = value
+      when "bearer" then h[name.empty? ? "Authorization" : name] = prefix.empty? ? "Bearer #{@secret}" : value
       else raise ArgumentError, "unknown auth type #{@auth['type'].inspect}"
       end
       [q, h]
@@ -265,14 +291,14 @@ module Cogito
         rescue KeyProblem => e
           last = attempt >= max_attempts
           nxt = current.report(e.outcome, status_code: e.status_code, retry_after_sec: e.retry_after,
-                                          message: e.message, rotate: !last)
+                                          message: Cogito.scrub_message(e.message, current.secret), rotate: !last)
           raise if last
 
           lease = nxt || self.lease(service, exclude_key_ids: tried, ttl_sec: ttl_sec, wait_sec: wait_sec)
           next
         rescue Exception => e # rubocop:disable Lint/RescueException
           begin
-            current.report("error", message: "#{e.class}: #{e.message}"[0, 500])
+            current.report("error", message: Cogito.scrub_message("#{e.class}: #{e.message}", current.secret))
           rescue StandardError
             nil # never mask the caller's exception
           end

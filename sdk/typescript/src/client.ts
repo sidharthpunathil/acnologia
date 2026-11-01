@@ -131,6 +131,8 @@ export class Lease {
    * Put the secret where the service expects it. Returns copies:
    * `query` auth sets `query[auth.name]`, `header` auth sets `headers[auth.name]`,
    * `bearer` auth sets `headers[auth.name || "Authorization"] = "Bearer <secret>"`.
+   * A non empty `auth.prefix` goes in front of the secret for every type; for `bearer` it
+   * replaces the default `Bearer ` prefix.
    */
   apply(input: { headers?: HeadersLike; query?: QueryInit } = {}): {
     headers: Record<string, string>;
@@ -138,15 +140,17 @@ export class Lease {
   } {
     const headers = toHeaderRecord(input.headers);
     const query = toSearchParams(input.query);
+    const prefix = this.auth.prefix ?? "";
+    const value = prefix + this.secret;
     switch (this.auth.type) {
       case "query":
-        query.set(this.auth.name || "api_key", this.secret);
+        query.set(this.auth.name || "api_key", value);
         break;
       case "bearer":
-        headers[this.auth.name || "Authorization"] = `Bearer ${this.secret}`;
+        headers[this.auth.name || "Authorization"] = prefix ? value : `Bearer ${this.secret}`;
         break;
       default:
-        headers[this.auth.name || "Authorization"] = this.secret;
+        headers[this.auth.name || "Authorization"] = value;
         break;
     }
     return { headers, query };

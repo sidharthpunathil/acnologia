@@ -3,6 +3,11 @@ export type AuthType = "query" | "header" | "bearer";
 export interface AuthSpec {
   type: AuthType;
   name: string;
+  /**
+   * Put in front of the secret for every type when non empty. For `bearer` it replaces the
+   * default `Bearer ` prefix. Absent or empty means the raw secret (and `Bearer ` for bearer).
+   */
+  prefix?: string;
 }
 
 export type Outcome = "ok" | "rate_limited" | "quota_exhausted" | "invalid" | "error";

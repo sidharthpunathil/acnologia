@@ -10,7 +10,7 @@ final class Lease
     public bool $reported = false;
 
     /**
-     * @param array{type: string, name: string} $auth
+     * @param array{type: string, name: string, prefix: string} $auth
      */
     public function __construct(
         private readonly Cogito $client,
@@ -34,7 +34,11 @@ final class Lease
             (int) ($data['key_id'] ?? 0),
             (string) ($data['service'] ?? ''),
             (string) ($data['secret'] ?? ''),
-            ['type' => (string) ($auth['type'] ?? ''), 'name' => (string) ($auth['name'] ?? '')],
+            [
+                'type' => (string) ($auth['type'] ?? ''),
+                'name' => (string) ($auth['name'] ?? ''),
+                'prefix' => (string) ($auth['prefix'] ?? ''),
+            ],
             (string) ($data['base_url'] ?? ''),
             isset($data['expires_at']) ? (string) $data['expires_at'] : null,
         );
@@ -59,6 +63,8 @@ final class Lease
     /**
      * Add the secret where the provider expects it and return both arrays.
      * query: $query[auth.name]; header: $headers[auth.name]; bearer: $headers[auth.name or Authorization] = "Bearer ...".
+     * A non empty auth.prefix goes in front of the secret for every type; for bearer it
+     * replaces the default "Bearer " prefix.
      *
      * @param array<string, mixed> $query
      * @param array<string, string> $headers
@@ -67,15 +73,17 @@ final class Lease
     public function apply(array $query = [], array $headers = []): array
     {
         $name = $this->auth['name'];
+        $prefix = $this->auth['prefix'] ?? '';
+        $value = $prefix . $this->secret;
         switch ($this->auth['type']) {
             case 'query':
-                $query[$name] = $this->secret;
+                $query[$name] = $value;
                 break;
             case 'header':
-                $headers[$name] = $this->secret;
+                $headers[$name !== '' ? $name : 'Authorization'] = $value;
                 break;
             case 'bearer':
-                $headers[$name !== '' ? $name : 'Authorization'] = 'Bearer ' . $this->secret;
+                $headers[$name !== '' ? $name : 'Authorization'] = $prefix !== '' ? $value : 'Bearer ' . $this->secret;
                 break;
             default:
                 throw new \InvalidArgumentException('unknown auth type ' . $this->auth['type']);

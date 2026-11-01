@@ -133,6 +133,53 @@ $reportsAfter = count(array_filter($log, static fn ($r) => str_ends_with((string
 $lastReport = json_decode(end($log)[3], true);
 $check($reportsAfter === $reportsBefore + 1 && $lastReport['outcome'] === 'error', 'withKey reports on other exceptions');
 
+$mk = static fn (array $auth): \Cogito\Lease => \Cogito\Lease::fromArray($cog, ['lease_id' => 'p', 'key_id' => 1, 'secret' => 'sk', 'auth' => $auth]);
+$check($mk(['type' => 'query', 'name' => 'api_key'])->auth['prefix'] === '', 'prefix defaults to empty');
+$check($mk(['type' => 'query', 'name' => 'key', 'prefix' => 'pk_'])->apply(['q' => 'a'])['query'] === ['q' => 'a', 'key' => 'pk_sk'], 'prefix query');
+$check($mk(['type' => 'header', 'name' => 'Authorization', 'prefix' => 'Token '])->apply()['headers'] === ['Authorization' => 'Token sk'], 'prefix header');
+$check($mk(['type' => 'header', 'name' => 'xi-api-key'])->apply()['headers'] === ['xi-api-key' => 'sk'], 'header without prefix');
+$check($mk(['type' => 'bearer', 'name' => '', 'prefix' => 'Key '])->apply()['headers'] === ['Authorization' => 'Key sk'], 'prefix replaces Bearer');
+$check($mk(['type' => 'bearer', 'name' => 'X-Token', 'prefix' => 'Token '])->apply()['headers'] === ['X-Token' => 'Token sk'], 'prefix bearer custom name');
+$check($mk(['type' => 'bearer', 'name' => ''])->apply()['headers'] === ['Authorization' => 'Bearer sk'], 'bearer default');
+
+$secret = 'a b+c/d';
+$scrubbed = Cogito::scrubMessage("GET /x?key=$secret&k2=" . urlencode($secret) . '&k3=' . rawurlencode($secret), $secret);
+$check($scrubbed === 'GET /x?key=[key]&k2=[key]&k3=[key]', 'scrub raw and encoded secret');
+$check(strlen(Cogito::scrubMessage(str_repeat('x', 600), 'sk')) === 500, 'scrub truncates to 500');
+$check(Cogito::scrubMessage('no secret here', '') === 'no secret here', 'scrub with empty secret');
+$cut = Cogito::scrubMessage(str_repeat('x', 499) . "\u{00e9}tail", 'sk');
+$check($cut === str_repeat('x', 499) && preg_match('//u', $cut) === 1, 'scrub keeps valid utf8');
+
+$bad = [];
+$keys = [1, 2];
+try {
+    $cog->withKey('serpapi', static function ($lease) {
+        throw new \RuntimeException('GET https://serpapi.com/search?api_key=' . $lease->secret . ' failed');
+    });
+} catch (\RuntimeException) {
+}
+$lastReport = json_decode(end($log)[3], true);
+$check($lastReport['outcome'] === 'error' && !str_contains($lastReport['message'], 's1') && str_contains($lastReport['message'], 'api_key=[key]'), 'withKey scrubs error report');
+
+$bad = [];
+$keys = [1, 2];
+$cog->withKey('serpapi', static function ($lease) {
+    if ($lease->keyId === 1) {
+        throw new RateLimited('429 for key ' . $lease->secret, 429, 5);
+    }
+    return 'ok';
+});
+$rlReport = null;
+foreach ($log as $r) {
+    if (str_ends_with((string) parse_url($r[1], PHP_URL_PATH), '/report')) {
+        $b = json_decode($r[3], true);
+        if ($b['outcome'] === 'rate_limited') {
+            $rlReport = $b;
+        }
+    }
+}
+$check($rlReport !== null && $rlReport['message'] === '429 for key [key]', 'withKey scrubs key problem report');
+
 $busy = true;
 try {
     $cog->lease('elevenlabs', [], null, 5);

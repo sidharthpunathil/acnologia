@@ -172,10 +172,12 @@ if next != nil {
 }
 ```
 
-`Lease` fields: `LeaseID`, `KeyID`, `Service`, `Secret`, `Auth{Type, Name}`, `BaseURL`, `ExpiresAt`.
+`Lease` fields: `LeaseID`, `KeyID`, `Service`, `Secret`, `Auth{Type, Name, Prefix}`, `BaseURL`, `ExpiresAt`.
 `Apply(req)` places the secret according to `Auth.Type`: `query` sets the query
 parameter `Auth.Name`, `header` sets header `Auth.Name`, `bearer` sets
-`Auth.Name` (default `Authorization`) to `Bearer <secret>`.
+`Auth.Name` (default `Authorization`) to `Bearer <secret>`. When `Auth.Prefix`
+is non empty it goes in front of the secret for every type, and for `bearer` it
+replaces `Bearer ` (for example `Prefix: "Token "` gives `Authorization: Token <secret>`).
 
 Outcomes: `OutcomeOK`, `OutcomeRateLimited`, `OutcomeQuotaExhausted`, `OutcomeInvalid`, `OutcomeError`.
 

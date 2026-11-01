@@ -57,6 +57,9 @@ is drained.
 `lease.apply(query: {}, headers: {})` returns `[query, headers]` with the secret
 placed where `auth["type"]` says: `query` (SerpAPI `api_key`), `header`
 (ElevenLabs `xi-api-key`) or `bearer` (`Authorization: Bearer ...`).
+`auth` is a hash with `"type"`, `"name"` and `"prefix"`. A non empty
+`"prefix"` goes in front of the secret for every type; for `bearer` it replaces
+`Bearer ` (so `"Token "` gives `Authorization: Token ...`).
 `lease.url(path, query)` builds a provider URL.
 
 `lease.report(outcome, status_code:, retry_after_sec:, message:, rotate:)`

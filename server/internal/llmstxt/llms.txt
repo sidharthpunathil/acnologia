@@ -11,6 +11,7 @@ Key facts for agents:
 - HTTP 503 with code `no_key_available` means every key is cooling down or exhausted. Wait `retry_after_sec` seconds.
 - HTTP 503 with code `all_keys_busy` means usable keys exist but every one is at its concurrency limit. It clears as soon as another caller reports; retry after `retry_after_sec` (usually 1) or lease with `wait_sec`.
 - An app may be limited to some services and to mode `proxy`, `lease` or `both`. Call `GET /api/v1/services` to see what you can use.
+- Report every lease within 10 minutes of `expires_at`. A second report gets 409, a late one 410.
 
 ## Auth
 
@@ -27,16 +28,16 @@ Key facts for agents:
 
 ## Consumer API
 
-- [GET /api/v1/services](/llms-full.txt#get-apiv1services): services this token may use, with `available`, `base_url` and `auth` `{type, name}`.
-- [POST /api/v1/lease](/llms-full.txt#post-apiv1lease): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300, "wait_sec": 0}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name"}, "base_url", "expires_at"}`, or 503 `{"error": {"code": "no_key_available"}, "retry_after_sec": n}` or 503 `{"error": {"code": "all_keys_busy"}, "retry_after_sec": 1}`.
+- [GET /api/v1/services](/llms-full.txt#get-apiv1services): services this token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`.
+- [POST /api/v1/lease](/llms-full.txt#post-apiv1lease): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300, "wait_sec": 0}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name", "prefix"}, "base_url", "expires_at"}` (put `prefix` before the secret when present), or 503 `{"error": {"code": "no_key_available"}, "retry_after_sec": n}` or 503 `{"error": {"code": "all_keys_busy"}, "retry_after_sec": 1}`.
 - [POST /api/v1/leases/{lease_id}/report](/llms-full.txt#post-apiv1leaseslease_idreport): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
-- [ANY /proxy/{service}/{path}](/llms-full.txt#any-proxyservicepath): forwards to `base_url/{path}` with query string and body, injecting a key. Response headers add `X-Cogito-Key-Id` and `X-Cogito-Attempts`.
+- [ANY /proxy/{service}/{path}](/llms-full.txt#any-proxyservicepath): forwards to `base_url/{path}` with query string and body, injecting a key. Methods GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. Response headers add `X-Cogito-Key-Id` and `X-Cogito-Attempts`. Redirects are returned to you, not followed.
 - [GET /healthz](/llms-full.txt#public-endpoints): `{"ok": true, "version": "..."}`, no auth.
 
 ## Outcomes
 
 - `ok`: call succeeded, resets the key's failure counter.
-- `rate_limited`: key cools down for `retry_after_sec`, or exponential backoff from the service cooldown, capped at 1h.
+- `rate_limited`: key cools down for `retry_after_sec` (at most 24h), or exponential backoff from the service cooldown, capped at 1h.
 - `quota_exhausted`: key parked as `exhausted` until its quota resets (or 24h).
 - `invalid`: key marked `invalid` and removed from rotation.
 - `error`: provider or network failure that is not the key's fault. Key is not penalized.

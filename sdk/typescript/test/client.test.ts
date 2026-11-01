@@ -247,6 +247,25 @@ describe("Lease", () => {
     expect(lease.apply().headers).toEqual({ Authorization: "Bearer secret-1" });
   });
 
+  it("apply puts auth.prefix in front of the secret for every type", async () => {
+    const cases: Array<[LeaseJSON["auth"], Record<string, string>, string]> = [
+      [{ type: "query", name: "key", prefix: "pk_" }, {}, "key=pk_secret-1"],
+      [{ type: "header", name: "Authorization", prefix: "Token " }, { Authorization: "Token secret-1" }, ""],
+      [{ type: "bearer", name: "", prefix: "Key " }, { Authorization: "Key secret-1" }, ""],
+      [{ type: "bearer", name: "X-Token", prefix: "Token " }, { "X-Token": "Token secret-1" }, ""],
+      [{ type: "bearer", name: "", prefix: "" }, { Authorization: "Bearer secret-1" }, ""],
+      [{ type: "header", name: "x-key", prefix: "" }, { "x-key": "secret-1" }, ""],
+    ];
+    for (const [auth, wantHeaders, wantQuery] of cases) {
+      const { client } = mock(() => json(leaseJSON(1, { auth })));
+      const lease = await client.lease("x");
+      expect(lease.auth.prefix).toBe(auth.prefix);
+      const { headers, query } = lease.apply();
+      expect(headers).toEqual(wantHeaders);
+      expect(query.toString()).toBe(wantQuery);
+    }
+  });
+
   it("toJSON hides the secret", async () => {
     const { client } = mock(() => json(leaseJSON(1)));
     const lease = await client.lease("serpapi");

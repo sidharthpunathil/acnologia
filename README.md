@@ -88,8 +88,9 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
 - **Key flags**:
   - `hidden`: only superadmins see the key or count it, and admins cannot
     infer it from events. Hidden keys are used (leased or proxied) only by
-    apps a superadmin marked `lease_hidden`, and are never sent to a service whose base URL or
-    auth was last changed by someone other than a superadmin.
+    apps a superadmin marked `lease_hidden`, and are never sent to a service
+    whose base URL or auth was last changed by someone other than a
+    superadmin. See [security](docs/security.md).
   - `backup` tier: used only when every primary key is unavailable.
   - `restricted`: only allow-listed apps can use it.
   - `disabled`: kept, but never handed out.
@@ -206,11 +207,20 @@ Layout:
 
 | Path | What |
 |---|---|
-| `server/` | Go backend: `internal/api` (HTTP, proxy, MCP), `pool` (selection and outcomes), `providers` (SerpAPI, ElevenLabs, generic), `store` (SQLite), `worker` (health checks, resets) |
+| `server/` | Go backend: `internal/api` (HTTP, proxy, MCP), `pool` (selection, slots, outcomes), `providers` (spec engine), `catalog` (provider publishing, logos), `agent` (AI builder), `store` (SQLite), `worker` (health checks, housekeeping) |
 | `web/` | React, Vite, Zustand and Tailwind dashboard |
 | `sdk/` | Client libraries |
-| `docs/` | Design spec, llms.txt |
-| `reference/` | OmniRoute source and treg.to screenshots used as references |
+| `docs/` | Architecture, flows, security, configuration, API, llms.txt |
+| `reference/` | Third party code used as reference only |
 
-Adding a provider means implementing `Classify` and `Check` in
-`server/internal/providers` and registering it.
+Providers are data, not code: add one from the dashboard, with the AI
+builder, or through the API. See [docs/providers.md](docs/providers.md).
+
+## Documentation
+
+- [Architecture](docs/architecture.md): components, data model, boot and background work
+- [Request flows](docs/flows.md): proxy, leases, key states, health checks, sign in, MCP, AI builder
+- [Security model](docs/security.md): roles, hidden keys, secrets, limits, operator checklist
+- [Configuration](docs/configuration.md): every setting, backups, upgrading
+- [HTTP API](docs/api.md): consumer error codes and the dashboard API
+- [Provider specs](docs/providers.md) and [Development](docs/development.md)

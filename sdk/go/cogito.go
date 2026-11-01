@@ -75,9 +75,12 @@ func New(baseURL, token string, opts ...Option) *Client {
 
 // Auth describes where a provider expects the key.
 // Type is "query", "header" or "bearer"; Name is the param or header name.
+// Prefix, when set, goes in front of the secret for every type (for bearer it
+// replaces the default "Bearer " prefix).
 type Auth struct {
-	Type string `json:"type"`
-	Name string `json:"name"`
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	Prefix string `json:"prefix,omitempty"`
 }
 
 // Service is an entry from GET /api/v1/services.
@@ -247,25 +250,32 @@ func (l *Lease) Report(ctx context.Context, r Report) (*Lease, error) {
 }
 
 // Apply puts the secret on req where the provider expects it: a query
-// parameter, a header, or an "Authorization: Bearer" style header.
+// parameter, a header, or an "Authorization: Bearer" style header. A non empty
+// Auth.Prefix is put in front of the secret for every type; for bearer it
+// replaces the default "Bearer " prefix. Header names default to
+// "Authorization" when Auth.Name is empty.
 func (l *Lease) Apply(req *http.Request) {
+	value := l.Auth.Prefix + l.Secret
 	switch l.Auth.Type {
 	case "query":
 		q := req.URL.Query()
-		q.Set(l.Auth.Name, l.Secret)
+		q.Set(l.Auth.Name, value)
 		req.URL.RawQuery = q.Encode()
 	case "bearer":
 		name := l.Auth.Name
 		if name == "" {
 			name = "Authorization"
 		}
-		req.Header.Set(name, "Bearer "+l.Secret)
+		if l.Auth.Prefix == "" {
+			value = "Bearer " + l.Secret
+		}
+		req.Header.Set(name, value)
 	default: // "header"
 		name := l.Auth.Name
 		if name == "" {
 			name = "Authorization"
 		}
-		req.Header.Set(name, l.Secret)
+		req.Header.Set(name, value)
 	}
 }
 

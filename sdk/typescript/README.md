@@ -208,6 +208,9 @@ Returns copies with the secret placed according to `lease.auth.type`:
 | `header` | `headers[auth.name]` |
 | `bearer` | `headers[auth.name or "Authorization"] = "Bearer <secret>"` |
 
+When `auth.prefix` is non empty it goes in front of the secret for every type, and for `bearer`
+it replaces `Bearer ` (so `prefix: "Token "` gives `Authorization: Token <secret>`).
+
 `headers` is a plain object, `query` is a `URLSearchParams`.
 
 ## Concurrency limits

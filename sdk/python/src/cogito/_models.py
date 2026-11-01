@@ -15,15 +15,23 @@ OUTCOMES = ("ok", "rate_limited", "quota_exhausted", "invalid", "error")
 
 @dataclass(frozen=True)
 class Auth:
-    """Where the provider expects the key: `type` is `query`, `header` or `bearer`."""
+    """Where the provider expects the key: `type` is `query`, `header` or `bearer`.
+
+    `prefix`, when set, goes in front of the secret for every type (for
+    `bearer` it replaces the default `Bearer ` prefix)."""
 
     type: str
     name: str
+    prefix: str = ""
 
     @classmethod
     def from_json(cls, data: Optional[Mapping[str, Any]]) -> "Auth":
         data = data or {}
-        return cls(type=str(data.get("type") or ""), name=str(data.get("name") or ""))
+        return cls(
+            type=str(data.get("type") or ""),
+            name=str(data.get("name") or ""),
+            prefix=str(data.get("prefix") or ""),
+        )
 
 
 @dataclass(frozen=True)
@@ -123,13 +131,19 @@ class _LeaseBase:
         goes under `auth.name` (for example `api_key`). For `header` it is
         treated as headers (for example `xi-api-key`). For `bearer` the header
         `auth.name` (default `Authorization`) is set to `Bearer <secret>`.
+
+        A non empty `auth.prefix` goes in front of the secret for every type;
+        for `bearer` it replaces the default `Bearer ` prefix.
         """
         out: Dict[str, Any] = dict(params_or_headers or {})
         kind = self.auth.type
+        prefix = self.auth.prefix
         if kind == "bearer":
-            out[self.auth.name or "Authorization"] = f"Bearer {self.secret}"
-        elif kind in ("query", "header"):
-            out[self.auth.name] = self.secret
+            out[self.auth.name or "Authorization"] = (prefix or "Bearer ") + self.secret
+        elif kind == "header":
+            out[self.auth.name or "Authorization"] = prefix + self.secret
+        elif kind == "query":
+            out[self.auth.name] = prefix + self.secret
         else:
             raise ValueError(f"unknown auth type {kind!r}")
         return out

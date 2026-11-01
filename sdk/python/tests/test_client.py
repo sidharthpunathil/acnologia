@@ -376,13 +376,13 @@ def test_with_key_other_error(cog: Cogito, server: FakeServer) -> None:
     assert server.reports[-1]["rotate"] is False
 
 
-def _lease(auth_type: str, name: str) -> Lease:
+def _lease(auth_type: str, name: str, prefix: str = "") -> Lease:
     return Lease(
         lease_id="x",
         key_id=1,
         service="s",
         secret="sk",
-        auth=Auth(auth_type, name),
+        auth=Auth(auth_type, name, prefix),
         base_url="https://api.example.com/",
         expires_at=None,
     )
@@ -402,6 +402,20 @@ def test_apply_header_and_bearer() -> None:
     assert _lease("bearer", "X-Auth").request_kwargs(headers={}) == {"params": {}, "headers": {"X-Auth": "Bearer sk"}}
     with pytest.raises(ValueError):
         _lease("weird", "x").apply()
+
+
+def test_apply_prefix() -> None:
+    assert _lease("query", "key", "pk_").apply({"q": "x"}) == {"q": "x", "key": "pk_sk"}
+    assert _lease("header", "Authorization", "Token ").apply() == {"Authorization": "Token sk"}
+    assert _lease("bearer", "", "Key ").apply() == {"Authorization": "Key sk"}
+    assert _lease("bearer", "X-Auth", "Token ").apply() == {"X-Auth": "Token sk"}
+    assert _lease("bearer", "", "").apply() == {"Authorization": "Bearer sk"}
+
+
+def test_auth_from_json_prefix() -> None:
+    assert Auth.from_json({"type": "header", "name": "Authorization", "prefix": "Token "}).prefix == "Token "
+    assert Auth.from_json({"type": "header", "name": "x"}).prefix == ""
+    assert Auth.from_json({"type": "header", "name": "x", "prefix": None}).prefix == ""
 
 
 def test_lease_url() -> None:

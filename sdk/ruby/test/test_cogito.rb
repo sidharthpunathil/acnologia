@@ -96,6 +96,45 @@ class CogitoTest < Minitest::Test
     assert_equal "z", hd.apply[1]["xi-api-key"]
   end
 
+  def test_apply_prefix
+    mk = ->(auth) { Cogito::Lease.new(@cog, "secret" => "sk", "auth" => auth) }
+    assert_equal "", mk.call("type" => "query", "name" => "api_key").auth["prefix"]
+    q, h = mk.call("type" => "query", "name" => "key", "prefix" => "pk_").apply(query: { "q" => "a" })
+    assert_equal({ "q" => "a", "key" => "pk_sk" }, q)
+    assert_equal({}, h)
+    assert_equal({ "Authorization" => "Token sk" },
+                 mk.call("type" => "header", "name" => "Authorization", "prefix" => "Token ").apply[1])
+    assert_equal({ "xi-api-key" => "sk" }, mk.call("type" => "header", "name" => "xi-api-key").apply[1])
+    assert_equal({ "Authorization" => "Key sk" }, mk.call("type" => "bearer", "name" => "", "prefix" => "Key ").apply[1])
+    assert_equal({ "X-Token" => "Token sk" },
+                 mk.call("type" => "bearer", "name" => "X-Token", "prefix" => "Token ").apply[1])
+    assert_equal({ "Authorization" => "Bearer sk" }, mk.call("type" => "bearer", "name" => "", "prefix" => nil).apply[1])
+  end
+
+  def test_scrub_message
+    secret = "a b+c/d~*"
+    msg = "GET /x?key=#{secret}&k2=#{URI.encode_www_form_component(secret)}&k3=a%20b%2Bc%2Fd~%2A"
+    assert_equal "GET /x?key=[key]&k2=[key]&k3=[key]", Cogito.scrub_message(msg, secret)
+    assert_equal 500, Cogito.scrub_message("x" * 600, "sk").length
+    assert_equal "plain", Cogito.scrub_message("plain", "")
+    assert_equal "plain", Cogito.scrub_message("plain", nil)
+  end
+
+  def test_with_key_scrubs_report_messages
+    assert_raises(RuntimeError) do
+      @cog.with_key("serpapi") { |l| raise "GET https://serpapi.com/search?api_key=#{l.secret} failed" }
+    end
+    assert_equal "error", @srv.reports.last["outcome"]
+    assert_equal "RuntimeError: GET https://serpapi.com/search?api_key=[key] failed", @srv.reports.last["message"]
+    @cog.with_key("serpapi") do |l|
+      raise Cogito::RateLimited.new("429 for #{l.secret}") if l.key_id == 2
+
+      "ok"
+    end
+    rl = @srv.reports.find { |r| r["outcome"] == "rate_limited" }
+    assert_equal "429 for [key]", rl["message"]
+  end
+
   def test_with_key_rotates
     seen = []
     out = @cog.with_key("serpapi") do |lease|

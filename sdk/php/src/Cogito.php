@@ -22,6 +22,9 @@ final class Cogito
     /** Longest wait_sec the server accepts. */
     public const MAX_WAIT_SEC = 60;
 
+    /** Cap on a report message built from an exception. */
+    public const MAX_REPORT_MESSAGE = 500;
+
     public readonly string $baseUrl;
 
     /** @var callable(string, string, array<string, string>, ?string): Response */
@@ -47,7 +50,7 @@ final class Cogito
         $this->transport = $transport ?? $this->curlTransport(...);
     }
 
-    /** @return list<array{slug: string, name: string, provider: string, category: string, available: bool, base_url: string, auth: array{type: string, name: string}}> */
+    /** @return list<array{slug: string, name: string, provider: string, category: string, available: bool, base_url: string, auth: array{type: string, name: string, prefix?: string}}> */
     public function services(): array
     {
         return $this->call('GET', '/api/v1/services')['services'] ?? [];
@@ -143,7 +146,8 @@ final class Cogito
                 $result = $fn($lease);
             } catch (KeyProblem $e) {
                 $last = $attempt >= $maxAttempts;
-                $next = $lease->report($e->outcome(), $e->statusCode, $e->retryAfter, $e->getMessage(), !$last);
+                $message = self::scrubMessage($e->getMessage(), $lease->secret);
+                $next = $lease->report($e->outcome(), $e->statusCode, $e->retryAfter, $message, !$last);
                 if ($last) {
                     throw $e;
                 }
@@ -151,7 +155,7 @@ final class Cogito
                 continue;
             } catch (\Throwable $e) {
                 try {
-                    $lease->report('error', null, null, substr(get_class($e) . ': ' . $e->getMessage(), 0, 500));
+                    $lease->report('error', null, null, self::scrubMessage(get_class($e) . ': ' . $e->getMessage(), $lease->secret));
                 } catch (\Throwable) {
                     // never mask the caller's exception
                 }
@@ -160,6 +164,26 @@ final class Cogito
             $lease->report('ok');
             return $result;
         }
+    }
+
+    /**
+     * Replace the lease secret (raw and URL encoded) with "[key]" and truncate to
+     * MAX_REPORT_MESSAGE bytes. Errors from query auth services often carry the full
+     * request URL, key included, and a report must not copy it to the server.
+     */
+    public static function scrubMessage(string $message, string $secret): string
+    {
+        if ($secret !== '') {
+            $message = str_replace([$secret, urlencode($secret), rawurlencode($secret)], '[key]', $message);
+        }
+        if (strlen($message) > self::MAX_REPORT_MESSAGE) {
+            $message = substr($message, 0, self::MAX_REPORT_MESSAGE);
+            if (preg_match('//u', $message) !== 1) {
+                // the cut split a multibyte character; drop the partial tail
+                $message = (string) preg_replace('/[\xC0-\xFF][\x80-\xBF]*$/', '', $message);
+            }
+        }
+        return $message;
     }
 
     public function proxy(string $service): Proxy
