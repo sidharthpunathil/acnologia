@@ -35,3 +35,10 @@ docker:
 
 clean:
 	rm -rf bin server/internal/webui/dist/assets
+
+# Screenshot tests for the dashboard against bin/cogito (run `make build`
+# first). UPDATE=1 refreshes the baselines in e2e/__screenshots__.
+.PHONY: test-screens
+test-screens:
+	@test -x bin/cogito || { echo "bin/cogito is missing, run make build first"; exit 1; }
+	cd e2e && npm ci --no-audit --no-fund && npm run $(if $(UPDATE),update,test)

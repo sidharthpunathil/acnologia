@@ -159,7 +159,7 @@ export function KeyPasteArea({
           autoCorrect="off"
           placeholder={placeholder}
           className={cx(
-            "field-input block min-h-[140px] resize-y rounded-xl border bg-surface px-3 py-2.5 font-mono text-[13px] leading-relaxed text-ink placeholder:text-faint focus:outline-none focus:ring-2",
+            "field-input block min-h-[140px] resize-y rounded-xl border bg-surface px-3 py-2.5 font-mono text-[13px] leading-relaxed text-ink placeholder:text-faint focus:outline-hidden focus:ring-2 focus:ring-ink/20",
             "border-line focus:border-ink/60 focus:ring-ink/20",
           )}
         />

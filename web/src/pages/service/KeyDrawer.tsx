@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type JSX, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Activity, Eye, EyeOff, Info, Pencil, RotateCcw } from "lucide-react";
 import type { Key } from "../../lib/types";

@@ -412,7 +412,7 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
         )
       }
     >
-      <div data-autofocus tabIndex={-1} className="space-y-5 focus:outline-none">
+      <div data-autofocus tabIndex={-1} className="space-y-5 focus:outline-hidden">
         {readOnly && (
           <Callout icon={<Info className="h-4 w-4" />}>You can view these settings. Ask an admin to change them.</Callout>
         )}

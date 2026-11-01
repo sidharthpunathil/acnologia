@@ -306,13 +306,13 @@ export function ActivityChart({ daily }: { daily: DayActivity[] }) {
           </p>
           <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted" aria-label="Legend">
             <li className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm bg-chart-ok" aria-hidden="true" /> Requests
+              <span className="h-2.5 w-2.5 rounded-xs bg-chart-ok" aria-hidden="true" /> Requests
             </li>
             <li className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm bg-amber-500" aria-hidden="true" /> Rate limited
+              <span className="h-2.5 w-2.5 rounded-xs bg-amber-500" aria-hidden="true" /> Rate limited
             </li>
             <li className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm bg-red-500" aria-hidden="true" /> Errors
+              <span className="h-2.5 w-2.5 rounded-xs bg-red-500" aria-hidden="true" /> Errors
             </li>
           </ul>
         </>

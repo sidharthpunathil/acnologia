@@ -1,8 +1,20 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Stageshow (the /docs demos) keeps its own cascade layer. Declared first so
+   it sits under Tailwind's layers, as it did under Tailwind 3, where every
+   Tailwind rule was unlayered and outranked it. */
+@layer stageshow;
 
-/* Color tokens live in tailwind.config.js (light and dark), injected as CSS variables. */
+@import "@fontsource-variable/inter/opsz.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+/* BoardUI: Tailwind, its theme tokens and type ramp. */
+@import "./styles/globals.css";
+/* Acnologia's palette on top of BoardUI, plus the legacy token names. */
+@import "./styles/acnologia.css";
+
+/* Not app source: keep their example class names out of the build. */
+@source not "../AGENTS.md";
+@source not "../.cursor";
+/* Built from data at runtime. */
+@source inline("animate-pulse");
 
 @layer base {
   html {
@@ -11,11 +23,10 @@
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
     touch-action: manipulation;
-    background-color: rgb(var(--canvas));
+    background-color: var(--color-background-full);
   }
   body {
     @apply bg-canvas font-sans text-ink antialiased;
-    font-feature-settings: "ss01", "cv11";
     overscroll-behavior: none;
     overflow-wrap: break-word;
   }
@@ -30,7 +41,7 @@
     -webkit-touch-callout: none;
   }
   :where(a, button, [role="tab"], [role="switch"], [role="radio"], summary, [tabindex]):focus-visible {
-    outline: 2px solid rgb(var(--ink));
+    outline: 2px solid var(--color-text-primary);
     outline-offset: 2px;
     border-radius: 8px;
   }
@@ -47,30 +58,27 @@
   }
 }
 
-@layer utilities {
-  .no-scrollbar {
-    scrollbar-width: none;
-  }
-  .no-scrollbar::-webkit-scrollbar {
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
     display: none;
   }
+}
+/* wrap-anywhere (long URLs, slugs and secrets break anywhere) is built into Tailwind 4. */
+
+@layer utilities {
   .select-chevron {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b6b66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.6rem center;
   }
-  [data-theme="dark"] .select-chevron {
+  .dark .select-chevron {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23aaa89f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  }
-  /* Long URLs, slugs and secrets break anywhere instead of pushing the page sideways. */
-  .wrap-anywhere {
-    overflow-wrap: anywhere;
   }
 }
 
 :root {
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  /* --ease-out and --ease-in-out are theme tokens in styles/acnologia.css. */
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   /* Height of the phone tab bar, so sticky bars and toasts sit above it. */
   --tabbar-h: calc(60px + env(safe-area-inset-bottom, 0px));
@@ -361,8 +369,8 @@
   z-index: 100;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgb(var(--ink));
-  color: rgb(var(--on-ink));
+  background: var(--color-text-primary);
+  color: var(--color-on-ink);
   font-size: 14px;
 }
 .skip-link:focus {
@@ -372,16 +380,16 @@
 /* Briefly highlights fields that "Fill with AI" just changed. */
 @keyframes ai-flash {
   0% {
-    box-shadow: 0 0 0 0 rgb(var(--brand) / 0);
-    background-color: rgb(var(--brand-soft) / 0);
+    box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
   }
   20% {
-    box-shadow: 0 0 0 3px rgb(var(--brand) / 0.16);
-    background-color: rgb(var(--brand-soft) / 0.9);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand) 16%, transparent);
+    background-color: color-mix(in srgb, var(--color-brand-soft) 90%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 rgb(var(--brand) / 0);
-    background-color: rgb(var(--brand-soft) / 0);
+    box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
   }
 }
 .ai-flash {

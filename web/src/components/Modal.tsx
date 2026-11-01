@@ -189,7 +189,7 @@ export function Modal({
         tabIndex={-1}
         className={cx(
           drawer ? (closing ? "drawer-out pointer-events-none" : "drawer-in") : closing ? "modal-out pointer-events-none" : "modal-in",
-          "relative flex max-h-[92dvh] w-full flex-col overscroll-contain rounded-t-2xl bg-surface shadow-pop focus:outline-none",
+          "relative flex max-h-[92dvh] w-full flex-col overscroll-contain rounded-t-2xl bg-surface shadow-pop focus:outline-hidden",
           // On phones a drawer scrolls as one piece, header included, so short screens keep room for details.
           drawer && "overflow-y-auto dlg:overflow-visible",
           drawer ? "dlg:h-dvh dlg:max-h-none dlg:max-w-[480px] dlg:rounded-none dlg:rounded-l-2xl" : cx("dlg:rounded-2xl", wide ? "dlg:max-w-2xl" : "dlg:max-w-lg"),

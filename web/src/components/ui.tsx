@@ -37,7 +37,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       type={type}
       disabled={disabled || loading}
       className={cx(
-        "tap inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:active:scale-100",
+        "tap inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:active:scale-100",
         variants[variant],
         sizes[size],
         className,
@@ -73,7 +73,7 @@ export function IconButton({
 }
 
 const fieldBase =
-  "field-input rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20 disabled:bg-canvas disabled:text-muted";
+  "field-input rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/60 focus:outline-hidden focus:ring-2 focus:ring-ink/20 disabled:bg-canvas disabled:text-muted";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...rest },
@@ -195,7 +195,7 @@ export function Toggle({
     >
       <span
         className={cx(
-          "inline-block h-4 w-4 rounded-full shadow transition-transform duration-200 ease-out",
+          "inline-block h-4 w-4 rounded-full shadow-sm transition-transform duration-200 ease-out",
           // The knob contrasts with the track in both themes: surface on ink when on, white on gray when off.
           checked ? "bg-surface" : "bg-white",
           checked ? "translate-x-[18px]" : "translate-x-0.5",

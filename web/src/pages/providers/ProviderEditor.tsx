@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { useTitle } from "../../hooks/useTitle";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -723,7 +723,7 @@ export function ProviderEditorPage() {
       </div>
 
       {!readOnly && (dirty || isNew) && (
-        <div className="fade-up fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 backdrop-blur">
+        <div className="fade-up fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 backdrop-blur-sm">
           <div className="mx-auto flex max-w-[1076px] flex-col gap-2 px-4 py-2.5 sm:px-6 sm:py-3 lg:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {/* Phones: the version note opens on demand so the bar stays one row above the keyboard. */}
             {!isNew && noteOpen && (

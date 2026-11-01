@@ -43,7 +43,7 @@ export function EntityChip({ e, children }: { e: ChatEntity; children?: ReactNod
     <Link
       to={to}
       title={`Open ${e.type} ${e.name}`}
-      className="chat-chip press mx-px inline-flex max-w-full items-baseline gap-1 rounded-md bg-ink/[0.06] px-1.5 align-baseline font-medium text-ink transition-[background-color,transform] duration-150 hover:bg-ink/[0.11] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
+      className="chat-chip press mx-px inline-flex max-w-full items-baseline gap-1 rounded-md bg-ink/[0.06] px-1.5 align-baseline font-medium text-ink transition-[background-color,transform] duration-150 hover:bg-ink/[0.11] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink/30"
     >
       <span className="truncate">{label}</span>
     </Link>
@@ -307,7 +307,7 @@ export function AskCard({
                   maxLength={64}
                   placeholder="Name"
                   onChange={(e) => setNames({ ...names, [r.ref]: e.target.value })}
-                  className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-canvas px-2.5 text-[13.5px] text-ink transition-[border-color] duration-150 placeholder:text-faint focus:border-line-strong focus:outline-none"
+                  className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-canvas px-2.5 text-[13.5px] text-ink transition-[border-color] duration-150 placeholder:text-faint focus:border-line-strong focus:outline-hidden"
                 />
               </li>
             ))}

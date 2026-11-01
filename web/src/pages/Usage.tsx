@@ -321,7 +321,7 @@ function SpendChart({ data }: { data: UsageReport }) {
         onKeyDown={onKey}
         onFocus={() => setActive((v) => v ?? n - 1)}
         onBlur={() => setActive(null)}
-        className="relative rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ink/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+        className="relative rounded-lg outline-hidden focus-visible:ring-2 focus-visible:ring-ink/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
       >
         {width > 0 && (
           <svg width={width} height={H} className="block select-none" aria-hidden="true" onPointerLeave={() => setActive(null)}>

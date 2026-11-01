@@ -179,7 +179,7 @@ export function CatalogPage() {
           enterKeyHint="search"
           aria-label="Search services"
           type="search"
-          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/20"
+          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-hidden focus:ring-2 focus:ring-ink/20"
         />
       </div>
 

@@ -308,7 +308,7 @@ export function Layout() {
       <a href="#main" className="skip-link">
         Skip to content
       </a>
-      <header className="sticky top-0 z-40 border-b border-line bg-canvas/90 pt-[env(safe-area-inset-top)] backdrop-blur supports-[backdrop-filter]:bg-canvas/75">
+      <header className="sticky top-0 z-40 border-b border-line bg-canvas/90 pt-[env(safe-area-inset-top)] backdrop-blur-sm supports-[backdrop-filter]:bg-canvas/75">
         {/* Same width as main, so the logo and account pill line up with the page column. */}
         <div className="mx-auto flex h-14 max-w-[1076px] items-center justify-between gap-4 px-4 sm:px-6">
           <Logo />
@@ -329,7 +329,7 @@ export function Layout() {
           </Link>
         </div>
       </header>
-      <main id="main" ref={main} tabIndex={-1} className="mx-auto w-full max-w-[1076px] flex-1 px-4 pb-24 pt-8 focus:outline-none sm:px-6 sm:pt-14">
+      <main id="main" ref={main} tabIndex={-1} className="mx-auto w-full max-w-[1076px] flex-1 px-4 pb-24 pt-8 focus:outline-hidden sm:px-6 sm:pt-14">
         <Outlet />
       </main>
       <footer className="border-t border-line">
@@ -344,7 +344,7 @@ export function Layout() {
       {/* Phone tab bar: the main destinations stay under the thumb. */}
       <nav
         aria-label="Main"
-        className="tabbar fixed inset-x-0 bottom-0 z-40 border-t border-line bg-canvas/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur supports-[backdrop-filter]:bg-canvas/85 lg:hidden"
+        className="tabbar fixed inset-x-0 bottom-0 z-40 border-t border-line bg-canvas/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur-sm supports-[backdrop-filter]:bg-canvas/85 lg:hidden"
       >
         <ul className="mx-auto flex max-w-md items-stretch gap-1">
           {tabs.map((l) => (

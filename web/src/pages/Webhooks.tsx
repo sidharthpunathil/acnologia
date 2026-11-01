@@ -57,7 +57,7 @@ function EventPicker({ types, value, onChange }: { types: WebhookEventType[]; va
           >
             <span
               className={cx(
-                "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-colors",
                 on ? "border-ink bg-ink text-on-ink" : "border-line-strong bg-surface",
               )}
             >

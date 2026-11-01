@@ -103,7 +103,7 @@ function DocNav({ current, onPick }: { current?: string; onPick?: () => void }) 
                 onClick={onPick}
                 aria-current={on ? "page" : undefined}
                 className={cx(
-                  "tap flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink",
+                  "tap flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] transition-colors duration-150 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink",
                   on ? "bg-surface font-medium text-ink-strong shadow-card" : "text-muted hover:bg-ink/[0.04] hover:text-ink",
                 )}
               >
@@ -123,7 +123,7 @@ function DocNav({ current, onPick }: { current?: string; onPick?: () => void }) 
           <li key={href}>
             <a
               href={href}
-              className="tap flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 font-mono text-[12.5px] text-muted transition-colors duration-150 hover:bg-ink/[0.04] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+              className="tap flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 font-mono text-[12.5px] text-muted transition-colors duration-150 hover:bg-ink/[0.04] hover:text-ink focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink"
             >
               <Bot className="h-4 w-4 shrink-0 text-faint" aria-hidden />
               {label}
@@ -159,7 +159,7 @@ function Toc({
                 onClick={onPick ? (e) => onPick(h.id, e) : undefined}
                 aria-current={on ? "location" : undefined}
                 className={cx(
-                  "-ml-px block border-l py-1 text-[13px] leading-snug transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink",
+                  "-ml-px block border-l py-1 text-[13px] leading-snug transition-colors duration-150 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink",
                   h.depth === 3 ? "pl-6" : "pl-3",
                   on ? "border-brand text-ink-strong" : "border-transparent text-muted hover:text-ink",
                 )}
@@ -178,7 +178,7 @@ type CopyState = "idle" | "busy" | "done" | "error";
 
 function DocActions({ slug }: { slug: string }) {
   const [copy, setCopy] = useState<CopyState>("idle");
-  const timer = useRef<number>();
+  const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const onCopy = async () => {
@@ -198,7 +198,7 @@ function DocActions({ slug }: { slug: string }) {
   };
 
   const btn =
-    "tap inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-medium text-ink transition-[border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas";
+    "tap inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-medium text-ink transition-[border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.97] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas";
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -244,13 +244,13 @@ function DocSkeleton() {
       <div className="skeleton h-9 w-2/3 rounded-lg" />
       <div className="mt-6 space-y-2.5">
         {[100, 96, 88, 92, 60].map((w, i) => (
-          <div key={i} className="skeleton h-4 rounded" style={{ width: `${w}%` }} />
+          <div key={i} className="skeleton h-4 rounded-sm" style={{ width: `${w}%` }} />
         ))}
       </div>
       <div className="skeleton mt-10 h-6 w-1/3 rounded-lg" />
       <div className="mt-4 space-y-2.5">
         {[94, 98, 72].map((w, i) => (
-          <div key={i} className="skeleton h-4 rounded" style={{ width: `${w}%` }} />
+          <div key={i} className="skeleton h-4 rounded-sm" style={{ width: `${w}%` }} />
         ))}
       </div>
     </div>
@@ -262,7 +262,7 @@ function PrevNext({ doc }: { doc: DocEntry }) {
   const prev = DOCS[i - 1];
   const next = DOCS[i + 1];
   const card =
-    "tap group flex min-w-0 flex-1 flex-col rounded-xl border border-line bg-surface px-4 py-3 shadow-card transition-[border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink";
+    "tap group flex min-w-0 flex-1 flex-col rounded-xl border border-line bg-surface px-4 py-3 shadow-card transition-[border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.99] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink";
   return (
     <nav aria-label="More docs" className="mt-16 flex flex-col gap-3 border-t border-line pt-8 sm:flex-row">
       {prev ? (
@@ -391,14 +391,14 @@ export function DocPage() {
       <DocsHeader nav={headerNav} />
 
       {/* Phones and tablets: one bar that opens the docs list and outline. */}
-      <div className="sticky top-14 z-10 border-b border-line bg-canvas/90 backdrop-blur lg:hidden">
+      <div className="sticky top-14 z-10 border-b border-line bg-canvas/90 backdrop-blur-sm lg:hidden">
         <div className="mx-auto flex h-11 max-w-6xl items-center gap-2 px-4 sm:px-6">
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
             aria-haspopup="dialog"
             aria-expanded={menuOpen}
-            className="tap -ml-2 inline-flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-[13px] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+            className="tap -ml-2 inline-flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-[13px] text-muted transition-colors hover:text-ink focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink"
           >
             <Menu className="h-4 w-4 shrink-0" aria-hidden />
             <span className="shrink-0">Docs</span>
@@ -426,7 +426,7 @@ export function DocPage() {
           </div>
         </aside>
 
-        <main id="doc-content" ref={main} tabIndex={-1} className="min-w-0 pb-24 pt-8 focus:outline-none lg:pt-10">
+        <main id="doc-content" ref={main} tabIndex={-1} className="min-w-0 pb-24 pt-8 focus:outline-hidden lg:pt-10">
           {doc ? (
             <>
               <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

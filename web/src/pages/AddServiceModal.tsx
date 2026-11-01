@@ -97,7 +97,7 @@ function ProviderPicker({ onPick, onClose }: { onPick: (p: Provider) => void; on
           type="search"
           enterKeyHint="search"
           aria-label="Search providers"
-          className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm placeholder:text-faint focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20"
+          className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm placeholder:text-faint focus:border-ink/60 focus:outline-hidden focus:ring-2 focus:ring-ink/20"
         />
       </div>
 

@@ -1,5 +1,5 @@
-/* Acnologia's look, from web/tailwind.config.js: warm canvas, white cards
-   with a hairline shadow, Geist and Geist Mono, violet as the brand. Status
+/* Acnologia's look, from web/src/styles/acnologia.css: warm canvas, white cards
+   with a hairline shadow, Inter and JetBrains Mono, violet as the brand. Status
    colors are the dashboard's own (emerald, amber, orange, red). Every rule is
    scoped under .aa. */
 .aa {
@@ -18,8 +18,8 @@
     --ss-accent: #6a4bc4;
     --ss-accent-soft: #efebfb;
     --ss-accent-text: #4b2fa3;
-    --ss-font: Geist, Inter, ui-sans-serif, system-ui, sans-serif;
-    --ss-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    --ss-font: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
+    --ss-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 
     --aa-ground: #e4e2db;
     --aa-card-shadow: 0 1px 2px rgba(20, 20, 15, 0.04), 0 0 0 1px rgba(20, 20, 15, 0.035);

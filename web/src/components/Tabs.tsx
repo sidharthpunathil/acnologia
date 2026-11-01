@@ -96,7 +96,9 @@ export function Tabs<T extends string>({
           return (
             <button
               key={it.id}
-              ref={(el) => (refs.current[i] = el)}
+              ref={(el) => {
+                refs.current[i] = el;
+              }}
               role="tab"
               type="button"
               aria-selected={active}

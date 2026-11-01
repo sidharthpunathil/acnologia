@@ -249,7 +249,7 @@ export function AiBuilderPage() {
           </div>
 
           {/* Phones and tablets: the submit bar is pinned to the bottom (above the tab bar), so it stays in reach anywhere in the form. */}
-          <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 px-4 py-2.5 backdrop-blur lg:hidden">
+          <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 px-4 py-2.5 backdrop-blur-sm lg:hidden">
             <div className="mx-auto max-w-[1076px] sm:px-2">
               <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="w-full">
                 {updateSlug ? "Start improving" : "Build provider"}

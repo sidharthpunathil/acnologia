@@ -301,7 +301,7 @@ function StepRow({ item, delay }: { item: ChatItem; delay?: number }) {
                 onClick={() => setOpen(!open)}
                 aria-expanded={open}
                 aria-controls={panelId}
-                className="tap-inline rounded text-[12px] text-faint underline-offset-4 transition-colors hover:text-ink hover:underline"
+                className="tap-inline rounded-sm text-[12px] text-faint underline-offset-4 transition-colors hover:text-ink hover:underline"
               >
                 {open ? "Hide details" : "Details"}
               </button>

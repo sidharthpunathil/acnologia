@@ -180,7 +180,7 @@ function FeatureCard({ f }: { f: Feature }) {
 }
 
 function Code({ children }: { children: ReactNode }) {
-  return <code className="rounded bg-well px-1.5 py-0.5 font-mono text-[12.5px] text-ink">{children}</code>;
+  return <code className="rounded-sm bg-well px-1.5 py-0.5 font-mono text-[12.5px] text-ink">{children}</code>;
 }
 
 export function DocsPage() {
@@ -489,7 +489,7 @@ export function DocsPage() {
               <li key={d.slug} className="min-w-0">
                 <Link
                   to={`/docs/${d.slug}`}
-                  className="tap group flex h-full flex-col rounded-xl border border-line bg-surface p-5 shadow-card transition-[border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+                  className="tap group flex h-full flex-col rounded-xl border border-line bg-surface p-5 shadow-card transition-[border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.99] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink"
                 >
                   <d.icon className="h-4 w-4 text-muted transition-colors group-hover:text-brand" aria-hidden />
                   <span className="mt-3 font-medium text-ink-strong">{d.title}</span>

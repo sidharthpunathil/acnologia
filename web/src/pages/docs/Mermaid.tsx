@@ -14,26 +14,39 @@ const loadMermaid = () => (mermaidPromise ??= import("mermaid").then((m) => m.de
 // mermaid.initialize is global, so renders run one at a time.
 let queue: Promise<unknown> = Promise.resolve();
 
-/** Reads a theme token ("r g b") off the root element as a hex color. */
-function token(name: string): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(`--${name}`).trim();
-  const parts = v.split(/\s+/).map(Number);
-  if (parts.length !== 3 || parts.some(Number.isNaN)) return "";
-  return "#" + parts.map((n) => n.toString(16).padStart(2, "0")).join("");
+/**
+ * Reads a theme color off the root element as a hex color, which is what
+ * Mermaid's theme parser accepts. Tokens can be hex, oklch or color-mix(), so
+ * the browser resolves the value and a 1px canvas flattens it to sRGB.
+ */
+function token(cssVar: string): string {
+  const el = document.createElement("span");
+  el.style.display = "none";
+  el.style.color = `var(${cssVar})`;
+  document.body.appendChild(el);
+  const color = getComputedStyle(el).color;
+  el.remove();
+  const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  if (!ctx || !color) return "";
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+  return "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
 }
 
 function themeVariables(theme: Theme) {
-  const surface = token("surface");
-  const soft = token("soft");
-  const well = token("well");
-  const ink = token("ink");
-  const muted = token("muted");
-  const line = token("line-strong");
-  const brandSoft = token("brand-soft");
+  // BoardUI semantic tokens (styles/theme.css and styles/acnologia.css).
+  const surface = token("--color-background-primary-default");
+  const soft = token("--color-background-secondary-default");
+  const well = token("--color-background-tertiary-default");
+  const ink = token("--color-text-primary");
+  const muted = token("--color-text-secondary");
+  const line = token("--color-border-button-hover");
+  const brandSoft = token("--color-brand-soft");
   return {
     darkMode: theme === "dark",
     background: surface,
-    fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif",
+    fontFamily: "'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif",
     fontSize: "14px",
     primaryColor: soft,
     primaryTextColor: ink,
@@ -159,7 +172,7 @@ export function Mermaid({ code, theme }: { code: string; theme: Theme }) {
         </div>
       )}
       <details className="group border-t border-line">
-        <summary className="tap flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink [&::-webkit-details-marker]:hidden">
+        <summary className="tap flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs text-muted transition-colors hover:text-ink focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink [&::-webkit-details-marker]:hidden">
           <ChevronRight aria-hidden className="h-3.5 w-3.5 transition-transform duration-150 ease-out group-open:rotate-90" />
           Diagram source
         </summary>

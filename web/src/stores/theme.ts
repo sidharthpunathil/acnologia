@@ -35,11 +35,15 @@ function resolve(p: ThemePref): Theme {
 
 function apply(t: Theme) {
   const root = document.documentElement;
+  // data-theme is the original hook; BoardUI's tokens and dark: variant key off the .dark class.
   root.setAttribute("data-theme", t);
+  root.classList.toggle("dark", t === "dark");
   document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
     m.removeAttribute("media");
     m.content = THEME_COLOR[t];
   });
+  // BoardUI's ThemeToggle (components/application/theme) listens for this.
+  window.dispatchEvent(new CustomEvent("boardui:theme-change", { detail: t }));
 }
 
 interface ThemeStore {

@@ -12,7 +12,7 @@ import { Brand } from "../../components/Layout";
 export function DocsHeader({ nav }: { nav?: ReactNode }) {
   const signedIn = useAuth((s) => s.status === "authenticated");
   return (
-    <header className="sticky top-0 z-20 border-b border-line bg-canvas/90 backdrop-blur">
+    <header className="sticky top-0 z-20 border-b border-line bg-canvas/90 backdrop-blur-sm">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <Link to="/" className="tap flex items-center" aria-label="Acnologia home">
@@ -20,7 +20,7 @@ export function DocsHeader({ nav }: { nav?: ReactNode }) {
           </Link>
           <Link
             to="/docs"
-            className="tap inline-flex items-center rounded-md px-1 font-mono text-xs text-faint transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+            className="tap inline-flex items-center rounded-md px-1 font-mono text-xs text-faint transition-colors hover:text-ink focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink"
           >
             docs
           </Link>

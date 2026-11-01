@@ -1,0 +1,15 @@
+/*
+ * Applied while each screenshot is taken (stylePath in playwright.config.ts).
+ * Elements tagged by support/fixtures.ts are painted solid, so time based text,
+ * per run ports and animated figures never cause a diff. Painting in page
+ * keeps the mask on its element even when a full page capture relayouts.
+ */
+[data-e2e-mask] {
+  color: transparent !important;
+  text-shadow: none !important;
+  background: #ff00ff !important;
+  border-color: #ff00ff !important;
+}
+[data-e2e-mask] * {
+  visibility: hidden !important;
+}

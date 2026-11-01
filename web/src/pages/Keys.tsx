@@ -297,7 +297,7 @@ export function KeysPage() {
                 placeholder="Search by label, account, service or note"
                 aria-label="Search keys"
                 enterKeyHint="search"
-                className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20"
+                className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-hidden focus:ring-2 focus:ring-ink/20"
               />
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex">

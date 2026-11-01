@@ -32,7 +32,7 @@ export function useAiFill(form: AssistForm, current: () => object, apply: (field
   const [notes, setNotes] = useState("");
   const [changed, setChanged] = useState<Set<string>>(new Set());
   const [disabledByServer, setDisabledByServer] = useState(false);
-  const timer = useRef<number>();
+  const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => ensureStatus(), [ensureStatus]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -134,7 +134,7 @@ export function AiFillPanel({ ai }: { ai: AiFillState }) {
               }}
               placeholder={`For example: ${PLACEHOLDER[ai.form]}`}
               enterKeyHint="go"
-              className="field-input h-10 w-full min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20"
+              className="field-input h-10 w-full min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-hidden focus:ring-2 focus:ring-ink/20"
             />
             <div className="flex gap-2">
               <Button variant="primary" loading={ai.busy} disabled={!text.trim()} onClick={() => void ai.run(text)} icon={<Sparkles className="h-4 w-4" />}>

@@ -1,12 +1,12 @@
-/* Geist and Geist Mono are loaded by index.html. */
+/* Inter and JetBrains Mono are self hosted and loaded by index.css. */
 
-/* Acnologia's dashboard tokens (web/tailwind.config.js), light and dark.
+/* Acnologia's dashboard tokens (web/src/styles/acnologia.css), light and dark.
    The stage is the dashboard's own canvas, framed like the docs page's
    cards: a hairline and a 12px corner. */
 .acr {
   & .ss-stage {
-    --ss-font: 'Geist', 'Inter', ui-sans-serif, system-ui, sans-serif;
-    --ss-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+    --ss-font: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --ss-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
     --ss-canvas: #eeede9;
     --ss-surface: #ffffff;
     --ss-well: #ecebe5;

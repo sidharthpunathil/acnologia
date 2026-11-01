@@ -391,7 +391,7 @@ export const Composer = forwardRef<
             onPaste={onPaste}
             aria-describedby="assistant-hint"
             placeholder={off ? "The assistant is off" : "Ask anything, or paste or drop keys to add"}
-            className="block max-h-[200px] min-h-[36px] w-full flex-1 resize-none overflow-y-auto bg-transparent py-[7px] text-[16px] leading-[22px] text-ink placeholder:text-faint focus:outline-none disabled:cursor-not-allowed sm:text-[14px]"
+            className="block max-h-[200px] min-h-[36px] w-full flex-1 resize-none overflow-y-auto bg-transparent py-[7px] text-[16px] leading-[22px] text-ink placeholder:text-faint focus:outline-hidden disabled:cursor-not-allowed sm:text-[14px]"
           />
           <button
             type="submit"
@@ -448,7 +448,7 @@ export function Shortcuts() {
         <li key={label} className="flex items-center gap-2">
           <span className="flex shrink-0 gap-0.5">
             {keys.map((k) => (
-              <kbd key={k} className="min-w-[20px] rounded border border-line bg-soft px-1 text-center font-mono text-[10.5px] leading-[18px] text-ink">
+              <kbd key={k} className="min-w-[20px] rounded-sm border border-line bg-soft px-1 text-center font-mono text-[10.5px] leading-[18px] text-ink">
                 {k}
               </kbd>
             ))}

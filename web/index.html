@@ -24,6 +24,7 @@
         var dark = pref === "dark" || (pref === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
         var theme = dark ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", theme);
+        if (dark) document.documentElement.classList.add("dark");
         var metas = document.querySelectorAll('meta[name="theme-color"]');
         for (var i = 0; i < metas.length; i++) {
           metas[i].removeAttribute("media");
@@ -52,9 +53,6 @@
     <meta name="twitter:image" content="/og.png" />
     <meta name="twitter:image:alt" content="The Acnologia dragon mark beside the name and the tagline I think, therefore I am." />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>
