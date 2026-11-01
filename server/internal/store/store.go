@@ -284,7 +284,10 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	return migrateV2(db)
+	if err := migrateV2(db); err != nil {
+		return err
+	}
+	return migrateAIUsage(db)
 }
 
 func addColumn(db *sql.DB, table, col, def string) (bool, error) {

@@ -40,6 +40,8 @@ type Config struct {
 	APIKey      string
 	Model       string
 	GitHubToken string
+	// BaseURL overrides the Anthropic API endpoint; tests point it at a fake.
+	BaseURL string
 }
 
 type Agent struct {
@@ -63,7 +65,11 @@ func New(cfg Config, st *store.Store, cat *catalog.Catalog, box *crypto.Box) *Ag
 		a.model = "claude-opus-5-5"
 	}
 	if strings.TrimSpace(cfg.APIKey) != "" {
-		a.client = anthropic.NewClient(option.WithAPIKey(cfg.APIKey), option.WithMaxRetries(3))
+		opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey), option.WithMaxRetries(3)}
+		if cfg.BaseURL != "" {
+			opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+		}
+		a.client = anthropic.NewClient(opts...)
 		a.enabled = true
 	}
 	return a

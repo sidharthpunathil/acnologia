@@ -95,6 +95,7 @@ type chatSession struct {
 	s       *Server
 	r       *http.Request
 	user    *store.User
+	thread  int64
 	data    *chatData
 	secrets map[string]bool // key secrets seen this request, redacted on save
 	newIDs  map[string]bool // items created this request
@@ -272,7 +273,7 @@ func (s *Server) chatTurn(w http.ResponseWriter, r *http.Request, apply func(cs 
 		writeStoreErr(w, err)
 		return
 	}
-	cs := &chatSession{s: s, r: r, user: u, data: d, secrets: map[string]bool{}, newIDs: map[string]bool{}, tokens: map[string]string{}}
+	cs := &chatSession{s: s, r: r, user: u, thread: id, data: d, secrets: map[string]bool{}, newIDs: map[string]bool{}, tokens: map[string]string{}}
 	apply(cs)
 	if len(d.Messages) > 0 && d.Messages[len(d.Messages)-1].Role == "user" {
 		if err := cs.loop(r.Context()); err != nil {
@@ -432,6 +433,7 @@ func (cs *chatSession) loop(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("the assistant could not answer: %v", err)
 		}
+		cs.s.Agent.Record(ctx, store.AIFeatureAssistant, agent.CallerOf(cs.user), agent.ThreadRef(cs.thread), resp)
 		msg := chatMsg{Role: "assistant"}
 		results := []chatBlock{}
 		for _, block := range resp.Content {

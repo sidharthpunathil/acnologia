@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
+
+	"github.com/cogito-keys/cogito/internal/store"
 )
 
 // assistForms describes the fields "Fill with AI" may set on each form.
@@ -45,7 +47,7 @@ type AssistResult struct {
 }
 
 // Assist fills a form from a one line instruction.
-func (a *Agent) Assist(ctx context.Context, form, instruction string, current map[string]any) (*AssistResult, error) {
+func (a *Agent) Assist(ctx context.Context, by *store.User, form, instruction string, current map[string]any) (*AssistResult, error) {
 	if !a.enabled {
 		return nil, ErrDisabled
 	}
@@ -90,6 +92,7 @@ func (a *Agent) Assist(ctx context.Context, form, instruction string, current ma
 	if err != nil {
 		return nil, fmt.Errorf("AI request failed: %w", err)
 	}
+	a.Record(ctx, store.AIFeatureFill, CallerOf(by), "form:"+form, resp)
 	if resp.StopReason == anthropic.BetaStopReasonRefusal {
 		return nil, errors.New("Claude declined this request")
 	}

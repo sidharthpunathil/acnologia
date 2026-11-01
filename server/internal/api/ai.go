@@ -54,7 +54,7 @@ func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	res, err := s.Agent.Assist(r.Context(), body.Form, body.Instruction, body.Current)
+	res, err := s.Agent.Assist(r.Context(), userFrom(r), body.Form, body.Instruction, body.Current)
 	if err != nil {
 		writeAIErr(w, err)
 		return

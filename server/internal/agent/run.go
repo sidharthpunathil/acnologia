@@ -117,7 +117,8 @@ func (a *Agent) loop(ctx context.Context, s *runState) error {
 		if err != nil {
 			return fmt.Errorf("AI request failed: %w", err)
 		}
-		a.addUsage(s, resp.Usage)
+		cost := a.Record(ctx, store.AIFeatureBuilder, Caller{ID: s.run.CreatedByID, Email: s.run.CreatedBy}, runRef(id), resp)
+		a.addUsage(s, resp.Usage, cost)
 		u := s.usage
 		_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Usage: &u}) // live cost in the UI
 		messages = append(messages, resp.ToParam())
@@ -193,14 +194,14 @@ func (a *Agent) loop(ctx context.Context, s *runState) error {
 	return fmt.Errorf("stopped after %d turns without an accepted provider", MaxTurns)
 }
 
-func (a *Agent) addUsage(s *runState, u anthropic.BetaUsage) {
+// addUsage adds one call to the run's running totals. The cost is the
+// ledger's, priced in pricing.go, so a run and the Usage page agree.
+func (a *Agent) addUsage(s *runState, u anthropic.BetaUsage, cost float64) {
 	s.usage.InputTokens += u.InputTokens + u.CacheCreationInputTokens
 	s.usage.CacheRead += u.CacheReadInputTokens
 	s.usage.OutputTokens += u.OutputTokens
 	s.usage.WebSearches += u.ServerToolUse.WebSearchRequests
-	// Claude Opus 5.5 list prices: $4 input, $20 output, $0.20 cache reads per MTok; web search $10 per 1,000.
-	s.usage.CostUSD = float64(s.usage.InputTokens)*4/1e6 + float64(s.usage.OutputTokens)*20/1e6 +
-		float64(s.usage.CacheRead)*0.2/1e6 + float64(s.usage.WebSearches)*0.01
+	s.usage.CostUSD += cost
 }
 
 // finish publishes (or parks for review) the accepted draft.
