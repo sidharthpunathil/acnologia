@@ -2,6 +2,7 @@ export { Cogito, Lease, Proxy, VERSION } from "./client.js";
 export {
   CogitoError,
   NoKeyAvailableError,
+  AllKeysBusyError,
   KeyRotationError,
   RateLimitedError,
   QuotaExhaustedError,

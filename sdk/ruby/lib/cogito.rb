@@ -11,6 +11,8 @@ require "uri"
 module Cogito
   VERSION = "0.1.0"
   OUTCOMES = %w[ok rate_limited quota_exhausted invalid error].freeze
+  # Longest wait_sec the server accepts.
+  MAX_WAIT_SEC = 60
 
   # Non 2xx response from the consumer API, or a transport failure (status 0).
   class Error < StandardError
@@ -23,13 +25,32 @@ module Cogito
     end
   end
 
-  # HTTP 503 no_key_available. retry_after is in seconds, or nil.
+  # HTTP 503: no key can be leased right now. retry_after is in seconds, or nil.
+  #
+  # code is "no_key_available" when every key is cooling down, exhausted or
+  # excluded, and "all_keys_busy" when every usable key is at its concurrency
+  # limit (busy? is true and the AllKeysBusy subclass is raised).
   class NoKeyAvailable < Error
     attr_reader :retry_after
 
-    def initialize(message = "no key available", retry_after: nil)
-      super(message, status: 503, code: "no_key_available")
+    def initialize(message = "no key available", retry_after: nil, code: "no_key_available")
+      super(message, status: 503, code: code)
       @retry_after = retry_after
+    end
+
+    # True when every usable key is at its concurrency limit (all_keys_busy).
+    def busy?
+      code == "all_keys_busy"
+    end
+  end
+
+  # HTTP 503 all_keys_busy: usable keys exist but every one is at its
+  # concurrency limit. Clears as soon as another caller reports a lease, so
+  # retry after retry_after seconds (usually 1) or lease with wait_sec.
+  # Subclasses NoKeyAvailable, so existing rescues still catch it.
+  class AllKeysBusy < NoKeyAvailable
+    def initialize(message = "all keys busy", retry_after: nil)
+      super(message, retry_after: retry_after, code: "all_keys_busy")
     end
   end
 
@@ -199,41 +220,73 @@ module Cogito
       call("GET", "/api/v1/services").fetch("services", [])
     end
 
-    def lease(service, exclude_key_ids: nil, ttl_sec: nil)
+    # Borrow a key.
+    #
+    # wait_sec (0 to 60) lets the server wait that long for a free slot when
+    # every usable key is at its concurrency limit. Raises AllKeysBusy (a
+    # NoKeyAvailable) if none frees up in time, and NoKeyAvailable when the
+    # pool is drained.
+    #
+    # Always report the lease: on services with a concurrency limit it holds
+    # one of the key's slots until it is reported or its TTL expires.
+    def lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil)
       body = { "service" => service }
       body["exclude_key_ids"] = exclude_key_ids if exclude_key_ids && !exclude_key_ids.empty?
       body["ttl_sec"] = ttl_sec.to_i unless ttl_sec.nil?
+      if wait_sec && wait_sec != 0
+        raise ArgumentError, "wait_sec must be between 0 and #{MAX_WAIT_SEC}" if wait_sec.negative? || wait_sec > MAX_WAIT_SEC
+
+        body["wait_sec"] = wait_sec.ceil
+      end
       Lease.new(self, call("POST", "/api/v1/lease", body))
     end
 
     # Lease a key, yield it, report the outcome and return the block's value.
     # Raise RateLimited, QuotaExhausted or InvalidKey in the block to rotate.
-    def with_key(service, max_attempts: 5, ttl_sec: nil)
+    #
+    # Every lease is reported, whatever the block does (including raising any
+    # exception). On services with a concurrency limit an unreported lease
+    # keeps one of the key's slots busy until its TTL expires. wait_sec is
+    # passed to every lease call.
+    def with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil)
       raise ArgumentError, "max_attempts must be at least 1" if max_attempts < 1
 
       tried = []
-      lease = self.lease(service, ttl_sec: ttl_sec)
+      lease = self.lease(service, ttl_sec: ttl_sec, wait_sec: wait_sec)
       attempt = 0
       loop do
         attempt += 1
         tried << lease.key_id
+        current = lease
+        returned = false
         begin
-          result = yield lease
+          result = yield current
+          returned = true
         rescue KeyProblem => e
           last = attempt >= max_attempts
-          nxt = lease.report(e.outcome, status_code: e.status_code, retry_after_sec: e.retry_after,
-                                        message: e.message, rotate: !last)
+          nxt = current.report(e.outcome, status_code: e.status_code, retry_after_sec: e.retry_after,
+                                          message: e.message, rotate: !last)
           raise if last
 
-          lease = nxt || self.lease(service, exclude_key_ids: tried, ttl_sec: ttl_sec)
+          lease = nxt || self.lease(service, exclude_key_ids: tried, ttl_sec: ttl_sec, wait_sec: wait_sec)
           next
         rescue Exception => e # rubocop:disable Lint/RescueException
           begin
-            lease.report("error", message: "#{e.class}: #{e.message}"[0, 500])
+            current.report("error", message: "#{e.class}: #{e.message}"[0, 500])
           rescue StandardError
             nil # never mask the caller's exception
           end
           raise
+        ensure
+          # break, a non local return or throw in the block skips the code
+          # below; still release the lease so its concurrency slot frees up.
+          if !returned && !current.reported && $!.nil?
+            begin
+              current.report("ok")
+            rescue StandardError
+              nil
+            end
+          end
         end
         lease.report("ok")
         return result
@@ -279,10 +332,10 @@ module Cogito
       err = data.is_a?(Hash) && data["error"].is_a?(Hash) ? data["error"] : {}
       code = err["code"].to_s
       message = (err["message"] || "HTTP #{res.status}").to_s
-      if code == "no_key_available" || (res.status == 503 && code.empty?)
-        retry_after = data.is_a?(Hash) && data["retry_after_sec"] ? data["retry_after_sec"].to_i : nil
-        raise NoKeyAvailable.new(message, retry_after: retry_after)
-      end
+      retry_after = data.is_a?(Hash) && data["retry_after_sec"] ? data["retry_after_sec"].to_i : nil
+      raise AllKeysBusy.new(message, retry_after: retry_after) if code == "all_keys_busy"
+      raise NoKeyAvailable.new(message, retry_after: retry_after) if code == "no_key_available" || (res.status == 503 && code.empty?)
+
       raise Error.new(message, status: res.status, code: code)
     end
 
@@ -291,7 +344,7 @@ module Cogito
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
       http.open_timeout = @timeout
-      http.read_timeout = @timeout
+      http.read_timeout = [@timeout, lease_wait(uri, body) + 10].max
       req = Net::HTTPGenericRequest.new(method, !body.nil?, true, uri.request_uri, headers)
       req.body = body unless body.nil?
       res = http.request(req)
@@ -300,6 +353,15 @@ module Cogito
       Response.new(res.code.to_i, hdrs, res.body.to_s)
     rescue StandardError => e
       raise Error.new("request failed: #{e.message}")
+    end
+
+    # wait_sec of a lease request body, so the read timeout outlasts the server side wait.
+    def lease_wait(uri, body)
+      return 0 unless body && uri.path.end_with?("/api/v1/lease")
+
+      JSON.parse(body).fetch("wait_sec", 0).to_i
+    rescue JSON::ParserError
+      0
     end
   end
 end

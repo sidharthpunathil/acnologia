@@ -7,7 +7,7 @@ require_relative "../lib/cogito"
 
 class FakeServer
   attr_reader :log, :reports, :lease_bodies
-  attr_accessor :keys
+  attr_accessor :keys, :busy
 
   def initialize
     @keys = [1, 2, 3]
@@ -39,6 +39,10 @@ class FakeServer
 
     if path == "/api/v1/lease"
       @lease_bodies << json
+      if @busy
+        return Cogito::Response.new(503, {}, '{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}')
+      end
+
       l = lease_json(json["exclude_key_ids"] || [])
       return Cogito::Response.new(503, {}, '{"error":{"code":"no_key_available","message":"drained"},"retry_after_sec":7}') unless l
 
@@ -123,6 +127,65 @@ class CogitoTest < Minitest::Test
     @srv.keys = []
     err = assert_raises(Cogito::NoKeyAvailable) { @cog.lease("serpapi") }
     assert_equal 7, err.retry_after
+  end
+
+  def test_lease_sends_wait_sec
+    @cog.lease("elevenlabs", ttl_sec: 60, wait_sec: 20).report("ok")
+    assert_equal({ "service" => "elevenlabs", "ttl_sec" => 60, "wait_sec" => 20 }, @srv.lease_bodies.last)
+    @cog.lease("elevenlabs", wait_sec: 0).report("ok")
+    assert_equal({ "service" => "elevenlabs" }, @srv.lease_bodies.last)
+    assert_raises(ArgumentError) { @cog.lease("elevenlabs", wait_sec: 61) }
+    assert_equal 2, @srv.lease_bodies.size
+  end
+
+  def test_with_key_sends_wait_sec
+    @srv.keys = [1]
+    assert_raises(Cogito::NoKeyAvailable) do
+      @cog.with_key("elevenlabs", wait_sec: 15) { raise Cogito::RateLimited }
+    end
+    assert_equal([15, 15], @srv.lease_bodies.map { |b| b["wait_sec"] })
+    assert_equal ["rate_limited"], @srv.reports.map { |r| r["outcome"] }
+  end
+
+  def test_all_keys_busy
+    @srv.busy = true
+    err = assert_raises(Cogito::AllKeysBusy) { @cog.lease("elevenlabs", wait_sec: 5) }
+    assert_kind_of Cogito::NoKeyAvailable, err
+    assert err.busy?
+    assert_equal "all_keys_busy", err.code
+    assert_equal 503, err.status
+    assert_equal 1, err.retry_after
+    assert_equal "every key is at its limit", err.message
+  end
+
+  def test_no_key_available_is_not_busy
+    @srv.keys = []
+    err = assert_raises(Cogito::NoKeyAvailable) { @cog.lease("serpapi") }
+    refute err.busy?
+    refute_kind_of Cogito::AllKeysBusy, err
+  end
+
+  def test_with_key_busy_does_not_yield
+    @srv.busy = true
+    yielded = false
+    assert_raises(Cogito::AllKeysBusy) { @cog.with_key("elevenlabs", wait_sec: 2) { yielded = true } }
+    refute yielded
+    assert_empty @srv.reports
+  end
+
+  def test_with_key_reports_on_break_and_throw
+    @cog.with_key("serpapi") { break }
+    assert_equal ["ok"], @srv.reports.map { |r| r["outcome"] }
+    catch(:done) { @cog.with_key("serpapi") { throw :done } }
+    assert_equal %w[ok ok], @srv.reports.map { |r| r["outcome"] }
+    assert_equal 2, @srv.reports.map { |r| r["_id"] }.uniq.size
+  end
+
+  def test_lease_wait_read_timeout
+    uri = URI("http://cogito.test/api/v1/lease")
+    assert_equal 30, @cog.send(:lease_wait, uri, JSON.generate("service" => "x", "wait_sec" => 30))
+    assert_equal 0, @cog.send(:lease_wait, uri, JSON.generate("service" => "x"))
+    assert_equal 0, @cog.send(:lease_wait, URI("http://cogito.test/api/v1/services"), nil)
   end
 
   def test_bad_token

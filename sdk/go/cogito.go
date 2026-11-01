@@ -113,8 +113,16 @@ func (c *Client) leaseFromWire(w *leaseWire) *Lease {
 // LeaseOptions are optional parameters for Lease.
 type LeaseOptions struct {
 	ExcludeKeyIDs []int64       // keys that must not be returned
-	TTL           time.Duration // lease lifetime; zero uses the server default
+	TTL           time.Duration // lease lifetime; zero uses the server default (120s on services with a concurrency limit, 300s otherwise)
+	// Wait lets the server wait up to this long (at most MaxWait) for a free
+	// slot when every usable key is at its concurrency limit. Zero fails fast
+	// with a busy *ErrNoKeyAvailable. Sent as wait_sec, rounded up to whole
+	// seconds. If your http.Client has a Timeout, make it longer than Wait.
+	Wait time.Duration
 }
+
+// MaxWait is the longest LeaseOptions.Wait the server accepts.
+const MaxWait = 60 * time.Second
 
 // Outcome is the result of using a leased key.
 type Outcome string
@@ -149,7 +157,11 @@ func (c *Client) Services(ctx context.Context) ([]Service, error) {
 }
 
 // Lease asks the pool for a key. It returns *ErrNoKeyAvailable when the pool
-// is empty or every key is cooling down.
+// is empty or every key is cooling down, with Busy set when every usable key
+// is at its concurrency limit and opts.Wait ran out.
+//
+// Always Report the lease: on services with a concurrency limit it holds one
+// of the key's slots until it is reported or its TTL expires.
 func (c *Client) Lease(ctx context.Context, service string, opts *LeaseOptions) (*Lease, error) {
 	body := map[string]any{"service": service}
 	if opts != nil {
@@ -158,6 +170,12 @@ func (c *Client) Lease(ctx context.Context, service string, opts *LeaseOptions) 
 		}
 		if opts.TTL > 0 {
 			body["ttl_sec"] = ceilSeconds(opts.TTL)
+		}
+		if opts.Wait < 0 || opts.Wait > MaxWait {
+			return nil, fmt.Errorf("cogito: lease wait must be between 0 and %s", MaxWait)
+		}
+		if opts.Wait > 0 {
+			body["wait_sec"] = ceilSeconds(opts.Wait)
 		}
 	}
 	var w leaseWire
@@ -293,10 +311,17 @@ func parseError(status int, data []byte) error {
 		RetryAfterSec float64 `json:"retry_after_sec"`
 	}
 	_ = json.Unmarshal(data, &e)
-	if e.Error.Code == "no_key_available" || (status == http.StatusServiceUnavailable && e.Error.Code == "") {
+	if e.Error.Code == "no_key_available" || e.Error.Code == "all_keys_busy" ||
+		(status == http.StatusServiceUnavailable && e.Error.Code == "") {
+		code := e.Error.Code
+		if code == "" {
+			code = "no_key_available"
+		}
 		return &ErrNoKeyAvailable{
 			RetryAfter: time.Duration(e.RetryAfterSec * float64(time.Second)),
 			Message:    e.Error.Message,
+			Code:       code,
+			Busy:       code == "all_keys_busy",
 		}
 	}
 	msg := e.Error.Message

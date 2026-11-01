@@ -14,6 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/cogito-keys/cogito/internal/agent"
+	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
 	"github.com/cogito-keys/cogito/internal/pool"
 	"github.com/cogito-keys/cogito/internal/store"
@@ -23,15 +25,17 @@ type Server struct {
 	Cfg      config.Config
 	Store    *store.Store
 	Pool     *pool.Pool
+	Catalog  *catalog.Catalog
+	Agent    *agent.Agent
 	UpClient *http.Client
 	WebFS    fs.FS
 	LLMsTxt  []byte
 	limiter  *loginLimiter
 }
 
-func New(cfg config.Config, st *store.Store, p *pool.Pool, web fs.FS, llms []byte) *Server {
+func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
 	return &Server{
-		Cfg: cfg, Store: st, Pool: p, WebFS: web, LLMsTxt: llms,
+		Cfg: cfg, Store: st, Pool: p, Catalog: cat, Agent: ag, WebFS: web, LLMsTxt: llms,
 		UpClient: newUpstreamClient(),
 		limiter:  newLoginLimiter(),
 	}
@@ -39,7 +43,12 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, web fs.FS, llms []byt
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP, middleware.Recoverer, requestLog)
+	r.Use(middleware.RealIP, middleware.Recoverer, requestLog, privateSite)
+
+	r.Get("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("User-agent: *\nDisallow: /\n"))
+	})
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": s.Cfg.Version})
@@ -65,6 +74,12 @@ func (s *Server) Router() http.Handler {
 		r.Get("/services/{id}/keys", s.listKeys)
 		r.Get("/events", s.listEvents)
 		r.Get("/apps", s.listApps)
+		r.Get("/providers/{slug}", s.getProvider)
+		r.Post("/providers/validate", s.validateProvider)
+		r.Get("/ai/status", s.aiStatus)
+		r.Get("/ai/rules", s.aiGetRules)
+		r.Get("/ai/runs", s.aiListRuns)
+		r.Get("/ai/runs/{id}", s.aiGetRun)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleAdmin))
@@ -80,6 +95,20 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/apps/{id}", s.updateApp)
 			r.Delete("/apps/{id}", s.deleteApp)
 			r.Post("/apps/{id}/rotate-token", s.rotateAppToken)
+			r.Put("/services/{id}/logo", s.putServiceLogo)
+			r.Delete("/services/{id}/logo", s.deleteServiceLogo)
+			r.Post("/providers", s.createProvider)
+			r.Put("/providers/{slug}", s.updateProvider)
+			r.Delete("/providers/{slug}", s.deleteProvider)
+			r.Post("/providers/{slug}/rollback", s.rollbackProvider)
+			r.Post("/providers/{slug}/live-check", s.liveCheckProvider)
+			r.Put("/providers/{slug}/logo", s.putProviderLogo)
+			r.Delete("/providers/{slug}/logo", s.deleteProviderLogo)
+			r.Post("/providers/{slug}/logo/fetch", s.fetchProviderLogo)
+			r.Post("/ai/assist", s.aiAssist)
+			r.Post("/ai/runs", s.aiCreateRun)
+			r.Post("/ai/runs/{id}/cancel", s.aiCancelRun)
+			r.Post("/ai/runs/{id}/publish", s.aiPublishRun)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleSuperadmin))
@@ -89,7 +118,14 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/users/{id}", s.updateUser)
 			r.Delete("/users/{id}", s.deleteUser)
 			r.Get("/audit", s.listAudit)
+			r.Put("/ai/rules", s.aiSetRules)
 		})
+	})
+
+	r.Route("/api/logos", func(r chi.Router) {
+		r.Use(s.requireUser)
+		r.Get("/providers/{slug}", s.providerLogo)
+		r.Get("/services/{id}", s.serviceLogo)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -117,6 +153,19 @@ func requestLog(next http.Handler) http.Handler {
 		}
 		// Never log query strings: they may carry provider keys or app tokens.
 		slog.Info("http", "method", r.Method, "path", r.URL.Path, "status", ww.Status(), "ms", time.Since(start).Milliseconds())
+	})
+}
+
+// privateSite keeps every page out of search engines and AI crawlers, and
+// sets baseline security headers. Cogito is a private tool.
+func privateSite(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		h.Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
 	})
 }
 

@@ -14,6 +14,10 @@ var (
 	QuotaExhausted = errors.New("cogito: quota exhausted")
 	InvalidKey     = errors.New("cogito: invalid key")
 	NoKeyAvailable = errors.New("cogito: no key available")
+	// AllKeysBusy matches an *ErrNoKeyAvailable whose Busy field is true:
+	// every usable key is at its concurrency limit (HTTP 503 all_keys_busy).
+	// Such an error also matches NoKeyAvailable.
+	AllKeysBusy = errors.New("cogito: all keys busy")
 )
 
 // APIError is returned for any non-2xx response from the consumer API that is
@@ -85,15 +89,26 @@ func (e *ErrInvalidKey) Error() string {
 func (e *ErrInvalidKey) Is(target error) bool { return target == InvalidKey }
 func (e *ErrInvalidKey) Unwrap() error        { return e.Err }
 
-// ErrNoKeyAvailable is returned when the pool has no usable key (HTTP 503).
-// RetryAfter is the time until the earliest cooldown ends, or zero if unknown.
+// ErrNoKeyAvailable is returned when no key can be leased right now (HTTP 503).
+// RetryAfter is how long to wait before retrying, or zero if unknown.
+//
+// Code is "no_key_available" when every key is cooling down, exhausted or
+// excluded, and "all_keys_busy" when usable keys exist but every one is at its
+// concurrency limit. Busy is true in the second case; it clears as soon as
+// another caller reports a lease, so retry after RetryAfter (usually 1s) or
+// lease with LeaseOptions.Wait. errors.Is(err, AllKeysBusy) also tests it.
 type ErrNoKeyAvailable struct {
 	RetryAfter time.Duration
 	Message    string
+	Code       string
+	Busy       bool
 }
 
 func (e *ErrNoKeyAvailable) Error() string {
 	msg := "cogito: no key available"
+	if e.Busy {
+		msg = "cogito: all keys busy"
+	}
 	if e.RetryAfter > 0 {
 		msg += fmt.Sprintf(" (retry after %s)", e.RetryAfter)
 	}
@@ -102,4 +117,6 @@ func (e *ErrNoKeyAvailable) Error() string {
 	}
 	return msg
 }
-func (e *ErrNoKeyAvailable) Is(target error) bool { return target == NoKeyAvailable }
+func (e *ErrNoKeyAvailable) Is(target error) bool {
+	return target == NoKeyAvailable || (target == AllKeysBusy && e.Busy)
+}

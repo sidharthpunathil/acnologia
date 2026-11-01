@@ -3,7 +3,6 @@
 package providers
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,53 +46,6 @@ type CheckResult struct {
 	Message        string
 }
 
-type Template struct {
-	Provider           string `json:"provider"`
-	Name               string `json:"name"`
-	Category           string `json:"category"`
-	Description        string `json:"description"`
-	BaseURL            string `json:"base_url"`
-	AuthType           string `json:"auth_type"`
-	AuthName           string `json:"auth_name"`
-	Icon               string `json:"icon"`
-	DefaultCooldownSec int    `json:"default_cooldown_sec"`
-	DocsURL            string `json:"docs_url"`
-	// DefaultMaxConcurrency caps in-flight requests per key; 0 means unlimited.
-	DefaultMaxConcurrency  int `json:"default_max_concurrency"`
-	DefaultQueueTimeoutSec int `json:"default_queue_timeout_sec"`
-}
-
-type Provider interface {
-	Template() Template
-	// Classify turns an upstream response into an outcome. body may be truncated.
-	Classify(status int, h http.Header, body []byte) Result
-	// Check asks the upstream about the key's validity and quota without spending it.
-	Check(ctx context.Context, c *http.Client, baseURL, secret string) (*CheckResult, error)
-	// CountsPerRequest reports whether one successful request spends one quota unit.
-	CountsPerRequest() bool
-}
-
-var registry = map[string]Provider{}
-
-func register(p Provider) { registry[p.Template().Provider] = p }
-
-func init() {
-	register(serpAPI{})
-	register(elevenLabs{})
-	register(generic{})
-}
-
-func Get(name string) Provider {
-	if p, ok := registry[name]; ok {
-		return p
-	}
-	return registry["generic"]
-}
-
-func Templates() []Template {
-	return []Template{serpAPI{}.Template(), elevenLabs{}.Template(), generic{}.Template()}
-}
-
 // ParseRetryAfter reads a Retry-After header in seconds or HTTP date form.
 func ParseRetryAfter(h http.Header) time.Duration {
 	v := strings.TrimSpace(h.Get("Retry-After"))
@@ -109,42 +61,6 @@ func ParseRetryAfter(h http.Header) time.Duration {
 		}
 	}
 	return 0
-}
-
-// generic covers any API key based HTTP service with standard status codes.
-type generic struct{}
-
-func (generic) Template() Template {
-	return Template{
-		Provider: "generic", Name: "Custom API", Category: "Other",
-		Description: "Any HTTP API that takes a key in a header, a bearer token, or a query parameter.",
-		AuthType:    "header", AuthName: "Authorization", Icon: "plug", DefaultCooldownSec: 60,
-	}
-}
-
-func (generic) CountsPerRequest() bool { return false }
-
-func (generic) Classify(status int, h http.Header, body []byte) Result {
-	return classifyStandard(status, h, body)
-}
-
-func classifyStandard(status int, h http.Header, body []byte) Result {
-	msg := snippet(body)
-	switch {
-	case status == http.StatusTooManyRequests:
-		return Result{Outcome: RateLimited, RetryAfter: ParseRetryAfter(h), Message: msg}
-	case status == http.StatusPaymentRequired:
-		return Result{Outcome: QuotaExhausted, Message: msg}
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return Result{Outcome: Invalid, Message: msg}
-	case status >= 500:
-		return Result{Outcome: Error, Message: msg}
-	}
-	return Result{Outcome: OK}
-}
-
-func (generic) Check(ctx context.Context, c *http.Client, baseURL, secret string) (*CheckResult, error) {
-	return &CheckResult{Valid: true, Message: "no health check for custom APIs"}, nil
 }
 
 func snippet(b []byte) string {

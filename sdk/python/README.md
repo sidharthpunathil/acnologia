@@ -72,7 +72,7 @@ with open("hello.mp3", "wb") as f:
 
 ## Lease mode
 
-`cog.lease(service, exclude_key_ids=None, ttl_sec=None)` returns a `Lease` with
+`cog.lease(service, exclude_key_ids=None, ttl_sec=None, wait_sec=None)` returns a `Lease` with
 `lease_id`, `key_id`, `service`, `secret`, `auth` (`type` and `name`),
 `base_url` and `expires_at`. When every key is cooling down it raises
 `NoKeyAvailable` with `retry_after` in seconds.
@@ -127,7 +127,7 @@ Outcomes: `ok`, `rate_limited`, `quota_exhausted`, `invalid`, `error`.
 
 ### with_key: retries with rotation
 
-`cog.with_key(service, fn, max_attempts=5)` leases a key, calls `fn(lease)`,
+`cog.with_key(service, fn, max_attempts=5, ttl_sec=None, wait_sec=None)` leases a key, calls `fn(lease)`,
 reports the result and returns what `fn` returned. Raise one of the exported
 exceptions to make Cogito cool the key down and retry with the next one:
 
@@ -182,9 +182,48 @@ def speak(lease):
 audio = cog.with_key("elevenlabs", speak)
 ```
 
-If no key is left, `with_key` raises `NoKeyAvailable` (check `.retry_after`).
+If no key is left, `with_key` raises `NoKeyAvailable` (check `.retry_after`),
+or its subclass `AllKeysBusy` when every key is at its concurrency limit.
 After `max_attempts` rotations it re-raises the last `RateLimited`,
 `QuotaExhausted` or `InvalidKey`.
+
+## Concurrency limits
+
+Some providers cap how many requests one key may run at once (ElevenLabs
+allows 2 per key by default). Cogito enforces this per key, so a lease is
+exclusive: on a service with a limit, each lease holds one of the key's slots
+until you report it or its `ttl_sec` runs out (default 120 seconds on limited
+services, 300 otherwise).
+
+- **Always report.** `with_key` and the context manager report every lease,
+  even when your code raises. If you call `lease()` yourself, call
+  `lease.report(...)` in a `finally` block, or the slot stays taken until the
+  TTL expires.
+- **Wait instead of failing.** Pass `wait_sec` (0 to 60) and the server waits
+  that long for a slot when every usable key is busy. The SDK extends its read
+  timeout to cover the wait.
+
+```python
+from cogito import AllKeysBusy
+
+with cog.lease("elevenlabs", wait_sec=20) as lease:
+    ...
+
+audio = cog.with_key("elevenlabs", speak, wait_sec=20)
+
+try:
+    lease = cog.lease("elevenlabs")
+except AllKeysBusy as exc:   # subclass of NoKeyAvailable, exc.busy is True
+    time.sleep(exc.retry_after or 1)
+```
+
+`AllKeysBusy` (HTTP 503 `all_keys_busy`) means the keys are fine but in use;
+it clears as soon as another caller reports. `NoKeyAvailable` with
+`busy == False` means every key is cooling down, exhausted or excluded.
+
+Proxy mode needs none of this: Cogito queues proxied requests for up to the
+service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
+than the limit in parallel on one key.
 
 ## Async
 
@@ -216,7 +255,8 @@ for s in cog.services():
 ## Errors
 
 - `CogitoError`: any non 2xx from the consumer API (`.status_code`, `.code`, `.message`).
-- `NoKeyAvailable(CogitoError)`: HTTP 503 `no_key_available`, with `.retry_after`.
+- `NoKeyAvailable(CogitoError)`: HTTP 503 `no_key_available`, with `.retry_after` and `.busy`.
+- `AllKeysBusy(NoKeyAvailable)`: HTTP 503 `all_keys_busy`, every usable key is at its concurrency limit. `.busy` is `True`, `.retry_after` is usually 1.
 - `RateLimited`, `QuotaExhausted`, `InvalidKey`: raised by you inside `with_key` or a lease block. All subclass `KeyProblem`.
 
 ## Options

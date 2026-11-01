@@ -55,7 +55,7 @@ Array bodies are sent as JSON; strings are sent as is.
 
 ## Lease mode
 
-`$cog->lease($service, $excludeKeyIds = [], $ttlSec = null)` returns a
+`$cog->lease($service, $excludeKeyIds = [], $ttlSec = null, $waitSec = null)` returns a
 `Cogito\Lease` with `leaseId`, `keyId`, `service`, `secret`, `auth`
 (`['type' => ..., 'name' => ...]`), `baseUrl` and `expiresAt`. It throws
 `Cogito\Exception\NoKeyAvailable` (with `retryAfter`) when the pool is drained.
@@ -71,7 +71,7 @@ returns the next `Lease` (or null) when `$rotate` is true.
 
 ### withKey
 
-`$cog->withKey($service, $fn, $maxAttempts = 5)` leases a key, calls `$fn($lease)`,
+`$cog->withKey($service, $fn, $maxAttempts = 5, $ttlSec = null, $waitSec = null)` leases a key, calls `$fn($lease)`,
 reports and returns the result. Throw `RateLimited`, `QuotaExhausted` or
 `InvalidKey` from `$fn` to cool the key down and retry with the next one. Any
 other exception is reported as `error` and rethrown.
@@ -123,20 +123,63 @@ $audio = $cog->withKey('elevenlabs', function (Cogito\Lease $lease) {
 file_put_contents('hi.mp3', $audio);
 ```
 
-Manual flow:
+Manual flow (report on every path, see Concurrency limits):
 
 ```php
 $lease = $cog->lease('serpapi');
-// ... call the provider ...
-$next = $lease->report('rate_limited', 429, 3600, 'hourly limit', rotate: true);
+try {
+    // ... call the provider ...
+    $next = $lease->report('rate_limited', 429, 3600, 'hourly limit', rotate: true);
+} finally {
+    if (!$lease->reported) {
+        $lease->report('error');
+    }
+}
 ```
+
+## Concurrency limits
+
+Some providers cap how many requests one key may run at once (ElevenLabs
+allows 2 per key by default). Cogito enforces this per key, so a lease is
+exclusive: on a service with a limit, each lease holds one of the key's slots
+until you report it or its `ttlSec` runs out (default 120 seconds on limited
+services, 300 otherwise).
+
+- **Always report.** `withKey` reports every lease, even when `$fn` throws.
+  With a manual `lease()`, report in a `finally` block, or the slot stays taken
+  until the TTL expires.
+- **Wait instead of failing.** Pass `waitSec` (0 to 60) and the server waits
+  that long for a slot when every usable key is busy. The curl timeout is
+  extended to cover the wait.
+
+```php
+use Cogito\Exception\AllKeysBusy;
+
+$audio = $cog->withKey('elevenlabs', $speak, waitSec: 20);
+
+try {
+    $lease = $cog->lease('elevenlabs', waitSec: 20);
+} catch (AllKeysBusy $e) {
+    sleep($e->retryAfter ?? 1); // $e->busy === true
+}
+```
+
+`AllKeysBusy` (503 `all_keys_busy`) means the keys are fine but in use; it
+clears as soon as another caller reports. It extends `NoKeyAvailable`, so
+existing `catch (NoKeyAvailable $e)` blocks still catch it; check `$e->busy` to
+tell them apart.
+
+Proxy mode needs none of this: Cogito queues proxied requests for up to the
+service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
+than the limit in parallel on one key.
 
 ## Errors
 
 | class | when |
 |---|---|
 | `Cogito\Exception\CogitoException` | non 2xx from Cogito (`statusCode`, `errorCode`), or curl failure |
-| `Cogito\Exception\NoKeyAvailable` | 503 `no_key_available`, `retryAfter` in seconds |
+| `Cogito\Exception\NoKeyAvailable` | 503 `no_key_available`, `retryAfter` in seconds, `busy` |
+| `Cogito\Exception\AllKeysBusy` | 503 `all_keys_busy`: every usable key is at its concurrency limit (extends `NoKeyAvailable`, `busy` is true) |
 | `RateLimited`, `QuotaExhausted`, `InvalidKey` | thrown by you inside `withKey` (all extend `KeyProblem`) |
 
 ## Tests

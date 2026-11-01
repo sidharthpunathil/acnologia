@@ -13,15 +13,36 @@ export class CogitoError extends Error {
   }
 }
 
-/** Thrown when the pool has no usable key for a service (HTTP 503, code `no_key_available`). */
+/**
+ * Thrown when no key can be leased right now (HTTP 503). `code` is `no_key_available`
+ * when every key is cooling down, exhausted or excluded, and `all_keys_busy` when every
+ * usable key is at its concurrency limit (see `busy` and `AllKeysBusyError`).
+ */
 export class NoKeyAvailableError extends CogitoError {
-  /** Seconds until the earliest cooldown ends, when the server knows it. */
+  /** Seconds to wait before retrying, when the server knows it. */
   readonly retryAfter: number | null;
 
-  constructor(message: string, retryAfter: number | null, body?: unknown) {
-    super(message, 503, "no_key_available", body);
+  constructor(message: string, retryAfter: number | null, body?: unknown, code: string = "no_key_available") {
+    super(message, 503, code, body);
     this.name = "NoKeyAvailableError";
     this.retryAfter = retryAfter;
+  }
+
+  /** True when every usable key is at its concurrency limit (`all_keys_busy`). Clears as soon as another caller reports. */
+  get busy(): boolean {
+    return this.code === "all_keys_busy";
+  }
+}
+
+/**
+ * Every usable key is at its concurrency limit (HTTP 503, code `all_keys_busy`).
+ * Extends `NoKeyAvailableError`, so existing `instanceof NoKeyAvailableError` checks still match.
+ * Retry after `retryAfter` seconds (usually 1) or lease with `waitSec`.
+ */
+export class AllKeysBusyError extends NoKeyAvailableError {
+  constructor(message: string, retryAfter: number | null, body?: unknown) {
+    super(message, retryAfter, body, "all_keys_busy");
+    this.name = "AllKeysBusyError";
   }
 }
 

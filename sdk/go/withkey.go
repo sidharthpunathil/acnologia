@@ -3,7 +3,12 @@ package cogito
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 )
+
+// reportTimeout bounds a report sent after the caller's context is done.
+const reportTimeout = 10 * time.Second
 
 type withKeyConfig struct {
 	maxAttempts int
@@ -22,9 +27,32 @@ func WithMaxAttempts(n int) WithKeyOption {
 	}
 }
 
-// WithLeaseOptions sets the options used for the first lease (exclusions, TTL).
+// WithLeaseOptions sets the options used for the first lease (exclusions,
+// TTL, Wait). TTL and Wait also apply to every later lease.
 func WithLeaseOptions(o LeaseOptions) WithKeyOption {
 	return func(c *withKeyConfig) { c.lease = o }
+}
+
+// WithWait sets LeaseOptions.Wait for every lease WithKey takes: how long the
+// server may wait for a free slot when every usable key is busy (at most
+// MaxWait).
+func WithWait(d time.Duration) WithKeyOption {
+	return func(c *withKeyConfig) { c.lease.Wait = d }
+}
+
+// detached returns a context for reporting that survives cancellation of ctx,
+// so a lease is still released when the caller's deadline has passed.
+func detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx.Err() == nil {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
+}
+
+func reportDetached(ctx context.Context, l *Lease, r Report) (*Lease, error) {
+	rctx, cancel := detached(ctx)
+	defer cancel()
+	return l.Report(rctx, r)
 }
 
 // WithKey leases a key for service and calls fn with it.
@@ -38,7 +66,13 @@ func WithLeaseOptions(o LeaseOptions) WithKeyOption {
 //   - fn returns any other error: the lease is reported "error" and fn's error
 //     is returned unchanged.
 //
-// If the pool has no further key, *ErrNoKeyAvailable is returned.
+// If the pool has no further key, *ErrNoKeyAvailable is returned (Busy is set
+// when every usable key is at its concurrency limit).
+//
+// Every lease is reported, even when fn panics (the panic is re-raised after
+// the report), calls runtime.Goexit, or ctx is cancelled while fn runs (the report is sent on a
+// detached context). This matters on services with a concurrency limit, where
+// an unreported lease keeps one of the key's slots busy until its TTL expires.
 func (c *Client) WithKey(ctx context.Context, service string, fn func(*Lease) error, opts ...WithKeyOption) error {
 	cfg := withKeyConfig{maxAttempts: 5}
 	for _, o := range opts {
@@ -51,21 +85,24 @@ func (c *Client) WithKey(ctx context.Context, service string, fn func(*Lease) er
 	}
 	var lastErr error
 	for attempt := 1; attempt <= cfg.maxAttempts; attempt++ {
-		ferr := fn(lease)
+		ferr := callReporting(ctx, lease, fn)
 		if ferr == nil {
-			_, rerr := lease.Report(ctx, Report{Outcome: OutcomeOK})
+			_, rerr := reportDetached(ctx, lease, Report{Outcome: OutcomeOK})
 			return rerr
 		}
 		report, rotate := classify(ferr)
 		if !rotate {
-			_, _ = lease.Report(ctx, report)
+			_, _ = reportDetached(ctx, lease, report)
 			return ferr
 		}
 		lastErr = ferr
 		tried = append(tried, lease.KeyID)
-		if attempt == cfg.maxAttempts {
+		if attempt == cfg.maxAttempts || ctx.Err() != nil {
 			report.Rotate = false
-			_, _ = lease.Report(ctx, report)
+			_, _ = reportDetached(ctx, lease, report)
+			if attempt < cfg.maxAttempts {
+				return ctx.Err()
+			}
 			break
 		}
 		next, rerr := lease.Report(ctx, report)
@@ -73,7 +110,7 @@ func (c *Client) WithKey(ctx context.Context, service string, fn func(*Lease) er
 			return rerr
 		}
 		if next == nil {
-			next, err = c.Lease(ctx, service, &LeaseOptions{ExcludeKeyIDs: tried, TTL: cfg.lease.TTL})
+			next, err = c.Lease(ctx, service, &LeaseOptions{ExcludeKeyIDs: tried, TTL: cfg.lease.TTL, Wait: cfg.lease.Wait})
 			if err != nil {
 				return err
 			}
@@ -81,6 +118,30 @@ func (c *Client) WithKey(ctx context.Context, service string, fn func(*Lease) er
 		lease = next
 	}
 	return lastErr
+}
+
+// callReporting runs fn and, if it does not return normally (a panic or
+// runtime.Goexit), reports the lease as an error so the key's concurrency slot
+// is released. A panic is re-raised after the report.
+func callReporting(ctx context.Context, lease *Lease, fn func(*Lease) error) error {
+	returned := false
+	defer func() {
+		if returned {
+			return
+		}
+		r := recover()
+		msg := "fn did not return"
+		if r != nil {
+			msg = fmt.Sprint("panic: ", r)
+		}
+		_, _ = reportDetached(ctx, lease, Report{Outcome: OutcomeError, Message: msg})
+		if r != nil {
+			panic(r)
+		}
+	}()
+	err := fn(lease)
+	returned = true
+	return err
 }
 
 func classify(err error) (Report, bool) {

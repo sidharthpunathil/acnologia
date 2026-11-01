@@ -2,6 +2,8 @@
 
 # Cogito
 
+**I think, therefore I am.**
+
 A self-hosted API key pool. Register many accounts with a provider (SerpAPI,
 ElevenLabs, or any API key based HTTP service), put all their keys in Cogito,
 and your apps get a working key on demand. When a key hits a rate limit or runs
@@ -107,6 +109,53 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
   - PHP: [`sdk/php`](sdk/php)
   - Ruby: [`sdk/ruby`](sdk/ruby)
 - **Audit log** of every dashboard change and every secret reveal.
+
+## Providers are data, and AI builds them
+
+A provider (SerpAPI, ElevenLabs, anything else) is a JSON spec stored in SQLite:
+where the key goes, which error responses mean "rate limited", "out of quota"
+or "bad key", how to read remaining quota, and fixture tests that prove the rules
+work. One engine interprets every spec. Publishing a spec swaps it in memory, so
+**adding or fixing a provider never restarts Cogito**.
+
+**Build with AI.** Give it a name, a docs URL or a GitHub repo (and optionally a
+test key). An agent built on the Claude API then:
+
+1. researches the official docs (web search, web fetch, GitHub),
+2. writes the whole provider: metadata, brand color, auth, defaults, rules,
+   health check, examples and tests,
+3. validates it and runs the fixture tests through the real engine, plus a live
+   check when you gave a test key,
+4. finds the logo on the provider's website,
+5. publishes it and adds a service to the catalog.
+
+You watch every step live in the dashboard. Without auto publish, the draft
+waits for your review.
+
+**Guardrails are enforced in code, not just requested in the prompt:**
+- Specs are data and cannot execute.
+- The harness re-validates and re-tests every submit itself.
+- A failing test blocks publishing.
+- Logo and live-check requests can't reach private networks.
+- Test keys are encrypted and wiped after the run.
+- Runs are capped in turns and searches.
+
+**AI rules** (Settings) is your own policy text that every AI action follows,
+for example "always set max_concurrency for voice APIs".
+
+**Fill with AI** fills the app, service and provider forms from one sentence.
+
+Every provider has version history and one-click rollback. You can edit it in
+the dashboard as a form or as raw JSON, with live validation.
+
+Set `ANTHROPIC_API_KEY` in `.env` to turn the AI features on; everything else
+works without it.
+
+## Private by default
+
+Every response carries `X-Robots-Tag: noindex, nofollow`, and `/robots.txt`
+disallows everything, so search engines and AI crawlers stay out. Pages also
+cannot be framed.
 
 ## Self-hosting
 

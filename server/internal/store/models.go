@@ -71,6 +71,10 @@ type Service struct {
 	// QueueTimeoutSec is how long a proxied request waits for a free key when all are busy.
 	QueueTimeoutSec int `json:"queue_timeout_sec"`
 	InFlight        int `json:"in_flight"`
+	// LogoURL is the service's own logo, else its provider's, else null.
+	LogoURL *string `json:"logo_url"`
+	HasLogo bool    `json:"-"`
+	LogoRev int     `json:"-"`
 }
 
 const (

@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec`
+const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
 	var created int64
 	err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.Provider, &s.Category, &s.Description, &s.BaseURL,
-		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec)
+		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -147,4 +147,23 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 		}
 	}
 	return rows2.Err()
+}
+
+func (s *Store) SetServiceLogo(ctx context.Context, id int64, data []byte, mime string) error {
+	var d any
+	if data != nil {
+		d = data
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE services SET logo=?, logo_mime=?, logo_rev=logo_rev+1 WHERE id=?`, d, mime, id)
+	return err
+}
+
+func (s *Store) ServiceLogo(ctx context.Context, id int64) ([]byte, string, error) {
+	var data []byte
+	var mime string
+	err := s.DB.QueryRowContext(ctx, `SELECT logo, logo_mime FROM services WHERE id=? AND logo IS NOT NULL`, id).Scan(&data, &mime)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	return data, mime, err
 }

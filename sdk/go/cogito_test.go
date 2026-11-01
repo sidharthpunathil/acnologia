@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,7 @@ type fakeServer struct {
 	next    int
 	reports []map[string]any
 	leases  []map[string]any
+	busy    bool
 }
 
 func leaseJSON(id int64) map[string]any {
@@ -59,6 +61,11 @@ func (f *fakeServer) handler() http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.leases = append(f.leases, body)
+		if f.busy {
+			w.WriteHeader(503)
+			_, _ = io.WriteString(w, `{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}`)
+			return
+		}
 		if f.next >= len(f.keys) {
 			w.WriteHeader(503)
 			_, _ = io.WriteString(w, `{"error":{"code":"no_key_available","message":"all keys cooling"},"retry_after_sec":42}`)
@@ -172,6 +179,120 @@ func TestNoKeyAvailable(t *testing.T) {
 	}
 	if !errors.Is(err, NoKeyAvailable) {
 		t.Fatal("errors.Is sentinel failed")
+	}
+}
+
+func TestNoKeyAvailableIsNotBusy(t *testing.T) {
+	c, _ := setup(t)
+	_, err := c.Lease(context.Background(), "serpapi", nil)
+	var nk *ErrNoKeyAvailable
+	if !errors.As(err, &nk) || nk.Busy || nk.Code != "no_key_available" || errors.Is(err, AllKeysBusy) {
+		t.Fatalf("got %+v", err)
+	}
+}
+
+func TestLeaseSendsWaitSec(t *testing.T) {
+	c, f := setup(t, 1, 2)
+	if _, err := c.Lease(context.Background(), "elevenlabs", &LeaseOptions{Wait: 1500 * time.Millisecond, TTL: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	if f.leases[0]["wait_sec"] != float64(2) || f.leases[0]["ttl_sec"] != float64(60) {
+		t.Fatalf("lease body %+v", f.leases[0])
+	}
+	if _, err := c.Lease(context.Background(), "elevenlabs", &LeaseOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.leases[1]["wait_sec"]; ok {
+		t.Fatalf("wait_sec should be omitted: %+v", f.leases[1])
+	}
+	if _, err := c.Lease(context.Background(), "elevenlabs", &LeaseOptions{Wait: 61 * time.Second}); err == nil {
+		t.Fatal("expected error for wait above MaxWait")
+	}
+	if len(f.leases) != 2 {
+		t.Fatal("invalid wait should not reach the server")
+	}
+}
+
+func TestAllKeysBusy(t *testing.T) {
+	c, f := setup(t, 1)
+	f.busy = true
+	_, err := c.Lease(context.Background(), "elevenlabs", &LeaseOptions{Wait: 5 * time.Second})
+	var nk *ErrNoKeyAvailable
+	if !errors.As(err, &nk) {
+		t.Fatalf("got %v", err)
+	}
+	if !nk.Busy || nk.Code != "all_keys_busy" || nk.RetryAfter != time.Second || nk.Message != "every key is at its limit" {
+		t.Fatalf("got %+v", nk)
+	}
+	if !errors.Is(err, AllKeysBusy) || !errors.Is(err, NoKeyAvailable) {
+		t.Fatal("busy error should match AllKeysBusy and NoKeyAvailable")
+	}
+	if !strings.Contains(err.Error(), "all keys busy") {
+		t.Fatalf("message %q", err.Error())
+	}
+}
+
+func TestWithKeyPassesWait(t *testing.T) {
+	c, f := setup(t, 1)
+	err := c.WithKey(context.Background(), "elevenlabs", func(l *Lease) error { return &ErrRateLimited{} }, WithWait(15*time.Second))
+	if !errors.Is(err, NoKeyAvailable) {
+		t.Fatalf("got %v", err)
+	}
+	if len(f.leases) != 2 || f.leases[0]["wait_sec"] != float64(15) || f.leases[1]["wait_sec"] != float64(15) {
+		t.Fatalf("leases %+v", f.leases)
+	}
+}
+
+func TestWithKeyReportsOnPanic(t *testing.T) {
+	c, f := setup(t, 1)
+	defer func() {
+		if r := recover(); r != "kaboom" {
+			t.Fatalf("recovered %v", r)
+		}
+		if len(f.reports) != 1 || f.reports[0]["outcome"] != "error" {
+			t.Fatalf("reports %+v", f.reports)
+		}
+	}()
+	_ = c.WithKey(context.Background(), "serpapi", func(l *Lease) error { panic("kaboom") })
+}
+
+func TestWithKeyReportsOnGoexit(t *testing.T) {
+	c, f := setup(t, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = c.WithKey(context.Background(), "serpapi", func(l *Lease) error { runtime.Goexit(); return nil })
+	}()
+	<-done
+	if len(f.reports) != 1 || f.reports[0]["outcome"] != "error" {
+		t.Fatalf("reports %+v", f.reports)
+	}
+}
+
+func TestWithKeyReportsAfterCancel(t *testing.T) {
+	c, f := setup(t, 1, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	err := c.WithKey(ctx, "serpapi", func(l *Lease) error {
+		cancel()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reports) != 1 || f.reports[0]["outcome"] != "ok" {
+		t.Fatalf("reports %+v", f.reports)
+	}
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	err = c.WithKey(ctx2, "serpapi", func(l *Lease) error {
+		cancel2()
+		return &ErrRateLimited{}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if len(f.reports) != 2 || f.reports[1]["outcome"] != "rate_limited" || f.reports[1]["rotate"] != nil {
+		t.Fatalf("reports %+v", f.reports)
 	}
 }
 

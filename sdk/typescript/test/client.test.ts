@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AllKeysBusyError,
   Cogito,
   CogitoError,
   InvalidKeyError,
@@ -132,6 +133,38 @@ describe("Cogito client", () => {
     expect(err.retryAfter).toBe(42);
     expect(err.status).toBe(503);
     expect(err.message).toBe("all keys cooling");
+  });
+
+  it("sends wait_sec and omits it when 0", async () => {
+    const { client, calls } = mock(() => json(leaseJSON(2)));
+    await client.lease("elevenlabs", { waitSec: 20, ttlSec: 60 });
+    expect(calls[0].body).toEqual({ service: "elevenlabs", ttl_sec: 60, wait_sec: 20 });
+    await client.lease("elevenlabs", { waitSec: 0 });
+    expect(calls[1].body).toEqual({ service: "elevenlabs" });
+    await expect(client.lease("elevenlabs", { waitSec: 61 })).rejects.toBeInstanceOf(RangeError);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("throws AllKeysBusyError on all_keys_busy, which is also a NoKeyAvailableError", async () => {
+    const { client } = mock(() =>
+      json({ error: { code: "all_keys_busy", message: "every key is at its limit" }, retry_after_sec: 1 }, 503),
+    );
+    const err = await client.lease("elevenlabs", { waitSec: 5 }).catch((e) => e);
+    expect(err).toBeInstanceOf(AllKeysBusyError);
+    expect(err).toBeInstanceOf(NoKeyAvailableError);
+    expect(err.busy).toBe(true);
+    expect(err.code).toBe("all_keys_busy");
+    expect(err.status).toBe(503);
+    expect(err.retryAfter).toBe(1);
+    expect(err.name).toBe("AllKeysBusyError");
+  });
+
+  it("no_key_available is not busy", async () => {
+    const { client } = mock(() => json({ error: { code: "no_key_available", message: "drained" } }, 503));
+    const err = await client.lease("serpapi").catch((e) => e);
+    expect(err).not.toBeInstanceOf(AllKeysBusyError);
+    expect(err.busy).toBe(false);
+    expect(err.retryAfter).toBeNull();
   });
 
   it("throws CogitoError with code and status for other errors", async () => {
@@ -291,6 +324,37 @@ describe("withKey", () => {
     });
     expect(calls[2].url).toBe("http://cogito.test/api/v1/lease");
     expect(calls[2].body).toEqual({ service: "serpapi", exclude_key_ids: [1] });
+  });
+
+  it("passes waitSec to every lease call", async () => {
+    const { client, calls } = pool({ nextOnReport: false });
+    let n = 0;
+    await client.withKey(
+      "elevenlabs",
+      () => {
+        if (++n === 1) throw new RateLimitedError();
+        return n;
+      },
+      { waitSec: 15 },
+    );
+    expect(calls[0].body).toEqual({ service: "elevenlabs", wait_sec: 15 });
+    expect(calls[2].body).toEqual({ service: "elevenlabs", exclude_key_ids: [1], wait_sec: 15 });
+    expect(calls[3].body).toEqual({ outcome: "ok" });
+  });
+
+  it("throws AllKeysBusyError without calling fn or reporting", async () => {
+    const { client, calls } = mock(() =>
+      json({ error: { code: "all_keys_busy", message: "busy" }, retry_after_sec: 1 }, 503),
+    );
+    let called = false;
+    const err = await client
+      .withKey("elevenlabs", () => {
+        called = true;
+      }, { waitSec: 2 })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(AllKeysBusyError);
+    expect(called).toBe(false);
+    expect(calls).toHaveLength(1);
   });
 
   it("throws NoKeyAvailableError when the pool runs dry", async () => {

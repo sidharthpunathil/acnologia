@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/cogito-keys/cogito/internal/agent"
+	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
 	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/pool"
@@ -71,7 +74,12 @@ func newEnv(t *testing.T) *env {
 	up := &fakeSerp{hits: map[string]int{}, bad: map[string]string{}}
 	ups := httptest.NewServer(up)
 	t.Cleanup(ups.Close)
-	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20}, st, pool.New(st, box),
+	cat := &catalog.Catalog{Store: st}
+	if err := cat.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ag := agent.New(agent.Config{}, st, cat, box)
+	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20}, st, pool.New(st, box), cat, ag,
 		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Cogito {{BASE_URL}}"))
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)
@@ -337,5 +345,17 @@ func TestCSRFGuard(t *testing.T) {
 	}
 	if resp.StatusCode != 415 {
 		t.Fatalf("want 415 got %d", resp.StatusCode)
+	}
+}
+
+func TestNoIndex(t *testing.T) {
+	e := newEnv(t)
+	resp := e.do(http.DefaultClient, "GET", "/robots.txt", nil, 200, nil)
+	if !strings.Contains(resp.Header.Get("X-Robots-Tag"), "noindex") {
+		t.Fatal("missing X-Robots-Tag")
+	}
+	resp = e.do(http.DefaultClient, "GET", "/", nil, 200, nil)
+	if !strings.Contains(resp.Header.Get("X-Robots-Tag"), "nofollow") || resp.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatal("UI must not be indexable or framable")
 	}
 }

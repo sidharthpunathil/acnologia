@@ -10,6 +10,7 @@ spl_autoload_register(static function (string $class): void {
 });
 
 use Cogito\Cogito;
+use Cogito\Exception\AllKeysBusy;
 use Cogito\Exception\NoKeyAvailable;
 use Cogito\Exception\RateLimited;
 use Cogito\Response;
@@ -30,11 +31,15 @@ $lease = static function (array $exclude) use (&$keys, &$bad, &$n): ?array {
     return null;
 };
 $leases = [];
-$transport = static function (string $method, string $url, array $headers, ?string $body) use (&$log, &$bad, &$leases, $lease): Response {
+$busy = false;
+$transport = static function (string $method, string $url, array $headers, ?string $body) use (&$log, &$bad, &$leases, &$busy, $lease): Response {
     $log[] = [$method, $url, $headers, $body];
     $path = parse_url($url, PHP_URL_PATH);
     $json = $body !== null ? json_decode($body, true) : null;
     if ($path === '/api/v1/lease') {
+        if ($busy) {
+            return new Response(503, [], '{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}');
+        }
         $l = $lease($json['exclude_key_ids'] ?? []);
         if ($l === null) {
             return new Response(503, [], '{"error":{"code":"no_key_available","message":"drained"},"retry_after_sec":9}');
@@ -85,12 +90,66 @@ $out = $cog->withKey('serpapi', static function ($lease) use (&$seen) {
 });
 $check($out === 'done' && $seen === [1, 2], 'withKey rotates');
 
+$lastBody = static function () use (&$log): array {
+    for ($i = count($log) - 1; $i >= 0; $i--) {
+        if (parse_url($log[$i][1], PHP_URL_PATH) === '/api/v1/lease') {
+            return json_decode($log[$i][3], true);
+        }
+    }
+    return [];
+};
+
+$bad = [];
+$cog->lease('elevenlabs', [], 60, 20)->report('ok');
+$check($lastBody() === ['service' => 'elevenlabs', 'ttl_sec' => 60, 'wait_sec' => 20], 'lease sends wait_sec');
+$cog->lease('elevenlabs', [], null, 0)->report('ok');
+$check(!array_key_exists('wait_sec', $lastBody()), 'wait_sec 0 omitted');
+try {
+    $cog->lease('elevenlabs', [], null, 61);
+    $check(false, 'wait_sec above 60 rejected');
+} catch (\InvalidArgumentException) {
+    $check(true, 'wait_sec above 60 rejected');
+}
+
+$bad = [];
+$cog->withKey('elevenlabs', static function ($lease) {
+    if ($lease->keyId === 1) {
+        throw RateLimited::after(5);
+    }
+    return 'ok';
+}, waitSec: 15);
+$leaseBodies = array_values(array_filter($log, static fn ($r) => parse_url($r[1], PHP_URL_PATH) === '/api/v1/lease'));
+$check(json_decode(end($leaseBodies)[3], true)['wait_sec'] === 15, 'withKey sends wait_sec');
+
+$bad = [];
+$reportsBefore = count(array_filter($log, static fn ($r) => str_ends_with((string) parse_url($r[1], PHP_URL_PATH), '/report')));
+try {
+    $cog->withKey('serpapi', static function () {
+        throw new \LogicException('boom');
+    });
+} catch (\LogicException) {
+}
+$reportsAfter = count(array_filter($log, static fn ($r) => str_ends_with((string) parse_url($r[1], PHP_URL_PATH), '/report')));
+$lastReport = json_decode(end($log)[3], true);
+$check($reportsAfter === $reportsBefore + 1 && $lastReport['outcome'] === 'error', 'withKey reports on other exceptions');
+
+$busy = true;
+try {
+    $cog->lease('elevenlabs', [], null, 5);
+    $check(false, 'all keys busy');
+} catch (NoKeyAvailable $e) {
+    $check($e instanceof AllKeysBusy, 'all keys busy throws AllKeysBusy');
+    $check($e->busy && $e->errorCode === 'all_keys_busy' && $e->retryAfter === 1 && $e->statusCode === 503, 'all keys busy fields');
+}
+$busy = false;
+
 $keys = [];
 try {
     $cog->lease('serpapi');
     $check(false, 'no key available');
 } catch (NoKeyAvailable $e) {
     $check($e->retryAfter === 9, 'no key available');
+    $check(!$e->busy && !($e instanceof AllKeysBusy), 'no key available is not busy');
 }
 
 exit($fails ? 1 : 0);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Cogito;
 
+use Cogito\Exception\AllKeysBusy;
 use Cogito\Exception\CogitoException;
 use Cogito\Exception\KeyProblem;
 use Cogito\Exception\NoKeyAvailable;
@@ -18,10 +19,16 @@ final class Cogito
 {
     public const VERSION = '0.1.0';
 
+    /** Longest wait_sec the server accepts. */
+    public const MAX_WAIT_SEC = 60;
+
     public readonly string $baseUrl;
 
     /** @var callable(string, string, array<string, string>, ?string): Response */
     private $transport;
+
+    /** Per call curl timeout override, used while a lease waits server side. */
+    private ?int $callTimeout = null;
 
     /**
      * @param null|callable(string $method, string $url, array<string, string> $headers, ?string $body): Response $transport
@@ -46,8 +53,19 @@ final class Cogito
         return $this->call('GET', '/api/v1/services')['services'] ?? [];
     }
 
-    /** @param list<int> $excludeKeyIds */
-    public function lease(string $service, array $excludeKeyIds = [], ?int $ttlSec = null): Lease
+    /**
+     * Borrow a key.
+     *
+     * $waitSec (0 to 60) lets the server wait that long for a free slot when every
+     * usable key is at its concurrency limit. Throws AllKeysBusy (a NoKeyAvailable)
+     * if none frees up in time, and NoKeyAvailable when the pool is drained.
+     *
+     * Always report the lease: on services with a concurrency limit it holds one of
+     * the key's slots until it is reported or its TTL expires.
+     *
+     * @param list<int> $excludeKeyIds
+     */
+    public function lease(string $service, array $excludeKeyIds = [], ?int $ttlSec = null, ?int $waitSec = null): Lease
     {
         $body = ['service' => $service];
         if ($excludeKeyIds) {
@@ -56,7 +74,18 @@ final class Cogito
         if ($ttlSec !== null) {
             $body['ttl_sec'] = $ttlSec;
         }
-        return Lease::fromArray($this, $this->call('POST', '/api/v1/lease', $body));
+        if ($waitSec !== null && $waitSec !== 0) {
+            if ($waitSec < 0 || $waitSec > self::MAX_WAIT_SEC) {
+                throw new \InvalidArgumentException('waitSec must be between 0 and ' . self::MAX_WAIT_SEC);
+            }
+            $body['wait_sec'] = $waitSec;
+            $this->callTimeout = max($this->timeout, $waitSec + 10);
+        }
+        try {
+            return Lease::fromArray($this, $this->call('POST', '/api/v1/lease', $body));
+        } finally {
+            $this->callTimeout = null;
+        }
     }
 
     /** @internal used by Lease::report() */
@@ -87,17 +116,27 @@ final class Cogito
      * Throw RateLimited, QuotaExhausted or InvalidKey from $fn to rotate to the next key.
      * Any other exception is reported as error and rethrown.
      *
+     * Every lease is reported, whatever $fn does. On services with a concurrency limit an
+     * unreported lease keeps one of the key's slots busy until its TTL expires. $waitSec is
+     * passed to every lease call.
+     *
      * @template T
      * @param callable(Lease): T $fn
      * @return T
      */
-    public function withKey(string $service, callable $fn, int $maxAttempts = 5, ?int $ttlSec = null): mixed
+    public function withKey(
+        string $service,
+        callable $fn,
+        int $maxAttempts = 5,
+        ?int $ttlSec = null,
+        ?int $waitSec = null,
+    ): mixed
     {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException('maxAttempts must be at least 1');
         }
         $tried = [];
-        $lease = $this->lease($service, [], $ttlSec);
+        $lease = $this->lease($service, [], $ttlSec, $waitSec);
         for ($attempt = 1; ; $attempt++) {
             $tried[] = $lease->keyId;
             try {
@@ -108,7 +147,7 @@ final class Cogito
                 if ($last) {
                     throw $e;
                 }
-                $lease = $next ?? $this->lease($service, $tried, $ttlSec);
+                $lease = $next ?? $this->lease($service, $tried, $ttlSec, $waitSec);
                 continue;
             } catch (\Throwable $e) {
                 try {
@@ -152,8 +191,11 @@ final class Cogito
             $err = is_array($data) && is_array($data['error'] ?? null) ? $data['error'] : [];
             $code = (string) ($err['code'] ?? '');
             $message = (string) ($err['message'] ?? ('HTTP ' . $res->status));
+            $retry = is_array($data) && isset($data['retry_after_sec']) ? (int) $data['retry_after_sec'] : null;
+            if ($code === 'all_keys_busy') {
+                throw new AllKeysBusy($message, $retry);
+            }
             if ($code === 'no_key_available' || ($res->status === 503 && $code === '')) {
-                $retry = is_array($data) && isset($data['retry_after_sec']) ? (int) $data['retry_after_sec'] : null;
                 throw new NoKeyAvailable($message, $retry);
             }
             throw new CogitoException($message, $res->status, $code);
@@ -184,7 +226,7 @@ final class Cogito
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $lines,
-            CURLOPT_TIMEOUT => $this->timeout,
+            CURLOPT_TIMEOUT => $this->callTimeout ?? $this->timeout,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$respHeaders): int {
                 $parts = explode(':', $line, 2);

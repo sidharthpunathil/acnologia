@@ -113,6 +113,10 @@ Cogito cool down rate limited keys and retire exhausted or invalid ones.
   outcome, gets the next key and calls your function again, up to `maxAttempts` (default 5).
 - function throws anything else: reports `error` and rethrows.
 - no key left: throws `NoKeyAvailableError` with `retryAfter` seconds.
+- every key busy (concurrency limit): throws `AllKeysBusyError`, a subclass of
+  `NoKeyAvailableError`. Pass `{ waitSec }` to wait for a slot instead.
+
+Options: `{ maxAttempts?: number; ttlSec?: number; waitSec?: number }`.
 
 #### SerpAPI search
 
@@ -168,13 +172,18 @@ const audio = await cogito.withKey("elevenlabs", async (lease) => {
 import { NoKeyAvailableError } from "@cogito/keys";
 
 try {
-  let lease = await cogito.lease("serpapi", { ttlSec: 120 });
-  const res = await fetch(lease.url("/search.json", { q: "coffee" }));
-  if (res.status === 429) {
-    const next = await lease.report({ outcome: "rate_limited", statusCode: 429, retryAfterSec: 3600, rotate: true });
-    // next is a fresh Lease, or null when no other key is free
-  } else {
-    await lease.report({ outcome: res.ok ? "ok" : "error", statusCode: res.status });
+  const lease = await cogito.lease("serpapi", { ttlSec: 120, waitSec: 10 });
+  try {
+    const res = await fetch(lease.url("/search.json", { q: "coffee" }));
+    if (res.status === 429) {
+      const next = await lease.report({ outcome: "rate_limited", statusCode: 429, retryAfterSec: 3600, rotate: true });
+      // next is a fresh Lease (report it too), or null when no other key is free
+    } else {
+      await lease.report({ outcome: res.ok ? "ok" : "error", statusCode: res.status });
+    }
+  } finally {
+    // always report, so a concurrency slot is never held until the TTL expires
+    if (!lease.reported) await lease.report({ outcome: "error" });
   }
 } catch (err) {
   if (err instanceof NoKeyAvailableError) {
@@ -200,6 +209,40 @@ Returns copies with the secret placed according to `lease.auth.type`:
 | `bearer` | `headers[auth.name or "Authorization"] = "Bearer <secret>"` |
 
 `headers` is a plain object, `query` is a `URLSearchParams`.
+
+## Concurrency limits
+
+Some providers cap how many requests one key may run at once (ElevenLabs allows 2 per key
+by default). Cogito enforces this per key, so a lease is exclusive: on a service with a
+limit, each lease holds one of the key's slots until you report it or its `ttlSec` runs out
+(default 120 seconds on limited services, 300 otherwise).
+
+- **Always report.** `withKey` reports every lease, even when your function throws. With a
+  manual lease, report in a `finally` block, or the slot stays taken until the TTL expires.
+- **Wait instead of failing.** Pass `waitSec` (0 to 60) to `lease()` or `withKey()` and the
+  server waits that long for a slot when every usable key is busy.
+
+```ts
+import { AllKeysBusyError } from "@cogito/keys";
+
+const audio = await cogito.withKey("elevenlabs", speak, { waitSec: 20 });
+
+try {
+  const lease = await cogito.lease("elevenlabs");
+} catch (err) {
+  if (err instanceof AllKeysBusyError) {
+    // err.busy === true, err.retryAfter is usually 1
+  }
+}
+```
+
+`AllKeysBusyError` (503 `all_keys_busy`) means the keys are fine but in use; it clears as
+soon as another caller reports. It extends `NoKeyAvailableError`, so existing
+`instanceof NoKeyAvailableError` checks still catch it; use `err.busy` to tell them apart.
+
+Proxy mode needs none of this: Cogito queues proxied requests for up to the service's
+`queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more than the limit in
+parallel on one key.
 
 ## Plain JavaScript
 
@@ -246,7 +289,8 @@ page needs. Anyone who can read the page can use the token.
 | Class | When |
 |-------|------|
 | `CogitoError` | Cogito returned a non-2xx response. Has `status`, `code`, `body`. |
-| `NoKeyAvailableError` | 503 `no_key_available`. Has `retryAfter` (seconds or null). Extends `CogitoError`. |
+| `NoKeyAvailableError` | 503 `no_key_available`. Has `retryAfter` (seconds or null) and `busy`. Extends `CogitoError`. |
+| `AllKeysBusyError` | 503 `all_keys_busy`: every usable key is at its concurrency limit. `busy` is true, `retryAfter` usually 1. Extends `NoKeyAvailableError`. |
 | `RateLimitedError(retryAfter?, { statusCode?, message? })` | You throw it inside `withKey`. |
 | `QuotaExhaustedError({ statusCode?, message? })` | You throw it inside `withKey`. |
 | `InvalidKeyError({ statusCode?, message? })` | You throw it inside `withKey`. |

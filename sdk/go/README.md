@@ -84,6 +84,9 @@ Wrapped errors (`fmt.Errorf("...: %w", err)`) are recognized. After
 `WithMaxAttempts(n)` (default 5) keys, the last rotation error is returned; the
 final attempt is reported without asking for a next key.
 
+Options: `WithMaxAttempts(n)`, `WithWait(d)` (see [Concurrency limits](#concurrency-limits))
+and `WithLeaseOptions(cogito.LeaseOptions{...})`.
+
 #### SerpAPI search
 
 ```go
@@ -148,10 +151,11 @@ err := c.WithKey(ctx, "elevenlabs", func(l *cogito.Lease) error {
 ### Lease and Report by hand
 
 ```go
-lease, err := c.Lease(ctx, "serpapi", &cogito.LeaseOptions{TTL: 5 * time.Minute})
+lease, err := c.Lease(ctx, "serpapi", &cogito.LeaseOptions{TTL: 5 * time.Minute, Wait: 10 * time.Second})
 if err != nil {
 	return err
 }
+// Report on every path: an unreported lease holds a concurrency slot until its TTL.
 req, _ := http.NewRequestWithContext(ctx, "GET",
 	lease.URL("/search.json", url.Values{"q": {"coffee"}}), nil)
 lease.Apply(req)
@@ -175,6 +179,40 @@ parameter `Auth.Name`, `header` sets header `Auth.Name`, `bearer` sets
 
 Outcomes: `OutcomeOK`, `OutcomeRateLimited`, `OutcomeQuotaExhausted`, `OutcomeInvalid`, `OutcomeError`.
 
+## Concurrency limits
+
+Some providers cap how many requests one key may run at once (ElevenLabs
+allows 2 per key by default). Cogito enforces this per key, so a lease is
+exclusive: on a service with a limit, each lease holds one of the key's slots
+until you report it or its `TTL` runs out (default 120 seconds on limited
+services, 300 otherwise).
+
+- **Always report.** `WithKey` reports every lease: on success, on any error,
+  when your callback panics (the panic is re-raised after the report), and
+  when `ctx` is cancelled while it runs (the report goes out on a detached
+  context). With a manual `Lease`, report on every return path.
+- **Wait instead of failing.** Set `LeaseOptions.Wait` (or `WithWait(d)` for
+  `WithKey`), up to `cogito.MaxWait` (60s), and the server waits that long for
+  a slot when every usable key is busy. If your `http.Client` has a `Timeout`,
+  keep it longer than the wait.
+
+```go
+err := c.WithKey(ctx, "elevenlabs", speak, cogito.WithWait(20*time.Second))
+
+if errors.Is(err, cogito.AllKeysBusy) {
+	// every usable key is at its limit; retry soon
+}
+```
+
+A busy pool returns `*cogito.ErrNoKeyAvailable` with `Busy: true` and
+`Code: "all_keys_busy"` (HTTP 503, `RetryAfter` usually 1s). It still matches
+`cogito.NoKeyAvailable`, so existing checks keep working; it clears as soon as
+another caller reports.
+
+Proxy mode needs none of this: Cogito queues proxied requests for up to the
+service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
+than the limit in parallel on one key.
+
 ## Services
 
 ```go
@@ -188,7 +226,8 @@ for _, s := range svcs {
 
 | Type | Sentinel | When |
 |---|---|---|
-| `*cogito.ErrNoKeyAvailable{RetryAfter}` | `cogito.NoKeyAvailable` | 503 `no_key_available` from the pool |
+| `*cogito.ErrNoKeyAvailable{RetryAfter, Code, Busy}` | `cogito.NoKeyAvailable` | 503 `no_key_available` from the pool |
+| `*cogito.ErrNoKeyAvailable` with `Busy: true` | `cogito.AllKeysBusy` (and `cogito.NoKeyAvailable`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
 | `*cogito.ErrRateLimited{RetryAfter}` | `cogito.RateLimited` | you return it from `WithKey` |
 | `*cogito.ErrQuotaExhausted` | `cogito.QuotaExhausted` | you return it from `WithKey` |
 | `*cogito.ErrInvalidKey` | `cogito.InvalidKey` | you return it from `WithKey` |

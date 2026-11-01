@@ -17,7 +17,12 @@ class CogitoError(Exception):
 
 
 class NoKeyAvailable(CogitoError):
-    """Every key for the service is cooling down, exhausted or excluded (HTTP 503)."""
+    """No key could be leased right now (HTTP 503).
+
+    `code` is `no_key_available` when every key is cooling down, exhausted or
+    excluded, and `all_keys_busy` when usable keys exist but every one is at its
+    concurrency limit (see `busy` and the `AllKeysBusy` subclass).
+    """
 
     def __init__(
         self,
@@ -29,6 +34,34 @@ class NoKeyAvailable(CogitoError):
     ) -> None:
         super().__init__(message, status_code=status_code, code=code)
         self.retry_after = retry_after
+
+    @property
+    def busy(self) -> bool:
+        """True when every usable key is at its concurrency limit (`all_keys_busy`).
+
+        Busy is short lived: slots free up as soon as other callers report, so a
+        retry after `retry_after` seconds (usually 1) or a lease with `wait_sec`
+        normally succeeds.
+        """
+        return self.code == "all_keys_busy"
+
+
+class AllKeysBusy(NoKeyAvailable):
+    """Every usable key is at its concurrency limit (HTTP 503 `all_keys_busy`).
+
+    Subclasses NoKeyAvailable, so existing `except NoKeyAvailable` handlers still
+    catch it.
+    """
+
+    def __init__(
+        self,
+        message: str = "all keys busy",
+        *,
+        retry_after: Optional[float] = None,
+        status_code: int = 503,
+        code: str = "all_keys_busy",
+    ) -> None:
+        super().__init__(message, retry_after=retry_after, status_code=status_code, code=code)
 
 
 class KeyProblem(Exception):

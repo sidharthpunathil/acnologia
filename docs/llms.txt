@@ -7,8 +7,9 @@ Base URL is wherever Cogito is deployed, for example `http://localhost:8080`. Al
 Key facts for agents:
 
 - Prefer proxy mode. Call `/proxy/{service}/{provider path}` exactly as you would call the provider, minus the provider key. Cogito retries with the next key on rate limits.
-- Use lease mode only when you must hold the raw key (for example a provider SDK). Always report the outcome so bad keys cool down.
+- Use lease mode only when you must hold the raw key (for example a provider SDK). Always report the outcome so bad keys cool down, and so the key's concurrency slot is released (see below).
 - HTTP 503 with code `no_key_available` means every key is cooling down or exhausted. Wait `retry_after_sec` seconds.
+- HTTP 503 with code `all_keys_busy` means usable keys exist but every one is at its concurrency limit. It clears as soon as another caller reports; retry after `retry_after_sec` (usually 1) or lease with `wait_sec`.
 - An app may be limited to some services and to mode `proxy`, `lease` or `both`. Call `GET /api/v1/services` to see what you can use.
 
 ## Auth
@@ -17,10 +18,17 @@ Key facts for agents:
 - Proxy only: query parameter `?cogito_token=cog_...` for tools that only accept a URL.
 - Cogito strips all three before forwarding upstream.
 
+## Concurrency limits
+
+- A key can have a concurrency limit: how many requests may use it at once. Each service has a default (`max_concurrency`, 0 means unlimited) that a key can override. ElevenLabs defaults to 2 per key.
+- On a service with a limit, a lease is exclusive: it holds one of the key's slots until it is reported (`POST /api/v1/leases/{lease_id}/report`) or expires (`ttl_sec`, default 120s on limited services, 300s otherwise). An unreported lease blocks the slot until then, so always report, on success and on failure.
+- `POST /api/v1/lease` accepts `wait_sec` (0 to 60): wait up to that long for a slot when every usable key is busy, instead of failing at once with `all_keys_busy`.
+- Proxy mode handles this for you: requests queue for up to the service `queue_timeout_sec` (ElevenLabs default 30s) and never exceed the limit in parallel on one key. When the queue wait runs out the proxy answers 503 `all_keys_busy`.
+
 ## Consumer API
 
 - [GET /api/v1/services](/llms-full.txt#get-apiv1services): services this token may use, with `available`, `base_url` and `auth` `{type, name}`.
-- [POST /api/v1/lease](/llms-full.txt#post-apiv1lease): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name"}, "base_url", "expires_at"}`, or 503 `{"error": {"code": "no_key_available"}, "retry_after_sec": n}`.
+- [POST /api/v1/lease](/llms-full.txt#post-apiv1lease): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300, "wait_sec": 0}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name"}, "base_url", "expires_at"}`, or 503 `{"error": {"code": "no_key_available"}, "retry_after_sec": n}` or 503 `{"error": {"code": "all_keys_busy"}, "retry_after_sec": 1}`.
 - [POST /api/v1/leases/{lease_id}/report](/llms-full.txt#post-apiv1leaseslease_idreport): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
 - [ANY /proxy/{service}/{path}](/llms-full.txt#any-proxyservicepath): forwards to `base_url/{path}` with query string and body, injecting a key. Response headers add `X-Cogito-Key-Id` and `X-Cogito-Attempts`.
 - [GET /healthz](/llms-full.txt#public-endpoints): `{"ok": true, "version": "..."}`, no auth.
@@ -40,9 +48,11 @@ Key facts for agents:
 
 ## MCP
 
-- [POST /mcp](/llms-full.txt#mcp): MCP streamable HTTP endpoint (JSON responses), same app token auth. Tools: `list_services`, `get_key`, `report_key`, `pool_status`, `proxy_request`.
+- [POST /mcp](/llms-full.txt#mcp): MCP streamable HTTP endpoint (JSON responses), same app token auth. Tools: `list_services`, `get_key` (accepts `ttl_sec` and `wait_sec`), `report_key`, `pool_status`, `proxy_request`.
 
 ## SDKs
+
+Every SDK's lease call and `with_key` helper accept the wait option (`wait_sec` in Python, PHP and Ruby, `waitSec` in TypeScript, `LeaseOptions.Wait` / `WithWait` in Go) and raise a distinct busy error that still counts as "no key available" (`AllKeysBusy`, `AllKeysBusyError`, or `ErrNoKeyAvailable` with `Busy` in Go). `with_key` always reports its leases.
 
 - [Python](/llms-full.txt#python): `pip install cogito-keys`, then `from cogito import Cogito`.
 - [TypeScript and JavaScript](/llms-full.txt#typescript-and-javascript): `npm install @cogito/keys`, then `import { Cogito } from "@cogito/keys"`. Node 18+, Bun, Deno, browsers.

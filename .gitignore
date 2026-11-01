@@ -1,6 +1,7 @@
 reference/OmniRoute/
 node_modules/
-dist/
+dist/*
+!server/internal/webui/dist/.keep
 /data/
 *.db
 *.db-*

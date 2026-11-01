@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from cogito import (
+    AllKeysBusy,
     AsyncCogito,
     Auth,
     Cogito,
@@ -35,6 +36,7 @@ class FakeServer:
         self.leases: Dict[str, int] = {}
         self.bad: set = set()
         self.counter = 0
+        self.busy = False
 
     def _lease(self, exclude: List[int]) -> Optional[Dict[str, Any]]:
         for k in self.keys:
@@ -80,6 +82,11 @@ class FakeServer:
             self.lease_bodies.append(body)
             if body.get("service") == "missing":
                 return httpx.Response(404, json={"error": {"code": "not_found", "message": "unknown service"}})
+            if self.busy:
+                return httpx.Response(
+                    503,
+                    json={"error": {"code": "all_keys_busy", "message": "every key is at its limit"}, "retry_after_sec": 1},
+                )
             lease = self._lease(body.get("exclude_key_ids") or [])
             if lease is None:
                 return httpx.Response(
@@ -159,6 +166,88 @@ def test_no_key_available(server: FakeServer) -> None:
     assert ei.value.retry_after == 42
     assert ei.value.status_code == 503
     assert ei.value.code == "no_key_available"
+
+
+def test_lease_sends_wait_sec(cog: Cogito, server: FakeServer) -> None:
+    cog.lease("serpapi", wait_sec=10)
+    assert server.lease_bodies[-1] == {"service": "serpapi", "wait_sec": 10}
+    cog.lease("serpapi", wait_sec=0)
+    assert server.lease_bodies[-1] == {"service": "serpapi"}
+    with pytest.raises(ValueError):
+        cog.lease("serpapi", wait_sec=61)
+
+
+def test_lease_wait_extends_timeout() -> None:
+    seen: List[Any] = []
+    server = FakeServer()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req.extensions.get("timeout"))
+        return server.handler(req)
+
+    cog = Cogito(BASE, TOKEN, timeout=5.0, transport=httpx.MockTransport(handler))
+    cog.lease("serpapi")
+    assert seen[-1]["read"] == 5.0
+    cog.lease("serpapi", wait_sec=30)
+    assert seen[-1]["read"] == 40.0
+
+
+def test_with_key_sends_wait_sec(cog: Cogito, server: FakeServer) -> None:
+    def fn(lease: Lease) -> int:
+        if lease.key_id == 1:
+            raise RateLimited(retry_after=5)
+        return lease.key_id
+
+    assert cog.with_key("serpapi", fn, wait_sec=15, ttl_sec=60) == 2
+    assert server.lease_bodies[0] == {"service": "serpapi", "ttl_sec": 60, "wait_sec": 15}
+    assert all(r.get("_lease_id") for r in server.reports)
+    assert [r["outcome"] for r in server.reports] == ["rate_limited", "ok"]
+
+
+def test_all_keys_busy(server: FakeServer) -> None:
+    server.busy = True
+    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    with pytest.raises(AllKeysBusy) as ei:
+        cog.lease("serpapi", wait_sec=5)
+    err = ei.value
+    assert isinstance(err, NoKeyAvailable)
+    assert err.busy is True
+    assert err.code == "all_keys_busy"
+    assert err.status_code == 503
+    assert err.retry_after == 1
+
+
+def test_no_key_available_is_not_busy(server: FakeServer) -> None:
+    server.keys = []
+    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    with pytest.raises(NoKeyAvailable) as ei:
+        cog.lease("serpapi")
+    assert ei.value.busy is False
+    assert not isinstance(ei.value, AllKeysBusy)
+
+
+def test_with_key_busy_raises_without_calling_fn(server: FakeServer) -> None:
+    server.busy = True
+    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    calls: List[int] = []
+    with pytest.raises(AllKeysBusy):
+        cog.with_key("serpapi", lambda lease: calls.append(1), wait_sec=2)
+    assert calls == []
+    assert server.reports == []
+
+
+def test_with_key_reports_on_unexpected_exception(cog: Cogito, server: FakeServer) -> None:
+    class Boom(Exception):
+        pass
+
+    def fn(lease: Lease) -> None:
+        raise Boom()
+
+    with pytest.raises(Boom):
+        cog.with_key("serpapi", fn)
+    assert len(server.reports) == 1
+    assert server.reports[0]["outcome"] == "error"
+    assert server.reports[0]["rotate"] is False
 
 
 def test_api_error(cog: Cogito) -> None:
@@ -363,6 +452,14 @@ async def test_async_client(server: FakeServer) -> None:
 
         resp = await cog.proxy("serpapi").get("search.json", params={"q": "a"})
         assert resp.json()["query"] == {"q": "a"}
+
+        await (await cog.lease("serpapi", wait_sec=7)).report("ok")
+        assert server.lease_bodies[-1] == {"service": "serpapi", "wait_sec": 7}
+
+        server.busy = True
+        with pytest.raises(AllKeysBusy):
+            await cog.lease("serpapi", wait_sec=1)
+        server.busy = False
 
         server.keys = []
         with pytest.raises(NoKeyAvailable):

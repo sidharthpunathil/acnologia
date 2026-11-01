@@ -20,6 +20,9 @@ type Config struct {
 	BootstrapEmail     string
 	BootstrapPassword  string
 	Version            string
+	AnthropicAPIKey    string
+	AIModel            string
+	GitHubToken        string
 }
 
 func Load(version string) Config {
@@ -35,6 +38,36 @@ func Load(version string) Config {
 		BootstrapEmail:     os.Getenv("COGITO_BOOTSTRAP_EMAIL"),
 		BootstrapPassword:  os.Getenv("COGITO_BOOTSTRAP_PASSWORD"),
 		Version:            version,
+		AnthropicAPIKey:    os.Getenv("ANTHROPIC_API_KEY"),
+		AIModel:            env("COGITO_AI_MODEL", "claude-opus-5-5"),
+		GitHubToken:        os.Getenv("GITHUB_TOKEN"),
+	}
+}
+
+// LoadDotEnv reads KEY=VALUE lines from a .env file into the environment.
+// Variables already set in the environment win. A missing file is fine.
+func LoadDotEnv(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = v[1 : len(v)-1]
+		}
+		if _, set := os.LookupEnv(k); !set && k != "" {
+			os.Setenv(k, v)
+		}
 	}
 }
 

@@ -51,7 +51,10 @@ CREATE TABLE IF NOT EXISTS services(
   icon TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   max_concurrency INTEGER NOT NULL DEFAULT 0,
-  queue_timeout_sec INTEGER NOT NULL DEFAULT 0
+  queue_timeout_sec INTEGER NOT NULL DEFAULT 0,
+  logo BLOB,
+  logo_mime TEXT NOT NULL DEFAULT '',
+  logo_rev INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS keys(
   id INTEGER PRIMARY KEY,
@@ -132,6 +135,64 @@ CREATE TABLE IF NOT EXISTS audit(
   detail TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS providers(
+  slug TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  website TEXT NOT NULL DEFAULT '',
+  docs_url TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  builtin INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'manual',
+  version INTEGER NOT NULL DEFAULT 1,
+  spec TEXT NOT NULL,
+  logo BLOB,
+  logo_mime TEXT NOT NULL DEFAULT '',
+  logo_rev INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS provider_versions(
+  slug TEXT NOT NULL REFERENCES providers(slug) ON DELETE CASCADE ON UPDATE CASCADE,
+  version INTEGER NOT NULL,
+  snapshot TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(slug, version)
+);
+CREATE TABLE IF NOT EXISTS agent_runs(
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  provider_slug TEXT NOT NULL DEFAULT '',
+  input TEXT NOT NULL,
+  test_key_enc BLOB,
+  draft TEXT NOT NULL DEFAULT '',
+  report TEXT NOT NULL DEFAULT '',
+  live TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  service_id INTEGER,
+  usage TEXT NOT NULL DEFAULT '{}',
+  created_by INTEGER,
+  created_by_email TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS agent_steps(
+  run_id INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(run_id, seq)
+);
 `
 
 func Open(dataDir string) (*Store, error) {
@@ -167,7 +228,16 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	_, err = addColumn(db, "keys", "max_concurrency", "INTEGER")
+	if _, err = addColumn(db, "keys", "max_concurrency", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err = addColumn(db, "services", "logo", "BLOB"); err != nil {
+		return err
+	}
+	if _, err = addColumn(db, "services", "logo_mime", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	_, err = addColumn(db, "services", "logo_rev", "INTEGER NOT NULL DEFAULT 0")
 	return err
 }
 

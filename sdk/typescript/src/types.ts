@@ -20,8 +20,13 @@ export interface Service {
 export interface LeaseOptions {
   /** Key ids the server must not hand out (for example keys you already tried). */
   excludeKeyIds?: number[];
-  /** Lease lifetime in seconds. Server default applies when omitted. */
+  /** Lease lifetime in seconds. Server default applies when omitted (120 on services with a concurrency limit, 300 otherwise). */
   ttlSec?: number;
+  /**
+   * Seconds (0 to 60) the server may wait for a free slot when every usable key is at its
+   * concurrency limit. Omit or 0 to fail fast with `AllKeysBusyError`.
+   */
+  waitSec?: number;
 }
 
 export interface ReportOptions {
@@ -37,6 +42,8 @@ export interface WithKeyOptions {
   /** Total keys to try before giving up. Default 5. */
   maxAttempts?: number;
   ttlSec?: number;
+  /** Passed to every lease call. See `LeaseOptions.waitSec`. */
+  waitSec?: number;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;

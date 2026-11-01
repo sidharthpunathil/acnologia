@@ -6,6 +6,10 @@ services:
     ports:
       - "8080:8080"
     env_file: .env
+    environment:
+      # Inside the container data always lives on the volume.
+      COGITO_DATA_DIR: /data
+      COGITO_ADDR: ":8080"
     volumes:
       - cogito-data:/data
     healthcheck:

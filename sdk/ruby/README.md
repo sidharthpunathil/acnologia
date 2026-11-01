@@ -49,7 +49,7 @@ Hash and Array bodies are sent as JSON.
 
 ## Lease mode
 
-`cog.lease(service, exclude_key_ids: nil, ttl_sec: nil)` returns a
+`cog.lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil)` returns a
 `Cogito::Lease` (`lease_id`, `key_id`, `service`, `secret`, `auth`, `base_url`,
 `expires_at`). It raises `Cogito::NoKeyAvailable` (`retry_after`) when the pool
 is drained.
@@ -65,7 +65,7 @@ returns the next lease (or nil) when `rotate: true`.
 
 ### with_key
 
-`cog.with_key(service, max_attempts: 5) { |lease| ... }` leases a key, yields
+`cog.with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil) { |lease| ... }` leases a key, yields
 it, reports the outcome and returns the block's value. Raise
 `Cogito::RateLimited`, `Cogito::QuotaExhausted` or `Cogito::InvalidKey` to cool
 the key down and retry with the next one. Other exceptions are reported as
@@ -109,20 +109,60 @@ end
 File.binwrite("hi.mp3", audio)
 ```
 
-Manual flow:
+Manual flow (report on every path, see Concurrency limits):
 
 ```ruby
 lease = cog.lease("serpapi")
-# ... call the provider ...
-next_lease = lease.report("rate_limited", status_code: 429, retry_after_sec: 3600, rotate: true)
+begin
+  # ... call the provider ...
+  next_lease = lease.report("rate_limited", status_code: 429, retry_after_sec: 3600, rotate: true)
+ensure
+  lease.report("error") unless lease.reported
+end
 ```
+
+## Concurrency limits
+
+Some providers cap how many requests one key may run at once (ElevenLabs
+allows 2 per key by default). Cogito enforces this per key, so a lease is
+exclusive: on a service with a limit, each lease holds one of the key's slots
+until you report it or its `ttl_sec` runs out (default 120 seconds on limited
+services, 300 otherwise).
+
+- **Always report.** `with_key` reports every lease, even when the block
+  raises, `break`s, returns early or `throw`s. With a manual `lease`, report
+  in an `ensure` block, or the slot stays taken until the TTL expires.
+- **Wait instead of failing.** Pass `wait_sec:` (0 to 60) and the server waits
+  that long for a slot when every usable key is busy. The `net/http` read
+  timeout is extended to cover the wait.
+
+```ruby
+audio = cog.with_key("elevenlabs", wait_sec: 20) { |lease| speak(lease) }
+
+begin
+  lease = cog.lease("elevenlabs")
+rescue Cogito::AllKeysBusy => e # e.busy? is true
+  sleep(e.retry_after || 1)
+  retry
+end
+```
+
+`Cogito::AllKeysBusy` (503 `all_keys_busy`) means the keys are fine but in
+use; it clears as soon as another caller reports. It subclasses
+`Cogito::NoKeyAvailable`, so existing rescues still catch it; check `busy?` to
+tell them apart.
+
+Proxy mode needs none of this: Cogito queues proxied requests for up to the
+service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
+than the limit in parallel on one key.
 
 ## Errors
 
 | class | when |
 |---|---|
 | `Cogito::Error` | non 2xx from Cogito (`status`, `code`), or a transport failure |
-| `Cogito::NoKeyAvailable` | 503 `no_key_available`, `retry_after` in seconds |
+| `Cogito::NoKeyAvailable` | 503 `no_key_available`, `retry_after` in seconds, `busy?` |
+| `Cogito::AllKeysBusy` | 503 `all_keys_busy`: every usable key is at its concurrency limit (subclass of `NoKeyAvailable`, `busy?` is true) |
 | `Cogito::RateLimited`, `QuotaExhausted`, `InvalidKey` | raised by you inside `with_key` (all `Cogito::KeyProblem`) |
 
 ## Tests

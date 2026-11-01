@@ -1,4 +1,5 @@
 import {
+  AllKeysBusyError,
   CogitoError,
   KeyRotationError,
   NoKeyAvailableError,
@@ -260,9 +261,13 @@ export class Cogito {
     if (!res.ok) {
       const code: string = data?.error?.code ?? `http_${res.status}`;
       const message: string = data?.error?.message ?? (text || res.statusText || `HTTP ${res.status}`);
+      const ra = data?.retry_after_sec;
+      const retryAfter = typeof ra === "number" ? ra : null;
+      if (code === "all_keys_busy") {
+        throw new AllKeysBusyError(message, retryAfter, data);
+      }
       if (code === "no_key_available") {
-        const ra = data?.retry_after_sec;
-        throw new NoKeyAvailableError(message, typeof ra === "number" ? ra : null, data);
+        throw new NoKeyAvailableError(message, retryAfter, data);
       }
       throw new CogitoError(message, res.status, code, data);
     }
@@ -283,11 +288,24 @@ export class Cogito {
     }));
   }
 
-  /** Lease a key. Throws `NoKeyAvailableError` when the pool is empty or cooling down. */
+  /**
+   * Lease a key. Throws `NoKeyAvailableError` when the pool is empty or cooling down, and
+   * `AllKeysBusyError` (a subclass) when every usable key is at its concurrency limit and
+   * `waitSec` ran out.
+   *
+   * Always report the lease: on services with a concurrency limit it holds one of the key's
+   * slots until it is reported or its TTL expires.
+   */
   async lease(service: string, opts: LeaseOptions = {}): Promise<Lease> {
     const body: Record<string, unknown> = { service };
     if (opts.excludeKeyIds !== undefined) body.exclude_key_ids = opts.excludeKeyIds;
     if (opts.ttlSec !== undefined) body.ttl_sec = opts.ttlSec;
+    if (opts.waitSec !== undefined && opts.waitSec !== 0) {
+      if (!(opts.waitSec > 0 && opts.waitSec <= 60)) {
+        throw new RangeError("Cogito: waitSec must be between 0 and 60");
+      }
+      body.wait_sec = Math.ceil(opts.waitSec);
+    }
     const raw = await this._json<LeaseJSON>("POST", "/api/v1/lease", body);
     return new Lease(this, raw);
   }
@@ -296,11 +314,15 @@ export class Cogito {
    * Lease a key and run `fn` with it. Throw `RateLimitedError`, `QuotaExhaustedError` or
    * `InvalidKeyError` from `fn` to report the key and retry with the next one.
    * Returns whatever `fn` returns. Reports `ok` on success and `error` on any other throw.
+   *
+   * Every lease is reported, whatever `fn` does. On services with a concurrency limit an
+   * unreported lease keeps one of the key's slots busy until its TTL expires. `waitSec` is
+   * passed to every lease call.
    */
   async withKey<T>(service: string, fn: (lease: Lease) => T | Promise<T>, opts: WithKeyOptions = {}): Promise<T> {
     const maxAttempts = Math.max(1, opts.maxAttempts ?? 5);
     const tried: number[] = [];
-    let lease = await this.lease(service, { ttlSec: opts.ttlSec });
+    let lease = await this.lease(service, { ttlSec: opts.ttlSec, waitSec: opts.waitSec });
     let lastErr: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -326,7 +348,7 @@ export class Cogito {
             throw reportErr;
           }
           if (!rotate) break;
-          lease = next ?? (await this.lease(service, { excludeKeyIds: [...tried], ttlSec: opts.ttlSec }));
+          lease = next ?? (await this.lease(service, { excludeKeyIds: [...tried], ttlSec: opts.ttlSec, waitSec: opts.waitSec }));
           continue;
         }
         try {

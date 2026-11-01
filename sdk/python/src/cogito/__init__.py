@@ -1,7 +1,7 @@
 """Client for Cogito, a self-hosted API key pool with automatic rotation."""
 
 from ._client import AsyncCogito, AsyncProxy, Cogito, Proxy, __version__
-from ._errors import CogitoError, InvalidKey, KeyProblem, NoKeyAvailable, QuotaExhausted, RateLimited
+from ._errors import AllKeysBusy, CogitoError, InvalidKey, KeyProblem, NoKeyAvailable, QuotaExhausted, RateLimited
 from ._models import OUTCOMES, AsyncLease, Auth, Lease, Service
 
 __all__ = [
@@ -16,6 +16,7 @@ __all__ = [
     "OUTCOMES",
     "CogitoError",
     "NoKeyAvailable",
+    "AllKeysBusy",
     "KeyProblem",
     "RateLimited",
     "QuotaExhausted",

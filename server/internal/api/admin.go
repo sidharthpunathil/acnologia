@@ -11,9 +11,9 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/pool"
-	"github.com/cogito-keys/cogito/internal/providers"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -62,10 +62,6 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 
 // ---- services ----
 
-func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"providers": providers.Templates(), "strategies": pool.Strategies})
-}
-
 func (s *Server) listServices(w http.ResponseWriter, r *http.Request) {
 	svcs, err := s.Store.ListServices(r.Context())
 	if err == nil {
@@ -75,6 +71,7 @@ func (s *Server) listServices(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.fillLogos(r.Context(), svcs...)
 	writeJSON(w, 200, map[string]any{"services": svcs})
 }
 
@@ -100,6 +97,7 @@ func (s *Server) getService(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.fillLogos(r.Context(), sv)
 	writeJSON(w, 200, sv)
 }
 
@@ -156,8 +154,8 @@ func (in serviceInput) apply(sv *store.Service) string {
 		return "slug must be lowercase letters, digits and hyphens"
 	case sv.Name == "":
 		return "name is required"
-	case sv.Provider != "serpapi" && sv.Provider != "elevenlabs" && sv.Provider != "generic":
-		return "provider must be serpapi, elevenlabs or generic"
+	case sv.Provider == "":
+		return "provider is required"
 	case sv.AuthType != "query" && sv.AuthType != "header" && sv.AuthType != "bearer":
 		return "auth_type must be query, header or bearer"
 	case sv.AuthName == "" && sv.AuthType != "bearer":
@@ -192,12 +190,18 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 	if in.Provider != nil {
 		prov = *in.Provider
 	}
-	t := providers.Get(prov).Template()
-	sv := &store.Service{
-		Slug: prov, Name: t.Name, Provider: t.Provider, Category: t.Category, Description: t.Description,
-		BaseURL: t.BaseURL, AuthType: t.AuthType, AuthName: t.AuthName, Strategy: "round_robin",
-		CooldownSec: t.DefaultCooldownSec, MaxAttempts: 5, Icon: t.Icon,
-		MaxConcurrency: t.DefaultMaxConcurrency, QueueTimeoutSec: t.DefaultQueueTimeoutSec,
+	p, err := s.Store.GetProvider(r.Context(), prov)
+	if err != nil {
+		writeErr(w, 400, "unknown_provider", "no provider named "+prov)
+		return
+	}
+	sv, err := catalog.ServiceDefaults(p)
+	if err != nil {
+		writeErr(w, 400, "bad_provider", "provider spec is unreadable: "+err.Error())
+		return
+	}
+	if in.Slug == nil {
+		sv.Slug = catalog.UniqueServiceSlug(r.Context(), s.Store, sv.Slug)
 	}
 	if msg := in.apply(sv); msg != "" {
 		writeErr(w, 400, "invalid", msg)
@@ -209,6 +213,7 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.create", created.Slug, "")
+	s.fillLogos(r.Context(), created)
 	writeJSON(w, 201, created)
 }
 
@@ -225,12 +230,17 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid", msg)
 		return
 	}
+	if _, err := s.Store.GetProvider(r.Context(), sv.Provider); err != nil {
+		writeErr(w, 400, "unknown_provider", "no provider named "+sv.Provider)
+		return
+	}
 	if err := s.Store.UpdateService(r.Context(), sv); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.update", sv.Slug, "")
 	_ = s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r), s.Pool.InFlight())
+	s.fillLogos(r.Context(), sv)
 	writeJSON(w, 200, sv)
 }
 

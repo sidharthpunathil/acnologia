@@ -17,7 +17,9 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/cogito-keys/cogito/internal/agent"
 	"github.com/cogito-keys/cogito/internal/api"
+	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
 	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/llmstxt"
@@ -54,6 +56,7 @@ func genKey() string {
 }
 
 func run() error {
+	config.LoadDotEnv(".env")
 	cfg := config.Load(version)
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return err
@@ -79,11 +82,24 @@ func run() error {
 		return err
 	}
 
+	cat := &catalog.Catalog{Store: st}
+	if err := cat.Boot(ctx); err != nil {
+		return fmt.Errorf("load providers: %w", err)
+	}
+	ag := agent.New(agent.Config{APIKey: cfg.AnthropicAPIKey, Model: cfg.AIModel, GitHubToken: cfg.GitHubToken}, st, cat, box)
+	if err := ag.Boot(ctx); err != nil {
+		return err
+	}
+	if s := ag.Status(); s.Enabled {
+		slog.Info("AI provider builder enabled", "model", s.Model)
+	} else {
+		slog.Info("AI provider builder disabled", "reason", s.Reason)
+	}
 	p := pool.New(st, box)
 	if err := p.RestoreLeases(ctx); err != nil {
 		return err
 	}
-	srv := api.New(cfg, st, p, webui.FS(), llmstxt.Content)
+	srv := api.New(cfg, st, p, cat, ag, webui.FS(), llmstxt.Content)
 	w := &worker.Worker{Store: st, Pool: p, HealthInterval: cfg.HealthInterval,
 		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour}
 	go w.Run(ctx)
