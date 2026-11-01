@@ -1,11 +1,11 @@
 # cogito-keys (Python)
 
-Python client for [Cogito](../../docs/llms.txt), a self-hosted API key pool. Cogito
+Python client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Acnologia
 holds many keys per provider (SerpAPI, ElevenLabs, any API key based HTTP service)
 and hands out a working one. When a key hits a rate limit or runs out of quota,
 you get the next one automatically.
 
-- Sync client `Cogito` and async client `AsyncCogito`, both built on `httpx` (the only dependency).
+- Sync client `Acnologia` and async client `AsyncAcnologia`, both built on `httpx` (the only dependency).
 - Python 3.9+, fully typed (dataclasses, `py.typed`).
 
 ## Install
@@ -27,12 +27,12 @@ cog = Cogito("http://localhost:8080", "cog_your_app_token")
 # or set COGITO_URL and COGITO_TOKEN and call Cogito()
 ```
 
-The token is an app token created in the Cogito dashboard (Apps page). It is
+The token is an app token created in the Acnologia dashboard (Apps page). It is
 sent as `Authorization: Bearer cog_...`.
 
 ## Two ways to use a key
 
-**Proxy mode**: send the provider request to Cogito. Cogito injects a key,
+**Proxy mode**: send the provider request to Acnologia. Acnologia injects a key,
 retries with the next key on rate limits, and your process never sees a secret.
 
 **Lease mode**: borrow a key, call the provider yourself, then report how it went.
@@ -62,7 +62,7 @@ for r in resp.json().get("organic_results", [])[:5]:
 tts = cog.proxy("elevenlabs")
 resp = tts.post(
     "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
-    json={"text": "Hello from Cogito.", "model_id": "eleven_multilingual_v2"},
+    json={"text": "Hello from Acnologia.", "model_id": "eleven_multilingual_v2"},
     headers={"Accept": "audio/mpeg"},
 )
 resp.raise_for_status()
@@ -132,7 +132,7 @@ Outcomes: `ok`, `rate_limited`, `quota_exhausted`, `invalid`, `error`.
 
 `cog.with_key(service, fn, max_attempts=5, ttl_sec=None, wait_sec=None)` leases a key, calls `fn(lease)`,
 reports the result and returns what `fn` returned. Raise one of the exported
-exceptions to make Cogito cool the key down and retry with the next one:
+exceptions to make Acnologia cool the key down and retry with the next one:
 
 | raise | reported outcome |
 |---|---|
@@ -193,7 +193,7 @@ After `max_attempts` rotations it re-raises the last `RateLimited`,
 ## Concurrency limits
 
 Some providers cap how many requests one key may run at once (ElevenLabs
-allows 2 per key by default). Cogito enforces this per key, so a lease is
+allows 2 per key by default). Acnologia enforces this per key, so a lease is
 exclusive: on a service with a limit, each lease holds one of the key's slots
 until you report it or its `ttl_sec` runs out (default 120 seconds on limited
 services, 300 otherwise).
@@ -224,7 +224,7 @@ except AllKeysBusy as exc:   # subclass of NoKeyAvailable, exc.busy is True
 it clears as soon as another caller reports. `NoKeyAvailable` with
 `busy == False` means every key is cooling down, exhausted or excluded.
 
-Proxy mode needs none of this: Cogito queues proxied requests for up to the
+Proxy mode needs none of this: Acnologia queues proxied requests for up to the
 service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
 than the limit in parallel on one key.
 
@@ -232,7 +232,7 @@ than the limit in parallel on one key.
 
 ```python
 import asyncio
-from cogito import AsyncCogito
+from cogito import AsyncAcnologia
 
 async def main():
     async with AsyncCogito("http://localhost:8080", "cog_your_app_token") as cog:

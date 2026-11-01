@@ -1,13 +1,13 @@
-<p align="center"><img src="docs/brand/logo.png" alt="Cogito" width="320"></p>
+<p align="center"><img src="docs/brand/logo.png" alt="Acnologia" width="140"></p>
 
-# Cogito
+# Acnologia
 
 **I think, therefore I am.**
 
 A self-hosted API key pool. Register many accounts with a provider (SerpAPI,
-ElevenLabs, or any API key based HTTP service), put all their keys in Cogito,
+ElevenLabs, or any API key based HTTP service), put all their keys in Acnologia,
 and your apps get a working key on demand. When a key hits a rate limit or runs
-out of quota, Cogito cools it down and hands out the next one.
+out of quota, Acnologia cools it down and hands out the next one.
 
 One Go binary with an embedded React dashboard. SQLite storage, keys encrypted
 at rest with AES-256-GCM.
@@ -46,7 +46,7 @@ restricted keys, and a bar shows quota left.
 
 ## Two ways to use it
 
-**Proxy mode (recommended).** Call Cogito instead of the provider. Cogito picks a
+**Proxy mode (recommended).** Call Acnologia instead of the provider. Acnologia picks a
 key, injects it, retries with the next key on rate limits, and your app never
 sees a secret.
 
@@ -86,7 +86,7 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
   backoff. A key whose account was suspended is marked `banned` and stays out
   until you reset it.
 - **Circuit breaker** per service: when the provider itself keeps failing
-  (5xx, timeouts), Cogito pauses traffic, answers 503 at once, and probes
+  (5xx, timeouts), Acnologia pauses traffic, answers 503 at once, and probes
   until it recovers. Keys are not blamed for a provider outage.
 - **Quota tracking**: health checks read SerpAPI `account.json` and ElevenLabs
   `/v1/user/subscription` (neither spends quota), and providers that report
@@ -95,7 +95,7 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
 - **Response cache**: identical GET requests to search style APIs are
   answered from memory, so repeats spend no quota. `Idempotency-Key` makes
   retried POSTs safe.
-- **Service groups**: put several services behind one slug and Cogito falls
+- **Service groups**: put several services behind one slug and Acnologia falls
   through to the next when one runs dry or goes down.
 - **App limits and spend**: per app daily and monthly request caps and USD
   budgets, with spend tracked from each provider's price per request.
@@ -150,7 +150,7 @@ A provider (SerpAPI, ElevenLabs, anything else) is a JSON spec stored in SQLite:
 where the key goes, which error responses mean "rate limited", "out of quota"
 or "bad key", how to read remaining quota, and fixture tests that prove the rules
 work. One engine interprets every spec. Publishing a spec swaps it in memory, so
-**adding or fixing a provider never restarts Cogito**.
+**adding or fixing a provider never restarts Acnologia**.
 
 **Build with AI.** Give it a name, a docs URL or a GitHub repo (and optionally a
 test key). An agent built on the Claude API then:

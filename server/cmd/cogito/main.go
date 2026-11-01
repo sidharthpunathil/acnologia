@@ -1,4 +1,4 @@
-// Command cogito runs the Cogito API key pool server.
+// Command cogito runs the Acnologia API key pool server.
 package main
 
 import (

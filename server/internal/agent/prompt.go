@@ -15,12 +15,12 @@ import (
 
 func prStatus(st *string) store.RunPatch { return store.RunPatch{Status: st} }
 
-const specGuide = `You are the provider engineer inside Cogito, a self-hosted API key pool. Cogito stores many API keys per provider, hands out a working key on demand, and rotates to the next key when one hits a rate limit or runs out of quota. A provider in Cogito is a declarative JSON spec that a generic engine interprets. You research an API and write that spec. Nothing you write is executed; the engine only reads it.
+const specGuide = `You are the provider engineer inside Acnologia, a self-hosted API key pool. Acnologia stores many API keys per provider, hands out a working key on demand, and rotates to the next key when one hits a rate limit or runs out of quota. A provider in Acnologia is a declarative JSON spec that a generic engine interprets. You research an API and write that spec. Nothing you write is executed; the engine only reads it.
 
 # What the spec does
 - base_url and auth: where requests go and where the key is placed (query param, header, or bearer token). The proxy puts the key there for every request.
 - defaults: strategy (round_robin, fill_first, least_used, most_quota, random), cooldown_sec (base cooldown after a rate limit, doubled on repeats), max_attempts (keys tried per proxied request), max_concurrency (parallel requests allowed per key; 0 = unlimited; set it when the provider documents a concurrency cap), queue_timeout_sec (how long a request waits for a free key when all are busy; 0 to 30 is sensible when max_concurrency is set), cache_ttl_sec (seconds to cache successful GET responses; set 3600 or so for search and lookup APIs whose results are stable, leave 0 for anything that generates content or changes state), breaker_threshold / breaker_window_sec / breaker_reset_sec (circuit breaker on provider errors; leave them out for the defaults of 10 errors in 60s pausing 30s).
-- quota: unit (searches, characters, credits, requests, tokens), counts_per_request (true only when each successful request spends exactly one unit), cost_per_request (USD for one successful request at the entry paid price, used for spend tracking and budgets; omit if pricing is not per request), free_tier (one short sentence on the free allowance, hedged when it changes often), headers (when every response carries quota headers: {limit: "X-RateLimit-Limit", remaining: "X-RateLimit-Remaining", reset: "X-RateLimit-Reset", reset_format: seconds | unix | unix_ms | iso8601 | http_date, index: n}. index picks entry n of a comma list such as "1, 2000" for per second and per month windows; use the longest window. Cogito then tracks quota from live traffic without a health check).
+- quota: unit (searches, characters, credits, requests, tokens), counts_per_request (true only when each successful request spends exactly one unit), cost_per_request (USD for one successful request at the entry paid price, used for spend tracking and budgets; omit if pricing is not per request), free_tier (one short sentence on the free allowance, hedged when it changes often), headers (when every response carries quota headers: {limit: "X-RateLimit-Limit", remaining: "X-RateLimit-Remaining", reset: "X-RateLimit-Reset", reset_format: seconds | unix | unix_ms | iso8601 | http_date, index: n}. index picks entry n of a comma list such as "1, 2000" for per second and per month windows; use the longest window. Acnologia then tracks quota from live traffic without a health check).
 - rules: ordered list, first match wins, evaluated on error responses. Each rule: name, match, outcome, optional retry_after.
   - match fields are ANDed; values inside a list are ORed; text matching is case insensitive substring.
     status: [codes] (empty = any status >= 400; rules never see 2xx/3xx unless status lists such a code),
@@ -33,7 +33,7 @@ const specGuide = `You are the provider engineer inside Cogito, a self-hosted AP
 - tests: fixture responses with the expected outcome. They prove the rules work and guard future edits. Write at least one success case, one test per rule using the provider's real documented error bodies, and tests for 429, 401 and 5xx. A request validation error (400/422) should usually be ok.
 
 # Provider metadata
-slug (lowercase, hyphens), name (official product name), category (one or two words, for example Search, Voice, LLM, Images, Data, Email, Maps, Finance), description (one or two plain sentences: what it does and how its quota works), website (homepage), docs_url (API reference), color (#rrggbb, the brand's primary color), logo_url (optional: a direct link to the brand logo or icon image if you saw one; Cogito also discovers icons on the website itself).
+slug (lowercase, hyphens), name (official product name), category (one or two words, for example Search, Voice, LLM, Images, Data, Email, Maps, Finance), description (one or two plain sentences: what it does and how its quota works), website (homepage), docs_url (API reference), color (#rrggbb, the brand's primary color), logo_url (optional: a direct link to the brand logo or icon image if you saw one; Acnologia also discovers icons on the website itself).
 
 # How to work
 1. Find the official API docs: authentication, base URL, rate limits, quotas, concurrency limits, error format and error codes, and any account or usage endpoint. Prefer official docs and official SDK source over blogs.
@@ -52,7 +52,7 @@ slug (lowercase, hyphens), name (official product name), category (one or two wo
 
 func examplesBlock() string {
 	var b strings.Builder
-	b.WriteString("# Worked examples: Cogito's built-in providers\n")
+	b.WriteString("# Worked examples: Acnologia's built-in providers\n")
 	// A few varied examples teach the format; all twelve would only add tokens.
 	show := map[string]bool{"serpapi": true, "elevenlabs": true, "brave-search": true, "tavily": true}
 	for _, bi := range providers.Builtins() {
@@ -72,7 +72,7 @@ func (a *Agent) rulesBlock(ctx context.Context) string {
 	if r == "" {
 		return ""
 	}
-	return "# Operator rules\nThe operator of this Cogito instance set these rules. Follow them unless they conflict with the hard rules above.\n\n" + r
+	return "# Operator rules\nThe operator of this Acnologia instance set these rules. Follow them unless they conflict with the hard rules above.\n\n" + r
 }
 
 func (a *Agent) systemPrompt(ctx context.Context) ([]anthropic.BetaTextBlockParam, error) {
@@ -99,7 +99,7 @@ func (a *Agent) taskPrompt(ctx context.Context, s *runState) (string, error) {
 			"website": p.Website, "docs_url": p.DocsURL, "color": p.Color, "spec": json.RawMessage(p.Spec)}, "", "  ")
 		fmt.Fprintf(&b, "Task: improve the existing provider %q (keep slug %q).\n\nCurrent version %d:\n```json\n%s\n```\n\n", p.Name, p.Slug, p.Version, cur)
 	} else {
-		b.WriteString("Task: add a new provider to Cogito and fill in everything: metadata, brand color, logo URL if you find one, auth, defaults, rules, health check, examples and tests.\n\n")
+		b.WriteString("Task: add a new provider to Acnologia and fill in everything: metadata, brand color, logo URL if you find one, auth, defaults, rules, health check, examples and tests.\n\n")
 		if ps, err := a.Store.ListProviders(ctx); err == nil {
 			names := []string{}
 			for _, p := range ps {

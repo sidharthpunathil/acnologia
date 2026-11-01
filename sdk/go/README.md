@@ -1,10 +1,10 @@
 # cogito-go
 
-Go client for [Cogito](../../docs/llms.txt), a self-hosted API key pool. Standard library only.
+Go client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Standard library only.
 
 Two ways to use your pooled keys:
 
-- **Proxy mode**: send requests to Cogito instead of the provider. Cogito injects a key, retries with the next key on rate limits, and never exposes the secret.
+- **Proxy mode**: send requests to Acnologia instead of the provider. Acnologia injects a key, retries with the next key on rate limits, and never exposes the secret.
 - **Lease mode**: lease a key, call the provider yourself, report the outcome. `WithKey` runs that loop and rotates keys for you.
 
 ## Install
@@ -48,7 +48,7 @@ err = json.NewDecoder(resp.Body).Decode(&results)
 
 ```go
 resp, err := c.Proxy("elevenlabs").PostJSON(ctx, "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
-	map[string]string{"text": "Hello from Cogito", "model_id": "eleven_multilingual_v2"})
+	map[string]string{"text": "Hello from Acnologia", "model_id": "eleven_multilingual_v2"})
 if err != nil {
 	return err
 }
@@ -120,7 +120,7 @@ err := c.WithKey(ctx, "serpapi", func(l *cogito.Lease) error {
 ```go
 var audio []byte
 err := c.WithKey(ctx, "elevenlabs", func(l *cogito.Lease) error {
-	payload := strings.NewReader(`{"text":"Hello from Cogito","model_id":"eleven_multilingual_v2"}`)
+	payload := strings.NewReader(`{"text":"Hello from Acnologia","model_id":"eleven_multilingual_v2"}`)
 	req, _ := http.NewRequestWithContext(ctx, "POST",
 		l.URL("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM", nil), payload)
 	req.Header.Set("Content-Type", "application/json")
@@ -184,7 +184,7 @@ Outcomes: `OutcomeOK`, `OutcomeRateLimited`, `OutcomeQuotaExhausted`, `OutcomeIn
 ## Concurrency limits
 
 Some providers cap how many requests one key may run at once (ElevenLabs
-allows 2 per key by default). Cogito enforces this per key, so a lease is
+allows 2 per key by default). Acnologia enforces this per key, so a lease is
 exclusive: on a service with a limit, each lease holds one of the key's slots
 until you report it or its `TTL` runs out (default 120 seconds on limited
 services, 300 otherwise).
@@ -211,7 +211,7 @@ A busy pool returns `*cogito.ErrNoKeyAvailable` with `Busy: true` and
 `cogito.NoKeyAvailable`, so existing checks keep working; it clears as soon as
 another caller reports.
 
-Proxy mode needs none of this: Cogito queues proxied requests for up to the
+Proxy mode needs none of this: Acnologia queues proxied requests for up to the
 service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
 than the limit in parallel on one key.
 

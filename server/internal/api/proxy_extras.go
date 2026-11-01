@@ -225,7 +225,7 @@ func (s *Server) onBreakerChange(serviceID int64, down bool, reason string) {
 		s.Store.AddEvent(ctx, store.NewEvent{Kind: "service_down", ServiceID: sv.ID, Detail: "paused after repeated provider errors: " + reason})
 		if s.Pool.Notify != nil {
 			s.Pool.Notify.Emit(notify.Event{Type: notify.ServiceDown, ServiceID: sv.ID, Service: sv.Slug,
-				Message: sv.Name + " keeps failing (" + reason + "), Cogito paused traffic to it"})
+				Message: sv.Name + " keeps failing (" + reason + "), Acnologia paused traffic to it"})
 		}
 		return
 	}

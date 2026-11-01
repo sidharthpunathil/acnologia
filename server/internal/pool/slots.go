@@ -13,7 +13,7 @@ import (
 // A slot is held by a proxied request until its response finishes, or by a
 // lease until it is reported or expires.
 //
-// State is in memory: Cogito runs as a single instance. Open leases are
+// State is in memory: Acnologia runs as a single instance. Open leases are
 // restored from the database on start.
 type slots struct {
 	mu       sync.Mutex

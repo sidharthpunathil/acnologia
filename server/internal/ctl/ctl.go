@@ -1,5 +1,5 @@
 // Package ctl is the `cogito ctl` command line client. It drives a local or
-// remote Cogito through the admin API with a cogadm_ token, so CI jobs and
+// remote Acnologia through the admin API with a cogadm_ token, so CI jobs and
 // scripts can add keys, check them and watch the pool without a browser.
 package ctl
 
@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-const usage = `cogito ctl: manage a Cogito server from the command line
+const usage = `cogito ctl: manage a Acnologia server from the command line
 
 Connect once, then run commands against that server:
   cogito ctl login <url> --token cogadm_...   [--name prod]

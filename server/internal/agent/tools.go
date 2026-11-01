@@ -48,7 +48,7 @@ func (a *Agent) tools(s *runState) []anthropic.BetaToolUnionParam {
 		},
 		{
 			Name:        "validate_spec",
-			Description: anthropic.String("Check a draft provider for schema problems and run its fixture tests through Cogito's real engine. Call it before submitting."),
+			Description: anthropic.String("Check a draft provider for schema problems and run its fixture tests through Acnologia's real engine. Call it before submitting."),
 			InputSchema: schema(map[string]any{"provider": providerProp}, "provider"),
 		},
 		{
@@ -173,7 +173,7 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 		}
 		s.accepted, s.summary = d, in.Summary
 		a.logf(ctx, id, "result", fmt.Sprintf("Accepted: %d/%d tests pass", rep.Passed, rep.Passed+rep.Failed), in.Summary)
-		return "Accepted. Cogito will fetch the logo and publish it now. Reply with nothing more.", false, true
+		return "Accepted. Acnologia will fetch the logo and publish it now. Reply with nothing more.", false, true
 	}
 	return "unknown tool " + name, true, false
 }

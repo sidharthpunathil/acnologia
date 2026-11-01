@@ -15,7 +15,7 @@ var assistForms = map[string]map[string]any{
 	"app": {
 		"name":             map[string]any{"type": "string", "description": "short human name, for example Marketing site"},
 		"description":      map[string]any{"type": "string", "description": "one sentence"},
-		"mode":             map[string]any{"type": "string", "enum": []string{"proxy", "lease", "both"}, "description": "proxy for websites and anything public (keys never leave Cogito), lease when the code must call the provider itself, both for trusted backends"},
+		"mode":             map[string]any{"type": "string", "enum": []string{"proxy", "lease", "both"}, "description": "proxy for websites and anything public (keys never leave Acnologia), lease when the code must call the provider itself, both for trusted backends"},
 		"allowed_services": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "service slugs this app needs; empty means all"},
 	},
 	"service": {
@@ -70,7 +70,7 @@ func (a *Agent) Assist(ctx context.Context, form, instruction string, current ma
 	}
 	cur, _ := json.Marshal(current)
 	ctxInfo := a.assistContext(ctx)
-	system := "You fill forms in Cogito, a self-hosted API key pool, from a one line description. Return every field; keep current values that already fit. Be concise and practical.\n\n" + ctxInfo
+	system := "You fill forms in Acnologia, a self-hosted API key pool, from a one line description. Return every field; keep current values that already fit. Be concise and practical.\n\n" + ctxInfo
 	if r := a.rulesBlock(ctx); r != "" {
 		system += "\n\n" + r
 	}

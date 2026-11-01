@@ -22,7 +22,7 @@ the rules that apply to it, then lists the dashboard API.
 | `GET /api/v1/services` | Services the token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`. |
 | `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec}`. Apps in mode `lease` or `both`. |
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. |
-| `ANY /proxy/{service}/{path}` | Call the provider through Cogito with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Cogito-Key-Id`, `X-Cogito-Attempts`, `X-Cogito-Service` and, when caching applies, `X-Cogito-Cache`. |
+| `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Cogito-Key-Id`, `X-Cogito-Attempts`, `X-Cogito-Service` and, when caching applies, `X-Cogito-Cache`. |
 | `POST /mcp` | MCP tools over JSON-RPC: `list_services`, `pool_status`, `get_key`, `report_key`, `proxy_request`. |
 
 Status codes an app should handle:

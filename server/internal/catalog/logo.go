@@ -259,7 +259,7 @@ func get(ctx context.Context, c *http.Client, u string, limit int64) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Cogito/1.0; +https://github.com/sidharthpunathil/cogito)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Acnologia/1.0; +https://github.com/sidharthpunathil/acnologia)")
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err

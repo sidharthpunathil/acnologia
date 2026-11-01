@@ -267,7 +267,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		retry := max(int(math.Ceil(down.RetryAfter.Seconds())), 1)
 		w.Header().Set("Retry-After", itoa(retry))
 		writeJSON(w, 503, map[string]any{"error": apiError{Code: "service_unavailable",
-			Message: down.Service + " keeps failing, so Cogito paused traffic to it"}, "retry_after_sec": retry})
+			Message: down.Service + " keeps failing, so Acnologia paused traffic to it"}, "retry_after_sec": retry})
 	case errors.Is(failErr, errUpstreamUnreachable):
 		writeErr(w, 502, "upstream_unreachable", "could not reach "+targets[len(targets)-1].Name)
 	case failErr != nil:
@@ -457,7 +457,7 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 
 // droppedResponseHeaders never pass from an upstream to the client. Besides
 // hop-by-hop headers this covers anything that would let an upstream act on
-// the dashboard origin: cookies, CORS grants and Cogito's own security headers.
+// the dashboard origin: cookies, CORS grants and Acnologia's own security headers.
 var droppedResponseHeaders = map[string]bool{
 	"Connection": true, "Keep-Alive": true, "Transfer-Encoding": true, "Upgrade": true, "Content-Length": true,
 	"Set-Cookie": true, "Set-Cookie2": true, "Proxy-Authenticate": true, "Trailer": true,

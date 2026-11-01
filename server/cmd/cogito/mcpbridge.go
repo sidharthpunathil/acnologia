@@ -1,7 +1,7 @@
 package main
 
 // `cogito mcp` bridges a stdio MCP client (for example Claude Desktop) to a
-// Cogito server's streamable HTTP MCP endpoint. Each JSON-RPC message read
+// Acnologia server's streamable HTTP MCP endpoint. Each JSON-RPC message read
 // from stdin is POSTed to /mcp with the app token; responses go to stdout.
 
 import (
@@ -20,7 +20,7 @@ import (
 
 func runMCPBridge(args []string) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	url := fs.String("url", envOr("COGITO_URL", "http://localhost:8080"), "Cogito base URL (or COGITO_URL)")
+	url := fs.String("url", envOr("COGITO_URL", "http://localhost:8080"), "Acnologia base URL (or COGITO_URL)")
 	token := fs.String("token", os.Getenv("COGITO_TOKEN"), "app token cog_... (or COGITO_TOKEN)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -68,7 +68,7 @@ func runMCPBridge(args []string) int {
 			req.Header.Set("Authorization", "Bearer "+*token)
 			resp, err := client.Do(req)
 			if err != nil {
-				fail(head.ID, "cannot reach Cogito at "+endpoint+": "+err.Error())
+				fail(head.ID, "cannot reach Acnologia at "+endpoint+": "+err.Error())
 				return
 			}
 			defer resp.Body.Close()
@@ -79,7 +79,7 @@ func runMCPBridge(args []string) int {
 			case resp.StatusCode == http.StatusOK:
 				write(body)
 			default:
-				fail(head.ID, fmt.Sprintf("Cogito returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+				fail(head.ID, fmt.Sprintf("Acnologia returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 			}
 		}()
 	}

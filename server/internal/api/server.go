@@ -236,7 +236,7 @@ func requestLog(next http.Handler) http.Handler {
 }
 
 // privateSite keeps every page out of search engines and AI crawlers, and
-// sets baseline security headers. Cogito is a private tool.
+// sets baseline security headers. Acnologia is a private tool.
 func (s *Server) privateSite(next http.Handler) http.Handler {
 	csp := dashboardCSP(inlineScriptHashes(s.WebFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

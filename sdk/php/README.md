@@ -1,6 +1,6 @@
 # cogito/keys (PHP)
 
-PHP client for [Cogito](../../docs/llms.txt), a self-hosted API key pool. Cogito
+PHP client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Acnologia
 holds many keys per provider and hands out a working one, rotating automatically
 when a key is rate limited or out of quota.
 
@@ -18,13 +18,13 @@ require 'vendor/autoload.php';
 $cog = new Cogito\Cogito('http://localhost:8080', 'cog_your_app_token');
 ```
 
-The token is an app token from the Cogito dashboard, sent as `Authorization: Bearer cog_...`.
+The token is an app token from the Acnologia dashboard, sent as `Authorization: Bearer cog_...`.
 
 ## Proxy mode
 
-Send the provider request to Cogito. It injects a key and retries with the next
+Send the provider request to Acnologia. It injects a key and retries with the next
 key on rate limits. Your code never sees a secret. Responses come back as
-`Cogito\Response` (`status`, `headers`, `body`, `ok()`, `json()`, `header()`),
+`Acnologia\Response` (`status`, `headers`, `body`, `ok()`, `json()`, `header()`),
 including non 2xx ones.
 
 ### SerpAPI search
@@ -42,7 +42,7 @@ echo 'served by key ', $res->header('X-Cogito-Key-Id'), PHP_EOL;
 ```php
 $res = $cog->proxy('elevenlabs')->post(
     '/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM',
-    ['text' => 'Hello from Cogito.', 'model_id' => 'eleven_multilingual_v2'],
+    ['text' => 'Hello from Acnologia.', 'model_id' => 'eleven_multilingual_v2'],
     ['Accept' => 'audio/mpeg'],
 );
 if ($res->ok()) {
@@ -56,9 +56,9 @@ Array bodies are sent as JSON; strings are sent as is.
 ## Lease mode
 
 `$cog->lease($service, $excludeKeyIds = [], $ttlSec = null, $waitSec = null)` returns a
-`Cogito\Lease` with `leaseId`, `keyId`, `service`, `secret`, `auth`
+`Acnologia\Lease` with `leaseId`, `keyId`, `service`, `secret`, `auth`
 (`['type' => ..., 'name' => ..., 'prefix' => ...]`), `baseUrl` and `expiresAt`. It throws
-`Cogito\Exception\NoKeyAvailable` (with `retryAfter`) when the pool is drained.
+`Acnologia\Exception\NoKeyAvailable` (with `retryAfter`) when the pool is drained.
 
 `$lease->apply($query, $headers)` returns `['query' => ..., 'headers' => ...]`
 with the secret placed where `auth.type` says: `query` adds a query param
@@ -81,7 +81,7 @@ other exception is reported as `error` and rethrown.
 SerpAPI with your own HTTP call:
 
 ```php
-use Cogito\Exception\{InvalidKey, QuotaExhausted, RateLimited};
+use Acnologia\Exception\{InvalidKey, QuotaExhausted, RateLimited};
 
 $data = $cog->withKey('serpapi', function (Cogito\Lease $lease) {
     ['query' => $q] = $lease->apply(['engine' => 'google', 'q' => 'coffee']);
@@ -142,7 +142,7 @@ try {
 ## Concurrency limits
 
 Some providers cap how many requests one key may run at once (ElevenLabs
-allows 2 per key by default). Cogito enforces this per key, so a lease is
+allows 2 per key by default). Acnologia enforces this per key, so a lease is
 exclusive: on a service with a limit, each lease holds one of the key's slots
 until you report it or its `ttlSec` runs out (default 120 seconds on limited
 services, 300 otherwise).
@@ -155,7 +155,7 @@ services, 300 otherwise).
   extended to cover the wait.
 
 ```php
-use Cogito\Exception\AllKeysBusy;
+use Acnologia\Exception\AllKeysBusy;
 
 $audio = $cog->withKey('elevenlabs', $speak, waitSec: 20);
 
@@ -171,7 +171,7 @@ clears as soon as another caller reports. It extends `NoKeyAvailable`, so
 existing `catch (NoKeyAvailable $e)` blocks still catch it; check `$e->busy` to
 tell them apart.
 
-Proxy mode needs none of this: Cogito queues proxied requests for up to the
+Proxy mode needs none of this: Acnologia queues proxied requests for up to the
 service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
 than the limit in parallel on one key.
 
@@ -179,9 +179,9 @@ than the limit in parallel on one key.
 
 | class | when |
 |---|---|
-| `Cogito\Exception\CogitoException` | non 2xx from Cogito (`statusCode`, `errorCode`), or curl failure |
-| `Cogito\Exception\NoKeyAvailable` | 503 `no_key_available`, `retryAfter` in seconds, `busy` |
-| `Cogito\Exception\AllKeysBusy` | 503 `all_keys_busy`: every usable key is at its concurrency limit (extends `NoKeyAvailable`, `busy` is true) |
+| `Acnologia\Exception\AcnologiaException` | non 2xx from Acnologia (`statusCode`, `errorCode`), or curl failure |
+| `Acnologia\Exception\NoKeyAvailable` | 503 `no_key_available`, `retryAfter` in seconds, `busy` |
+| `Acnologia\Exception\AllKeysBusy` | 503 `all_keys_busy`: every usable key is at its concurrency limit (extends `NoKeyAvailable`, `busy` is true) |
 | `RateLimited`, `QuotaExhausted`, `InvalidKey` | thrown by you inside `withKey` (all extend `KeyProblem`) |
 
 ## Tests
@@ -191,5 +191,5 @@ php tests/run.php
 ```
 
 The constructor takes an optional fourth argument, a transport callable
-`fn(string $method, string $url, array $headers, ?string $body): Cogito\Response`,
+`fn(string $method, string $url, array $headers, ?string $body): Acnologia\Response`,
 which the tests use instead of curl.

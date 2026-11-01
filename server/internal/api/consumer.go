@@ -105,7 +105,7 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 	return s.issueLeaseOpts(ctx, a, sv, exclude, ttl, wait, false)
 }
 
-// issueLeaseOpts can also reserve the key exclusively: Cogito then hands it
+// issueLeaseOpts can also reserve the key exclusively: Acnologia then hands it
 // to no one else, through leases or the proxy, until the lease ends.
 func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration, exclusive bool) (*leaseDTO, error) {
 	ex := map[int64]bool{}
@@ -140,7 +140,7 @@ func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Ser
 		_ = s.Store.MarkLeaseExclusive(ctx, l.ID)
 	}
 	s.Pool.HoldLease(p, l.ID, l.ExpiresAt)
-	// A lease is charged as one request: Cogito cannot see what the app does with the key.
+	// A lease is charged as one request: Acnologia cannot see what the app does with the key.
 	cost := costPerRequest(sv, providers.Get(sv.Provider))
 	s.Store.AddEvent(ctx, store.NewEvent{Kind: "lease", ServiceID: sv.ID, KeyID: p.Key.ID, AppID: a.ID, Cost: cost})
 	_ = s.Store.RecordAppUsage(ctx, a.ID, cost, false)

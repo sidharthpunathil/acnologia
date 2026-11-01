@@ -16,7 +16,7 @@ Mermaid and render on GitHub.
 
 ## Proxy request
 
-`ANY /proxy/{service}/{path}`. The app never sees the key. Cogito retries with
+`ANY /proxy/{service}/{path}`. The app never sees the key. Acnologia retries with
 the next key when a response says the key itself is the problem.
 
 ```mermaid
@@ -328,7 +328,7 @@ ones. The test key is encrypted while the run is active and wiped when it ends.
 
 ## Assistant chat
 
-The Assistant page is a chat where Claude manages Cogito for you. Every action
+The Assistant page is a chat where Claude manages Acnologia for you. Every action
 is a tool call that the server turns into a request to its own dashboard API,
 **made as you** (your session), so it gets exactly your role, the same
 validation, and the same audit log entries as clicking in the UI.

@@ -5,7 +5,7 @@ package providers
 // docs and OmniRoute's search registry (MIT). Free tiers change often, so
 // the wording stays approximate and points at the provider's pricing page.
 // Health checks are included only where a free, documented endpoint exists;
-// for the rest Cogito learns validity from real traffic.
+// for the rest Acnologia learns validity from real traffic.
 func searchBuiltins() []Builtin {
 	t := func(name string, status int, body string, expect Outcome) Fixture {
 		return Fixture{Name: name, Status: status, Body: body, Expect: expect}

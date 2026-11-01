@@ -1,6 +1,6 @@
 # Server architecture
 
-Cogito is one Go binary. It serves the React dashboard, the dashboard API, the
+Acnologia is one Go binary. It serves the React dashboard, the dashboard API, the
 consumer API, an HTTP proxy and an MCP endpoint from a single process, and
 keeps everything in one SQLite file. There is no queue, cache or second
 service to run.
@@ -13,7 +13,7 @@ flowchart LR
         Agent["AI agents<br/>(MCP clients)"]
     end
 
-    subgraph Cogito["cogito (one process)"]
+    subgraph Acnologia["cogito (one process)"]
         Router["chi router<br/>+ middleware"]
         Auth["auth<br/>sessions, app tokens"]
         Admin["dashboard API<br/>/api/admin, /api/auth"]
@@ -207,7 +207,7 @@ Notes:
 Almost all state is in SQLite. The exception is **concurrency slots**
 (`internal/pool/slots.go`): how many requests are in flight on each key, which
 leases hold a slot, and a wake channel per service for requests queued on a
-busy service. Cogito runs as a single instance, and on boot it rebuilds lease
+busy service. Acnologia runs as a single instance, and on boot it rebuilds lease
 slots from open leases in the database (`RestoreLeases`).
 
 ## Boot sequence

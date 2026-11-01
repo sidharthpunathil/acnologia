@@ -1,7 +1,7 @@
 # @cogito/keys
 
-TypeScript and JavaScript client for [Cogito](../../docs/llms.txt), a self-hosted API key pool.
-Register many provider accounts (SerpAPI, ElevenLabs, any API key based service) in Cogito and
+TypeScript and JavaScript client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool.
+Register many provider accounts (SerpAPI, ElevenLabs, any API key based service) in Acnologia and
 let this client hand you a working key, or proxy your calls so keys rotate automatically when one
 hits a rate limit.
 
@@ -27,7 +27,7 @@ import { Cogito } from "npm:@cogito/keys";
 
 ## Setup
 
-Create an app in the Cogito dashboard and copy its token (`cog_...`, shown once).
+Create an app in the Acnologia dashboard and copy its token (`cog_...`, shown once).
 
 ```ts
 import { Cogito } from "@cogito/keys";
@@ -44,16 +44,16 @@ const services = await cogito.services();
 
 There are two ways to use a pool.
 
-| Mode | You call | Secret leaves Cogito | Rotation |
+| Mode | You call | Secret leaves Acnologia | Rotation |
 |------|----------|----------------------|----------|
-| Proxy | Cogito at `/proxy/{service}/...` | never | automatic, server side |
+| Proxy | Acnologia at `/proxy/{service}/...` | never | automatic, server side |
 | Lease | the provider directly | yes, to your process | you report, `withKey` automates it |
 
 The app must be allowed the mode you use (`proxy`, `lease` or `both`).
 
 ## Proxy mode
 
-Call Cogito as if it were the provider. Cogito injects a key, retries with the next key on a
+Call Acnologia as if it were the provider. Acnologia injects a key, retries with the next key on a
 rate limit, and returns the provider's response as a standard `Response`. Non-2xx responses do
 not throw, check `res.ok` yourself. The response carries `X-Cogito-Key-Id` and
 `X-Cogito-Attempts` headers.
@@ -102,7 +102,7 @@ accepts an object, `URLSearchParams` or an array of pairs.
 ## Lease mode
 
 Lease a key, call the provider yourself, then report how it went. Reporting is what lets
-Cogito cool down rate limited keys and retire exhausted or invalid ones.
+Acnologia cool down rate limited keys and retire exhausted or invalid ones.
 
 ### withKey (recommended)
 
@@ -216,7 +216,7 @@ it replaces `Bearer ` (so `prefix: "Token "` gives `Authorization: Token <secret
 ## Concurrency limits
 
 Some providers cap how many requests one key may run at once (ElevenLabs allows 2 per key
-by default). Cogito enforces this per key, so a lease is exclusive: on a service with a
+by default). Acnologia enforces this per key, so a lease is exclusive: on a service with a
 limit, each lease holds one of the key's slots until you report it or its `ttlSec` runs out
 (default 120 seconds on limited services, 300 otherwise).
 
@@ -243,7 +243,7 @@ try {
 soon as another caller reports. It extends `NoKeyAvailableError`, so existing
 `instanceof NoKeyAvailableError` checks still catch it; use `err.busy` to tell them apart.
 
-Proxy mode needs none of this: Cogito queues proxied requests for up to the service's
+Proxy mode needs none of this: Acnologia queues proxied requests for up to the service's
 `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more than the limit in
 parallel on one key.
 
@@ -291,7 +291,7 @@ page needs. Anyone who can read the page can use the token.
 
 | Class | When |
 |-------|------|
-| `CogitoError` | Cogito returned a non-2xx response. Has `status`, `code`, `body`. |
+| `CogitoError` | Acnologia returned a non-2xx response. Has `status`, `code`, `body`. |
 | `NoKeyAvailableError` | 503 `no_key_available`. Has `retryAfter` (seconds or null) and `busy`. Extends `CogitoError`. |
 | `AllKeysBusyError` | 503 `all_keys_busy`: every usable key is at its concurrency limit. `busy` is true, `retryAfter` usually 1. Extends `NoKeyAvailableError`. |
 | `RateLimitedError(retryAfter?, { statusCode?, message? })` | You throw it inside `withKey`. |

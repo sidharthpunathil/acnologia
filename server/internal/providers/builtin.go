@@ -8,7 +8,7 @@ var serpLogo []byte
 //go:embed seedlogos/elevenlabs.png
 var elevenLogo []byte
 
-// Builtin is a provider shipped with Cogito. It is seeded into the database on
+// Builtin is a provider shipped with Acnologia. It is seeded into the database on
 // first boot; after that the database copy is the source of truth and can be
 // edited like any other provider.
 type Builtin struct {

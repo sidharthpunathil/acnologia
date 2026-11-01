@@ -13,7 +13,7 @@ func (a *Agent) Enabled() bool { return a.enabled }
 func (a *Agent) Model() string { return a.model }
 
 // Converse sends one turn of an assistant chat with custom tools. The caller
-// runs the tool loop; this only wraps the client with Cogito's model and
+// runs the tool loop; this only wraps the client with Acnologia's model and
 // defaults. No extended thinking, so history can be replayed without
 // thinking signatures.
 func (a *Agent) Converse(ctx context.Context, system string, messages []anthropic.BetaMessageParam, tools []anthropic.BetaToolUnionParam) (*anthropic.BetaMessage, error) {

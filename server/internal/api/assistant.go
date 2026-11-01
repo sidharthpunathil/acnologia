@@ -21,7 +21,7 @@ import (
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
-// The assistant is a chat where Claude manages Cogito through tool calls.
+// The assistant is a chat where Claude manages Acnologia through tool calls.
 // Every tool is a call to the dashboard API made as the signed in user, so
 // roles, validation and the audit log apply exactly as in the UI. Destructive
 // tools wait for the user to press Confirm. Conversations are encrypted at
@@ -473,9 +473,9 @@ func (cs *chatSession) loop(ctx context.Context) error {
 
 func (cs *chatSession) systemPrompt(ctx context.Context) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, `You are the assistant inside Cogito, a self-hosted API key pool. Cogito stores many API keys per provider (SerpAPI, ElevenLabs, any API key based HTTP API), hands working keys to apps through a proxy or leases, and cools keys down on rate limits.
+	fmt.Fprintf(&b, `You are the assistant inside Acnologia, a self-hosted API key pool. Acnologia stores many API keys per provider (SerpAPI, ElevenLabs, any API key based HTTP API), hands working keys to apps through a proxy or leases, and cools keys down on rate limits.
 
-You are talking to %s (%s), role %s. You act only through tools, which call Cogito's dashboard API as this user, so the same permissions apply. Never claim something was done unless a tool result says so. If a tool fails, say what failed in plain words.
+You are talking to %s (%s), role %s. You act only through tools, which call Acnologia's dashboard API as this user, so the same permissions apply. Never claim something was done unless a tool result says so. If a tool fails, say what failed in plain words.
 
 Concepts: a provider describes an API. A service is a provider plus settings and keys; apps reach it at /proxy/<service slug>. Keys belong to a service. A key can record who it belongs to: account_name, account_email, account_phone, and account_ref (any other identifier, such as a username or account id).
 

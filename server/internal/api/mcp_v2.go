@@ -76,7 +76,7 @@ var coreTools = []mcpTool{
 			"rotate":          map[string]any{"type": "boolean", "description": "Return a new lease when the outcome is a failure"},
 		}, "lease_id", "outcome")},
 	{Name: "proxy_request", Set: setCore, Annotations: map[string]any{"title": "Call a service", "openWorldHint": true},
-		Description: "Call any endpoint of a service through Cogito. Cogito picks a key, injects it, and retries with the next key on rate limits. The key is never shown to you.",
+		Description: "Call any endpoint of a service through Acnologia. Acnologia picks a key, injects it, and retries with the next key on rate limits. The key is never shown to you.",
 		InputSchema: obj(map[string]any{
 			"service": str("Service slug"),
 			"method":  map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "PATCH", "DELETE"}, "default": "GET"},
@@ -174,7 +174,7 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 				props["body"] = map[string]any{"type": "object", "description": "JSON body. Example: " + string(eb)}
 				required = append(required, "body")
 			}
-			desc := fmt.Sprintf("%s on %s (%s %s). Cogito adds a pooled key and rotates on rate limits.", ex.Name, sv.Name, strings.ToUpper(orDefault(ex.Method, "GET")), ex.Path)
+			desc := fmt.Sprintf("%s on %s (%s %s). Acnologia adds a pooled key and rotates on rate limits.", ex.Name, sv.Name, strings.ToUpper(orDefault(ex.Method, "GET")), ex.Path)
 			if sv.Description != "" {
 				desc += " " + sv.Description
 			}
@@ -473,13 +473,13 @@ func (s *Server) mcpResources(ctx context.Context, a *store.App) []map[string]an
 	out := []map[string]any{
 		{"uri": "cogito://services", "name": "services", "title": "Services", "mimeType": "application/json",
 			"description": "Services this app can use, with availability and how the key is sent."},
-		{"uri": "cogito://llms.txt", "name": "llms.txt", "title": "Cogito guide for agents", "mimeType": "text/plain"},
+		{"uri": "cogito://llms.txt", "name": "llms.txt", "title": "Acnologia guide for agents", "mimeType": "text/plain"},
 	}
 	svcs, _ := s.Store.ListServices(ctx)
 	for _, sv := range svcs {
 		if a.CanUse(sv.Slug) {
 			out = append(out, map[string]any{"uri": "cogito://services/" + sv.Slug, "name": sv.Slug, "title": sv.Name,
-				"mimeType": "application/json", "description": "How to call " + sv.Name + " through Cogito"})
+				"mimeType": "application/json", "description": "How to call " + sv.Name + " through Acnologia"})
 		}
 	}
 	return out
@@ -517,7 +517,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 			"slug": sv.Slug, "name": sv.Name, "category": sv.Category, "description": sv.Description,
 			"base_url": sv.BaseURL, "auth": map[string]any{"type": sv.AuthType, "name": sv.AuthName},
 			"quota_unit": spec.Quota.Unit, "max_concurrency_per_key": sv.MaxConcurrency, "examples": examples,
-			"how_to_call": "Use proxy_request with service=" + sv.Slug + " and a path, or the generated tool for an example. Cogito adds the key.",
+			"how_to_call": "Use proxy_request with service=" + sv.Slug + " and a path, or the generated tool for an example. Acnologia adds the key.",
 		}
 		if p, err := s.Store.GetProvider(ctx, sv.Provider); err == nil && strings.HasPrefix(p.DocsURL, "https://") {
 			doc["docs_url"] = p.DocsURL
@@ -529,7 +529,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 }
 
 var mcpPrompts = []map[string]any{
-	{"name": "use_service", "title": "Use a service through Cogito",
+	{"name": "use_service", "title": "Use a service through Acnologia",
 		"description": "Instructions for calling one service with pooled keys.",
 		"arguments":   []map[string]any{{"name": "service", "description": "Service slug", "required": true}}},
 	{"name": "key_health_report", "title": "Key health report",
@@ -547,9 +547,9 @@ func (s *Server) mcpGetPrompt(ctx context.Context, a *store.App, st store.MCPSet
 		if !a.CanUse(svc) {
 			return nil, fmt.Errorf("this app cannot use service %q", svc)
 		}
-		return msg(fmt.Sprintf("You can call the %q service through Cogito, which holds a pool of API keys and rotates them on rate limits. "+
+		return msg(fmt.Sprintf("You can call the %q service through Acnologia, which holds a pool of API keys and rotates them on rate limits. "+
 			"First read the resource cogito://services/%s to see its examples. Prefer the generated tools named %s_*, or proxy_request with service=%q. "+
-			"Never ask for or print an API key. If a call returns a rate limit, try again: Cogito already rotated keys for you. "+
+			"Never ask for or print an API key. If a call returns a rate limit, try again: Acnologia already rotated keys for you. "+
 			"Only lease a key with get_key when you must call the provider yourself, and always call report_key afterwards.", svc, svc, toolName(svc), svc)), nil
 	case "key_health_report":
 		if !st.Insights {

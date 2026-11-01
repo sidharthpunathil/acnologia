@@ -111,14 +111,14 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if st.Prompts {
 			caps["prompts"] = map[string]any{"listChanged": false}
 		}
-		instr := "Cogito hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself."
+		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself."
 		if strings.TrimSpace(st.Instructions) != "" {
 			instr += "\n\n" + strings.TrimSpace(st.Instructions)
 		}
 		return map[string]any{
 			"protocolVersion": v,
 			"capabilities":    caps,
-			"serverInfo":      map[string]any{"name": "cogito", "title": "Cogito: " + a.Name, "version": s.Cfg.Version},
+			"serverInfo":      map[string]any{"name": "cogito", "title": "Acnologia: " + a.Name, "version": s.Cfg.Version},
 			"instructions":    instr,
 		}, nil
 	case "ping":

@@ -1,6 +1,6 @@
 # Security model
 
-Cogito holds other people's API keys, so most of its design is about who can
+Acnologia holds other people's API keys, so most of its design is about who can
 make a key leave the server, and where it can go.
 
 ## Trust boundaries
@@ -194,7 +194,7 @@ service's target: a non-superadmin assigning or changing it clears
 `target_trusted`, so hidden keys stop flowing until a superadmin confirms.
 Proxy URLs are encrypted at rest and shown without credentials.
 
-The response cache is shared by the apps of a service, so Cogito never caches
+The response cache is shared by the apps of a service, so Acnologia never caches
 a response made with a hidden or restricted key, a response the upstream marks
 `private` or `no-store`, or a body that contains the key. Idempotent replays
 are stored per app.
@@ -209,7 +209,7 @@ at 169.254.169.254), CGNAT, benchmark, documentation and reserved ranges, plus
 NAT64 and 6to4 addresses that embed one of those.
 
 The AI builder's `web_search` and `web_fetch` run on Anthropic's side, so
-fetched pages never reach Cogito's network. Its `github_read` tool validates
+fetched pages never reach Acnologia's network. Its `github_read` tool validates
 owner, repo and path. Text from fetched pages can steer the model, so its
 output is checked rather than trusted: the harness re-validates and re-tests
 every submitted spec, a create run cannot overwrite an existing provider,

@@ -227,7 +227,7 @@ func init() {
 		},
 		{
 			Name: "list_providers", Role: store.RoleMember, Props: none,
-			Desc: "Providers Cogito knows (built in, manual and AI built), with how many services use each.",
+			Desc: "Providers Acnologia knows (built in, manual and AI built), with how many services use each.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				return cs.simple("GET", "/api/admin/providers", nil, "Listed providers", func(m map[string]any) any {
 					return rows(m["providers"], "slug", "name", "category", "status", "builtin", "services_count", "base_url", "auth_type")
@@ -535,7 +535,7 @@ func init() {
 			Props: map[string]any{
 				"name":             map[string]any{"type": "string"},
 				"description":      map[string]any{"type": "string"},
-				"mode":             map[string]any{"type": "string", "enum": []string{"proxy", "lease", "both"}, "description": "proxy keeps keys inside Cogito (best for most apps)"},
+				"mode":             map[string]any{"type": "string", "enum": []string{"proxy", "lease", "both"}, "description": "proxy keeps keys inside Acnologia (best for most apps)"},
 				"allowed_services": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "service slugs; empty means all"},
 			},
 			Desc: "Create an app (a consumer such as a website or agent). Its token is shown to the user once; you never see it.",
@@ -583,7 +583,7 @@ func init() {
 				"context": map[string]any{"type": "string", "description": "anything the user said about it"},
 				"urls":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "docs or website URLs the user gave"},
 			},
-			Desc: "Start the AI provider builder for an API Cogito does not know yet. It researches the docs and publishes a provider in a few minutes; then create a service and add keys. Returns a run id to check with get_ai_run.",
+			Desc: "Start the AI provider builder for an API Acnologia does not know yet. It researches the docs and publishes a provider in a few minutes; then create a service and add keys. Returns a run id to check with get_ai_run.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				ctxText := argStr(in, "name")
 				if c := argStr(in, "context"); c != "" {

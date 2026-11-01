@@ -52,7 +52,7 @@ var Types = []struct {
 	{KeyRecovered, "A bad or exhausted key works again"},
 	{QuotaLow, "A key has less than 10% of its quota left"},
 	{PoolEmpty, "A request found no usable key in a service"},
-	{ServiceDown, "A provider keeps failing and Cogito stopped sending it traffic"},
+	{ServiceDown, "A provider keeps failing and Acnologia stopped sending it traffic"},
 	{ServiceUp, "A provider that was down answers again"},
 	{AppLimit, "An app reached its request or budget limit"},
 }
@@ -270,7 +270,7 @@ func Sign(secret, ts string, body []byte) string {
 }
 
 // Text is the one-line human form used by chat formats.
-func Text(e Event) string { return "Cogito: " + e.Message }
+func Text(e Event) string { return "Acnologia: " + e.Message }
 
 // Payload renders the body for a webhook format.
 func Payload(format string, e Event) ([]byte, error) {

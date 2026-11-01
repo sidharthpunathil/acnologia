@@ -70,7 +70,7 @@ func opsTools() []*chatTool {
 		{
 			Name: "service_breaker", Role: store.RoleMember, Required: []string{"service"},
 			Props: map[string]any{"service": map[string]any{"type": "string"}},
-			Desc:  "The circuit breaker state of a service (whether Cogito paused it after repeated provider failures).",
+			Desc:  "The circuit breaker state of a service (whether Acnologia paused it after repeated provider failures).",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				path, sv, err := svcPath(cs, in, "/breaker")
 				if err != nil {

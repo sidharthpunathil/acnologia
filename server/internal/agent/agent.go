@@ -1,4 +1,4 @@
-// Package agent is Cogito's AI harness. It researches an API with Claude,
+// Package agent is Acnologia's AI harness. It researches an API with Claude,
 // writes a provider spec, tests it with the real engine, fetches a logo, and
 // publishes it without restarting anything. It also powers "Fill with AI".
 //
@@ -77,12 +77,12 @@ type Status struct {
 
 func (a *Agent) Status() Status {
 	if !a.enabled {
-		return Status{Model: a.model, Reason: "Set ANTHROPIC_API_KEY in .env (or the environment) and restart Cogito."}
+		return Status{Model: a.model, Reason: "Set ANTHROPIC_API_KEY in .env (or the environment) and restart Acnologia."}
 	}
 	return Status{Enabled: true, Model: a.model}
 }
 
-var ErrDisabled = errors.New("AI is not configured. Set ANTHROPIC_API_KEY and restart Cogito.")
+var ErrDisabled = errors.New("AI is not configured. Set ANTHROPIC_API_KEY and restart Acnologia.")
 
 // Boot marks runs interrupted by a restart as failed.
 func (a *Agent) Boot(ctx context.Context) error { return a.Store.FailStaleRuns(ctx) }

@@ -1,6 +1,6 @@
 # Configuration
 
-Cogito reads environment variables on start. It also loads a `.env` file from
+Acnologia reads environment variables on start. It also loads a `.env` file from
 the working directory if there is one; variables already set in the
 environment win over the file. [`.env.example`](../.env.example) lists them all.
 
@@ -59,7 +59,7 @@ The container runs as a nonroot user with `/data` as a volume.
 
 Back up `cogito.db` (with its `-wal` file, or after a clean shutdown) **and**
 the master key, separately. Without the master key the stored keys cannot be
-decrypted, and Cogito refuses to start against a database with a different key.
+decrypted, and Acnologia refuses to start against a database with a different key.
 
 ## Upgrading
 

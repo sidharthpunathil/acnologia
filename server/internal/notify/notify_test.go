@@ -92,7 +92,7 @@ func TestChatFormats(t *testing.T) {
 		}
 		var m map[string]any
 		_ = json.Unmarshal(b, &m)
-		if m[field] != "Cogito: SerpAPI has no usable key" {
+		if m[field] != "Acnologia: SerpAPI has no usable key" {
 			t.Fatalf("%s payload wrong: %s", format, b)
 		}
 	}
