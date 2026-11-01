@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -14,6 +16,7 @@ import (
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/pool"
+	"github.com/cogito-keys/cogito/internal/providers"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -285,8 +288,17 @@ func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) fillInFlight(keys ...*store.Key) {
 	inf := s.Pool.InFlight()
+	units := map[int64]string{}
 	for _, k := range keys {
 		k.InFlight = inf[k.ID]
+		u, ok := units[k.ServiceID]
+		if !ok {
+			if sv, err := s.Store.GetService(context.Background(), k.ServiceID); err == nil {
+				u = providers.Get(sv.Provider).Quota.Unit
+			}
+			units[k.ServiceID] = u
+		}
+		k.QuotaUnit = u
 	}
 }
 
@@ -413,7 +425,7 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) checkMany(sv *store.Service, keys []*store.Key) {
-	if sv.Provider == "generic" {
+	if providers.Get(sv.Provider).Health == nil {
 		return
 	}
 	for _, k := range keys {
@@ -543,6 +555,10 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 	err := s.Pool.Check(r.Context(), sv, k)
+	if errors.Is(err, pool.ErrNoHealthCheck) {
+		writeErr(w, 422, "no_health_check", err.Error())
+		return
+	}
 	detail := "ok"
 	if err != nil {
 		detail = err.Error()

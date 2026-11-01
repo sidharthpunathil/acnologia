@@ -133,3 +133,32 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]*AuditEntry, error)
 	}
 	return out, rows.Err()
 }
+
+type DayStat struct {
+	Day         string
+	Requests    int
+	Errors      int
+	RateLimited int
+}
+
+// KeyDailyStats counts a key's events per UTC day.
+func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT date(ts,'unixepoch') d,
+		SUM(CASE WHEN kind IN ('lease','proxy') THEN 1 ELSE 0 END),
+		SUM(CASE WHEN kind='error' OR kind='invalid' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN kind IN ('rate_limited','quota_exhausted') THEN 1 ELSE 0 END)
+		FROM events WHERE key_id=? AND ts>=? GROUP BY d ORDER BY d`, keyID, time.Now().AddDate(0, 0, -days).Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DayStat{}
+	for rows.Next() {
+		var d DayStat
+		if err := rows.Scan(&d.Day, &d.Requests, &d.Errors, &d.RateLimited); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

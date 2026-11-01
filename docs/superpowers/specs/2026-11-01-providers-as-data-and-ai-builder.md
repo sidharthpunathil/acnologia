@@ -171,3 +171,20 @@ Changes to existing shapes: `Service` gains `logo_url: string | null`,
 `max_concurrency`, `queue_timeout_sec`, `in_flight`, `key_counts.busy`.
 `Key` gains `max_concurrency: number | null` (PATCH `-1` clears it) and
 `in_flight`. Lease body gains `wait_sec`; 503 code `all_keys_busy`.
+
+## Key insights (added)
+
+`Key` gains: `last_ok_at` (last successful request or passed health check),
+`validity` (`valid` | `invalid` | `unknown`), `validity_reason` (for example
+"last worked 3m ago"), `quota_unit` (from the provider spec, may be empty).
+
+- `GET /api/admin/keys?q=&service_id=&validity=&sort=last_used|quota|validity|label`
+  -> `{keys: KeyRow[], summary: {total, valid, invalid, unknown, low_quota, unused_7d}}`
+  where `KeyRow = Key & {service_slug, service_name, service_logo_url, has_health_check}`.
+  Hidden keys only for superadmins.
+- `GET /api/admin/keys/{id}/insights` -> `{key, service: {id, slug, name, logo_url, max_concurrency},
+  has_health_check, quota_unit, events: Event[] (last 50), daily: [{day: "YYYY-MM-DD", requests, errors, rate_limited}] (14 days, oldest first)}`
+- `POST /api/admin/services/{id}/check` (admin) and `POST /api/admin/keys/check-all` (admin)
+  -> `{checked, valid, invalid, failed, skipped, message, keys: Key[]}`. Checks run four at a time.
+- `POST /api/admin/keys/{id}/check` returns 422 `no_health_check` when the provider has no
+  health check; validity is then learned from real traffic.

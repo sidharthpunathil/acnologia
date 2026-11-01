@@ -10,16 +10,16 @@ import (
 
 const keyCols = `id, service_id, label, secret_enc, hint, tier, hidden, restricted, status, weight, priority, cooldown_until,
 consecutive_fails, quota_limit, quota_remaining, quota_reset_at, usage_total, usage_today, last_used_at, last_error,
-last_checked_at, notes, created_at, max_concurrency`
+last_checked_at, notes, created_at, max_concurrency, last_ok_at`
 
 func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	var k Key
 	var hidden, restricted int
-	var cd, ql, qr, qra, lu, lc, mc sql.NullInt64
+	var cd, ql, qr, qra, lu, lc, mc, lok sql.NullInt64
 	var created int64
 	err := row.Scan(&k.ID, &k.ServiceID, &k.Label, &k.SecretEnc, &k.Hint, &k.Tier, &hidden, &restricted, &k.Status,
 		&k.Weight, &k.Priority, &cd, &k.ConsecutiveFails, &ql, &qr, &qra, &k.UsageTotal, &k.UsageToday, &lu,
-		&k.LastError, &lc, &k.Notes, &created, &mc)
+		&k.LastError, &lc, &k.Notes, &created, &mc, &lok)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -30,6 +30,7 @@ func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	k.CooldownUntil, k.QuotaLimit, k.QuotaRemaining, k.QuotaResetAt = toTime(cd), toInt(ql), toInt(qr), toTime(qra)
 	k.LastUsedAt, k.LastCheckedAt = toTime(lu), toTime(lc)
 	k.MaxConcurrency = toInt(mc)
+	k.LastOKAt = toTime(lok)
 	k.CreatedAt = time.Unix(created, 0).UTC()
 	k.AppIDs = []int64{}
 	k.computeEffective(time.Now())
@@ -278,6 +279,7 @@ type KeyEffect struct {
 	QuotaLimit       **int64
 	QuotaResetAt     **time.Time
 	DecrementQuota   bool
+	MarkOK           bool
 	LastError        *string
 	Checked          bool
 }
@@ -313,6 +315,9 @@ func (s *Store) ApplyEffect(ctx context.Context, id int64, e KeyEffect) error {
 	}
 	if e.Checked {
 		add(`last_checked_at=?`, now())
+	}
+	if e.MarkOK {
+		add(`last_ok_at=?`, now())
 	}
 	if len(sets) == 0 {
 		return nil

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cogito-keys/cogito/internal/pool"
+	"github.com/cogito-keys/cogito/internal/providers"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -64,8 +65,8 @@ func (w *Worker) healthChecks(ctx context.Context) {
 	}
 	now := time.Now()
 	for _, sv := range svcs {
-		if sv.Provider == "generic" {
-			continue
+		if providers.Get(sv.Provider).Health == nil {
+			continue // no free endpoint to test keys with
 		}
 		keys, err := w.Store.ListKeys(ctx, sv.ID, true)
 		if err != nil {

@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS keys(
   created_by INTEGER,
   created_at INTEGER NOT NULL,
   max_concurrency INTEGER,
+  last_ok_at INTEGER,
   UNIQUE(service_id, secret_fp)
 );
 CREATE INDEX IF NOT EXISTS keys_service ON keys(service_id);
@@ -237,7 +238,10 @@ func migrate(db *sql.DB) error {
 	if _, err = addColumn(db, "services", "logo_mime", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	_, err = addColumn(db, "services", "logo_rev", "INTEGER NOT NULL DEFAULT 0")
+	if _, err = addColumn(db, "services", "logo_rev", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	_, err = addColumn(db, "keys", "last_ok_at", "INTEGER")
 	return err
 }
 

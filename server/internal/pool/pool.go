@@ -233,6 +233,7 @@ func (p *Pool) Apply(ctx context.Context, svc *store.Service, k *store.Key, r pr
 	case providers.OK:
 		zero := 0
 		e.ConsecutiveFails = &zero
+		e.MarkOK = true
 		if providers.Get(svc.Provider).CountsPerRequest() {
 			e.DecrementQuota = true
 		}
@@ -276,12 +277,19 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 	if err != nil {
 		return err
 	}
-	res, err := providers.Get(svc.Provider).Check(ctx, p.Client, svc.BaseURL, secret)
+	spec := providers.Get(svc.Provider)
+	if spec.Health == nil {
+		return ErrNoHealthCheck
+	}
+	res, err := spec.Check(ctx, p.Client, svc.BaseURL, secret)
 	e := store.KeyEffect{Checked: true}
 	if err != nil {
 		e.LastError = ptr("health check failed: " + err.Error())
 		_ = p.Store.ApplyEffect(ctx, k.ID, e)
 		return err
+	}
+	if res.Valid {
+		e.MarkOK = true
 	}
 	if !res.Valid {
 		st := store.StatusInvalid
@@ -327,3 +335,7 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// ErrNoHealthCheck means the provider has no free endpoint to test keys, so
+// validity is learned from real traffic instead.
+var ErrNoHealthCheck = errors.New("this provider has no health check, so key validity is learned from real requests")

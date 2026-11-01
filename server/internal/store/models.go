@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type Role string
 
@@ -113,6 +116,13 @@ type Key struct {
 	// MaxConcurrency overrides the service default when set; 0 means unlimited.
 	MaxConcurrency *int64 `json:"max_concurrency"`
 	InFlight       int    `json:"in_flight"`
+	// LastOKAt is the last time the key served a successful request or passed a health check.
+	LastOKAt *time.Time `json:"last_ok_at"`
+	// Validity summarizes whether the key works: valid, invalid or unknown.
+	Validity       string `json:"validity"`
+	ValidityReason string `json:"validity_reason"`
+	// QuotaUnit comes from the provider spec, for example searches or characters.
+	QuotaUnit string `json:"quota_unit"`
 
 	SecretEnc []byte `json:"-"`
 }
@@ -140,6 +150,17 @@ func (k *Key) Available(at time.Time) bool {
 }
 
 func (k *Key) computeEffective(at time.Time) {
+	switch {
+	case k.Status == StatusInvalid:
+		k.Validity, k.ValidityReason = "invalid", k.LastError
+		if k.ValidityReason == "" {
+			k.ValidityReason = "the provider rejected this key"
+		}
+	case k.LastOKAt != nil:
+		k.Validity, k.ValidityReason = "valid", "last worked "+ago(at, *k.LastOKAt)
+	default:
+		k.Validity, k.ValidityReason = "unknown", "not checked or used yet"
+	}
 	k.EffectiveStatus = k.Status
 	if k.Status == StatusActive && k.CooldownUntil != nil && k.CooldownUntil.After(at) {
 		k.EffectiveStatus = StatusCooling
@@ -207,4 +228,17 @@ type AuditEntry struct {
 	Action    string    `json:"action"`
 	Target    string    `json:"target"`
 	Detail    string    `json:"detail"`
+}
+
+func ago(now, t time.Time) string {
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }

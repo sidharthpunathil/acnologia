@@ -359,3 +359,52 @@ func TestNoIndex(t *testing.T) {
 		t.Fatal("UI must not be indexable or framable")
 	}
 }
+
+func TestKeyInsights(t *testing.T) {
+	e := newEnv(t)
+	e.up.bad["badkey99"] = "Invalid API key. Your API key should be here"
+	e.addKeys(map[string]any{"secret": "goodkey1", "label": "good"}, map[string]any{"secret": "badkey99", "label": "bad"}, map[string]any{"secret": "freshkey", "label": "fresh", "status": "active"})
+	var sum struct {
+		Checked, Valid, Invalid int
+		Message                 string
+	}
+	e.do(e.super, "POST", "/api/admin/services/1/check", map[string]any{}, 200, &sum)
+	if sum.Checked != 3 || sum.Valid != 2 || sum.Invalid != 1 {
+		t.Fatalf("check summary: %+v", sum)
+	}
+	var all struct {
+		Keys []struct {
+			Label, Validity, QuotaUnit, ServiceSlug string
+			ValidityReason                          string `json:"validity_reason"`
+			HasHealthCheck                          bool   `json:"has_health_check"`
+		} `json:"keys"`
+		Summary map[string]int `json:"summary"`
+	}
+	e.do(e.super, "GET", "/api/admin/keys?sort=validity", nil, 200, &all)
+	if all.Summary["invalid"] != 1 || all.Summary["valid"] != 2 || all.Keys[0].Label != "bad" || all.Keys[0].Validity != "invalid" {
+		t.Fatalf("all keys: %+v", all)
+	}
+	var ins struct {
+		Key struct {
+			Validity  string `json:"validity"`
+			QuotaUnit string `json:"quota_unit"`
+		} `json:"key"`
+		Daily          []map[string]any `json:"daily"`
+		HasHealthCheck bool             `json:"has_health_check"`
+	}
+	e.do(e.super, "GET", "/api/admin/keys/1/insights", nil, 200, &ins)
+	if ins.Key.Validity != "valid" || ins.Key.QuotaUnit != "searches" || len(ins.Daily) != 14 || !ins.HasHealthCheck {
+		t.Fatalf("insights: %+v", ins)
+	}
+	// Custom API providers have no health check: checking says so instead of faking "valid".
+	var sv store.Service
+	e.do(e.super, "POST", "/api/admin/services", map[string]any{"provider": "generic", "slug": "custom", "base_url": "https://example.com"}, 201, &sv)
+	var out struct {
+		Keys []store.Key `json:"keys"`
+	}
+	e.do(e.super, "POST", "/api/admin/services/"+itoa(int(sv.ID))+"/keys", map[string]any{"keys": []map[string]any{{"secret": "zzzz1111"}}}, 201, &out)
+	e.do(e.super, "POST", "/api/admin/keys/"+itoa(int(out.Keys[0].ID))+"/check", map[string]any{}, 422, nil)
+	if out.Keys[0].Validity != "unknown" {
+		t.Fatalf("unchecked key validity = %s", out.Keys[0].Validity)
+	}
+}
