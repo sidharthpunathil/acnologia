@@ -18,7 +18,7 @@ flowchart LR
         Adm["admin"]
     end
     Sup["superadmin"]
-    subgraph Server["cogito"]
+    subgraph Server["Acnologia server (cogito binary)"]
         Keys[("encrypted keys")]
     end
 

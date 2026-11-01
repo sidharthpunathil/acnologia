@@ -16,7 +16,7 @@ key pool design and the providers as data and AI builder design.
 
 ```mermaid
 flowchart LR
-    Apps["apps and agents"] -->|"proxy / lease / MCP"| Acnologia["cogito"]
+    Apps["apps and agents"] -->|"proxy / lease / MCP"| Acnologia["Acnologia server (cogito binary)"]
     Admins["dashboard users"] -->|"session"| Acnologia
     Acnologia -->|"key injected"| Providers["provider APIs"]
     Acnologia --- DB[("SQLite")]
