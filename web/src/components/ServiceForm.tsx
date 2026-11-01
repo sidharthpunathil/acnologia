@@ -71,7 +71,7 @@ export function validateService(v: ServiceInput): ServiceErrors {
   if (!v.name.trim()) e.name = "Give the service a name.";
   if (!v.slug.trim()) e.slug = "Add a slug. Apps call it in /proxy/<slug>/.";
   else if (!/^[a-z0-9][a-z0-9_-]*$/.test(v.slug)) e.slug = "Use lowercase letters, numbers, dashes or underscores.";
-  if (!v.base_url.trim()) e.base_url = "Add the API address Cogito forwards to, such as https://api.example.com.";
+  if (!v.base_url.trim()) e.base_url = "Add the API address Acnologia forwards to, such as https://api.example.com.";
   else if (!/^https?:\/\//i.test(v.base_url.trim())) e.base_url = "Start with http:// or https://.";
   if ((v.max_concurrency ?? 0) < 0 || (v.max_concurrency ?? 0) > 1000) e.max_concurrency = "Between 0 (unlimited) and 1000.";
   if ((v.queue_timeout_sec ?? 0) < 0 || (v.queue_timeout_sec ?? 0) > 300) e.queue_timeout_sec = "Between 0 and 300 seconds.";
@@ -175,7 +175,7 @@ export function ServiceForm({
         <Field label="Category" hint="Groups services in the catalog." className={f("category")}>
           <Input value={value.category} onChange={(e) => set("category", e.target.value)} placeholder="Search" />
         </Field>
-        <Field label="Provider" hint="Sets how Cogito spots rate limits and checks keys." className={f("provider")}>
+        <Field label="Provider" hint="Sets how Acnologia spots rate limits and checks keys." className={f("provider")}>
           <ProviderSelect value={value.provider} onChange={(v) => set("provider", v)} />
         </Field>
         <Field label="Description" className={`sm:col-span-2 ${f("description")}`}>
@@ -196,7 +196,7 @@ export function ServiceForm({
             className="font-mono"
           />
         </Field>
-        <Field label="Auth type" hint="Where Cogito puts the key on upstream requests." className={f("auth_type")}>
+        <Field label="Auth type" hint="Where Acnologia puts the key on upstream requests." className={f("auth_type")}>
           <Select value={value.auth_type} onChange={(e) => set("auth_type", e.target.value as AuthType)}>
             <option value="query">query parameter</option>
             <option value="header">header</option>

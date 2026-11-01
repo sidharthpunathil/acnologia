@@ -117,7 +117,7 @@ export function QuotaMeter({
   now: number;
   compact?: boolean;
   className?: string;
-  /** False when the provider does not report reset times, so an exhausted key's reset is Cogito's estimate. */
+  /** False when the provider does not report reset times, so an exhausted key's reset is Acnologia's estimate. */
   resetExact?: boolean;
 }) {
   const q = quotaInfo(k, unit);

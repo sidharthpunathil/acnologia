@@ -131,7 +131,7 @@ export function SettingsPage() {
               <Callout tone="amber" icon={<Terminal className="h-4 w-4" />}>
                 <div className="font-medium">AI is off</div>
                 <div className="wrap-anywhere mt-0.5">
-                  {sentence(status?.reason || statusError || "Add the AI key to .env, then restart Cogito")}
+                  {sentence(status?.reason || statusError || "Add the AI key to .env, then restart Acnologia")}
                 </div>
               </Callout>
             )}

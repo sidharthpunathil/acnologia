@@ -17,12 +17,12 @@ const SETS: Array<{ id: MCPToolSet; label: string; body: string }> = [
   {
     id: "core",
     label: "Core",
-    body: "Lease a key, renew the lease, report how the key did, and call any endpoint of a service through Cogito. Most agents need this.",
+    body: "Lease a key, renew the lease, report how the key did, and call any endpoint of a service through Acnologia. Most agents need this.",
   },
   {
     id: "service_tools",
     label: "Service tools",
-    body: "One ready-made tool for each example call in your services. Cogito builds them live, so new services show up on their own.",
+    body: "One ready-made tool for each example call in your services. Acnologia builds them live, so new services show up on their own.",
   },
   {
     id: "insights",
@@ -90,7 +90,7 @@ function snippets(name: string, endpoint: string) {
 const CLIENT_NOTE: Record<Client, string> = {
   "claude-code": "Run this in your project folder. Add --scope user to use it in every project.",
   "claude-desktop":
-    "Claude Desktop starts servers as local programs, so it talks to Cogito through the cogito binary. Set command to where that binary lives, then restart the app.",
+    "Claude Desktop starts servers as local programs, so it talks to Acnologia through the cogito binary. Set command to where that binary lives, then restart the app.",
   cursor: "Put this in .cursor/mcp.json in your project, or in ~/.cursor/mcp.json for every project.",
   vscode: "Put this in .vscode/mcp.json in your workspace. VS Code shows a Start button above the server name.",
   other: "Any client that speaks streamable HTTP can connect with the URL and header. Clients that only start local programs can use the stdio bridge.",
@@ -140,7 +140,7 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
             checked={draft.resources}
             onChange={(v) => edit({ resources: v })}
             label="Resources"
-            description="Lets the agent read the list of services, how to call each one, and a short guide to Cogito."
+            description="Lets the agent read the list of services, how to call each one, and a short guide to Acnologia."
             disabled={readOnly}
           />
         </Row>
@@ -196,7 +196,7 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
               </span>
             </span>
           }
-          hint="Sent when the agent connects, after Cogito's own instructions. Good for house rules, such as which service to try first."
+          hint="Sent when the agent connects, after Acnologia's own instructions. Good for house rules, such as which service to try first."
         >
           <Textarea
             rows={5}
@@ -298,7 +298,7 @@ function ConnectTab({ app, endpoint }: { app: App; endpoint: string }) {
     <div className="space-y-4">
       <Callout icon={<Info className="h-4 w-4" />}>
         Replace <code className="font-mono text-ink">{TOKEN}</code> with this app's token, which starts with{" "}
-        <code className="break-all font-mono text-ink">{app.token_prefix}</code>. Cogito showed the full token once, when the app was created. Lost it? An admin can
+        <code className="break-all font-mono text-ink">{app.token_prefix}</code>. Acnologia showed the full token once, when the app was created. Lost it? An admin can
         rotate it from the app's actions to get a new one. The old token stops working right away.
       </Callout>
       <Tabs items={CLIENTS} value={client} onChange={setClient} label="MCP client" />

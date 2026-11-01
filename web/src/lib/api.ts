@@ -83,7 +83,7 @@ export async function request<T>(method: Method, path: string, body?: unknown): 
   try {
     res = await fetch(path, init);
   } catch {
-    throw new ApiError(0, "network", "Cannot reach the Cogito server.");
+    throw new ApiError(0, "network", "Cannot reach the Acnologia server.");
   }
 
   const text = await res.text();

@@ -41,7 +41,7 @@ function When({ iso, now, never = "Never" }: { iso: string | null | undefined; n
   return <time dateTime={iso}>{relTime(iso, now)}</time>;
 }
 
-const NO_HEALTH = "This provider has no health check, so Cogito learns whether the key works from real requests.";
+const NO_HEALTH = "This provider has no health check, so Acnologia learns whether the key works from real requests.";
 
 /**
  * Everything about one key: validity, timing, quota, 14 days of activity and

@@ -1,7 +1,7 @@
 {
-  "name": "Cogito",
-  "short_name": "Cogito",
-  "description": "Cogito: I think, therefore I am. A self-hosted API key pool.",
+  "name": "Acnologia",
+  "short_name": "Acnologia",
+  "description": "Acnologia: I think, therefore I am. Self-hosted API key pool.",
   "start_url": "/",
   "display": "standalone",
   "theme_color": "#eeede9",

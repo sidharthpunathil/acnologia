@@ -87,7 +87,7 @@ function RowActions({
       }
     } catch (e) {
       if (e instanceof ApiError && e.code === "no_health_check")
-        toast.info("This provider has no health check. Cogito learns whether the key works from real requests.");
+        toast.info("This provider has no health check. Acnologia learns whether the key works from real requests.");
       else toast.error(errorMessage(e));
     } finally {
       setBusy(null);

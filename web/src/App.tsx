@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./stores/auth";
 import { can } from "./lib/perms";
-import { Layout, Wordmark } from "./components/Layout";
+import { Layout, Mark } from "./components/Layout";
 import { Toaster } from "./components/Toaster";
 import { Button, PageLoading } from "./components/ui";
 import { SetupPage } from "./pages/Setup";
@@ -49,8 +49,8 @@ export function App() {
   } else if (status === "error") {
     body = (
       <div role="alert" className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-canvas px-6 text-center">
-        <Wordmark className="h-8" />
-        <h1 className="font-mono text-lg text-ink">Cannot reach Cogito</h1>
+        <Mark size={48} className="rounded-[22%]" />
+        <h1 className="font-mono text-lg text-ink">Cannot reach Acnologia</h1>
         <p className="max-w-sm text-sm text-muted">{error} Make sure the server is running, then try again.</p>
         <Button variant="primary" onClick={() => void load()}>
           Try again

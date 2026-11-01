@@ -117,14 +117,14 @@ curl ${sh(`${proxyUrl}${q ? "&" : "?"}cogito_token=${TOKEN}`)}`,
 
 c = Cogito(${lit(host)}, "${TOKEN}")
 
-# Cogito picks a key, retries on rate limits, and never exposes the secret.
+# Acnologia picks a key, retries on rate limits, and never exposes the secret.
 r = c.proxy(${lit(slug)}).get(${lit(ex.path)}, params=${pyDict(ex.params)})
 print(r.json())`,
       typescript: `import { Cogito } from "@cogito/keys";
 
 const cogito = new Cogito({ baseUrl: ${lit(host)}, token: process.env.COGITO_TOKEN! });
 
-// Cogito picks a key, retries on rate limits, and never exposes the secret.
+// Acnologia picks a key, retries on rate limits, and never exposes the secret.
 const res = await cogito.proxy(${lit(slug)}).get(${lit(ex.path)}, ${tsObj(ex.params)});
 console.log(await res.json());`,
       go: `package main
@@ -236,13 +236,13 @@ export function IntegratePanel({ service }: { service: Service }) {
         <Card className={cx("p-4", mode === "proxy" && "ring-1 ring-ink/20")}>
           <div className="text-sm font-medium text-ink">Proxy mode</div>
           <p className="mt-1 text-[13px] text-muted">
-            Call Cogito instead of the provider. It adds a key, retries a rate limit with the next key up to {service.max_attempts} times, and your app never sees a secret.
+            Call Acnologia instead of the provider. It adds a key, retries a rate limit with the next key up to {service.max_attempts} times, and your app never sees a secret.
           </p>
         </Card>
         <Card className={cx("p-4", mode === "lease" && "ring-1 ring-ink/20")}>
           <div className="text-sm font-medium text-ink">Lease mode</div>
           <p className="mt-1 text-[13px] text-muted">
-            Lease a key, call the provider yourself, then report how it went so Cogito can rest the key and rotate.
+            Lease a key, call the provider yourself, then report how it went so Acnologia can rest the key and rotate.
           </p>
         </Card>
       </div>

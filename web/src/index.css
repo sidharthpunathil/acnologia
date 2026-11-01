@@ -82,15 +82,6 @@
   }
 }
 
-/* The wordmark is drawn through the logo's alpha, so its red can be tuned per theme. */
-.wordmark {
-  display: inline-block;
-  aspect-ratio: 118 / 64;
-  background-color: rgb(var(--wordmark));
-  -webkit-mask: url("/logo.png") center / contain no-repeat;
-  mask: url("/logo.png") center / contain no-repeat;
-}
-
 /* Toasts use transitions, not keyframes, so a stack stays interruptible. */
 .toast {
   transition:

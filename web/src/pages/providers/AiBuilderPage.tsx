@@ -135,7 +135,7 @@ export function AiBuilderPage() {
         <Callout tone="amber" icon={<Terminal className="h-4 w-4" />} className="mb-6">
           <div className="font-medium text-amber-950">The AI builder is off on this server</div>
           <div className="wrap-anywhere mt-1">
-            {sentence(status?.reason || statusError || "Add the AI key to your .env, then restart Cogito")} You can still{" "}
+            {sentence(status?.reason || statusError || "Add the AI key to your .env, then restart Acnologia")} You can still{" "}
             <Link to="/providers/new" className="font-medium underline underline-offset-2">
               write a provider by hand
             </Link>

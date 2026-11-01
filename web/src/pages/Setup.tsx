@@ -23,7 +23,7 @@ export function SetupPage() {
     setBusy(true);
     try {
       await setup(email.trim(), name.trim(), password);
-      toast.success("You are in. Welcome to Cogito.");
+      toast.success("You are in. Welcome to Acnologia.");
     } catch (e) {
       setErr(errorMessage(e));
     } finally {
@@ -32,7 +32,7 @@ export function SetupPage() {
   };
 
   return (
-    <AuthShell title="Set up Cogito" meta="Self-hosted API key pool · first run">
+    <AuthShell title="Set up Acnologia" meta="Self-hosted API key pool · first run">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />

@@ -19,7 +19,7 @@ export function SourceBadge({ source }: { source: Provider["source"] }) {
         ai
       </Badge>
     );
-  if (source === "builtin") return <Badge title="Ships with Cogito">builtin</Badge>;
+  if (source === "builtin") return <Badge title="Ships with Acnologia">builtin</Badge>;
   return <Badge tone="blue">manual</Badge>;
 }
 
@@ -147,7 +147,7 @@ export function ProvidersPage() {
           className="mt-8"
           icon={<Blocks className="h-5 w-5" />}
           title="No providers yet"
-          body="A provider tells Cogito how an API signals rate limits and quota. Build one with AI from a name or docs URL, or write the rules yourself."
+          body="A provider tells Acnologia how an API signals rate limits and quota. Build one with AI from a name or docs URL, or write the rules yourself."
           action={actions}
         />
       ) : shown.length === 0 ? (

@@ -175,7 +175,7 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
         </fieldset>
       </Section>
 
-      <Section title="Quota" description="How Cogito counts usage between health checks.">
+      <Section title="Quota" description="How Acnologia counts usage between health checks.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Unit" hint="Shows next to quota numbers, such as searches or characters.">
             <Input value={quota.unit} disabled={readOnly} onChange={(e) => set({ quota: { ...quota, unit: e.target.value } })} placeholder="requests" />
@@ -211,7 +211,7 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
         </div>
         <fieldset className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <legend className="mb-1 font-mono text-[11px] uppercase tracking-wide text-faint">Quota from response headers (optional)</legend>
-          <p className="text-xs leading-relaxed text-muted sm:col-span-3">Header names Cogito reads on every response to keep the remaining quota fresh.</p>
+          <p className="text-xs leading-relaxed text-muted sm:col-span-3">Header names Acnologia reads on every response to keep the remaining quota fresh.</p>
           <Field label="Limit header">
             <Input value={qh.limit ?? ""} disabled={readOnly} onChange={(e) => setQH({ limit: e.target.value })} placeholder="X-RateLimit-Limit" className="font-mono" spellCheck={false} />
           </Field>
@@ -421,11 +421,11 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
     <div className="space-y-5">
       <Section
         title="Health check"
-        description="A cheap request Cogito sends with each key every few hours to catch invalid keys and read the quota left."
+        description="A cheap request Acnologia sends with each key every few hours to catch invalid keys and read the quota left."
       >
         <Toggle
           label="Enable health checks"
-          description="When off, Cogito judges keys by real requests only."
+          description="When off, Acnologia judges keys by real requests only."
           checked={!!h}
           disabled={readOnly}
           onChange={(v) => onChange({ ...spec, health: v ? { method: "GET", path: "", query: {} } : null })}
@@ -466,7 +466,7 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
               <Field label="Remaining paths">
                 <ListInput value={q.remaining} disabled={readOnly} onChange={(v) => setQ({ remaining: v })} placeholder="plan.remaining" className="font-mono" />
               </Field>
-              <Field label="Used paths" hint="When remaining is empty, Cogito uses limit minus used.">
+              <Field label="Used paths" hint="When remaining is empty, Acnologia uses limit minus used.">
                 <ListInput value={q.used} disabled={readOnly} onChange={(v) => setQ({ used: v })} placeholder="usage.used" className="font-mono" />
               </Field>
               <Field label="Reset time path">

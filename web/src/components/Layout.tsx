@@ -27,15 +27,27 @@ import { Modal } from "./Modal";
 import { ThemePicker } from "./ThemePicker";
 import { cx } from "./ui";
 
-/** The red Cogito wordmark, tuned per theme so it reads on light and dark. */
-export function Wordmark({ className }: { className?: string }) {
-  return <span role="img" aria-label="Cogito" className={cx("wordmark", className)} />;
+export const BRAND_NAME = "Acnologia";
+
+/** The Acnologia dragon mark. Corners are baked into the artwork. Decorative: pair it with the name. */
+export function Mark({ size, className }: { size: number; className?: string }) {
+  return <img src="/mark.png" alt="" aria-hidden="true" width={size} height={size} draggable={false} className={cx("shrink-0 select-none", className)} />;
+}
+
+/** Mark plus name, as shown in the nav. */
+export function Brand({ className }: { className?: string }) {
+  return (
+    <span className={cx("flex items-center gap-2", className)}>
+      <Mark size={28} />
+      <span className="font-mono text-[15px] font-medium tracking-tight text-ink">{BRAND_NAME}</span>
+    </span>
+  );
 }
 
 export function Logo() {
   return (
-    <Link to="/" className="tap flex items-center" aria-label="Cogito home">
-      <Wordmark className="h-7" />
+    <Link to="/" className="tap flex items-center" aria-label={`${BRAND_NAME} home`}>
+      <Brand />
     </Link>
   );
 }
@@ -284,7 +296,7 @@ export function Layout() {
       <footer className="border-t border-line">
         <div className="mx-auto flex max-w-[1076px] flex-col gap-1 px-4 py-6 font-mono text-[11px] text-faint sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <span title={BRAND_TITLE}>
-            <span className="text-brand">Cogito</span> · {TAGLINE}
+            <span className="text-brand">{BRAND_NAME}</span> · {TAGLINE}
           </span>
           <span>Self-hosted API key pool</span>
         </div>

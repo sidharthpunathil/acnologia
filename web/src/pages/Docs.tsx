@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { useTitle } from "../hooks/useTitle";
 import { useAuth } from "../stores/auth";
-import { Wordmark } from "../components/Layout";
+import { Brand } from "../components/Layout";
 import { CodeBlock } from "../components/CodeBlock";
 import { cx } from "../components/ui";
 
@@ -40,9 +40,9 @@ const SECTIONS = [
 
 const STEPS = [
   { title: "Add a service", body: "Pick a provider from the catalog, such as SerpAPI or ElevenLabs, or describe any HTTP API and let the AI builder write its rules." },
-  { title: "Paste your keys", body: "One per line, or label,secret. Cogito encrypts each key with AES-256-GCM and checks it against the provider." },
+  { title: "Paste your keys", body: "One per line, or label,secret. Acnologia encrypts each key with AES-256-GCM and checks it against the provider." },
   { title: "Create an app", body: "Each website, worker or agent gets its own cog_ token, limited to the services and modes you allow." },
-  { title: "Call through Cogito", body: "Your app sends the request to Cogito. Cogito picks a key with quota left, attaches it and passes the answer back." },
+  { title: "Call through Acnologia", body: "Your app sends the request to Acnologia. Acnologia picks a key with quota left, attaches it and passes the answer back." },
 ];
 
 const OUTCOMES: Array<{ name: string; when: string; effect: string }> = [
@@ -66,21 +66,21 @@ const FEATURE_GROUPS: Array<{ title: string; intro: string; items: Feature[] }> 
     intro: "What happens between your app and the provider.",
     items: [
       { icon: RotateCw, title: "Rotation strategies", body: "Round robin, fill first by priority, least used today, most quota left, or weighted random. Set per service." },
-      { icon: Timer, title: "Cooldowns that follow the provider", body: "Cogito reads Retry-After, provider error text and reset times, so a key comes back when the provider says it can." },
+      { icon: Timer, title: "Cooldowns that follow the provider", body: "Acnologia reads Retry-After, provider error text and reset times, so a key comes back when the provider says it can." },
       { icon: Gauge, title: "Concurrency limits", body: "Cap parallel requests per key (ElevenLabs allows 2 on its free plan). Extra requests wait in a queue for a free slot." },
-      { icon: Zap, title: "Circuit breaker", body: "When the provider itself keeps failing, Cogito answers 503 at once and sends one probe every 30 seconds until it recovers." },
+      { icon: Zap, title: "Circuit breaker", body: "When the provider itself keeps failing, Acnologia answers 503 at once and sends one probe every 30 seconds until it recovers." },
       { icon: Layers, title: "Backup keys", body: "Mark keys as backup and they only serve when every primary key is cooling, busy or out of quota." },
       { icon: GitBranch, title: "Service groups", body: "Put two accounts or two regions of one API behind a single slug. A request that one member cannot serve moves to the next." },
     ],
   },
   {
     title: "Spend less quota",
-    intro: "Every request Cogito answers itself is a search or a character you keep.",
+    intro: "Every request Acnologia answers itself is a search or a character you keep.",
     items: [
       { icon: DatabaseZap, title: "Response cache", body: "Identical GET requests to search APIs come back from memory with X-Cogito-Cache: hit and cost nothing upstream." },
       { icon: ShieldCheck, title: "Idempotency keys", body: "Send Idempotency-Key and a retried POST within 10 minutes replays the first answer instead of paying twice." },
       { icon: Gauge, title: "Live quota", body: "Health checks read remaining quota from account endpoints, and providers that send quota headers update it on every response." },
-      { icon: Coins, title: "Spend and budgets", body: "Each provider has a price per request. Give an app a daily or monthly request cap or USD budget and Cogito holds it there." },
+      { icon: Coins, title: "Spend and budgets", body: "Each provider has a price per request. Give an app a daily or monthly request cap or USD budget and Acnologia holds it there." },
     ],
   },
   {
@@ -95,7 +95,7 @@ const FEATURE_GROUPS: Array<{ title: string; intro: string; items: Feature[] }> 
   },
   {
     title: "Know what happened",
-    intro: "Find out about a dead key from Cogito before your users notice.",
+    intro: "Find out about a dead key from Acnologia before your users notice.",
     items: [
       { icon: Bell, title: "Webhooks", body: "Slack, Discord, Telegram or signed JSON when a key goes bad, quota drops under 10%, a pool runs dry, a provider goes down or an app hits its limit." },
       { icon: ScrollText, title: "Activity and audit log", body: "Every proxied request, lease and health check with its key, app, status and latency. Every dashboard change and secret reveal is audited." },
@@ -127,7 +127,7 @@ curl -X POST https://cogito.example.com/api/v1/lease \\
   -H "Authorization: Bearer cog_your_app_token" \\
   -H "Content-Type: application/json" -d '{"service":"serpapi"}'
 
-# tell Cogito how it went, and get the next key if it failed
+# tell Acnologia how it went, and get the next key if it failed
 curl -X POST https://cogito.example.com/api/v1/leases/lse_.../report \\
   -H "Authorization: Bearer cog_your_app_token" \\
   -H "Content-Type: application/json" \\
@@ -174,8 +174,8 @@ export function DocsPage() {
     <div className="min-h-dvh bg-canvas text-ink">
       <header className="sticky top-0 z-20 border-b border-line bg-canvas/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Link to="/" className="tap flex items-center gap-3" aria-label="Cogito home">
-            <Wordmark className="h-6" />
+          <Link to="/" className="tap flex items-center gap-3" aria-label="Acnologia home">
+            <Brand />
             <span className="font-mono text-xs text-faint">docs</span>
           </Link>
           <nav className="hidden items-center gap-5 text-[13px] text-muted lg:flex" aria-label="On this page">
@@ -203,8 +203,8 @@ export function DocsPage() {
             One endpoint in front of all your API keys
           </h1>
           <p className="mt-5 max-w-2xl text-pretty text-[17px] leading-relaxed text-muted">
-            Cogito stores many keys per provider and sends each request with one that has quota left. When the provider
-            answers rate limited, out of quota or suspended, Cogito parks that key and retries with the next one. It runs
+            Acnologia stores many keys per provider and sends each request with one that has quota left. When the provider
+            answers rate limited, out of quota or suspended, Acnologia parks that key and retries with the next one. It runs
             as a single Go binary with SQLite, on your own server.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
@@ -225,7 +225,7 @@ export function DocsPage() {
           <div className="mt-12 max-w-2xl">
             <CodeBlock label="your app, before and after" code={PROXY_EXAMPLE} />
             <p className="mt-3 text-[13px] text-faint">
-              Same path and query you would send to SerpAPI, minus <Code>api_key</Code>. Cogito adds the key.
+              Same path and query you would send to the provider, minus <Code>api_key</Code>. Acnologia adds the key.
             </p>
           </div>
         </section>
@@ -248,7 +248,7 @@ export function DocsPage() {
         <section className="border-t border-line py-16">
           <Heading id="calling" eyebrow="Calling it" title="Proxy the request, or borrow the key">
             Proxy mode is the default. Use a lease when a provider SDK insists on holding the raw key, and report back so
-            Cogito knows whether the key still works.
+            Acnologia knows whether the key still works.
           </Heading>
           <div className="mt-10 grid gap-6 lg:grid-cols-2">
             <div className="min-w-0">
@@ -287,7 +287,7 @@ export function DocsPage() {
                 <tr>
                   <th className="px-4 py-2.5 font-medium">Outcome</th>
                   <th className="px-4 py-2.5 font-medium">When</th>
-                  <th className="px-4 py-2.5 font-medium">What Cogito does</th>
+                  <th className="px-4 py-2.5 font-medium">What Acnologia does</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -305,7 +305,7 @@ export function DocsPage() {
 
         {/* Features */}
         <section className="border-t border-line py-16">
-          <Heading id="features" eyebrow="Features" title="Everything Cogito does" />
+          <Heading id="features" eyebrow="Features" title="Everything Acnologia does" />
           <div className="mt-10 space-y-14">
             {FEATURE_GROUPS.map((g) => (
               <div key={g.title}>
@@ -387,7 +387,7 @@ export function DocsPage() {
             <ul className="mt-3 grid gap-2 text-muted sm:grid-cols-2">
               <li><Code>503 no_key_available</Code> every key is cooling or out of quota; wait <Code>retry_after_sec</Code>.</li>
               <li><Code>503 all_keys_busy</Code> keys exist but all are at their concurrency limit; retry in a second.</li>
-              <li><Code>503 service_unavailable</Code> the provider keeps failing and Cogito paused it.</li>
+              <li><Code>503 service_unavailable</Code> the provider keeps failing and Acnologia paused it.</li>
               <li><Code>429 app_limit_reached</Code> your app used its daily or monthly limit; see <Code>reset_at</Code>.</li>
             </ul>
           </div>
@@ -396,7 +396,7 @@ export function DocsPage() {
         {/* Operate */}
         <section className="border-t border-line py-16">
           <Heading id="operate" eyebrow="Operate" title="Run it from the terminal too">
-            Create an API token under Account, then script Cogito from CI or your laptop. The same binary that runs the
+            Create an API token under Account, then script Acnologia from CI or your laptop. The same binary that runs the
             server is the client.
           </Heading>
           <div className="mt-10 grid gap-6 lg:grid-cols-2">
@@ -449,7 +449,7 @@ export function DocsPage() {
         <section className="rounded-2xl border border-line bg-surface px-6 py-10 text-center shadow-card sm:px-10">
           <h2 className="text-balance text-2xl font-semibold tracking-tight text-ink-strong">Add your first service</h2>
           <p className="mx-auto mt-3 max-w-xl text-pretty text-[15px] leading-relaxed text-muted">
-            Pick a provider, paste your keys and point one app at Cogito. The full API reference lives at{" "}
+            Pick a provider, paste your keys and point one app at Acnologia. The full API reference lives at{" "}
             <a className="text-ink underline decoration-line-strong underline-offset-4" href="/llms-full.txt">
               /llms-full.txt
             </a>
@@ -462,7 +462,7 @@ export function DocsPage() {
                 "tap inline-flex h-10 items-center gap-2 rounded-lg bg-ink px-4 text-sm font-medium text-canvas transition-opacity hover:opacity-90",
               )}
             >
-              {signedIn ? "Open the catalog" : "Sign in to Cogito"}
+              {signedIn ? "Open the catalog" : "Sign in to Acnologia"}
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
           </div>

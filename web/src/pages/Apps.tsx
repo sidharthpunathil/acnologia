@@ -185,7 +185,7 @@ function AppFormModal({
       open={open}
       onClose={onClose}
       title={initial ? `Edit ${initial.name}` : "Create app"}
-      description={initial ? undefined : "An app is anything that calls Cogito, such as a website, an agent or a script. Each gets its own token."}
+      description={initial ? undefined : "An app is anything that calls Acnologia, such as a website, an agent or a script. Each gets its own token."}
       headerAction={<AiFillButton ai={ai} />}
       footer={
         <>
@@ -286,7 +286,7 @@ function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null;
           <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              Copy this token now. Cogito stores only a hash, so it cannot show the token again.
+              Copy this token now. Acnologia stores only a hash, so it cannot show the token again.
               {rotated && " The old token has stopped working."}
             </span>
           </div>

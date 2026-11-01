@@ -149,7 +149,7 @@ function WebhookFormModal({
       onClose={onClose}
       wide
       title={initial ? `Edit ${initial.name}` : "Add webhook"}
-      description={initial ? undefined : "Cogito posts a message to this URL when a subscribed event happens."}
+      description={initial ? undefined : "Acnologia posts a message to this URL when a subscribed event happens."}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -229,7 +229,7 @@ function SecretModal({ result, onClose }: { result: { name: string; secret: stri
         <div className="space-y-3">
           <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>Copy this signing secret now. Cogito cannot show it again.</span>
+            <span>Copy this signing secret now. Acnologia cannot show it again.</span>
           </div>
           <SecretBox value={result.secret} />
           <p className="text-[13px] leading-relaxed text-muted">
@@ -325,7 +325,7 @@ export function WebhooksPage() {
         }
       />
       <p className="-mt-4 mb-6 max-w-2xl text-[13px] leading-relaxed text-muted">
-        Post Cogito events to your own endpoint, Slack, Discord or Telegram. URLs on a private network are refused unless the server sets{" "}
+        Post Acnologia events to your own endpoint, Slack, Discord or Telegram. URLs on a private network are refused unless the server sets{" "}
         <code className="font-mono text-xs text-ink">COGITO_WEBHOOK_ALLOW_PRIVATE</code>.
       </p>
 

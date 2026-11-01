@@ -55,7 +55,7 @@ export function useAiFill(form: AssistForm, current: () => object, apply: (field
       if (e instanceof ApiError && e.code === "ai_disabled") {
         setDisabledByServer(true);
         setOpen(false);
-        toast.error("AI is not set up on this server. Add the AI key to .env, then restart Cogito.");
+        toast.error("AI is not set up on this server. Add the AI key to .env, then restart Acnologia.");
       } else toast.error(errorMessage(e));
     } finally {
       setBusy(false);

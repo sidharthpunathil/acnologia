@@ -250,7 +250,7 @@ export function ServicePage() {
               title="No keys in this pool yet"
               body={
                 perms.manage
-                  ? "Paste a key from each account you own. Cogito rotates through them and rests any key that hits a limit."
+                  ? "Paste a key from each account you own. Acnologia rotates through them and rests any key that hits a limit."
                   : "No keys here yet. Ask an admin to add some."
               }
               action={

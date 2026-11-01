@@ -50,7 +50,7 @@ function NewTokenModal({ result, onClose }: { result: { token: string; info: Adm
         <div className="space-y-3">
           <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>Copy this token now. Cogito stores only a hash, so it cannot show the token again.</span>
+            <span>Copy this token now. Acnologia stores only a hash, so it cannot show the token again.</span>
           </div>
           <SecretBox value={result.token} />
           <div>

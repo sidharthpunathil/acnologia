@@ -30,7 +30,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       else if (s.user) set({ status: "authenticated", user: s.user, error: null });
       else set({ status: "anonymous", user: null, error: null });
     } catch (e) {
-      set({ status: "error", error: e instanceof Error ? e.message : "Cannot reach the Cogito server." });
+      set({ status: "error", error: e instanceof Error ? e.message : "Cannot reach the Acnologia server." });
     }
   },
 

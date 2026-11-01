@@ -384,7 +384,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         <Callout tone="amber" icon={<TriangleAlert className="h-4 w-4" />}>
           <div className="font-medium">Hidden keys are paused for this service</div>
           <div className="mt-0.5">
-            Someone other than a superadmin set its base URL or auth, so Cogito will not send hidden keys to it. Open Edit, check the
+            Someone other than a superadmin set its base URL or auth, so Acnologia will not send hidden keys to it. Open Edit, check the
             base URL, then save to confirm it.
           </div>
         </Callout>
@@ -393,7 +393,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-[15px] font-semibold text-ink">Rotation and concurrency</h3>
-            <p className="mt-0.5 text-[13px] text-muted">How Cogito picks the next key, how long a rate limited key rests, and how many requests one key can serve at once.</p>
+            <p className="mt-0.5 text-[13px] text-muted">How Acnologia picks the next key, how long a rate limited key rests, and how many requests one key can serve at once.</p>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">

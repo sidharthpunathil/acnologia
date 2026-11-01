@@ -34,11 +34,12 @@ const tokens = {
     "on-ink": "#ffffff",
     muted: "#6b6b66",
     faint: "#75756f",
-    brand: "#e80000",
-    "brand-soft": "#fdecec",
-    "brand-ink": "#b00000",
-    spark: "#ff6b6b",
-    wordmark: "#e80000",
+    // Violet from the dragon mark. brand-ink on brand-soft is 8:1.
+    brand: "#6a4bc4",
+    "brand-soft": "#efebfb",
+    "brand-ink": "#4b2fa3",
+    // Cyan second accent. Only used on bg-ink chips, which are near-black here.
+    spark: "#0e9aa7",
     "chart-ok": "#3f3f3c",
     "code-bg": "#1b1b1d",
     "code-ink": "#ececec",
@@ -55,11 +56,12 @@ const tokens = {
     "on-ink": "#151412",
     muted: "#aaa89f",
     faint: "#96948c",
-    brand: "#ff5148",
-    "brand-soft": "#3a1c19",
-    "brand-ink": "#ff9a92",
-    spark: "#ff6b6b",
-    wordmark: "#ff4a40",
+    // brand-ink on brand-soft is 9:1.
+    brand: "#b39cff",
+    "brand-soft": "#2a2440",
+    "brand-ink": "#d2c4ff",
+    // bg-ink flips to near-white in dark, so the cyan deepens to stay at 4:1 on it.
+    spark: "#0a7f8a",
     "chart-ok": "#c9c7bf",
     "code-bg": "#0f0e0d",
     "code-ink": "#e6e4de",
@@ -112,7 +114,7 @@ function themeVars(mode) {
     vars["--shadow-pop"] = "0 12px 40px rgba(20, 20, 15, 0.14), 0 0 0 1px rgba(20, 20, 15, 0.06)";
     vars["--scrim"] = "rgba(24, 24, 26, 0.4)";
     vars["--logo-ring"] = "rgba(20, 20, 15, 0.09)";
-    vars["--selection"] = "rgba(24, 24, 26, 0.12)";
+    vars["--selection"] = "rgba(106, 75, 196, 0.18)";
     vars["--skeleton-a"] = "#ecebe5";
     vars["--skeleton-b"] = "#f4f3ee";
     vars["color-scheme"] = "light";
@@ -122,7 +124,7 @@ function themeVars(mode) {
     vars["--shadow-pop"] = "0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 240, 0.08)";
     vars["--scrim"] = "rgba(0, 0, 0, 0.6)";
     vars["--logo-ring"] = "rgba(255, 255, 240, 0.1)";
-    vars["--selection"] = "rgba(255, 81, 72, 0.3)";
+    vars["--selection"] = "rgba(179, 156, 255, 0.3)";
     vars["--skeleton-a"] = "#25241f";
     vars["--skeleton-b"] = "#302e2a";
     vars["color-scheme"] = "dark";

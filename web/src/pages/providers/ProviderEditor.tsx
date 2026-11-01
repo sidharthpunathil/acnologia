@@ -170,7 +170,7 @@ function OverviewTab({
 
   return (
     <div className="space-y-5">
-      <Section title="Identity" description="How this provider shows up across Cogito." actions={!readOnly && <AiFillButton ai={ai} />}>
+      <Section title="Identity" description="How this provider shows up across Acnologia." actions={!readOnly && <AiFillButton ai={ai} />}>
         <AiFillPanel ai={ai} />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Name" required error={errors.name} className={ai.flash("name")}>
@@ -395,7 +395,7 @@ function LiveCheckTab({ slug, dirty, readOnly }: { slug: string; dirty: boolean;
   return (
     <Section
       title="Live check"
-      description="Runs the health check and the first safe example against the real API with a key you paste. Cogito does not store the key."
+      description="Runs the health check and the first safe example against the real API with a key you paste. Acnologia does not store the key."
     >
       {dirty && (
         <Callout tone="amber" icon={<AlertTriangle className="h-4 w-4" />} className="mb-4">

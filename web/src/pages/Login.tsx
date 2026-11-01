@@ -42,7 +42,7 @@ export function LoginPage() {
         <Button type="submit" variant="primary" loading={busy} className="w-full">
           Sign in
         </Button>
-        <p className="text-xs text-muted">No account yet? Ask your Cogito superadmin to add you.</p>
+        <p className="text-xs text-muted">No account yet? Ask your Acnologia superadmin to add you.</p>
       </form>
     </AuthShell>
   );
