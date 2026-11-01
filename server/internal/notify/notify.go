@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -238,9 +239,24 @@ func (n *Notifier) Deliver(ctx context.Context, h *store.Webhook, e Event) (int,
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	if resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("receiver answered %d: %s", resp.StatusCode, bytes.TrimSpace(rb))
+		return resp.StatusCode, fmt.Errorf("receiver answered %d%s", resp.StatusCode, receiverText(resp.Header.Get("Content-Type"), rb))
 	}
 	return resp.StatusCode, nil
+}
+
+// receiverText is a short, readable form of an error body: HTML pages are
+// left out and long bodies are cut so the dashboard stays legible.
+func receiverText(_ string, body []byte) string {
+	s := strings.Join(strings.Fields(string(body)), " ")
+	// Some receivers label short plain answers as HTML (Slack's "no_team"), so
+	// judge by the body rather than the content type: markup is left out.
+	if s == "" || strings.HasPrefix(s, "<") {
+		return ""
+	}
+	if r := []rune(s); len(r) > 160 {
+		s = string(r[:160]) + "…"
+	}
+	return ": " + s
 }
 
 // Sign is the HMAC-SHA256 of "<timestamp>.<body>" in hex. Receivers should

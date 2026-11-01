@@ -177,7 +177,7 @@ function TrafficCard({ service, canManage, isSuper }: { service: Service; canMan
                 disabled={!canManage}
                 onChange={(e) => setTtl(e.target.value)}
                 placeholder="sec"
-                className="w-24 shrink-0"
+                className="!w-24 shrink-0"
               />
             )}
           </div>
@@ -199,7 +199,7 @@ function TrafficCard({ service, canManage, isSuper }: { service: Service; canMan
                 disabled={!canManage}
                 onChange={(e) => setCost(e.target.value)}
                 placeholder="0.002"
-                className="w-24 shrink-0 font-mono"
+                className="!w-24 shrink-0 font-mono"
               />
             )}
           </div>
