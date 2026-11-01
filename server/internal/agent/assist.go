@@ -88,7 +88,7 @@ func (a *Agent) Assist(ctx context.Context, form, instruction string, current ma
 		Betas:     []anthropic.AnthropicBeta{betaFallback},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Claude API: %w", err)
+		return nil, fmt.Errorf("AI request failed: %w", err)
 	}
 	if resp.StopReason == anthropic.BetaStopReasonRefusal {
 		return nil, errors.New("Claude declined this request")

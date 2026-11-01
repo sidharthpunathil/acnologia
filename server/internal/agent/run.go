@@ -115,7 +115,7 @@ func (a *Agent) loop(ctx context.Context, s *runState) error {
 		}
 		resp, err := a.client.Beta.Messages.New(ctx, params)
 		if err != nil {
-			return fmt.Errorf("Claude API: %w", err)
+			return fmt.Errorf("AI request failed: %w", err)
 		}
 		a.addUsage(s, resp.Usage)
 		u := s.usage

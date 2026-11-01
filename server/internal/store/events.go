@@ -148,7 +148,7 @@ type DayStat struct {
 // KeyDailyStats counts a key's events per UTC day.
 func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT date(ts,'unixepoch') d,
-		SUM(CASE WHEN kind IN ('lease','proxy') THEN 1 ELSE 0 END),
+		SUM(CASE WHEN kind='lease' OR (kind='proxy' AND status_code<400) THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind='error' OR kind='invalid' THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind IN ('rate_limited','quota_exhausted') THEN 1 ELSE 0 END)
 		FROM events WHERE key_id=? AND ts>=? GROUP BY d ORDER BY d`, keyID, time.Now().AddDate(0, 0, -days).Unix())

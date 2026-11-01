@@ -77,12 +77,12 @@ type Status struct {
 
 func (a *Agent) Status() Status {
 	if !a.enabled {
-		return Status{Model: a.model, Reason: "set ANTHROPIC_API_KEY in .env (or the environment) and restart Cogito"}
+		return Status{Model: a.model, Reason: "Set ANTHROPIC_API_KEY in .env (or the environment) and restart Cogito."}
 	}
 	return Status{Enabled: true, Model: a.model}
 }
 
-var ErrDisabled = errors.New("AI is not configured: set ANTHROPIC_API_KEY")
+var ErrDisabled = errors.New("AI is not configured. Set ANTHROPIC_API_KEY and restart Cogito.")
 
 // Boot marks runs interrupted by a restart as failed.
 func (a *Agent) Boot(ctx context.Context) error { return a.Store.FailStaleRuns(ctx) }

@@ -151,13 +151,14 @@ func fillDays(got []store.DayStat, n int) []dayStat {
 }
 
 type checkSummary struct {
-	Checked int          `json:"checked"`
-	Valid   int          `json:"valid"`
-	Invalid int          `json:"invalid"`
-	Failed  int          `json:"failed"`
-	Skipped int          `json:"skipped"`
-	Message string       `json:"message"`
-	Keys    []*store.Key `json:"keys"`
+	Checked   int          `json:"checked"`
+	Valid     int          `json:"valid"`
+	Invalid   int          `json:"invalid"`
+	Exhausted int          `json:"exhausted"`
+	Failed    int          `json:"failed"`
+	Skipped   int          `json:"skipped"`
+	Message   string       `json:"message"`
+	Keys      []*store.Key `json:"keys"`
 }
 
 // checkKeys health checks keys four at a time and reports what it found.
@@ -184,8 +185,15 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 			defer wg.Done()
 			defer func() { <-sem }()
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			start := time.Now()
 			err := s.Pool.Check(cctx, sv, k)
 			cancel()
+			detail := "ok"
+			if err != nil {
+				detail = err.Error()
+			}
+			s.Store.AddEvent(context.Background(), store.NewEvent{Kind: "health", ServiceID: sv.ID, KeyID: k.ID,
+				LatencyMS: time.Since(start).Milliseconds(), Detail: detail})
 			nk, gerr := s.Store.GetKey(context.Background(), k.ID)
 			mu.Lock()
 			defer mu.Unlock()
@@ -195,6 +203,8 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 				sum.Failed++
 			case gerr == nil && nk.Status == store.StatusInvalid:
 				sum.Invalid++
+			case gerr == nil && (nk.Status == store.StatusExhausted || (nk.QuotaRemaining != nil && *nk.QuotaRemaining <= 0)):
+				sum.Exhausted++
 			default:
 				sum.Valid++
 			}
@@ -205,7 +215,7 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 	}
 	wg.Wait()
 	s.fillInFlight(sum.Keys...)
-	sum.Message = fmt.Sprintf("Checked %d keys: %d valid, %d invalid, %d could not be reached.", sum.Checked, sum.Valid, sum.Invalid, sum.Failed)
+	sum.Message = checkMessage(sum)
 	return sum
 }
 
@@ -247,12 +257,24 @@ func (s *Server) checkAllKeys(w http.ResponseWriter, r *http.Request) {
 		total.Invalid += sum.Invalid
 		total.Failed += sum.Failed
 		total.Skipped += sum.Skipped
+		total.Exhausted += sum.Exhausted
+		total.Keys = append(total.Keys, sum.Keys...)
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		total.Message = "Stopped after 3 minutes. "
 	}
-	total.Message += fmt.Sprintf("Checked %d keys: %d valid, %d invalid, %d could not be reached. %d skipped (disabled, or the provider has no health check).",
-		total.Checked, total.Valid, total.Invalid, total.Failed, total.Skipped)
+	total.Message += checkMessage(total)
+	if total.Skipped > 0 {
+		total.Message += fmt.Sprintf(" Skipped %d (disabled, or the provider has no health check).", total.Skipped)
+	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "keys.check_all", "", total.Message)
 	writeJSON(w, 200, total)
+}
+
+func checkMessage(s checkSummary) string {
+	msg := fmt.Sprintf("Checked %d keys: %d working, %d out of quota, %d invalid", s.Checked, s.Valid, s.Exhausted, s.Invalid)
+	if s.Failed > 0 {
+		msg += fmt.Sprintf(", %d could not be reached", s.Failed)
+	}
+	return msg + "."
 }

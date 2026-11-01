@@ -436,3 +436,17 @@ func TestKeyInsights(t *testing.T) {
 		t.Fatalf("unchecked key validity = %s", out.Keys[0].Validity)
 	}
 }
+
+func TestRoundRobinSpreadsBursts(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "rr_one_11"}, map[string]any{"secret": "rr_two_22"}, map[string]any{"secret": "rr_three_3"})
+	_, tok := e.app(map[string]any{"name": "site"})
+	seen := map[string]int{}
+	for i := 0; i < 9; i++ {
+		resp := e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=x", nil, 200, nil, "Authorization", "Bearer "+tok)
+		seen[resp.Header.Get("X-Cogito-Key-Id")]++
+	}
+	if len(seen) != 3 || seen["1"] != 3 || seen["2"] != 3 || seen["3"] != 3 {
+		t.Fatalf("round robin within one second should spread evenly, got %v", seen)
+	}
+}

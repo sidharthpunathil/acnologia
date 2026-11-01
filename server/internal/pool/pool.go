@@ -54,6 +54,8 @@ type Pool struct {
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
 	slots *slots
+	// picked holds the last pick time per key in nanoseconds (key id -> int64).
+	picked sync.Map
 }
 
 func New(s *store.Store, box *crypto.Box) *Pool {
@@ -153,7 +155,18 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		}
 		return nil, e
 	}
+	// The database stores last use in whole seconds, so a burst would tie
+	// and always pick the lowest id. Use the precise in-memory pick time.
+	for _, c := range set {
+		if v, ok := p.picked.Load(c.ID); ok {
+			t := time.Unix(0, v.(int64))
+			if c.LastUsedAt == nil || t.After(*c.LastUsedAt) {
+				c.LastUsedAt = &t
+			}
+		}
+	}
 	k := choose(svc.Strategy, set)
+	p.picked.Store(k.ID, time.Now().UnixNano())
 	secret, err := p.Box.Decrypt(k.SecretEnc)
 	if err != nil {
 		return nil, errors.New("cannot decrypt key, is COGITO_MASTER_KEY correct?")
@@ -335,7 +348,12 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 		st := store.StatusExhausted
 		e.Status = &st
 		if res.ResetAt == nil {
+			// The provider gave no reset time: keep an earlier estimate rather
+			// than pushing it forward on every check.
 			t := time.Now().Add(24 * time.Hour)
+			if k.QuotaResetAt != nil && k.QuotaResetAt.After(time.Now()) {
+				t = *k.QuotaResetAt
+			}
 			tp := &t
 			e.QuotaResetAt = &tp
 		}
@@ -382,4 +400,4 @@ var ErrUntrustedTarget = errors.New("hidden keys are not sent to this service un
 
 // ErrNoHealthCheck means the provider has no free endpoint to test keys, so
 // validity is learned from real traffic instead.
-var ErrNoHealthCheck = errors.New("this provider has no health check, so key validity is learned from real requests")
+var ErrNoHealthCheck = errors.New("This provider has no health check, so key validity is learned from real requests.")
