@@ -1,0 +1,16 @@
+reference/OmniRoute/
+node_modules/
+dist/
+/data/
+*.db
+*.db-*
+server/cogito
+.env
+__pycache__/
+*.egg-info/
+.venv/
+bin/
+.agents/
+sdk/typescript/node_modules/
+sdk/typescript/dist/
+.claude/

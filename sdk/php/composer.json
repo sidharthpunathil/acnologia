@@ -1,0 +1,20 @@
+{
+    "name": "cogito/keys",
+    "description": "Client for Cogito, a self-hosted API key pool with automatic rotation.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["api-keys", "rate-limit", "key-rotation", "serpapi", "elevenlabs"],
+    "require": {
+        "php": ">=8.1",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Cogito\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "php tests/run.php"
+    }
+}

@@ -1,0 +1,135 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"time"
+)
+
+type NewEvent struct {
+	Kind       string
+	ServiceID  int64
+	KeyID      int64
+	AppID      int64
+	StatusCode int
+	LatencyMS  int64
+	Detail     string
+}
+
+func nz(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+func (s *Store) AddEvent(ctx context.Context, e NewEvent) {
+	if len(e.Detail) > 500 {
+		e.Detail = e.Detail[:500]
+	}
+	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,status_code,latency_ms,detail) VALUES(?,?,?,?,?,?,?,?)`,
+		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), e.StatusCode, e.LatencyMS, e.Detail)
+}
+
+type EventFilter struct {
+	ServiceID int64
+	KeyID     int64
+	Kind      string
+	Limit     int
+	Since     time.Time
+}
+
+func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error) {
+	q := `SELECT e.id, e.ts, e.kind, e.service_id, COALESCE(s.slug,''), e.key_id, COALESCE(k.label,''), COALESCE(k.hidden,0),
+		e.app_id, COALESCE(a.name,''), e.status_code, e.latency_ms, e.detail
+		FROM events e LEFT JOIN services s ON s.id=e.service_id LEFT JOIN keys k ON k.id=e.key_id LEFT JOIN apps a ON a.id=e.app_id WHERE 1=1`
+	args := []any{}
+	if f.ServiceID != 0 {
+		q += ` AND e.service_id=?`
+		args = append(args, f.ServiceID)
+	}
+	if f.KeyID != 0 {
+		q += ` AND e.key_id=?`
+		args = append(args, f.KeyID)
+	}
+	if f.Kind != "" {
+		q += ` AND e.kind=?`
+		args = append(args, f.Kind)
+	}
+	if !f.Since.IsZero() {
+		q += ` AND e.ts>=?`
+		args = append(args, f.Since.Unix())
+	}
+	if f.Limit <= 0 || f.Limit > 500 {
+		f.Limit = 100
+	}
+	q += ` ORDER BY e.id DESC LIMIT ?`
+	args = append(args, f.Limit)
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Event{}
+	for rows.Next() {
+		var e Event
+		var ts int64
+		var sid, kid, aid sql.NullInt64
+		var hidden int
+		if err := rows.Scan(&e.ID, &ts, &e.Kind, &sid, &e.ServiceSlug, &kid, &e.KeyLabel, &hidden, &aid, &e.AppName,
+			&e.StatusCode, &e.LatencyMS, &e.Detail); err != nil {
+			return nil, err
+		}
+		e.TS = time.Unix(ts, 0).UTC()
+		e.ServiceID, e.KeyID, e.AppID = toInt(sid), toInt(kid), toInt(aid)
+		e.KeyHidden = hidden == 1
+		out = append(out, &e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountEvents(ctx context.Context, since time.Time, kinds ...string) (int, error) {
+	q := `SELECT COUNT(*) FROM events WHERE ts>=?`
+	args := []any{since.Unix()}
+	if len(kinds) > 0 {
+		q += ` AND kind IN (` + placeholders(len(kinds)) + `)`
+		for _, k := range kinds {
+			args = append(args, k)
+		}
+	}
+	var n int
+	err := s.DB.QueryRowContext(ctx, q, args...).Scan(&n)
+	return n, err
+}
+
+func (s *Store) AddAudit(ctx context.Context, u *User, action, target, detail string) {
+	var uid any
+	email := "system"
+	if u != nil {
+		uid, email = u.ID, u.Email
+	}
+	_, _ = s.DB.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
+		now(), uid, email, action, target, detail)
+}
+
+func (s *Store) ListAudit(ctx context.Context, limit int) ([]*AuditEntry, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, ts, user_email, action, target, detail FROM audit ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*AuditEntry{}
+	for rows.Next() {
+		var a AuditEntry
+		var ts int64
+		if err := rows.Scan(&a.ID, &ts, &a.UserEmail, &a.Action, &a.Target, &a.Detail); err != nil {
+			return nil, err
+		}
+		a.TS = time.Unix(ts, 0).UTC()
+		out = append(out, &a)
+	}
+	return out, rows.Err()
+}

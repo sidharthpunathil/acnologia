@@ -1,0 +1,233 @@
+# cogito-keys (Python)
+
+Python client for [Cogito](../../docs/llms.txt), a self-hosted API key pool. Cogito
+holds many keys per provider (SerpAPI, ElevenLabs, any API key based HTTP service)
+and hands out a working one. When a key hits a rate limit or runs out of quota,
+you get the next one automatically.
+
+- Sync client `Cogito` and async client `AsyncCogito`, both built on `httpx` (the only dependency).
+- Python 3.9+, fully typed (dataclasses, `py.typed`).
+
+## Install
+
+```bash
+pip install cogito-keys
+```
+
+```python
+import cogito
+```
+
+## Configure
+
+```python
+from cogito import Cogito
+
+cog = Cogito("http://localhost:8080", "cog_your_app_token")
+# or set COGITO_URL and COGITO_TOKEN and call Cogito()
+```
+
+The token is an app token created in the Cogito dashboard (Apps page). It is
+sent as `Authorization: Bearer cog_...`.
+
+## Two ways to use a key
+
+**Proxy mode**: send the provider request to Cogito. Cogito injects a key,
+retries with the next key on rate limits, and your process never sees a secret.
+
+**Lease mode**: borrow a key, call the provider yourself, then report how it went.
+Use this when the provider SDK needs the raw key or when you cannot route traffic
+through Cogito.
+
+## Proxy mode
+
+`cog.proxy(service)` returns an object with `get`, `post`, `put`, `patch`,
+`delete` and `request(method, path, **httpx_kwargs)`. Each returns a plain
+`httpx.Response` (non 2xx responses are returned, not raised). The response
+carries `X-Cogito-Key-Id` and `X-Cogito-Attempts` headers.
+
+### SerpAPI search
+
+```python
+serp = cog.proxy("serpapi")
+resp = serp.get("/search.json", params={"engine": "google", "q": "best espresso grinder"})
+resp.raise_for_status()
+for r in resp.json().get("organic_results", [])[:5]:
+    print(r["title"], r["link"])
+```
+
+### ElevenLabs text to speech
+
+```python
+tts = cog.proxy("elevenlabs")
+resp = tts.post(
+    "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
+    json={"text": "Hello from Cogito.", "model_id": "eleven_multilingual_v2"},
+    headers={"Accept": "audio/mpeg"},
+)
+resp.raise_for_status()
+with open("hello.mp3", "wb") as f:
+    f.write(resp.content)
+```
+
+## Lease mode
+
+`cog.lease(service, exclude_key_ids=None, ttl_sec=None)` returns a `Lease` with
+`lease_id`, `key_id`, `service`, `secret`, `auth` (`type` and `name`),
+`base_url` and `expires_at`. When every key is cooling down it raises
+`NoKeyAvailable` with `retry_after` in seconds.
+
+`lease.apply(params_or_headers)` returns a copy of the dict with the secret
+placed where the provider expects it:
+
+| `auth.type` | effect |
+|---|---|
+| `query` | treats the dict as query params, adds `auth.name` (SerpAPI: `api_key`) |
+| `header` | treats the dict as headers, adds `auth.name` (ElevenLabs: `xi-api-key`) |
+| `bearer` | sets header `auth.name` (default `Authorization`) to `Bearer <secret>` |
+
+`lease.request_kwargs(params=..., headers=...)` returns `{"params", "headers"}`
+with the secret already in the right one, and `lease.url(path)` joins the
+service `base_url` with a path.
+
+### Context manager
+
+A lease used as a context manager reports `ok` on a clean exit and an error
+outcome if the block raises.
+
+```python
+import httpx
+from cogito import Cogito, RateLimited
+
+with cog.lease("serpapi") as lease:
+    resp = httpx.get(lease.url("/search.json"), params=lease.apply({"engine": "google", "q": "coffee"}))
+    if resp.status_code == 429:
+        raise RateLimited(retry_after=3600, status_code=429)  # reported as rate_limited
+    resp.raise_for_status()
+    data = resp.json()
+```
+
+### Manual reporting and rotation
+
+```python
+lease = cog.lease("elevenlabs")
+resp = httpx.post(
+    lease.url("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"),
+    headers=lease.apply({"Accept": "audio/mpeg"}),
+    json={"text": "Hi", "model_id": "eleven_multilingual_v2"},
+)
+if resp.status_code == 429:
+    next_lease = lease.report("rate_limited", status_code=429, retry_after_sec=5, rotate=True)
+    # next_lease is a fresh Lease on another key, or None if the pool is drained
+else:
+    lease.report("ok")
+```
+
+Outcomes: `ok`, `rate_limited`, `quota_exhausted`, `invalid`, `error`.
+
+### with_key: retries with rotation
+
+`cog.with_key(service, fn, max_attempts=5)` leases a key, calls `fn(lease)`,
+reports the result and returns what `fn` returned. Raise one of the exported
+exceptions to make Cogito cool the key down and retry with the next one:
+
+| raise | reported outcome |
+|---|---|
+| `RateLimited(retry_after=None)` | `rate_limited` (key cools down for `retry_after` seconds) |
+| `QuotaExhausted()` | `quota_exhausted` (key parked until its quota resets) |
+| `InvalidKey()` | `invalid` (key disabled) |
+| anything else | `error`, then re-raised without retry |
+
+All three accept `message=` and `status_code=` keyword arguments.
+
+```python
+import httpx
+from cogito import Cogito, InvalidKey, QuotaExhausted, RateLimited
+
+cog = Cogito("http://localhost:8080", "cog_your_app_token")
+
+def search(lease):
+    resp = httpx.get(lease.url("/search.json"), params=lease.apply({"engine": "google", "q": "coffee"}))
+    if resp.status_code == 429:
+        if "run out of searches" in resp.text:
+            raise QuotaExhausted(status_code=429)
+        raise RateLimited(retry_after=3600, status_code=429)
+    if resp.status_code == 401:
+        raise InvalidKey(status_code=401)
+    resp.raise_for_status()
+    return resp.json()
+
+results = cog.with_key("serpapi", search)
+```
+
+ElevenLabs with `with_key`:
+
+```python
+def speak(lease):
+    resp = httpx.post(
+        lease.url("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"),
+        headers=lease.apply({"Accept": "audio/mpeg"}),
+        json={"text": "Rotation is automatic.", "model_id": "eleven_multilingual_v2"},
+    )
+    if resp.status_code == 429:
+        raise RateLimited(retry_after=5, status_code=429)
+    if resp.status_code == 401:
+        status = (resp.json().get("detail") or {}).get("status", "")
+        if status == "quota_exceeded":
+            raise QuotaExhausted(status_code=401)
+        raise InvalidKey(status_code=401)
+    resp.raise_for_status()
+    return resp.content
+
+audio = cog.with_key("elevenlabs", speak)
+```
+
+If no key is left, `with_key` raises `NoKeyAvailable` (check `.retry_after`).
+After `max_attempts` rotations it re-raises the last `RateLimited`,
+`QuotaExhausted` or `InvalidKey`.
+
+## Async
+
+```python
+import asyncio
+from cogito import AsyncCogito
+
+async def main():
+    async with AsyncCogito("http://localhost:8080", "cog_your_app_token") as cog:
+        resp = await cog.proxy("serpapi").get("/search.json", params={"q": "coffee"})
+        print(resp.json())
+
+        async with await cog.lease("serpapi") as lease:
+            ...  # reports ok on exit
+
+        # fn may be sync or async
+        data = await cog.with_key("serpapi", async_search)
+
+asyncio.run(main())
+```
+
+## Other calls
+
+```python
+for s in cog.services():
+    print(s.slug, s.available, s.auth.type, s.auth.name)
+```
+
+## Errors
+
+- `CogitoError`: any non 2xx from the consumer API (`.status_code`, `.code`, `.message`).
+- `NoKeyAvailable(CogitoError)`: HTTP 503 `no_key_available`, with `.retry_after`.
+- `RateLimited`, `QuotaExhausted`, `InvalidKey`: raised by you inside `with_key` or a lease block. All subclass `KeyProblem`.
+
+## Options
+
+`Cogito(base_url, token, timeout=30.0, http_client=None, transport=None)`. Pass
+your own `httpx.Client` to reuse connection pools, proxies or TLS settings, or a
+`transport` (for example `httpx.MockTransport`) in tests.
+
+## Development
+
+```bash
+pip install -e '.[test]'
+pytest
+```

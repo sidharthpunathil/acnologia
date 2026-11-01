@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cogito-keys"
+version = "0.1.0"
+description = "Client for Cogito, a self-hosted API key pool with automatic rotation."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["api-keys", "rate-limit", "key-rotation", "serpapi", "elevenlabs", "cogito"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Typing :: Typed",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = ["httpx>=0.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-asyncio>=0.21"]
+
+[project.urls]
+Homepage = "https://github.com/cogito-keys/cogito"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cogito"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

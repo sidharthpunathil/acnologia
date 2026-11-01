@@ -1,0 +1,55 @@
+# Cogito
+
+> Cogito is a self-hosted API key pool. It stores many API keys per provider (SerpAPI, ElevenLabs, or any API key based HTTP service), hands out a working key on demand, detects rate limits and quota exhaustion, cools keys down and rotates to the next one. Agents use it either as a proxy (Cogito injects the key, the secret is never exposed) or by leasing a key and reporting the outcome.
+
+Base URL is wherever Cogito is deployed, for example `http://localhost:8080`. All consumer calls need an app token (`cog_...`) created in the dashboard. All bodies are JSON. Errors look like `{"error": {"code": "string", "message": "string"}}`.
+
+Key facts for agents:
+
+- Prefer proxy mode. Call `/proxy/{service}/{provider path}` exactly as you would call the provider, minus the provider key. Cogito retries with the next key on rate limits.
+- Use lease mode only when you must hold the raw key (for example a provider SDK). Always report the outcome so bad keys cool down.
+- HTTP 503 with code `no_key_available` means every key is cooling down or exhausted. Wait `retry_after_sec` seconds.
+- An app may be limited to some services and to mode `proxy`, `lease` or `both`. Call `GET /api/v1/services` to see what you can use.
+
+## Auth
+
+- `Authorization: Bearer cog_...` (preferred), or `X-Cogito-Token: cog_...`.
+- Proxy only: query parameter `?cogito_token=cog_...` for tools that only accept a URL.
+- Cogito strips all three before forwarding upstream.
+
+## Consumer API
+
+- [GET /api/v1/services](/llms-full.txt#get-apiv1services): services this token may use, with `available`, `base_url` and `auth` `{type, name}`.
+- [POST /api/v1/lease](/llms-full.txt#post-apiv1lease): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name"}, "base_url", "expires_at"}`, or 503 `{"error": {"code": "no_key_available"}, "retry_after_sec": n}`.
+- [POST /api/v1/leases/{lease_id}/report](/llms-full.txt#post-apiv1leaseslease_idreport): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
+- [ANY /proxy/{service}/{path}](/llms-full.txt#any-proxyservicepath): forwards to `base_url/{path}` with query string and body, injecting a key. Response headers add `X-Cogito-Key-Id` and `X-Cogito-Attempts`.
+- [GET /healthz](/llms-full.txt#public-endpoints): `{"ok": true, "version": "..."}`, no auth.
+
+## Outcomes
+
+- `ok`: call succeeded, resets the key's failure counter.
+- `rate_limited`: key cools down for `retry_after_sec`, or exponential backoff from the service cooldown, capped at 1h.
+- `quota_exhausted`: key parked as `exhausted` until its quota resets (or 24h).
+- `invalid`: key marked `invalid` and removed from rotation.
+- `error`: provider or network failure that is not the key's fault. Key is not penalized.
+
+## Proxy examples
+
+- [SerpAPI search](/llms-full.txt#serpapi): `GET /proxy/serpapi/search.json?engine=google&q=coffee` with `Authorization: Bearer cog_...`. Do not send `api_key`.
+- [ElevenLabs text to speech](/llms-full.txt#elevenlabs): `POST /proxy/elevenlabs/v1/text-to-speech/{voice_id}` with JSON `{"text": "Hello", "model_id": "eleven_multilingual_v2"}` and `Accept: audio/mpeg`. Do not send `xi-api-key`.
+
+## MCP
+
+- [POST /mcp](/llms-full.txt#mcp): MCP streamable HTTP endpoint (JSON responses), same app token auth. Tools: `list_services`, `get_key`, `report_key`, `pool_status`, `proxy_request`.
+
+## SDKs
+
+- [Python](/llms-full.txt#python): `pip install cogito-keys`, then `from cogito import Cogito`.
+- [TypeScript and JavaScript](/llms-full.txt#typescript-and-javascript): `npm install @cogito/keys`, then `import { Cogito } from "@cogito/keys"`. Node 18+, Bun, Deno, browsers.
+- [Go](/llms-full.txt#go): `go get github.com/cogito-keys/cogito-go`, package `cogito`.
+- [PHP](/llms-full.txt#php): `composer require cogito/keys`, class `Cogito\Cogito`.
+- [Ruby](/llms-full.txt#ruby): `gem install cogito-keys`, then `require "cogito"`.
+
+## Optional
+
+- [Full reference](/llms-full.txt): every endpoint with request and response examples, provider error mapping, MCP tool arguments and SDK snippets.

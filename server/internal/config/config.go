@@ -1,0 +1,74 @@
+// Package config loads runtime settings from environment variables.
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	Addr               string
+	DataDir            string
+	MasterKey          string
+	PublicURL          string
+	SecureCookies      bool
+	EventRetentionDays int
+	HealthInterval     time.Duration
+	MaxBodyBytes       int64
+	BootstrapEmail     string
+	BootstrapPassword  string
+	Version            string
+}
+
+func Load(version string) Config {
+	return Config{
+		Addr:               env("COGITO_ADDR", ":8080"),
+		DataDir:            env("COGITO_DATA_DIR", "./data"),
+		MasterKey:          os.Getenv("COGITO_MASTER_KEY"),
+		PublicURL:          strings.TrimRight(os.Getenv("COGITO_PUBLIC_URL"), "/"),
+		SecureCookies:      envBool("COGITO_SECURE_COOKIES", false),
+		EventRetentionDays: envInt("COGITO_EVENT_RETENTION_DAYS", 30),
+		HealthInterval:     envDuration("COGITO_HEALTH_INTERVAL", 6*time.Hour),
+		MaxBodyBytes:       int64(envInt("COGITO_MAX_BODY_MB", 50)) << 20,
+		BootstrapEmail:     os.Getenv("COGITO_BOOTSTRAP_EMAIL"),
+		BootstrapPassword:  os.Getenv("COGITO_BOOTSTRAP_PASSWORD"),
+		Version:            version,
+	}
+}
+
+func env(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+func envInt(k string, def int) int {
+	if v, err := strconv.Atoi(os.Getenv(k)); err == nil {
+		return v
+	}
+	return def
+}
+
+func envBool(k string, def bool) bool {
+	if v, err := strconv.ParseBool(os.Getenv(k)); err == nil {
+		return v
+	}
+	return def
+}
+
+func envDuration(k string, def time.Duration) time.Duration {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	if v == "0" || v == "off" {
+		return 0
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d
+	}
+	return def
+}

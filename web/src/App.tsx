@@ -1,0 +1,99 @@
+import { useEffect, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useAuth } from "./stores/auth";
+import { can } from "./lib/perms";
+import { Layout } from "./components/Layout";
+import { Toaster } from "./components/Toaster";
+import { Button, PageLoading } from "./components/ui";
+import { SetupPage } from "./pages/Setup";
+import { LoginPage } from "./pages/Login";
+import { CatalogPage } from "./pages/Catalog";
+import { ServicePage } from "./pages/service/ServicePage";
+import { AppsPage } from "./pages/Apps";
+import { ActivityPage } from "./pages/Activity";
+import { UsersPage } from "./pages/Users";
+import { AuditPage } from "./pages/Audit";
+import { AccountPage } from "./pages/Account";
+import { NotFoundPage } from "./pages/NotFound";
+
+function RequireRole({ ok, children }: { ok: boolean; children: ReactNode }) {
+  return ok ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+export function App() {
+  const { status, user, error, load } = useAuth();
+  const location = useLocation();
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  let body: ReactNode;
+  if (status === "loading") {
+    body = (
+      <div className="min-h-screen bg-canvas">
+        <PageLoading />
+      </div>
+    );
+  } else if (status === "error") {
+    body = (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-canvas px-6 text-center">
+        <div className="font-mono text-lg">Cannot reach Cogito</div>
+        <p className="max-w-sm text-sm text-muted">{error}. Check that the server is running, then try again.</p>
+        <Button variant="primary" onClick={() => void load()}>
+          Retry
+        </Button>
+      </div>
+    );
+  } else if (status === "setup") {
+    body = <SetupPage />;
+  } else if (status === "anonymous") {
+    body = (
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="*"
+          element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />}
+        />
+      </Routes>
+    );
+  } else {
+    const role = user?.role;
+    body = (
+      <Routes>
+        <Route path="/login" element={<Navigate to="/" replace />} />
+        <Route element={<Layout />}>
+          <Route index element={<CatalogPage />} />
+          <Route path="services/:id" element={<ServicePage />} />
+          <Route path="apps" element={<AppsPage />} />
+          <Route path="activity" element={<ActivityPage />} />
+          <Route
+            path="users"
+            element={
+              <RequireRole ok={can.users(role)}>
+                <UsersPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="audit"
+            element={
+              <RequireRole ok={can.audit(role)}>
+                <AuditPage />
+              </RequireRole>
+            }
+          />
+          <Route path="account" element={<AccountPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Routes>
+    );
+  }
+
+  return (
+    <>
+      {body}
+      <Toaster />
+    </>
+  );
+}

@@ -1,0 +1,16 @@
+services:
+  cogito:
+    build: .
+    image: cogito:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file: .env
+    volumes:
+      - cogito-data:/data
+    healthcheck:
+      test: ["CMD", "/cogito", "version"]
+      interval: 30s
+
+volumes:
+  cogito-data:
