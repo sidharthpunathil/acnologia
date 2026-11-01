@@ -116,5 +116,5 @@ func Builtins() []Builtin {
 				},
 			},
 		},
-	}, searchBuiltins()...)
+	}, append(searchBuiltins(), llmBuiltins()...)...)
 }
