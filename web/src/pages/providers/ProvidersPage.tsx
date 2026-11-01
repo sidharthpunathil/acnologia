@@ -28,7 +28,7 @@ function ProviderCard({ p }: { p: Provider }) {
   return (
     <Link
       to={`/providers/${encodeURIComponent(p.slug)}`}
-      className="group flex flex-col gap-3 rounded-card bg-white p-4 shadow-card transition-[box-shadow,transform] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-[0_4px_14px_rgba(20,20,15,0.07),0_0_0_1px_rgba(20,20,15,0.06)]"
+      className="group flex flex-col gap-3 rounded-card bg-surface p-4 shadow-card transition-[box-shadow,transform] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift"
     >
       <div className="flex items-start gap-3.5">
         <ProviderLogo provider={p} />
@@ -38,7 +38,7 @@ function ProviderCard({ p }: { p: Provider }) {
             {disabled && <Badge>disabled</Badge>}
           </div>
           <div className="mt-1 truncate font-mono text-xs text-muted">
-            {p.slug} · {p.category || "other"} · v{p.version}
+            {p.slug} · {p.category || "Other"} · v{p.version}
           </div>
         </div>
       </div>
@@ -92,15 +92,15 @@ export function ProvidersPage() {
     <>
       <Link
         to="/providers/new"
-        className="tap inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-medium text-ink shadow-card transition-colors hover:bg-soft"
+        className="tap inline-flex h-10 items-center gap-2 rounded-full bg-surface px-4 text-sm font-medium text-ink shadow-card transition-colors hover:bg-soft"
       >
         <Plus className="h-4 w-4" /> New provider
       </Link>
       <Link
         to="/providers/ai"
-        className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-white transition-colors hover:bg-black"
+        className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-on-ink transition-colors hover:bg-ink-strong"
       >
-        <Sparkles className="h-4 w-4 text-[#ff6b6b]" /> Build with AI
+        <Sparkles className="h-4 w-4 text-spark" /> Build with AI
       </Link>
     </>
   ) : undefined;
@@ -109,7 +109,7 @@ export function ProvidersPage() {
     <div>
       <PageHeader
         title="Providers"
-        meta={`${plural(providers.length, "provider")} · rules, health checks and tests for each upstream API`}
+        meta={`${plural(providers.length, "provider")} · how each API signals limits, plus its health check and tests`}
         actions={actions}
       />
 
@@ -126,8 +126,9 @@ export function ProvidersPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search providers"
+          enterKeyHint="search"
           aria-label="Search providers"
-          className="field-input h-[52px] w-full rounded-card bg-white pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/10"
+          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/10"
         />
       </div>
 
@@ -138,17 +139,17 @@ export function ProvidersPage() {
           className="mt-8"
           icon={<Blocks className="h-5 w-5" />}
           title="No providers yet"
-          body="A provider teaches Cogito how an API signals rate limits and quota. Build one with AI from a name or docs URL, or write the rules yourself."
+          body="A provider tells Cogito how an API signals rate limits and quota. Build one with AI from a name or docs URL, or write the rules yourself."
           action={actions}
         />
       ) : shown.length === 0 ? (
         <Empty
           className="mt-8"
           title={q ? `Nothing matches "${q}"` : "None in this group yet"}
-          body={manage ? "Try a different search, or build the provider with AI." : "Try a different search."}
+          body={manage ? "Try another search, or build the provider with AI." : "Try another search."}
           action={
             manage ? (
-              <Link to="/providers/ai" className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-white hover:bg-black">
+              <Link to="/providers/ai" className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-on-ink hover:bg-ink-strong">
                 <Sparkles className="h-4 w-4" /> Build with AI
               </Link>
             ) : undefined

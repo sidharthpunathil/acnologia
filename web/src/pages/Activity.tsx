@@ -61,7 +61,7 @@ export function ActivityPage() {
     <div>
       <PageHeader
         title="Activity"
-        meta={`${shown.length} events · ${limited} limits hit · ${live ? "refreshing every 10s" : "paused"}`}
+        meta={`${shown.length} events · ${limited} limits hit · ${live ? "updates every 10s" : "paused"}`}
         actions={
           <Button icon={live ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />} onClick={() => setLive(!live)}>
             {live ? "Pause" : "Resume"}
@@ -70,7 +70,7 @@ export function ActivityPage() {
       />
 
       <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Select value={serviceId} onChange={(e) => setServiceId(e.target.value)} className="sm:w-56">
+        <Select value={serviceId} onChange={(e) => setServiceId(e.target.value)} aria-label="Service" className="sm:w-56">
           <option value="">All services</option>
           {services.map((s) => (
             <option key={s.id} value={s.id}>
@@ -78,8 +78,8 @@ export function ActivityPage() {
             </option>
           ))}
         </Select>
-        <Select value={kind} onChange={(e) => setKind(e.target.value as EventKind | "")} className="sm:w-48">
-          <option value="">All kinds</option>
+        <Select value={kind} onChange={(e) => setKind(e.target.value as EventKind | "")} aria-label="Event type" className="sm:w-48">
+          <option value="">All event types</option>
           {EVENT_KINDS.map((k) => (
             <option key={k} value={k}>
               {k.replace("_", " ")}
@@ -98,7 +98,7 @@ export function ActivityPage() {
           body={
             feed.length
               ? "Clear a filter to see more."
-              : "Create an app, then call a service through /proxy or lease a key. Every call, rate limit and health check is logged here."
+              : "Create an app, then call a service through /proxy or lease a key. Every request, rate limit and health check shows up here."
           }
           action={
             feed.length && (kind || serviceId) ? (

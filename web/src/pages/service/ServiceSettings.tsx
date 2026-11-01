@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Pencil } from "lucide-react";
+import { Pencil, TriangleAlert } from "lucide-react";
+import { useAuth } from "../../stores/auth";
+import { can } from "../../lib/perms";
 import type { Service, ServiceInput, Strategy } from "../../lib/types";
 import { useServices } from "../../stores/services";
 import { toast } from "../../stores/toast";
@@ -12,7 +14,7 @@ import { ConfirmButton } from "../../components/ConfirmButton";
 import { LogoEditor } from "../../components/LogoEditor";
 import { AiFillButton, AiFillPanel, useAiFill } from "../../components/AiFill";
 import { useProviders } from "../../stores/providers";
-import { Button, Card, Field, Input } from "../../components/ui";
+import { Button, Callout, Card, Field, Input } from "../../components/ui";
 import { applyServiceFields } from "../AddServiceModal";
 
 function inputOf(s: Service): ServiceInput {
@@ -39,12 +41,13 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:gap-4">
       <dt className="font-mono text-[11px] uppercase tracking-wide text-faint sm:w-36 sm:shrink-0 sm:pt-0.5">{label}</dt>
-      <dd className="min-w-0 break-words text-[13px] text-ink">{value || "-"}</dd>
+      <dd className="wrap-anywhere min-w-0 text-[13px] text-ink">{value || "-"}</dd>
     </div>
   );
 }
 
 export function ServiceSettings({ service, canManage }: { service: Service; canManage: boolean }) {
+  const isSuper = can.hidden(useAuth((s) => s.user?.role));
   const { update, remove, setLogo, removeLogo } = useServices();
   const provider = useProviders((s) => s.providers.find((p) => p.slug === service.provider));
   const navigate = useNavigate();
@@ -116,21 +119,30 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
 
   return (
     <div className="space-y-5">
+      {isSuper && !service.target_trusted && (
+        <Callout tone="amber" icon={<TriangleAlert className="h-4 w-4" />}>
+          <div className="font-medium">Hidden keys are paused for this service</div>
+          <div className="mt-0.5">
+            Someone other than a superadmin set its base URL or auth, so Cogito will not send hidden keys to it. Open Edit, check the
+            base URL, then save to confirm it.
+          </div>
+        </Callout>
+      )}
       <Card className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-[15px] font-semibold text-ink">Rotation and concurrency</h3>
-            <p className="mt-0.5 text-[13px] text-muted">How Cogito picks the next key, how long a rate limited key rests, and how many requests a key may serve at once.</p>
+            <p className="mt-0.5 text-[13px] text-muted">How Cogito picks the next key, how long a rate limited key rests, and how many requests one key can serve at once.</p>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Strategy" hint={STRATEGY_HELP[strategy]}>
             <StrategySelect value={strategy} onChange={setStrategy} disabled={!canManage} />
           </Field>
-          <Field label="Cooldown (seconds)" hint="Doubles per consecutive failure, capped at 1h.">
+          <Field label="Cooldown (seconds)" hint="Doubles with each failure in a row, up to 1 hour.">
             <Input type="number" min={0} value={cooldown} disabled={!canManage} onChange={(e) => setCooldown(Number(e.target.value))} />
           </Field>
-          <Field label="Max attempts" hint="Proxy retries before giving up.">
+          <Field label="Max attempts" hint="How many keys the proxy tries before giving up.">
             <Input type="number" min={1} max={20} value={attempts} disabled={!canManage} onChange={(e) => setAttempts(Number(e.target.value))} />
           </Field>
         </div>
@@ -170,7 +182,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
 
       <Card className="p-5">
         <h3 className="text-[15px] font-semibold text-ink">Logo</h3>
-        <p className="mb-4 mt-0.5 text-[13px] text-muted">Shown in the catalog and on this page.</p>
+        <p className="mb-4 mt-0.5 text-[13px] text-muted">Shows in the catalog and on this page.</p>
         <LogoEditor
           src={service.logo_url ?? provider?.logo_url}
           name={service.name}
@@ -180,7 +192,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
           disabled={!canManage}
           onUpload={(logo) => setLogo(service.id, logo)}
           onRemove={() => removeLogo(service.id)}
-          inheritedNote={provider ? `Without its own logo the service uses ${provider.name}'s.` : undefined}
+          inheritedNote={provider ? `Without its own logo, the service uses the provider logo.` : undefined}
         />
       </Card>
 
@@ -207,7 +219,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
           <Row label="Auth" value={`${service.auth_type}${service.auth_name ? ` · ${service.auth_name}` : ""}`} />
           <Row label="Category" value={service.category} />
           <Row label="Description" value={service.description} />
-          <Row label="Concurrency" value={service.max_concurrency ? `${service.max_concurrency} per key, queue ${service.queue_timeout_sec}s` : "unlimited"} />
+          <Row label="Concurrency" value={service.max_concurrency ? `${service.max_concurrency} per key, waits up to ${service.queue_timeout_sec}s for a free key` : "No limit"} />
         </dl>
       </Card>
 
@@ -215,7 +227,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         <Card className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="text-[15px] font-semibold text-ink">Delete service</h3>
-            <p className="mt-0.5 text-[13px] text-muted">Removes the service and all of its keys. Apps calling {service.slug} will start failing.</p>
+            <p className="mt-0.5 text-[13px] text-muted">Removes the service and all its keys. Apps that call {service.slug} start failing right away.</p>
           </div>
           <ConfirmButton
             label="Delete service"

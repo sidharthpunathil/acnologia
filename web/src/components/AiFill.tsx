@@ -49,13 +49,13 @@ export function useAiFill(form: AssistForm, current: () => object, apply: (field
       setNotes(res.notes ?? "");
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setChanged(new Set()), 2400);
-      if (keys.size === 0) toast.info("The AI had nothing to change.");
+      if (keys.size === 0) toast.info("Nothing to change. The form already matches.");
       else toast.success(`Filled ${keys.size} field${keys.size === 1 ? "" : "s"}. Review, then save.`);
     } catch (e) {
       if (e instanceof ApiError && e.code === "ai_disabled") {
         setDisabledByServer(true);
         setOpen(false);
-        toast.error("AI is not configured on this server. Set ANTHROPIC_API_KEY in .env and restart.");
+        toast.error("AI is not set up on this server. Add the AI key to .env, then restart Cogito.");
       } else toast.error(errorMessage(e));
     } finally {
       setBusy(false);
@@ -84,7 +84,7 @@ export function AiFillButton({ ai, className }: { ai: AiFillState; className?: s
       aria-expanded={ai.open}
       className={cx(
         "tap inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium transition-colors",
-        ai.open ? "border-brand/30 bg-brand-soft text-brand-ink" : "border-line bg-white text-muted hover:border-brand/30 hover:text-brand-ink",
+        ai.open ? "border-brand/30 bg-brand-soft text-brand-ink" : "border-line bg-surface text-muted hover:border-brand/30 hover:text-brand-ink",
         className,
       )}
     >
@@ -95,9 +95,9 @@ export function AiFillButton({ ai, className }: { ai: AiFillState; className?: s
 }
 
 const PLACEHOLDER: Record<AssistForm, string> = {
-  app: "my Next.js marketing site that only does search",
+  app: "marketing site that only needs search",
   service: "search pool for our scraper, gentle on rate limits",
-  provider: "Resend, the transactional email API",
+  provider: "a transactional email API with a daily send limit",
 };
 
 /** Inline one line prompt plus the AI's notes. Render it at the top of the form. */
@@ -132,8 +132,9 @@ export function AiFillPanel({ ai }: { ai: AiFillState }) {
               onKeyDown={(e) => {
                 if (e.key === "Enter") submit(e as unknown as FormEvent);
               }}
-              placeholder={`e.g. ${PLACEHOLDER[ai.form]}`}
-              className="field-input h-10 w-full min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm text-ink placeholder:text-faint focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10"
+              placeholder={`For example: ${PLACEHOLDER[ai.form]}`}
+              enterKeyHint="go"
+              className="field-input h-10 w-full min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10"
             />
             <div className="flex gap-2">
               <Button variant="primary" loading={ai.busy} disabled={!text.trim()} onClick={() => void ai.run(text)} icon={<Sparkles className="h-4 w-4" />}>
@@ -144,7 +145,7 @@ export function AiFillPanel({ ai }: { ai: AiFillState }) {
               </Button>
             </div>
           </div>
-          <p className="mt-1.5 text-xs text-muted">Fields are filled in for you to review. Nothing is saved until you save.</p>
+          <p className="mt-1.5 text-xs text-muted">AI fills the fields for you to review. Nothing is saved until you save.</p>
         </div>
       )}
       {ai.notes && (

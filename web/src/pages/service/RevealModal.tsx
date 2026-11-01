@@ -40,9 +40,9 @@ export function RevealModal({ k, onClose }: { k: Key | null; onClose: () => void
       <div className="space-y-3">
         <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
           <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          This reveal is recorded in the audit log. Do not paste it anywhere you would not paste a password.
+          The audit log records this reveal. Treat the secret like a password.
         </div>
-        {err ? <p className="text-sm text-red-600">{err}</p> : secret === null ? <div className="flex justify-center py-4"><Spinner /></div> : <SecretBox value={secret} />}
+        {err ? <p role="alert" className="text-sm text-red-700">{err}</p> : secret === null ? <div className="flex justify-center py-4"><Spinner /></div> : <SecretBox value={secret} />}
       </div>
     </Modal>
   );

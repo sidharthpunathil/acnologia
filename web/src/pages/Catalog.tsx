@@ -22,7 +22,7 @@ export function serviceMeta(s: Service): string {
   const parts = [plural(c.total, "key")];
   if (c.total > 0) parts.push(`${c.available} available`);
   if (c.cooling) parts.push(`${c.cooling} cooling`);
-  if (c.exhausted) parts.push(`${c.exhausted} exhausted`);
+  if (c.exhausted) parts.push(`${c.exhausted} out of quota`);
   if (c.invalid) parts.push(`${c.invalid} invalid`);
   if (c.busy) parts.push(`${c.busy} busy`);
   parts.push(STRATEGY_LABEL[s.strategy] ?? s.strategy);
@@ -39,14 +39,14 @@ function ServiceCard({ s }: { s: Service }) {
   return (
     <Link
       to={`/services/${s.id}`}
-      className="group flex min-h-[72px] items-center gap-3.5 rounded-card bg-white px-4 py-4 shadow-card transition-[box-shadow,transform] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-[0_4px_14px_rgba(20,20,15,0.07),0_0_0_1px_rgba(20,20,15,0.06)]"
+      className="group flex min-h-[72px] items-center gap-3.5 rounded-card bg-surface px-4 py-4 shadow-card transition-[box-shadow,transform] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift"
     >
       <ServiceLogo service={s} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="truncate text-[15px] font-medium text-ink">{s.name}</span>
+          <span className="min-w-0 truncate text-[15px] font-medium text-ink">{s.name}</span>
           <span
-            className={healthy ? "h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" : "h-1.5 w-1.5 shrink-0 rounded-full bg-[#d6d5ce]"}
+            className={healthy ? "h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" : "h-1.5 w-1.5 shrink-0 rounded-full bg-line-strong"}
             aria-hidden="true"
           />
           <span className="sr-only">{healthy ? "Keys available" : "No key available"}</span>
@@ -107,7 +107,7 @@ export function CatalogPage() {
     <div>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-mono text-[28px] leading-tight tracking-tight text-ink sm:text-[32px]">
+          <h1 className="font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[32px]">
             {compact(totalKeys)} {totalKeys === 1 ? "key" : "keys"} across {plural(services.length, "service")}
           </h1>
           <p className="mt-2 font-mono text-xs text-muted">
@@ -134,10 +134,11 @@ export function CatalogPage() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search services by name, slug or category"
+          placeholder="Search by name, slug or category"
+          enterKeyHint="search"
           aria-label="Search services"
           type="search"
-          className="field-input h-[52px] w-full rounded-card bg-white pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/10"
+          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/10"
         />
       </div>
 
@@ -148,8 +149,8 @@ export function CatalogPage() {
             title="No services yet"
             body={
               can.manage(role)
-                ? "Pick a provider, then paste in the API keys for each account you own. Missing one? Build it with AI."
-                : "An admin has not added any services yet. Ask one to add a service and its keys."
+                ? "Pick a provider, then paste in a key from each account you own. Provider not listed? Build it with AI in a minute."
+                : "No services yet. Ask an admin to add one with its keys."
             }
             action={
               can.manage(role) ? (
@@ -159,7 +160,7 @@ export function CatalogPage() {
                   </Button>
                   <Link
                     to="/providers/ai"
-                    className="tap inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-medium text-ink shadow-card hover:bg-soft"
+                    className="tap inline-flex h-10 items-center gap-2 rounded-full bg-surface px-4 text-sm font-medium text-ink shadow-card hover:bg-soft"
                   >
                     <Sparkles className="h-4 w-4 text-brand" /> Build a provider with AI
                   </Link>
@@ -173,7 +174,7 @@ export function CatalogPage() {
           <Tabs className="mt-10" items={tabs} value={activeTab} onChange={setTab} />
           {shown.length === 0 ? (
             <div className="mt-10">
-              <Empty title={`Nothing matches "${q}"`} body="Try a different name or clear the search." action={<Button onClick={() => setQ("")}>Clear search</Button>} />
+              <Empty title={`Nothing matches "${q}"`} body="Try another name, or clear the search." action={<Button onClick={() => setQ("")}>Clear search</Button>} />
             </div>
           ) : (
             shown.map(([cat, list]) => {

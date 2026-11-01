@@ -117,7 +117,7 @@ export function AddKeysModal({
       onClose={onClose}
       wide
       title={`Add keys to ${service.name}`}
-      description="Paste one key per line. Use label,secret to name a key."
+      description="Paste one key per line. To name a key, write label,secret."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -147,7 +147,7 @@ export function AddKeysModal({
           {parsed.keys.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {parsed.keys.slice(0, 12).map((p, i) => (
-                <span key={i} className="rounded-md bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                <span key={i} className="wrap-anywhere rounded-md bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-muted">
                   {p.label} · ...{p.secret.slice(-4)}
                 </span>
               ))}
@@ -177,7 +177,7 @@ export function AddKeysModal({
           )}
           <Toggle
             label="Restricted"
-            description="Only the selected apps may use these keys."
+            description="Only the apps you pick can use these keys."
             checked={restricted}
             onChange={setRestricted}
           />

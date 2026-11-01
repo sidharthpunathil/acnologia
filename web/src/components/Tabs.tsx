@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { cx } from "./ui";
 
 export interface TabItem<T extends string> {
@@ -7,7 +7,11 @@ export interface TabItem<T extends string> {
   count?: number;
 }
 
-/** treg style category tabs: label, small count, underline on the active one. Arrow keys move between tabs. */
+/**
+ * Category tabs: label, small count, underline on the active one. Arrow keys
+ * move between tabs. When the row is wider than the screen it scrolls
+ * sideways, with a fade on the edge that has more tabs behind it.
+ */
 export function Tabs<T extends string>({
   items,
   value,
@@ -22,6 +26,39 @@ export function Tabs<T extends string>({
   label?: string;
 }) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+
+  const measure = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const start = el.scrollLeft > 2;
+    const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    setEdges((p) => (p.start === start && p.end === end ? p : { start, end }));
+  }, []);
+
+  useEffect(() => {
+    measure();
+    const el = scroller.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure, items.length]);
+
+  // Keep the active tab in view, for deep links and keyboard moves.
+  useEffect(() => {
+    const i = items.findIndex((it) => it.id === value);
+    const btn = refs.current[i];
+    const el = scroller.current;
+    if (!btn || !el || el.scrollWidth <= el.clientWidth) return;
+    const left = btn.offsetLeft - el.clientWidth / 2 + btn.offsetWidth / 2;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ left: Math.max(0, left), behavior: reduce ? "auto" : "smooth" });
+    // Only when the selection changes; parents re-render often with a fresh items array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, items.length]);
+
   const onKey = (e: KeyboardEvent, i: number) => {
     let j = -1;
     if (e.key === "ArrowRight") j = (i + 1) % items.length;
@@ -33,8 +70,15 @@ export function Tabs<T extends string>({
     onChange(items[j].id);
     refs.current[j]?.focus();
   };
+
+  const fade = edges.start && edges.end ? "fade-x-both" : edges.end ? "fade-x-end" : edges.start ? "fade-x-start" : "";
+
   return (
-    <div className={cx("no-scrollbar -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0", className)}>
+    <div
+      ref={scroller}
+      onScroll={measure}
+      className={cx("no-scrollbar relative -mx-4 overflow-x-auto overscroll-x-contain px-4 sm:mx-0 sm:px-0", fade, className)}
+    >
       <div role="tablist" aria-label={label} className="flex min-w-max gap-1 border-b border-line">
         {items.map((it, i) => {
           const active = it.id === value;

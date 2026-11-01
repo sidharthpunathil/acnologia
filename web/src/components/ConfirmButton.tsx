@@ -56,14 +56,14 @@ export function ConfirmButton({
 
   if (iconOnly) {
     return (
-      <IconButton label={label} onClick={() => setArmed(true)} className="hover:text-red-600">
+      <IconButton label={label} onClick={() => setArmed(true)} className="hover:text-red-700">
         {icon ?? <Trash2 className="h-4 w-4" />}
       </IconButton>
     );
   }
 
   return (
-    <Button size="sm" variant="ghost" icon={icon ?? <Trash2 className="h-3.5 w-3.5" />} onClick={() => setArmed(true)} className="hover:text-red-600">
+    <Button size="sm" variant="ghost" icon={icon ?? <Trash2 className="h-3.5 w-3.5" />} onClick={() => setArmed(true)} className="hover:text-red-700">
       {label}
     </Button>
   );

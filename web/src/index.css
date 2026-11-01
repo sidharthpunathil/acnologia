@@ -2,21 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Color tokens live in tailwind.config.js (light and dark), injected as CSS variables. */
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    /* Native feel on phones: no gray flash on tap, no pull to refresh, no double tap delay. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    background-color: rgb(var(--canvas));
   }
   body {
     @apply bg-canvas font-sans text-ink antialiased;
     font-feature-settings: "ss01", "cv11";
+    overscroll-behavior: none;
+    overflow-wrap: break-word;
   }
-  :where(a, button, [role="tab"], [role="switch"], summary, [tabindex]):focus-visible {
-    outline: 2px solid #18181a;
+  /* Controls are not content: no text selection or callout on long press. */
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="switch"],
+  [role="radio"] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  :where(a, button, [role="tab"], [role="switch"], [role="radio"], summary, [tabindex]):focus-visible {
+    outline: 2px solid rgb(var(--ink));
     outline-offset: 2px;
     border-radius: 8px;
   }
   ::selection {
-    background: rgba(24, 24, 26, 0.12);
+    background: var(--selection);
   }
 }
 
@@ -32,6 +51,35 @@
     background-repeat: no-repeat;
     background-position: right 0.6rem center;
   }
+  [data-theme="dark"] .select-chevron {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23aaa89f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+  /* Long URLs, slugs and secrets break anywhere instead of pushing the page sideways. */
+  .wrap-anywhere {
+    overflow-wrap: anywhere;
+  }
+}
+
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Height of the phone tab bar, so sticky bars and toasts sit above it. */
+  --tabbar-h: calc(60px + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 1024px) {
+  :root {
+    --tabbar-h: 0px;
+  }
+}
+
+/* The wordmark is drawn through the logo's alpha, so its red can be tuned per theme. */
+.wordmark {
+  display: inline-block;
+  aspect-ratio: 118 / 64;
+  background-color: rgb(var(--wordmark));
+  -webkit-mask: url("/logo.png") center / contain no-repeat;
+  mask: url("/logo.png") center / contain no-repeat;
 }
 
 /* Toasts use transitions, not keyframes, so a stack stays interruptible. */
@@ -63,19 +111,12 @@
     min-height: 44px;
     font-size: 16px; /* stops iOS zooming into focused inputs */
   }
-  .switch-hit {
-    padding: 12px 4px;
-    margin: -12px -4px;
+  /* Grows the hit area without shrinking the painted track. */
+  .switch-hit::before {
+    content: "";
+    position: absolute;
+    inset: -12px -4px;
   }
-}
-
-html {
-  touch-action: manipulation;
-}
-
-:root {
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 @keyframes fade-up {
@@ -114,6 +155,53 @@ html {
 .modal-out {
   animation: modal-out 150ms ease-out both;
 }
+
+/* Side sheet on desktop: slides in from the right edge. */
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes drawer-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+.drawer-in {
+  animation: drawer-in 260ms var(--ease-drawer) both;
+}
+.drawer-out {
+  animation: drawer-out 160ms ease-out both;
+}
+
+/* Bottom sheet on phones: dialogs and drawers rise from the bottom edge. */
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+@media (max-width: 639px) {
+  .modal-in,
+  .drawer-in {
+    animation: sheet-in 280ms var(--ease-drawer) both;
+  }
+  .modal-out,
+  .drawer-out {
+    animation: sheet-out 180ms ease-out both;
+  }
+}
+
 @keyframes scrim-in {
   from {
     opacity: 0;
@@ -128,9 +216,24 @@ html {
 .scrim-out {
   animation: scrim-in 150ms ease-out reverse both;
 }
+.scrim {
+  background: var(--scrim);
+}
+
+/* Popover menus scale from their trigger. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+.pop-in {
+  transform-origin: top right;
+  animation: pop-in 160ms var(--ease-out) both;
+}
 
 .skeleton {
-  background: linear-gradient(90deg, #ecebe5 0%, #f4f3ee 50%, #ecebe5 100%);
+  background: linear-gradient(90deg, var(--skeleton-a) 0%, var(--skeleton-b) 50%, var(--skeleton-a) 100%);
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
 }
@@ -141,6 +244,33 @@ html {
   to {
     background-position: -200% 0;
   }
+}
+
+/* Indeterminate progress for long running checks. */
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.progress-indeterminate {
+  animation: progress-slide 1.2s var(--ease-in-out) infinite;
+}
+
+/* Edge fades on horizontal scrollers, set from JS when there is more to see. */
+.fade-x-end {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+}
+.fade-x-start {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+}
+.fade-x-both {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
 }
 
 /* Reduced motion means fewer and gentler animations, not none: keep fades
@@ -155,8 +285,10 @@ html {
     scroll-behavior: auto;
   }
   .fade-up,
-  .modal-in {
-    animation-name: fade-only;
+  .modal-in,
+  .drawer-in,
+  .pop-in {
+    animation: fade-only 180ms ease-out both;
   }
   .toast,
   .toast[data-leaving] {
@@ -165,12 +297,18 @@ html {
       transform: none;
     }
   }
-  .modal-out {
-    animation-name: scrim-in;
-    animation-direction: reverse;
+  .modal-out,
+  .drawer-out {
+    animation: scrim-in 150ms ease-out reverse both;
   }
   .skeleton {
     animation: none;
+  }
+  .progress-indeterminate {
+    animation: none;
+    transform: none;
+    width: 100% !important;
+    opacity: 0.5;
   }
   *,
   ::before,
@@ -186,27 +324,27 @@ html {
   z-index: 100;
   padding: 8px 14px;
   border-radius: 999px;
-  background: #18181a;
-  color: #fff;
+  background: rgb(var(--ink));
+  color: rgb(var(--on-ink));
   font-size: 14px;
 }
 .skip-link:focus {
-  top: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px));
 }
 
 /* Briefly highlights fields that "Fill with AI" just changed. */
 @keyframes ai-flash {
   0% {
-    box-shadow: 0 0 0 0 rgba(232, 0, 0, 0);
-    background-color: rgba(253, 236, 236, 0);
+    box-shadow: 0 0 0 0 rgb(var(--brand) / 0);
+    background-color: rgb(var(--brand-soft) / 0);
   }
   20% {
-    box-shadow: 0 0 0 3px rgba(232, 0, 0, 0.14);
-    background-color: rgba(253, 236, 236, 0.9);
+    box-shadow: 0 0 0 3px rgb(var(--brand) / 0.16);
+    background-color: rgb(var(--brand-soft) / 0.9);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(232, 0, 0, 0);
-    background-color: rgba(253, 236, 236, 0);
+    box-shadow: 0 0 0 0 rgb(var(--brand) / 0);
+    background-color: rgb(var(--brand-soft) / 0);
   }
 }
 .ai-flash {

@@ -38,6 +38,7 @@ function AppFormModal({
 }) {
   const { create, update } = useApps();
   const services = useServices((s) => s.services);
+  const isSuper = can.hidden(useAuth((s) => s.user?.role));
   const [form, setForm] = useState<AppInput>(blank);
   const [busy, setBusy] = useState(false);
   const [nameErr, setNameErr] = useState<string | null>(null);
@@ -64,7 +65,13 @@ function AppFormModal({
     ai.setOpen(false);
     setForm(
       initial
-        ? { name: initial.name, description: initial.description, mode: initial.mode, allowed_services: initial.allowed_services ?? [] }
+        ? {
+            name: initial.name,
+            description: initial.description,
+            mode: initial.mode,
+            allowed_services: initial.allowed_services ?? [],
+            lease_hidden: initial.lease_hidden,
+          }
         : blank,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,12 +85,15 @@ function AppFormModal({
     }
     setBusy(true);
     try {
+      // Only a superadmin may send lease_hidden; the server refuses it from anyone else.
+      const { lease_hidden, ...rest } = form;
+      const payload: AppInput = isSuper ? { ...rest, lease_hidden: !!lease_hidden } : rest;
       if (initial) {
-        await update(initial.id, { ...form, name: form.name.trim() });
+        await update(initial.id, { ...payload, name: form.name.trim() });
         toast.success(`Saved ${form.name}`);
         onClose();
       } else {
-        const res = await create({ ...form, name: form.name.trim() });
+        const res = await create({ ...payload, name: form.name.trim() });
         onClose();
         onCreated(res);
       }
@@ -99,7 +109,7 @@ function AppFormModal({
       open={open}
       onClose={onClose}
       title={initial ? `Edit ${initial.name}` : "Create app"}
-      description={initial ? undefined : "An app is a consumer such as a website or an agent. It gets its own token."}
+      description={initial ? undefined : "An app is anything that calls Cogito, such as a website, an agent or a script. Each gets its own token."}
       headerAction={<AiFillButton ai={ai} />}
       footer={
         <>
@@ -144,9 +154,17 @@ function AppFormModal({
             empty="No services yet. Add one from the catalog first."
           />
           <div className="mt-1 text-xs text-muted">
-            {form.allowed_services.length ? `Limited to ${plural(form.allowed_services.length, "service")}.` : "None selected means the app can use every service."}
+            {form.allowed_services.length ? `Limited to ${plural(form.allowed_services.length, "service")}.` : "Pick none to allow every service."}
           </div>
         </div>
+        {isSuper && (
+          <Toggle
+            checked={!!form.lease_hidden}
+            onChange={(v) => setForm({ ...form, lease_hidden: v })}
+            label="Lease hidden keys"
+            description="Lets this app use hidden keys. Leases and some upstream responses reveal the plain key, so turn this on only for apps you trust. Rotating the token as an admin turns it off."
+          />
+        )}
       </form>
     </Modal>
   );
@@ -169,12 +187,12 @@ function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null;
           <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              Copy this token now. It is shown once and Cogito only stores a hash of it.
-              {rotated && " The previous token stopped working immediately."}
+              Copy this token now. Cogito stores only a hash, so it cannot show the token again.
+              {rotated && " The old token has stopped working."}
             </span>
           </div>
           <SecretBox value={result.token} />
-          <p className="font-mono text-[11px] text-muted">Send it as Authorization: Bearer {result.app.token_prefix}...</p>
+          <p className="wrap-anywhere font-mono text-[11px] text-muted">Send it as Authorization: Bearer {result.app.token_prefix}...</p>
         </div>
       )}
     </Modal>
@@ -216,7 +234,7 @@ export function AppsPage() {
   const toggleActive = async (a: App, v: boolean) => {
     try {
       await update(a.id, { active: v });
-      toast.success(`${a.name} ${v ? "activated" : "paused"}`);
+      toast.success(v ? `${a.name} is active again` : `${a.name} is paused. Its token stops working until you turn it back on.`);
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -255,8 +273,8 @@ export function AppsPage() {
           title="No apps yet"
           body={
             manage
-              ? "Create an app for each website, agent or script that needs keys. Each one gets a cog_ token for proxy or lease calls."
-              : "An admin has not created any apps yet."
+              ? "Create one app per website, agent or script. Each gets its own token, so you can pause or rotate it without touching the others."
+              : "No apps yet. Ask an admin to create one."
           }
           action={
             manage ? (
@@ -269,7 +287,7 @@ export function AppsPage() {
       ) : (
         <ul className="space-y-2.5">
           {sorted.map((a) => (
-            <li key={a.id} className="rounded-card bg-white p-4 shadow-card sm:px-5">
+            <li key={a.id} className="rounded-card bg-surface p-4 shadow-card sm:px-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -278,13 +296,13 @@ export function AppsPage() {
                     {!a.active && <Badge>paused</Badge>}
                   </div>
                   {a.description && <div className="mt-0.5 text-[13px] text-muted">{a.description}</div>}
-                  <div className="mt-1.5 font-mono text-xs text-muted">
+                  <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
                     {a.token_prefix}... · {a.allowed_services?.length ? a.allowed_services.map((s) => nameBySlug[s] ?? s).join(", ") : "all services"} ·{" "}
                     <span title={dateTime(a.last_used_at)}>used {relTime(a.last_used_at, now)}</span>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} label={undefined} />
+                <div className="flex shrink-0 flex-wrap items-center gap-1">
+                  <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} ariaLabel={a.active ? `${a.name} is active` : `${a.name} is paused`} />
                   {manage && (
                     <>
                       <span className="mx-1 h-5 w-px bg-line" />

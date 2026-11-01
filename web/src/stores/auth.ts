@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { api, setUnauthorizedHandler } from "../lib/api";
 import type { User } from "../lib/types";
 
+const EXPIRE_KEY = "cogito.expired_at";
+
 type Status = "loading" | "setup" | "anonymous" | "authenticated" | "error";
 
 interface AuthStore {
@@ -28,7 +30,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       else if (s.user) set({ status: "authenticated", user: s.user, error: null });
       else set({ status: "anonymous", user: null, error: null });
     } catch (e) {
-      set({ status: "error", error: e instanceof Error ? e.message : "Cannot reach server" });
+      set({ status: "error", error: e instanceof Error ? e.message : "Cannot reach the Cogito server." });
     }
   },
 
@@ -52,6 +54,8 @@ export const useAuth = create<AuthStore>((set, get) => ({
       await api.logout();
     } finally {
       set({ status: "anonymous", user: null });
+      // A full page load drops every store, so the next user never sees cached data.
+      window.location.assign("/login");
     }
   },
 
@@ -62,7 +66,19 @@ export const useAuth = create<AuthStore>((set, get) => ({
   },
 
   expire: () => {
-    if (get().status === "authenticated") set({ status: "anonymous", user: null });
+    if (get().status !== "authenticated") return;
+    set({ status: "anonymous", user: null });
+    // Reload the current URL so every store starts empty; the router then sends
+    // the user to login and back here afterwards. If we already reloaded for an
+    // expiry moments ago, stop instead of looping.
+    let recent = false;
+    try {
+      recent = Date.now() - Number(sessionStorage.getItem(EXPIRE_KEY) ?? 0) < 10_000;
+      sessionStorage.setItem(EXPIRE_KEY, String(Date.now()));
+    } catch {
+      // Storage can be unavailable; a reload is still the right default.
+    }
+    if (!recent) window.location.reload();
   },
 }));
 

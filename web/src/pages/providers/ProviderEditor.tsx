@@ -18,6 +18,7 @@ import { ApiError, api, errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { dateTime, plural, relTime, slugify } from "../../lib/format";
 import { blankProviderInput, inputOf, normalizeSpec } from "../../lib/providerSpec";
+import { safeHref } from "../../lib/url";
 import type { LiveReport, ProviderDetail, ProviderInput, ProviderSpec, TestReport } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
 import { useAuth } from "../../stores/auth";
@@ -45,20 +46,20 @@ const PROVIDER_AI_FIELDS = ["name", "category", "description", "website", "docs_
 // ---------------------------------------------------------------- validation panel
 
 export function TestReportList({ report }: { report: TestReport }) {
-  if (!report.results?.length) return <p className="text-xs text-muted">No fixture tests in this spec.</p>;
+  if (!report.results?.length) return <p className="text-xs text-muted">This spec has no tests yet.</p>;
   return (
     <ul className="space-y-1.5">
       {report.results.map((r, i) => (
         <li key={i} className="flex items-start gap-2 text-[13px]">
           {r.ok ? (
-            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="passed" />
+            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700" aria-label="passed" />
           ) : (
-            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" aria-label="failed" />
+            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-700" aria-label="failed" />
           )}
           <div className="min-w-0">
-            <div className="truncate text-ink">{r.name || `test ${i + 1}`}</div>
+            <div className="break-words text-ink">{r.name || `Test ${i + 1}`}</div>
             {!r.ok && (
-              <div className="font-mono text-[11px] text-red-700">
+              <div className="wrap-anywhere font-mono text-[11px] text-red-700">
                 expected {r.expect}, got {r.got || "nothing"}
                 {r.detail ? `. ${r.detail}` : ""}
               </div>
@@ -81,13 +82,13 @@ function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void })
   else if (v.state === "checking")
     head = (
       <span className="flex items-center gap-2 text-muted">
-        <Loader2 className="h-4 w-4 animate-spin" /> Validating and running tests
+        <Loader2 className="h-4 w-4 animate-spin" /> Checking the spec and running tests
       </span>
     );
   else if (v.state === "error")
     head = (
       <span className="flex items-center gap-2 text-amber-800">
-        <AlertTriangle className="h-4 w-4" /> Validation unavailable
+        <AlertTriangle className="h-4 w-4" /> Could not check the spec
       </span>
     );
   else {
@@ -107,7 +108,7 @@ function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void })
     );
   }
   return (
-    <section aria-label="Validation" aria-live="polite" className="rounded-card bg-white p-4 shadow-card">
+    <section aria-label="Validation" aria-live="polite" className="rounded-card bg-surface p-4 shadow-card">
       <div className="text-[13px] font-medium">{head}</div>
       {v.state === "error" && (
         <p className="mt-2 text-xs text-muted">
@@ -169,7 +170,7 @@ function OverviewTab({
 
   return (
     <div className="space-y-5">
-      <Section title="Identity" description="How this provider appears across Cogito." actions={!readOnly && <AiFillButton ai={ai} />}>
+      <Section title="Identity" description="How this provider shows up across Cogito." actions={!readOnly && <AiFillButton ai={ai} />}>
         <AiFillPanel ai={ai} />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Name" required error={errors.name} className={ai.flash("name")}>
@@ -180,15 +181,15 @@ function OverviewTab({
                 const name = e.target.value;
                 setDraft((d) => ({ ...d, name, slug: isNew && (d.slug === "" || d.slug === slugify(d.name)) ? slugify(name) : d.slug }));
               }}
-              placeholder="Resend"
+              placeholder="Acme Mail"
             />
           </Field>
-          <Field label="Slug" required error={errors.slug} hint={isNew ? "Lowercase id used by services. Fixed after create." : "Fixed. Services reference it."}>
+          <Field label="Slug" required error={errors.slug} hint={isNew ? "Lowercase id that services use. You cannot change it later." : "Fixed, because services use it."}>
             <Input
               value={draft.slug}
               disabled={!isNew || readOnly}
               onChange={(e) => set("slug", e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
-              placeholder="resend"
+              placeholder="acme-mail"
               spellCheck={false}
               className="font-mono"
             />
@@ -196,7 +197,7 @@ function OverviewTab({
           <Field label="Category" className={ai.flash("category")}>
             <Input value={draft.category} disabled={readOnly} onChange={(e) => set("category", e.target.value)} placeholder="Email" />
           </Field>
-          <Field label="Status" hint="Disabled providers cannot be picked for new services.">
+          <Field label="Status" hint="New services cannot use a disabled provider.">
             <Select value={draft.status} disabled={readOnly} onChange={(e) => set("status", e.target.value as ProviderInput["status"])}>
               <option value="active">active</option>
               <option value="disabled">disabled</option>
@@ -206,12 +207,12 @@ function OverviewTab({
             <Textarea rows={2} value={draft.description} disabled={readOnly} onChange={(e) => set("description", e.target.value)} placeholder="Transactional email API" />
           </Field>
           <Field label="Website" error={errors.website} className={ai.flash("website")}>
-            <Input type="url" inputMode="url" value={draft.website} disabled={readOnly} onChange={(e) => set("website", e.target.value)} placeholder="https://resend.com" className="font-mono" />
+            <Input type="url" inputMode="url" value={draft.website} disabled={readOnly} onChange={(e) => set("website", e.target.value)} placeholder="https://example.com" className="font-mono" />
           </Field>
           <Field label="Docs URL" error={errors.docs_url} className={ai.flash("docs_url")}>
-            <Input type="url" inputMode="url" value={draft.docs_url} disabled={readOnly} onChange={(e) => set("docs_url", e.target.value)} placeholder="https://resend.com/docs" className="font-mono" />
+            <Input type="url" inputMode="url" value={draft.docs_url} disabled={readOnly} onChange={(e) => set("docs_url", e.target.value)} placeholder="https://example.com/docs" className="font-mono" />
           </Field>
-          <Field label="Color" hint="Used for the lettermark when there is no logo." className={ai.flash("color")}>
+          <Field label="Color" hint="Fills the lettermark when there is no logo." className={ai.flash("color")}>
             <div className="flex items-center gap-2">
               <input
                 type="color"
@@ -219,7 +220,7 @@ function OverviewTab({
                 value={/^#[0-9a-f]{6}$/i.test(draft.color) ? draft.color : "#6b6b66"}
                 disabled={readOnly}
                 onChange={(e) => set("color", e.target.value)}
-                className="tap h-10 w-12 shrink-0 cursor-pointer rounded-xl border border-line bg-white p-1"
+                className="tap h-10 w-12 shrink-0 cursor-pointer rounded-xl border border-line bg-surface p-1"
               />
               <Input value={draft.color} disabled={readOnly} onChange={(e) => set("color", e.target.value)} placeholder="#3b6ef5" className="font-mono" />
             </div>
@@ -227,11 +228,11 @@ function OverviewTab({
         </div>
       </Section>
 
-      <Section title="Logo" description="Shown on provider and service cards, and in pickers.">
+      <Section title="Logo" description="Shows on provider and service cards, and in pickers.">
         {isNew ? (
           <div className="flex items-center gap-4">
             <ProviderLogo provider={{ name: draft.name || "?", color: draft.color, logo_url: null }} size="xl" />
-            <p className="text-[13px] text-muted">Save the provider first, then upload a logo or fetch one from its website.</p>
+            <p className="text-[13px] text-muted">Create the provider first, then upload a logo or fetch one from its website.</p>
           </div>
         ) : (
           <LogoEditor
@@ -287,9 +288,9 @@ function OverviewTab({
 function VersionsTab({ detail, readOnly, onRolledBack }: { detail: ProviderDetail; readOnly: boolean; onRolledBack: () => void }) {
   const rollback = useProviders((s) => s.rollback);
   const versions = [...(detail.versions ?? [])].sort((a, b) => b.version - a.version);
-  if (!versions.length) return <Empty icon={<History className="h-5 w-5" />} title="No version history" body="Every save creates a version you can roll back to." />;
+  if (!versions.length) return <Empty icon={<History className="h-5 w-5" />} title="No version history" body="Each save creates a version you can roll back to." />;
   return (
-    <ol className="divide-y divide-line overflow-hidden rounded-card bg-white shadow-card">
+    <ol className="divide-y divide-line overflow-hidden rounded-card bg-surface shadow-card">
       {versions.map((v) => {
         const current = v.version === detail.version;
         return (
@@ -334,7 +335,7 @@ export function LiveReportView({ live }: { live: LiveReport }) {
     <div className="space-y-3">
       <div className={cx("flex items-center gap-2 text-[14px] font-medium", live.ok ? "text-emerald-700" : "text-red-700")}>
         {live.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-        {live.ok ? "The key works against the real API" : "Live check failed"}
+        {live.ok ? "The key works with the real API" : "The live check failed"}
       </div>
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="rounded-xl bg-soft p-3">
@@ -364,7 +365,7 @@ export function LiveReportView({ live }: { live: LiveReport }) {
                 )}
               </>
             ) : (
-              <span className="text-muted">not run (no safe example)</span>
+              <span className="text-muted">Not run: no example is marked safe</span>
             )}
             {live.example.detail && <div className="mt-1 break-words text-xs text-muted">{live.example.detail}</div>}
           </dd>
@@ -394,11 +395,11 @@ function LiveCheckTab({ slug, dirty, readOnly }: { slug: string; dirty: boolean;
   return (
     <Section
       title="Live check"
-      description="Runs the health check and the first safe example against the real API with a key you paste. The key is not stored."
+      description="Runs the health check and the first safe example against the real API with a key you paste. Cogito does not store the key."
     >
       {dirty && (
         <Callout tone="amber" icon={<AlertTriangle className="h-4 w-4" />} className="mb-4">
-          This checks the saved version. Save your changes first to test them.
+          This checks the saved version. Save first to test your changes.
         </Callout>
       )}
       <form
@@ -409,7 +410,7 @@ function LiveCheckTab({ slug, dirty, readOnly }: { slug: string; dirty: boolean;
         }}
       >
         <Field label="Test key" className="flex-1" error={err}>
-          <Input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="paste an API key" disabled={readOnly} className="font-mono" />
+          <Input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Paste an API key" disabled={readOnly} className="font-mono" />
         </Field>
         <Button type="submit" variant="primary" loading={busy} disabled={!secret.trim() || readOnly} icon={<KeyRound className="h-4 w-4" />}>
           Run live check
@@ -429,8 +430,8 @@ function LiveCheckTab({ slug, dirty, readOnly }: { slug: string; dirty: boolean;
 function localErrors(d: ProviderInput, isNew: boolean): Record<string, string> {
   const e: Record<string, string> = {};
   if (!d.name.trim()) e.name = "Give the provider a name.";
-  if (isNew && !d.slug.trim()) e.slug = "A slug is required.";
-  else if (isNew && !/^[a-z0-9][a-z0-9_-]*$/.test(d.slug)) e.slug = "Lowercase letters, numbers, dashes or underscores.";
+  if (isNew && !d.slug.trim()) e.slug = "Add a slug.";
+  else if (isNew && !/^[a-z0-9][a-z0-9_-]*$/.test(d.slug)) e.slug = "Use lowercase letters, numbers, dashes or underscores.";
   for (const k of ["website", "docs_url"] as const) if (d[k] && !/^https?:\/\//i.test(d[k])) e[k] = "Start with http:// or https://.";
   return e;
 }
@@ -557,7 +558,7 @@ export function ProviderEditorPage() {
       if (e instanceof ApiError && e.data && typeof e.data === "object" && ("errors" in e.data || "report" in e.data)) {
         const data = e.data as { errors?: string[]; report?: TestReport };
         setValidation({ state: "done", errors: data.errors ?? [e.message], report: data.report ?? null });
-        toast.error("Not saved: fix the problems listed under Validation.");
+        toast.error("Not saved. Fix the problems listed under Validation.");
       } else toast.error(errorMessage(e));
     } finally {
       setSaving(false);
@@ -576,7 +577,7 @@ export function ProviderEditorPage() {
         title="Provider not found"
         body="It may have been deleted, or the link is wrong."
         action={
-          <Link to="/providers" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-white">
+          <Link to="/providers" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-on-ink">
             All providers
           </Link>
         }
@@ -606,16 +607,16 @@ export function ProviderEditorPage() {
   };
 
   return (
-    <div className={dirty && !readOnly ? "pb-24" : undefined}>
+    <div className={(dirty || isNew) && !readOnly ? "pb-44 sm:pb-24" : undefined}>
       <Link to="/providers" className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
-        <ArrowLeft className="h-3.5 w-3.5" /> providers
+        <ArrowLeft className="h-3.5 w-3.5" /> Providers
       </Link>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-center gap-4">
           <ProviderLogo provider={{ name: draft.name || "New", color: draft.color, logo_url: detail?.logo_url ?? null }} size="lg" />
           <div className="min-w-0">
-            <h1 className="truncate font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">
+            <h1 className="break-words font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">
               {isNew ? draft.name || "New provider" : draft.name}
             </h1>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono text-xs text-muted">
@@ -626,14 +627,14 @@ export function ProviderEditorPage() {
                   <Badge>v{detail.version}</Badge>
                   {detail.status === "disabled" && <Badge tone="amber">disabled</Badge>}
                   <span>· {plural(detail.services_count, "service")}</span>
-                  {detail.docs_url && (
-                    <a href={detail.docs_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-ink">
+                  {safeHref(detail.docs_url) && (
+                    <a href={safeHref(detail.docs_url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-ink">
                       · docs <ExternalLink className="h-3 w-3" />
                     </a>
                   )}
                 </>
               ) : (
-                <span>Write the rules by hand, or let the AI builder do it from a docs URL.</span>
+                <span>Write the rules by hand, or let the AI builder write them from a docs URL.</span>
               )}
             </div>
           </div>
@@ -641,7 +642,7 @@ export function ProviderEditorPage() {
         {!readOnly && (
           <div className="flex shrink-0 flex-wrap gap-2">
             {isNew ? (
-              <Link to="/providers/ai" className="tap inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-medium text-ink shadow-card hover:bg-soft">
+              <Link to="/providers/ai" className="tap inline-flex h-10 items-center gap-2 rounded-full bg-surface px-4 text-sm font-medium text-ink shadow-card hover:bg-soft">
                 <Sparkles className="h-4 w-4 text-brand" /> Build with AI instead
               </Link>
             ) : (
@@ -651,9 +652,9 @@ export function ProviderEditorPage() {
                 </Button>
                 <Link
                   to={`/providers/ai?provider=${encodeURIComponent(draft.slug)}`}
-                  className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-white hover:bg-black"
+                  className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-on-ink hover:bg-ink-strong"
                 >
-                  <Sparkles className="h-4 w-4 text-[#ff6b6b]" /> Improve with AI
+                  <Sparkles className="h-4 w-4 text-spark" /> Improve with AI
                 </Link>
               </>
             )}
@@ -662,7 +663,7 @@ export function ProviderEditorPage() {
       </div>
 
       {readOnly && (
-        <Callout className="mt-6">You can view this provider. Only admins can edit it.</Callout>
+        <Callout className="mt-6">You can view this provider. Only admins can change it.</Callout>
       )}
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -690,17 +691,17 @@ export function ProviderEditorPage() {
       </div>
 
       {!readOnly && (dirty || isNew) && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 backdrop-blur">
-          <div className="mx-auto flex max-w-[1076px] flex-col gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:px-6">
+        <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 backdrop-blur">
+          <div className="mx-auto flex max-w-[1076px] flex-col gap-2 px-4 py-3 sm:flex-row lg:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:items-center sm:px-6">
             <div className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-muted">
               <span className="h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden="true" />
-              {isNew ? "New provider, not saved yet" : "Unsaved changes. Saving creates a new version."}
+              {isNew ? "New provider, not created yet" : "Unsaved changes. Saving creates a new version."}
             </div>
             {!isNew && (
               <Input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Version note (optional)"
+                placeholder="What changed (optional)"
                 aria-label="Version note"
                 className="sm:w-64"
               />

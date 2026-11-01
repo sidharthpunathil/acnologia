@@ -1,4 +1,4 @@
-import { cloneElement, forwardRef, isValidElement, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactElement, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { cloneElement, forwardRef, type KeyboardEvent, isValidElement, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactElement, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { Loader2 } from "lucide-react";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
@@ -9,10 +9,10 @@ type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-ink text-white hover:bg-black disabled:bg-ink/40",
-  secondary: "bg-white text-ink shadow-card hover:bg-[#fafaf7] disabled:text-faint",
-  ghost: "text-muted hover:text-ink hover:bg-black/[0.04] disabled:text-faint",
-  danger: "bg-red-600 text-white hover:bg-red-700 disabled:bg-red-300",
+  primary: "bg-ink text-on-ink hover:bg-ink-strong disabled:bg-ink/40",
+  secondary: "bg-surface text-ink shadow-card hover:bg-soft disabled:text-faint",
+  ghost: "text-muted hover:text-ink hover:bg-ink/[0.05] disabled:text-faint",
+  danger: "bg-red-600 text-white hover:bg-red-600/90 disabled:bg-red-600/40",
 };
 
 const sizes: Record<Size, string> = {
@@ -62,7 +62,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={cx(
-        "icon-btn inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-black/[0.05] hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+        "icon-btn inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-ink/[0.06] hover:text-ink active:scale-[0.94] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100",
         className,
       )}
       {...rest}
@@ -73,7 +73,7 @@ export function IconButton({
 }
 
 const fieldBase =
-  "field-input w-full rounded-xl border border-line bg-white px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10 disabled:bg-canvas disabled:text-muted";
+  "field-input w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10 disabled:bg-canvas disabled:text-muted";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...rest },
@@ -163,24 +163,27 @@ export function Toggle({
   label,
   description,
   disabled,
+  ariaLabel,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label?: string;
   description?: string;
   disabled?: boolean;
+  /** Accessible name when there is no visible label. */
+  ariaLabel?: string;
 }) {
   const sw = (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      aria-label={label ?? ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
-        "switch-hit relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full bg-clip-content transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-ink" : "bg-[#d9d8d1]",
+        "switch-hit relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        checked ? "bg-ink" : "bg-line-strong",
       )}
     >
       <span
@@ -204,19 +207,19 @@ export function Toggle({
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cx("rounded-card bg-white shadow-card", className)}>{children}</div>;
+  return <div className={cx("rounded-card bg-surface shadow-card", className)}>{children}</div>;
 }
 
 type BadgeTone = "neutral" | "green" | "amber" | "red" | "blue" | "violet" | "dark";
 
 const tones: Record<BadgeTone, string> = {
-  neutral: "bg-[#efeee8] text-muted",
+  neutral: "bg-well text-muted",
   green: "bg-emerald-50 text-emerald-700",
   amber: "bg-amber-50 text-amber-700",
   red: "bg-red-50 text-red-700",
   blue: "bg-sky-50 text-sky-700",
   violet: "bg-violet-50 text-violet-700",
-  dark: "bg-ink text-white",
+  dark: "bg-ink text-on-ink",
 };
 
 export function Badge({
@@ -262,8 +265,8 @@ export function Empty({
   className?: string;
 }) {
   return (
-    <div className={cx("flex flex-col items-center rounded-card border border-dashed border-[#dcdbd3] px-6 py-12 text-center", className)}>
-      {icon && <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white text-muted shadow-card">{icon}</div>}
+    <div className={cx("flex flex-col items-center rounded-card border border-dashed border-line-strong px-6 py-12 text-center", className)}>
+      {icon && <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-surface text-muted shadow-card">{icon}</div>}
       <div className="text-[15px] font-medium text-ink">{title}</div>
       {body && <div className="mt-1 max-w-md text-sm text-muted">{body}</div>}
       {action && <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div>}
@@ -309,7 +312,7 @@ export function PageSkeleton({ variant = "grid", tiles = 0, bare }: { variant?: 
       {variant === "grid" ? (
         <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3.5 rounded-card bg-white px-4 py-4 shadow-card">
+            <div key={i} className="flex items-center gap-3.5 rounded-card bg-surface px-4 py-4 shadow-card">
               <Skeleton className="h-10 w-10 rounded-[11px]" />
               <div className="flex-1">
                 <Skeleton className="h-4 w-1/2" />
@@ -321,7 +324,7 @@ export function PageSkeleton({ variant = "grid", tiles = 0, bare }: { variant?: 
       ) : (
         <div className="mt-8 space-y-2.5">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-card bg-white p-4 shadow-card">
+            <div key={i} className="rounded-card bg-surface p-4 shadow-card">
               <Skeleton className="h-4 w-40" />
               <Skeleton className="mt-2 h-3 w-3/4" />
             </div>
@@ -332,7 +335,7 @@ export function PageSkeleton({ variant = "grid", tiles = 0, bare }: { variant?: 
   );
 }
 
-/** A titled white card section with optional actions, used for settings and editors. */
+/** A titled card section with optional actions, used for settings and editors. */
 export function Section({
   title,
   description,
@@ -347,7 +350,7 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={cx("rounded-card bg-white p-5 shadow-card sm:p-6", className)}>
+    <section className={cx("rounded-card bg-surface p-5 shadow-card sm:p-6", className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
@@ -427,10 +430,70 @@ export function Stat({
             ? "text-violet-700"
             : "text-ink";
   return (
-    <div className="min-w-0 rounded-card bg-white px-4 py-3 shadow-card">
+    <div className="min-w-0 rounded-card bg-surface px-4 py-3 shadow-card">
       <div className="truncate font-mono text-[11px] uppercase tracking-wide text-faint">{label}</div>
       <div className={cx("mt-1 font-mono text-xl tabular-nums", color)}>{value}</div>
       {sub && <div className="mt-0.5 truncate font-mono text-[11px] text-faint">{sub}</div>}
+    </div>
+  );
+}
+
+export interface SegmentItem<T extends string> {
+  id: T;
+  label: string;
+  icon?: ReactNode;
+}
+
+/** Segmented control with radio semantics. Arrow keys move the selection. */
+export function Segmented<T extends string>({
+  items,
+  value,
+  onChange,
+  label,
+  className,
+  size = "md",
+}: {
+  items: SegmentItem<T>[];
+  value: T;
+  onChange: (v: T) => void;
+  label: string;
+  className?: string;
+  size?: "sm" | "md";
+}) {
+  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    let j = -1;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % items.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + items.length) % items.length;
+    if (j < 0) return;
+    e.preventDefault();
+    onChange(items[j].id);
+    const group = e.currentTarget.parentElement;
+    (group?.children[j] as HTMLElement | undefined)?.focus();
+  };
+  return (
+    <div role="radiogroup" aria-label={label} className={cx("inline-flex max-w-full rounded-full bg-well p-0.5", className)}>
+      {items.map((it, i) => {
+        const on = it.id === value;
+        return (
+          <button
+            key={it.id}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            tabIndex={on ? 0 : -1}
+            onClick={() => onChange(it.id)}
+            onKeyDown={(e) => onKey(e, i)}
+            className={cx(
+              "tap inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full transition-[background-color,color,box-shadow] duration-150",
+              size === "sm" ? "px-2.5 py-1 text-[12px]" : "px-3 py-1.5 text-[13px]",
+              on ? "bg-surface font-medium text-ink shadow-card" : "text-muted hover:text-ink",
+            )}
+          >
+            {it.icon}
+            {it.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

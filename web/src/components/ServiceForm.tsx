@@ -69,9 +69,9 @@ export type ServiceErrors = Partial<Record<keyof ServiceInput, string>>;
 export function validateService(v: ServiceInput): ServiceErrors {
   const e: ServiceErrors = {};
   if (!v.name.trim()) e.name = "Give the service a name.";
-  if (!v.slug.trim()) e.slug = "A slug is required. Apps call it in /proxy/<slug>/.";
+  if (!v.slug.trim()) e.slug = "Add a slug. Apps call it in /proxy/<slug>/.";
   else if (!/^[a-z0-9][a-z0-9_-]*$/.test(v.slug)) e.slug = "Use lowercase letters, numbers, dashes or underscores.";
-  if (!v.base_url.trim()) e.base_url = "Where Cogito sends upstream requests, such as https://api.example.com.";
+  if (!v.base_url.trim()) e.base_url = "Add the API address Cogito forwards to, such as https://api.example.com.";
   else if (!/^https?:\/\//i.test(v.base_url.trim())) e.base_url = "Start with http:// or https://.";
   if ((v.max_concurrency ?? 0) < 0 || (v.max_concurrency ?? 0) > 1000) e.max_concurrency = "Between 0 (unlimited) and 1000.";
   if ((v.queue_timeout_sec ?? 0) < 0 || (v.queue_timeout_sec ?? 0) > 300) e.queue_timeout_sec = "Between 0 and 300 seconds.";
@@ -100,7 +100,7 @@ export function ConcurrencyFields({
     <>
       <Field
         label="Max concurrent requests per key"
-        hint="0 = unlimited. A key at its limit is skipped until a request finishes."
+        hint="0 means no limit. A key at its limit is skipped until one of its requests finishes."
         error={errors?.max_concurrency}
         className={flash?.("max_concurrency")}
       >
@@ -116,7 +116,7 @@ export function ConcurrencyFields({
       </Field>
       <Field
         label="Queue wait (sec)"
-        hint="How long a caller waits for a free key when all are busy. 0 fails fast with all_keys_busy."
+        hint="How long a caller waits for a free key when every key is busy. 0 fails right away with all_keys_busy."
         error={errors?.queue_timeout_sec}
         className={flash?.("queue_timeout_sec")}
       >
@@ -175,11 +175,11 @@ export function ServiceForm({
         <Field label="Category" hint="Groups services in the catalog." className={f("category")}>
           <Input value={value.category} onChange={(e) => set("category", e.target.value)} placeholder="Search" />
         </Field>
-        <Field label="Provider" hint="Decides rate limit detection and health checks." className={f("provider")}>
+        <Field label="Provider" hint="Sets how Cogito spots rate limits and checks keys." className={f("provider")}>
           <ProviderSelect value={value.provider} onChange={(v) => set("provider", v)} />
         </Field>
         <Field label="Description" className={`sm:col-span-2 ${f("description")}`}>
-          <Textarea rows={2} value={value.description} onChange={(e) => set("description", e.target.value)} placeholder="What this pool is for" />
+          <Textarea rows={2} value={value.description} onChange={(e) => set("description", e.target.value)} placeholder="What this pool is for, such as search for the scraper" />
         </Field>
       </fieldset>
 
@@ -207,7 +207,7 @@ export function ServiceForm({
           <Input
             value={value.auth_name}
             onChange={(e) => set("auth_name", e.target.value)}
-            placeholder={value.auth_type === "query" ? "api_key" : value.auth_type === "bearer" ? "Authorization" : "xi-api-key"}
+            placeholder={value.auth_type === "query" ? "api_key" : value.auth_type === "bearer" ? "Authorization" : "X-API-Key"}
             spellCheck={false}
             className="font-mono"
           />
@@ -219,10 +219,10 @@ export function ServiceForm({
         <Field label="Strategy" hint={STRATEGY_HELP[value.strategy]} className={f("strategy")}>
           <StrategySelect value={value.strategy} onChange={(s) => set("strategy", s)} />
         </Field>
-        <Field label="Cooldown (sec)" hint="Base rest after a rate limit, doubled per consecutive failure." error={errors?.cooldown_sec} className={f("cooldown_sec")}>
+        <Field label="Cooldown (sec)" hint="How long a key rests after a rate limit. Doubles with each failure in a row." error={errors?.cooldown_sec} className={f("cooldown_sec")}>
           <Input type="number" inputMode="numeric" min={0} value={value.cooldown_sec} onChange={(e) => set("cooldown_sec", Number(e.target.value))} />
         </Field>
-        <Field label="Max attempts" hint="Proxy retries with the next key up to this many times." error={errors?.max_attempts} className={f("max_attempts")}>
+        <Field label="Max attempts" hint="How many keys the proxy tries before giving up." error={errors?.max_attempts} className={f("max_attempts")}>
           <Input type="number" inputMode="numeric" min={1} max={20} value={value.max_attempts} onChange={(e) => set("max_attempts", Number(e.target.value))} />
         </Field>
         <div className="hidden sm:block" />

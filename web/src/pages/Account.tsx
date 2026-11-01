@@ -31,7 +31,7 @@ export function AccountPage() {
     try {
       await updateMe({ name: name.trim(), current_password: nameCurrent });
       setNameCurrent("");
-      toast.success("Name updated");
+      toast.success("Name saved");
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {
@@ -41,8 +41,8 @@ export function AccountPage() {
 
   const savePassword = async (e: FormEvent) => {
     e.preventDefault();
-    if (next.length < MIN_PASSWORD) return toast.error(`New password needs at least ${MIN_PASSWORD} characters.`);
-    if (next !== confirm) return toast.error("New passwords do not match.");
+    if (next.length < MIN_PASSWORD) return toast.error(`Use at least ${MIN_PASSWORD} characters for the new password.`);
+    if (next !== confirm) return toast.error("The new passwords do not match.");
     setBusyPw(true);
     try {
       await updateMe({ current_password: current, password: next });
@@ -62,7 +62,7 @@ export function AccountPage() {
       <PageHeader
         title="Account"
         meta={
-          <span className="inline-flex flex-wrap items-center gap-2">
+          <span className="wrap-anywhere inline-flex flex-wrap items-center gap-2">
             {user.email} <Badge tone="dark">{user.role}</Badge> · joined {dateTime(user.created_at)}
           </span>
         }
@@ -86,7 +86,7 @@ export function AccountPage() {
             <Field label="Name">
               <Input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
             </Field>
-            <Field label="Current password" hint="Needed to confirm the change.">
+            <Field label="Current password" hint="Confirms it is you.">
               <Input type="password" value={nameCurrent} onChange={(e) => setNameCurrent(e.target.value)} required autoComplete="current-password" />
             </Field>
             <div className="flex justify-end sm:col-span-2">

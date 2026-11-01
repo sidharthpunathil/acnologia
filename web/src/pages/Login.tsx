@@ -30,7 +30,7 @@ export function LoginPage() {
   };
 
   return (
-    <AuthShell title="Sign in" meta="A self-hosted API key pool">
+    <AuthShell title="Sign in" meta="Self-hosted API key pool">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Email">
           <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
@@ -42,7 +42,7 @@ export function LoginPage() {
         <Button type="submit" variant="primary" loading={busy} className="w-full">
           Sign in
         </Button>
-        <p className="text-xs text-muted">No account? Ask your Cogito superadmin to create one for you.</p>
+        <p className="text-xs text-muted">No account yet? Ask your Cogito superadmin to add you.</p>
       </form>
     </AuthShell>
   );

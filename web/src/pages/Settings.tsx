@@ -10,6 +10,7 @@ import { useAi } from "../stores/ai";
 import { toast } from "../stores/toast";
 import { useTitle } from "../hooks/useTitle";
 import { Badge, Button, Callout, Field, PageHeader, Section, Skeleton, Textarea } from "../components/ui";
+import { ThemePicker } from "../components/ThemePicker";
 
 const RULES_PLACEHOLDER = `One rule per line. For example:
 Always set max_concurrency for voice providers.
@@ -18,11 +19,11 @@ Name services in lowercase.
 Never auto publish a provider without at least one test per rule.`;
 
 const GUARDRAILS = [
-  { icon: FlaskConical, text: "Every spec is validated and fixture tested by the engine before it can be published." },
-  { icon: Lock, text: "The AI writes data only. It cannot execute code on this server." },
-  { icon: KeyRound, text: "Test keys are encrypted during a run and wiped when the run ends." },
-  { icon: RefreshCcw, text: "A run is capped at 40 agent turns, and failed submits go back to the agent at most 3 times." },
-  { icon: CheckCircle2, text: "Every publish is a new provider version, so any change can be rolled back in one click." },
+  { icon: FlaskConical, text: "The engine validates every spec and runs its tests before it can go live." },
+  { icon: Lock, text: "The AI writes data only. It cannot run code on this server." },
+  { icon: KeyRound, text: "Test keys stay encrypted during a run and are wiped when it ends." },
+  { icon: RefreshCcw, text: "A run stops after 40 turns. A failed submit goes back to the agent at most 3 times." },
+  { icon: CheckCircle2, text: "Every publish is a new provider version, so you can roll back any change in one click." },
 ];
 
 export function SettingsPage() {
@@ -54,7 +55,7 @@ export function SettingsPage() {
       const r = await api.putAiRules(text);
       setRules(r);
       setText(r.rules ?? "");
-      toast.success("AI rules saved. They apply to the next AI action.");
+      toast.success("Rules saved. The next AI action follows them.");
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -64,13 +65,15 @@ export function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Settings" meta="AI behavior and guardrails for this Cogito" />
+      <PageHeader title="Settings" meta="Appearance, AI rules and guardrails" />
+
+      <Section className="mb-5" title="Appearance" description="Saved in this browser. System follows your device setting." actions={<ThemePicker />} />
 
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Section
           title="AI rules"
-          description="Policy every AI action must follow: the provider builder, and every Fill with AI button. Write it in plain language."
-          actions={rules?.updated_at ? <span className="font-mono text-[11px] text-faint" title={dateTime(rules.updated_at)}>updated {relTime(rules.updated_at)} by {rules.updated_by || "unknown"}</span> : undefined}
+          description="Plain language rules the AI follows everywhere: in the provider builder and in every Fill with AI button."
+          actions={rules?.updated_at ? <span className="font-mono text-[11px] text-faint" title={dateTime(rules.updated_at)}>updated {relTime(rules.updated_at)} by {rules.updated_by || "someone"}</span> : undefined}
         >
           {loadErr ? (
             <Callout tone="red">Could not load the rules: {loadErr}</Callout>
@@ -80,7 +83,7 @@ export function SettingsPage() {
             <>
               <Field
                 label="Rules"
-                hint={canEdit ? "Saved rules are sent with every AI request. Keep them short and specific." : "Only a superadmin can change these rules."}
+                hint={canEdit ? "Sent with every AI request. Short, specific rules work best." : "Only a superadmin can change these rules."}
               >
                 <Textarea
                   rows={14}
@@ -120,14 +123,14 @@ export function SettingsPage() {
                   <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
                     Enabled <Badge tone="green">ready</Badge>
                   </div>
-                  <div className="mt-0.5 truncate font-mono text-xs text-muted">{status.model}</div>
+                  <div className="wrap-anywhere mt-0.5 font-mono text-xs text-muted">{status.model}</div>
                 </div>
               </div>
             ) : (
               <Callout tone="amber" icon={<Terminal className="h-4 w-4" />}>
                 <div className="font-medium">AI is off</div>
-                <div className="mt-0.5">
-                  {status?.reason || statusError || "No API key configured."} Add <code className="font-mono text-[12px]">ANTHROPIC_API_KEY</code> to <code className="font-mono text-[12px]">.env</code> and restart.
+                <div className="wrap-anywhere mt-0.5">
+                  {status?.reason || statusError || "Add the AI key to .env, then restart Cogito."}
                 </div>
               </Callout>
             )}
@@ -146,7 +149,7 @@ export function SettingsPage() {
               ))}
             </ul>
             <p className="mt-4 flex items-center gap-1.5 text-xs text-muted">
-              <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" /> Rules are guidance for the model; the engine checks still decide what ships.
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> Rules guide the AI. The engine checks still decide what goes live.
             </p>
           </Section>
         </div>

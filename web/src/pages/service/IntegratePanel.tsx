@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import type { ProviderSpec, Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
 import { CodeBlock } from "../../components/CodeBlock";
-import { Card, cx } from "../../components/ui";
+import { Card, Segmented, cx } from "../../components/ui";
 
 type Mode = "proxy" | "lease";
 type Lang = "curl" | "python" | "typescript" | "go";
@@ -17,6 +17,34 @@ const LANGS: { id: Lang; label: string }[] = [
 
 const TOKEN = "cog_...";
 
+/*
+ * Every value below can come from the server (provider spec, service config),
+ * so each one is escaped for the language it lands in before it is pasted into
+ * a snippet. Normal inputs render exactly as a hand written example would.
+ */
+
+/** A string literal for Python, TypeScript or Go. JSON string syntax is valid in all three. */
+const lit = (v: string) => JSON.stringify(v);
+
+/** Single quoted shell word: nothing inside is expanded. */
+const shQ = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * A shell word for `literal` followed by the expansion of `$variable` (if any).
+ * Plain text stays in readable double quotes; anything the shell would expand
+ * inside double quotes is single quoted instead.
+ */
+function sh(literal: string, variable?: string): string {
+  if (!/[$`\\"!]/.test(literal)) return `"${literal}${variable ? `$${variable}` : ""}"`;
+  return shQ(literal) + (variable ? `"$${variable}"` : "");
+}
+
+/** Text that is safe inside a JS template literal. */
+const tpl = (v: string) => v.replace(/[\\`]/g, (c) => `\\${c}`).replace(/\$\{/g, "\\${");
+
+/** An object key for TypeScript: bare when it is a plain identifier. */
+const tsKey = (k: string) => (/^[A-Za-z_$][\w$]*$/.test(k) ? k : lit(k));
+
 /** A representative upstream call, taken from the provider spec, so snippets are runnable. */
 function example(_s: Service, spec?: ProviderSpec): { path: string; params: [string, string][] } {
   // Prefer the provider's own first GET example so new providers get runnable snippets too.
@@ -26,15 +54,15 @@ function example(_s: Service, spec?: ProviderSpec): { path: string; params: [str
 }
 
 function qsOf(params: [string, string][]): string {
-  return params.length ? `?${params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&")}` : "";
+  return params.length ? `?${params.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")}` : "";
 }
 
 function pyDict(params: [string, string][]): string {
-  return `{${params.map(([k, v]) => `"${k}": "${v}"`).join(", ")}}`;
+  return `{${params.map(([k, v]) => `${lit(k)}: ${lit(v)}`).join(", ")}}`;
 }
 
 function tsObj(params: [string, string][]): string {
-  return params.length ? `{ ${params.map(([k, v]) => `${k}: "${v}"`).join(", ")} }` : "{}";
+  return params.length ? `{ ${params.map(([k, v]) => `${tsKey(k)}: ${lit(v)}`).join(", ")} }` : "{}";
 }
 
 /** How the leased secret must be attached upstream, per language. */
@@ -42,8 +70,9 @@ function authFor(s: Service) {
   const name = s.auth_name || (s.auth_type === "query" ? "api_key" : "Authorization");
   return {
     name,
-    curl: s.auth_type === "query" ? "" : s.auth_type === "bearer" ? `-H "Authorization: Bearer $SECRET"` : `-H "${name}: $SECRET"`,
-    curlQuery: s.auth_type === "query" ? `${name}=$SECRET` : "",
+    curl: s.auth_type === "query" ? "" : s.auth_type === "bearer" ? `-H "Authorization: Bearer $SECRET"` : `-H ${sh(`${name}: `, "SECRET")}`,
+    /** The query string key for query auth, already URL encoded; the value is $SECRET. */
+    queryKey: s.auth_type === "query" ? `${encodeURIComponent(name)}=` : "",
   };
 }
 
@@ -53,48 +82,50 @@ function snippets(s: Service, host: string, spec?: ProviderSpec): Record<Mode, R
   const a = authFor(s);
   const q = qsOf(ex.params);
   const upstream = `${s.base_url.replace(/\/$/, "")}${ex.path}`;
+  const proxyUrl = `${host}/proxy/${slug}${ex.path}${q}`;
 
-  const leaseQuery = a.curlQuery ? (q ? `${q}&${a.curlQuery}` : `?${a.curlQuery}`) : q;
+  const leaseCurl = a.queryKey ? sh(`${upstream}${q ? `${q}&` : "?"}${a.queryKey}`, "SECRET") : sh(`${upstream}${q}`);
 
   const pyAuth =
     s.auth_type === "query"
-      ? `params={**${pyDict(ex.params)}, "${a.name}": lease.secret}`
+      ? `params={**${pyDict(ex.params)}, ${lit(a.name)}: lease.secret}`
       : s.auth_type === "bearer"
         ? `params=${pyDict(ex.params)},\n        headers={"Authorization": f"Bearer {lease.secret}"}`
-        : `params=${pyDict(ex.params)},\n        headers={"${a.name}": lease.secret}`;
+        : `params=${pyDict(ex.params)},\n        headers={${lit(a.name)}: lease.secret}`;
 
   const tsUrl =
     s.auth_type === "query"
-      ? `\`\${key.base_url}${ex.path}?${new URLSearchParams([...ex.params]).toString()}${ex.params.length ? "&" : ""}${a.name}=\${key.secret}\``
-      : `\`\${key.base_url}${ex.path}${q}\``;
+      ? `\`\${key.base_url}${tpl(`${ex.path}?${new URLSearchParams([...ex.params]).toString()}${ex.params.length ? "&" : ""}${a.queryKey}`)}\${key.secret}\``
+      : `\`\${key.base_url}${tpl(`${ex.path}${q}`)}\``;
   const tsHeaders =
     s.auth_type === "query"
       ? ""
       : s.auth_type === "bearer"
         ? `, {\n    headers: { Authorization: \`Bearer \${key.secret}\` },\n  }`
-        : `, {\n    headers: { "${a.name}": key.secret },\n  }`;
+        : `, {\n    headers: { ${lit(a.name)}: key.secret },\n  }`;
 
+  const leaseBody = `{"service": ${lit(slug)}, "ttl_sec": 300}`;
 
   return {
     proxy: {
-      curl: `curl "${host}/proxy/${slug}${ex.path}${q}" \\
+      curl: `curl ${sh(proxyUrl)} \\
   -H "Authorization: Bearer ${TOKEN}"
 
 # Tools that only take a URL can pass the token as a query parameter:
-curl "${host}/proxy/${slug}${ex.path}${q ? q + "&" : "?"}cogito_token=${TOKEN}"`,
+curl ${sh(`${proxyUrl}${q ? "&" : "?"}cogito_token=${TOKEN}`)}`,
       python: `from cogito import Cogito
 
-c = Cogito("${host}", "${TOKEN}")
+c = Cogito(${lit(host)}, "${TOKEN}")
 
 # Cogito picks a key, retries on rate limits, and never exposes the secret.
-r = c.proxy("${slug}").get("${ex.path}", params=${pyDict(ex.params)})
+r = c.proxy(${lit(slug)}).get(${lit(ex.path)}, params=${pyDict(ex.params)})
 print(r.json())`,
       typescript: `import { Cogito } from "@cogito/keys";
 
-const cogito = new Cogito({ baseUrl: "${host}", token: process.env.COGITO_TOKEN! });
+const cogito = new Cogito({ baseUrl: ${lit(host)}, token: process.env.COGITO_TOKEN! });
 
 // Cogito picks a key, retries on rate limits, and never exposes the secret.
-const res = await cogito.proxy("${slug}").get("${ex.path}", ${tsObj(ex.params)});
+const res = await cogito.proxy(${lit(slug)}).get(${lit(ex.path)}, ${tsObj(ex.params)});
 console.log(await res.json());`,
       go: `package main
 
@@ -106,7 +137,7 @@ import (
 )
 
 func main() {
-	req, _ := http.NewRequest("GET", "${host}/proxy/${slug}${ex.path}${q}", nil)
+	req, _ := http.NewRequest("GET", ${lit(proxyUrl)}, nil)
 	req.Header.Set("Authorization", "Bearer "+os.Getenv("COGITO_TOKEN"))
 
 	res, err := http.DefaultClient.Do(req)
@@ -123,11 +154,11 @@ func main() {
 curl -X POST "${host}/api/v1/lease" \\
   -H "Authorization: Bearer ${TOKEN}" \\
   -H "Content-Type: application/json" \\
-  -d '{"service": "${slug}", "ttl_sec": 300}'
+  -d ${shQ(leaseBody)}
 # returns {"lease_id", "key_id", "secret", "auth", "base_url", "expires_at"}
 
 # 2. Call the provider yourself
-curl "${upstream}${leaseQuery}"${a.curl ? ` \\\n  ${a.curl}` : ""}
+curl ${leaseCurl}${a.curl ? ` \\\n  ${a.curl}` : ""}
 
 # 3. Report the outcome (rotate: true returns the next lease on failure)
 curl -X POST "${host}/api/v1/leases/$LEASE_ID/report" \\
@@ -137,19 +168,19 @@ curl -X POST "${host}/api/v1/leases/$LEASE_ID/report" \\
       python: `import requests
 from cogito import Cogito
 
-c = Cogito("${host}", "${TOKEN}")
+c = Cogito(${lit(host)}, "${TOKEN}")
 
-with c.lease("${slug}") as lease:
+with c.lease(${lit(slug)}) as lease:
     r = requests.get(
-        f"{lease.base_url}${ex.path}",
+        lease.base_url + ${lit(ex.path)},
         ${pyAuth},
     )
     print(r.json())`,
       typescript: `import { Cogito } from "@cogito/keys";
 
-const cogito = new Cogito({ baseUrl: "${host}", token: process.env.COGITO_TOKEN! });
+const cogito = new Cogito({ baseUrl: ${lit(host)}, token: process.env.COGITO_TOKEN! });
 
-const data = await cogito.withKey("${slug}", async (key) => {
+const data = await cogito.withKey(${lit(slug)}, async (key) => {
   const res = await fetch(${tsUrl}${tsHeaders});
   return res.json();
 });`,
@@ -167,10 +198,10 @@ import (
 
 func main() {
 	ctx := context.Background()
-	c := cogito.New("${host}", os.Getenv("COGITO_TOKEN"))
+	c := cogito.New(${lit(host)}, os.Getenv("COGITO_TOKEN"))
 
-	err := c.WithKey(ctx, "${slug}", func(l *cogito.Lease) error {
-		req, _ := http.NewRequestWithContext(ctx, "GET", l.BaseURL+"${ex.path}${q}", nil)
+	err := c.WithKey(ctx, ${lit(slug)}, func(l *cogito.Lease) error {
+		req, _ := http.NewRequestWithContext(ctx, "GET", l.BaseURL+${lit(`${ex.path}${q}`)}, nil)
 		l.Apply(req) // puts the key where this service expects it
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -192,26 +223,6 @@ func main() {
   };
 }
 
-function Seg<T extends string>({ items, value, onChange }: { items: { id: T; label: string }[]; value: T; onChange: (v: T) => void }) {
-  return (
-    <div className="inline-flex rounded-full bg-[#ebeae4] p-0.5">
-      {items.map((it) => (
-        <button
-          key={it.id}
-          type="button"
-          onClick={() => onChange(it.id)}
-          className={cx(
-            "rounded-full px-3 py-1 text-[13px] transition-colors",
-            value === it.id ? "bg-white font-medium text-ink shadow-card" : "text-muted hover:text-ink",
-          )}
-        >
-          {it.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export function IntegratePanel({ service }: { service: Service }) {
   const [mode, setMode] = useState<Mode>("proxy");
   const [lang, setLang] = useState<Lang>("curl");
@@ -225,26 +236,26 @@ export function IntegratePanel({ service }: { service: Service }) {
         <Card className={cx("p-4", mode === "proxy" && "ring-1 ring-ink/20")}>
           <div className="text-sm font-medium text-ink">Proxy mode</div>
           <p className="mt-1 text-[13px] text-muted">
-            Call Cogito instead of the provider. It injects a key, retries rate limits with the next key up to {service.max_attempts} times, and your app never sees a secret.
+            Call Cogito instead of the provider. It adds a key, retries a rate limit with the next key up to {service.max_attempts} times, and your app never sees a secret.
           </p>
         </Card>
         <Card className={cx("p-4", mode === "lease" && "ring-1 ring-ink/20")}>
           <div className="text-sm font-medium text-ink">Lease mode</div>
           <p className="mt-1 text-[13px] text-muted">
-            Ask for a key, call the provider yourself, then report the outcome so Cogito can cool the key down and rotate.
+            Lease a key, call the provider yourself, then report how it went so Cogito can rest the key and rotate.
           </p>
         </Card>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Seg items={[{ id: "proxy" as Mode, label: "Proxy" }, { id: "lease" as Mode, label: "Lease" }]} value={mode} onChange={setMode} />
-        <Seg items={LANGS} value={lang} onChange={setLang} />
+        <Segmented label="Mode" size="sm" items={[{ id: "proxy" as Mode, label: "Proxy" }, { id: "lease" as Mode, label: "Lease" }]} value={mode} onChange={setMode} />
+        <Segmented label="Language" size="sm" items={LANGS} value={lang} onChange={setLang} />
       </div>
 
       <CodeBlock code={code} label={`${mode} · ${LANGS.find((l) => l.id === lang)?.label}`} />
 
-      <p className="font-mono text-xs text-muted">
-        Replace {TOKEN} with an app token from <Link to="/apps" className="text-ink underline underline-offset-2">Apps</Link>. The app must allow mode {mode} and service {service.slug}.
+      <p className="wrap-anywhere font-mono text-xs text-muted">
+        Replace {TOKEN} with an app token from <Link to="/apps" className="text-ink underline underline-offset-2">Apps</Link>. The app must allow {mode} mode and the {service.slug} service.
       </p>
     </div>
   );

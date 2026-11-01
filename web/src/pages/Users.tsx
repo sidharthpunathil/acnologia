@@ -14,9 +14,9 @@ import { ConfirmButton } from "../components/ConfirmButton";
 import { Badge, Button, Empty, Field, Input, PageHeader, PageSkeleton, Select } from "../components/ui";
 
 const ROLE_HELP: Record<Role, string> = {
-  member: "Read only: catalog, keys metadata and activity.",
-  admin: "Manages services, keys and apps. Cannot see hidden keys, reveal secrets or manage users.",
-  superadmin: "Everything, including hidden keys, secrets, users and the audit log.",
+  member: "View only: the catalog, key details and activity.",
+  admin: "Manages services, keys and apps. Cannot see hidden keys, reveal secrets or manage people.",
+  superadmin: "Everything, including hidden keys, secrets, people and the audit log.",
 };
 
 function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -37,7 +37,7 @@ function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void
     setBusy(true);
     try {
       const u = await create({ ...form, email: form.email.trim(), name: form.name.trim() });
-      toast.success(`Created ${u.email}. Share the password with them securely.`);
+      toast.success(`Account created for ${u.email}. Share the password with them privately.`);
       onClose();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -50,15 +50,15 @@ function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void
     <Modal
       open={open}
       onClose={onClose}
-      title="Invite user"
-      description="Create the account and share the initial password with them."
+      title="Add a person"
+      description="Create their account, then share the first password with them privately."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="primary" type="submit" form="user-form" loading={busy}>
-            Create user
+            Create account
           </Button>
         </>
       }
@@ -70,7 +70,7 @@ function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void
         <Field label="Name">
           <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required autoComplete="off" />
         </Field>
-        <Field label="Initial password" hint={`At least ${MIN_PASSWORD} characters. They can change it from Account.`}>
+        <Field label="First password" hint={`At least ${MIN_PASSWORD} characters. They can change it later from their account.`}>
           <Input type="text" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required autoComplete="off" className="font-mono" />
         </Field>
         <Field label="Role" hint={ROLE_HELP[form.role]}>
@@ -116,7 +116,7 @@ export function UsersPage() {
         meta={`${plural(users.length, "user")} · ${users.filter((u) => u.role === "superadmin").length} superadmin`}
         actions={
           <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setOpen(true)}>
-            Invite user
+            Add a person
           </Button>
         }
       />
@@ -126,7 +126,7 @@ export function UsersPage() {
           <Empty
             icon={<UsersIcon className="h-5 w-5" />}
             title="Just you so far"
-            body="Invite admins to manage keys and apps, or members who only need to see what is in the pool."
+            body="Add admins to manage keys and apps, or members who only need to see what is in the pool."
           />
         </div>
       )}
@@ -135,14 +135,14 @@ export function UsersPage() {
         {sorted.map((u) => {
           const self = u.id === me?.id;
           return (
-            <li key={u.id} className="flex flex-col gap-3 rounded-card bg-white p-4 shadow-card sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <li key={u.id} className="flex flex-col gap-3 rounded-card bg-surface p-4 shadow-card sm:flex-row sm:items-center sm:justify-between sm:px-5">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[15px] font-medium text-ink">{u.name || u.email}</span>
                   {self && <Badge>you</Badge>}
                   {u.disabled && <Badge tone="red">disabled</Badge>}
                 </div>
-                <div className="mt-1 font-mono text-xs text-muted">
+                <div className="wrap-anywhere mt-1 font-mono text-xs text-muted">
                   {u.email} · <span title={dateTime(u.last_login_at)}>last login {relTime(u.last_login_at, now)}</span>
                 </div>
               </div>
@@ -151,8 +151,9 @@ export function UsersPage() {
                   value={u.role}
                   disabled={self}
                   title={self ? "You cannot change your own role" : undefined}
+                  aria-label={`Role for ${u.email}`}
                   onChange={(e) => void patch(u, { role: e.target.value as Role }, `${u.email} is now ${e.target.value}`)}
-                  className="h-8 w-36 text-[13px]"
+                  className="h-9 w-36 text-[13px]"
                 >
                   <option value="member">member</option>
                   <option value="admin">admin</option>

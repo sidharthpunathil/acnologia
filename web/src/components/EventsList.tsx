@@ -30,7 +30,7 @@ export function EventsList({
   serviceIdBySlug?: Record<string, number>;
 }) {
   return (
-    <ul className="divide-y divide-line overflow-hidden rounded-card bg-white shadow-card">
+    <ul className="divide-y divide-line overflow-hidden rounded-card bg-surface shadow-card">
       {events.map((e) => {
         const sid = e.service_id ?? serviceIdBySlug?.[e.service_slug];
         return (
@@ -41,7 +41,7 @@ export function EventsList({
                 <span
                   className={cx(
                     "font-mono text-[11px]",
-                    e.status_code >= 500 ? "text-red-600" : e.status_code >= 400 ? "text-amber-700" : "text-muted",
+                    e.status_code >= 500 ? "text-red-700" : e.status_code >= 400 ? "text-amber-700" : "text-muted",
                   )}
                 >
                   {e.status_code}
@@ -62,7 +62,7 @@ export function EventsList({
                 {e.key_label && <span className="font-mono text-xs text-muted">key {e.key_label}</span>}
                 {e.app_name && <span className="font-mono text-xs text-muted">app {e.app_name}</span>}
               </div>
-              {e.detail && <div className="mt-0.5 truncate text-xs text-muted" title={e.detail}>{e.detail}</div>}
+              {e.detail && <div className="wrap-anywhere mt-0.5 line-clamp-2 text-xs text-muted" title={e.detail}>{e.detail}</div>}
             </div>
             <div className="flex shrink-0 items-center gap-3 font-mono text-[11px] text-faint">
               {e.latency_ms > 0 && <span>{e.latency_ms}ms</span>}

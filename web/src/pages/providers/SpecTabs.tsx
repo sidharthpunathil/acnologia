@@ -14,11 +14,11 @@ export interface SpecTabProps {
 }
 
 const OUTCOME_LABEL: Record<Outcome, string> = {
-  ok: "ok (key is fine)",
+  ok: "ok (the key is fine)",
   rate_limited: "rate limited (cool down)",
   quota_exhausted: "quota exhausted (park until reset)",
   invalid: "invalid (disable key)",
-  error: "error (provider side, key not penalized)",
+  error: "error (provider problem, key keeps working)",
 };
 
 const OUTCOME_TONE: Record<string, "green" | "amber" | "red" | "neutral"> = {
@@ -60,7 +60,7 @@ function ItemControls({
   disabled?: boolean;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-0.5">
+    <div className="ml-auto flex shrink-0 items-center gap-0.5">
       <IconButton label={`Move ${label} up`} disabled={disabled || index === 0} onClick={() => onMove(-1)}>
         <ArrowUp className="h-4 w-4" />
       </IconButton>
@@ -70,7 +70,7 @@ function ItemControls({
       <IconButton label={`Duplicate ${label}`} disabled={disabled} onClick={onDuplicate}>
         <Copy className="h-4 w-4" />
       </IconButton>
-      <IconButton label={`Delete ${label}`} disabled={disabled} onClick={onRemove} className="hover:text-red-600">
+      <IconButton label={`Delete ${label}`} disabled={disabled} onClick={onRemove} className="hover:text-red-700">
         <Trash2 className="h-4 w-4" />
       </IconButton>
     </div>
@@ -86,7 +86,7 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
   const quota = spec.quota ?? { unit: "", counts_per_request: false };
   return (
     <div className="space-y-5">
-      <Section title="Upstream" description="Where requests go and how the key is attached.">
+      <Section title="Upstream" description="Where requests go and where the key goes on each request.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Base URL" required className="sm:col-span-3">
             <Input
@@ -116,7 +116,7 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
               className="font-mono"
             />
           </Field>
-          <Field label="Value prefix" hint={spec.auth.type === "bearer" ? "Bearer adds its own prefix." : "Text before the key, if any."}>
+          <Field label="Value prefix" hint={spec.auth.type === "bearer" ? "Bearer adds its own prefix." : "Text before the key, if the API needs any."}>
             <Input value={spec.auth.prefix} disabled={readOnly} onChange={(e) => set({ auth: { ...spec.auth, prefix: e.target.value } })} placeholder="Token " className="font-mono" />
           </Field>
         </div>
@@ -127,10 +127,10 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
           <Field label="Strategy" hint={STRATEGY_HELP[d.strategy]}>
             <StrategySelect value={d.strategy as Strategy} disabled={readOnly} onChange={(s) => setD({ strategy: s })} />
           </Field>
-          <Field label="Cooldown (sec)" hint="Base rest after a rate limit.">
+          <Field label="Cooldown (sec)" hint="How long a key rests after a rate limit.">
             <Input type="number" min={0} inputMode="numeric" value={d.cooldown_sec} disabled={readOnly} onChange={(e) => setD({ cooldown_sec: Number(e.target.value) })} />
           </Field>
-          <Field label="Max attempts" hint="Proxy retries with the next key.">
+          <Field label="Max attempts" hint="How many keys the proxy tries.">
             <Input type="number" min={1} max={20} inputMode="numeric" value={d.max_attempts} disabled={readOnly} onChange={(e) => setD({ max_attempts: Number(e.target.value) })} />
           </Field>
         </div>
@@ -144,15 +144,15 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
         </div>
       </Section>
 
-      <Section title="Quota accounting" description="How Cogito counts usage between health checks.">
+      <Section title="Quota" description="How Cogito counts usage between health checks.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Unit" hint="Shown next to quota numbers, such as searches or characters.">
+          <Field label="Unit" hint="Shows next to quota numbers, such as searches or characters.">
             <Input value={quota.unit} disabled={readOnly} onChange={(e) => set({ quota: { ...quota, unit: e.target.value } })} placeholder="requests" />
           </Field>
           <div className="sm:pt-7">
             <Toggle
               label="Each successful request uses one unit"
-              description="Decrements the remaining quota locally. Leave off when cost varies per request."
+              description="Counts down the remaining quota on each success. Leave off when the cost changes per request."
               checked={quota.counts_per_request}
               disabled={readOnly}
               onChange={(v) => set({ quota: { ...quota, counts_per_request: v } })}
@@ -204,14 +204,14 @@ function RuleCard({
     .filter(Boolean)
     .join(" and ");
   return (
-    <li className="rounded-card bg-white shadow-card">
-      <div className="flex items-center gap-2 px-3 py-2.5 sm:px-4">
+    <li className="rounded-card bg-surface shadow-card">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:flex-nowrap sm:px-4">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-soft font-mono text-[11px] text-muted">{index + 1}</span>
         <button
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          className="tap flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="tap flex min-w-0 flex-1 basis-[60%] items-center gap-2 text-left"
         >
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[14px] font-medium text-ink">{rule.name || "Untitled rule"}</span>
@@ -226,7 +226,7 @@ function RuleCard({
         <div className="space-y-4 border-t border-line px-4 py-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Name" hint="A short label shown in test reports.">
-              <Input value={rule.name} disabled={readOnly} onChange={(e) => onChange({ ...rule, name: e.target.value })} placeholder="Out of searches" />
+              <Input value={rule.name} disabled={readOnly} onChange={(e) => onChange({ ...rule, name: e.target.value })} placeholder="Monthly quota used up" />
             </Field>
             <Field label="Outcome">
               <Select value={rule.outcome} disabled={readOnly} onChange={(e) => onChange({ ...rule, outcome: e.target.value as Outcome })}>
@@ -245,7 +245,7 @@ function RuleCard({
           {rule.outcome === "rate_limited" && (
             <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <legend className="mb-2 font-mono text-[11px] uppercase tracking-wide text-faint">Retry after</legend>
-              <Field label="Source" hint="Where the cooldown length comes from. None uses the service cooldown.">
+              <Field label="Source" hint="Where the rest time comes from. None uses the service cooldown.">
                 <Select
                   value={src}
                   disabled={readOnly}
@@ -289,7 +289,7 @@ export function RulesTab({ spec, onChange, readOnly }: SpecTabProps) {
     <div className="space-y-5">
       <Section
         title="Classification rules"
-        description="Checked top to bottom on every error response. The first match decides the outcome. Fields in a rule must all match; values in a list match any."
+        description="Checked top to bottom on every error response, and the first match wins. Every field in a rule must match. Any value in a list can match."
         actions={
           !readOnly && (
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={add}>
@@ -300,7 +300,7 @@ export function RulesTab({ spec, onChange, readOnly }: SpecTabProps) {
       >
         <Toggle
           label="Fall back to standard rules"
-          description="After your rules: 429 rate limited (honors Retry-After), 402 quota exhausted, 401 and 403 invalid, 5xx error."
+          description="Runs after your rules. 429 is rate limited (respects Retry-After), 402 is out of quota, 401 and 403 are invalid, 5xx is an error."
           checked={spec.use_standard_rules}
           disabled={readOnly}
           onChange={(v) => onChange({ ...spec, use_standard_rules: v })}
@@ -310,7 +310,7 @@ export function RulesTab({ spec, onChange, readOnly }: SpecTabProps) {
         <Empty
           icon={<ListOrdered className="h-5 w-5" />}
           title="No custom rules"
-          body={spec.use_standard_rules ? "Standard rules apply. Add a rule when the API signals limits in its own way, such as a 200 with an error body." : "Nothing classifies errors yet. Add a rule or turn on the standard rules."}
+          body={spec.use_standard_rules ? "The standard rules apply. Add a rule when the API signals limits its own way, such as a 200 with an error in the body." : "Nothing sorts errors yet. Add a rule, or turn on the standard rules."}
           action={!readOnly && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={add}>Add a rule</Button>}
         />
       ) : (
@@ -345,11 +345,11 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
     <div className="space-y-5">
       <Section
         title="Health check"
-        description="A cheap request Cogito makes with each key every few hours to find invalid keys and read remaining quota."
+        description="A cheap request Cogito sends with each key every few hours to catch invalid keys and read the quota left."
       >
         <Toggle
           label="Enable health checks"
-          description="Off means keys are only judged by real traffic."
+          description="When off, Cogito judges keys by real requests only."
           checked={!!h}
           disabled={readOnly}
           onChange={(v) => onChange({ ...spec, health: v ? { method: "GET", path: "", query: {} } : null })}
@@ -364,7 +364,7 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
               </Select>
             </Field>
             <Field label="Path" hint="Relative to the base URL.">
-              <Input value={h.path} disabled={readOnly} onChange={(e) => setH({ path: e.target.value })} placeholder="/account.json" className="font-mono" />
+              <Input value={h.path} disabled={readOnly} onChange={(e) => setH({ path: e.target.value })} placeholder="/account" className="font-mono" />
             </Field>
             <div className="sm:col-span-2">
               <div className="mb-1.5 text-[13px] font-medium text-ink">Query parameters</div>
@@ -376,25 +376,25 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
 
       {h && (
         <>
-          <Section title="Key is invalid when" description="Marks the key invalid. Anything else that fails is treated as transient.">
+          <Section title="Key is invalid when" description="A match marks the key invalid. Any other failure counts as temporary.">
             <MatchEditor compact value={h.invalid} disabled={readOnly} onChange={(m) => setH({ invalid: Object.keys(m).length ? m : undefined })} />
           </Section>
-          <Section title="Key works anyway when" description="For keys that cannot read account info but can still make calls. Quota stays unknown.">
+          <Section title="Key works anyway when" description="For keys that cannot read account details but can still make calls. Quota stays unknown.">
             <MatchEditor compact value={h.ok_anyway} disabled={readOnly} onChange={(m) => setH({ ok_anyway: Object.keys(m).length ? m : undefined })} />
           </Section>
-          <Section title="Quota from the response" description="JSON paths in the health check response. Several paths in one field are summed.">
+          <Section title="Quota from the response" description="JSON paths in the health check response. Several paths in one field are added together.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field label="Limit paths">
-                <ListInput value={q.limit} disabled={readOnly} onChange={(v) => setQ({ limit: v })} placeholder="searches_per_month" className="font-mono" />
+                <ListInput value={q.limit} disabled={readOnly} onChange={(v) => setQ({ limit: v })} placeholder="plan.limit" className="font-mono" />
               </Field>
               <Field label="Remaining paths">
-                <ListInput value={q.remaining} disabled={readOnly} onChange={(v) => setQ({ remaining: v })} placeholder="total_searches_left" className="font-mono" />
+                <ListInput value={q.remaining} disabled={readOnly} onChange={(v) => setQ({ remaining: v })} placeholder="plan.remaining" className="font-mono" />
               </Field>
-              <Field label="Used paths" hint="Remaining = limit minus used, when remaining is empty.">
-                <ListInput value={q.used} disabled={readOnly} onChange={(v) => setQ({ used: v })} placeholder="character_count" className="font-mono" />
+              <Field label="Used paths" hint="When remaining is empty, Cogito uses limit minus used.">
+                <ListInput value={q.used} disabled={readOnly} onChange={(v) => setQ({ used: v })} placeholder="usage.used" className="font-mono" />
               </Field>
               <Field label="Reset time path">
-                <Input value={q.reset_at ?? ""} disabled={readOnly} onChange={(e) => setQ({ reset_at: e.target.value })} placeholder="next_reset_unix" className="font-mono" />
+                <Input value={q.reset_at ?? ""} disabled={readOnly} onChange={(e) => setQ({ reset_at: e.target.value })} placeholder="plan.resets_at" className="font-mono" />
               </Field>
               <Field label="Reset format">
                 <Select value={q.reset_format || "unix"} disabled={readOnly} onChange={(e) => setQ({ reset_format: e.target.value })}>
@@ -411,7 +411,7 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
                   value={q.window?.limit ?? ""}
                   disabled={readOnly}
                   onChange={(e) => setQ({ window: { limit: e.target.value, used: q.window?.used ?? "", period: q.window?.period ?? "hour" } })}
-                  placeholder="account_rate_limit_per_hour"
+                  placeholder="rate_limit.limit"
                   className="font-mono"
                 />
               </Field>
@@ -420,7 +420,7 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
                   value={q.window?.used ?? ""}
                   disabled={readOnly}
                   onChange={(e) => setQ({ window: { limit: q.window?.limit ?? "", used: e.target.value, period: q.window?.period ?? "hour" } })}
-                  placeholder="last_hour_searches"
+                  placeholder="rate_limit.used"
                   className="font-mono"
                 />
               </Field>
@@ -453,18 +453,18 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
     <div className="space-y-5">
       <Section
         title="Examples"
-        description="Representative calls. They power the Integrate snippets, and the first safe one runs during a live check."
+        description="Typical calls. They feed the integration snippets, and the first safe one runs during a live check."
         actions={!readOnly && <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={add}>Add example</Button>}
       />
       {list.length === 0 ? (
-        <Empty title="No examples yet" body="Add one cheap call, such as a search or a list endpoint, so live checks can prove a key works." action={!readOnly && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={add}>Add an example</Button>} />
+        <Empty title="No examples yet" body="Add one cheap call, such as a search or a list endpoint, so a live check can prove a key works." action={!readOnly && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={add}>Add an example</Button>} />
       ) : (
         <ol className="space-y-2.5">
           {list.map((ex, i) => {
             const set = (p: Partial<SpecExample>) => setList(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
             return (
-              <li key={i} className="rounded-card bg-white p-4 shadow-card">
-                <div className="mb-4 flex items-center justify-between gap-2">
+              <li key={i} className="rounded-card bg-surface p-4 shadow-card">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <Badge tone="dark">{ex.method}</Badge>
                     <span className="truncate font-mono text-[13px] text-ink">{ex.path || "/"}</span>
@@ -482,7 +482,7 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_120px_1fr]">
                   <Field label="Name">
-                    <Input value={ex.name} disabled={readOnly} onChange={(e) => set({ name: e.target.value })} placeholder="Google search" />
+                    <Input value={ex.name} disabled={readOnly} onChange={(e) => set({ name: e.target.value })} placeholder="Search" />
                   </Field>
                   <Field label="Method">
                     <Select value={ex.method} disabled={readOnly} onChange={(e) => set({ method: e.target.value })}>
@@ -492,7 +492,7 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
                     </Select>
                   </Field>
                   <Field label="Path">
-                    <Input value={ex.path} disabled={readOnly} onChange={(e) => set({ path: e.target.value })} placeholder="/search.json" className="font-mono" />
+                    <Input value={ex.path} disabled={readOnly} onChange={(e) => set({ path: e.target.value })} placeholder="/search" className="font-mono" />
                   </Field>
                   <div className="sm:col-span-3">
                     <div className="mb-1.5 text-[13px] font-medium text-ink">Query parameters</div>
@@ -506,7 +506,7 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
                   <div className="sm:col-span-3">
                     <Toggle
                       label="Safe to run in a live check"
-                      description="Only mark calls that are cheap and have no side effects."
+                      description="Only for calls that are cheap and change nothing."
                       checked={ex.safe}
                       disabled={readOnly}
                       onChange={(v) => set({ safe: v })}
@@ -533,7 +533,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
     <div className="space-y-5">
       <Section
         title="Fixture tests"
-        description="Recorded or documented responses with the outcome they should produce. Every save runs them through the real engine."
+        description="Real or documented responses, each with the outcome it should produce. Every save runs them through the real engine."
         actions={!readOnly && <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={add}>Add test</Button>}
       >
         {report && (
@@ -541,7 +541,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
             <Badge tone={report.failed ? "red" : "green"}>
               {report.passed} passed · {report.failed} failed
             </Badge>
-            <span className="text-muted">from the latest validation of this draft</span>
+            <span className="text-muted">from the latest check of this draft</span>
           </div>
         )}
       </Section>
@@ -549,7 +549,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
         <Empty
           icon={<FlaskConical className="h-5 w-5" />}
           title="No tests yet"
-          body="Add at least one response per rule, for example a 429 body that should be rate limited. Tests are what make auto publishing safe."
+          body="Add at least one response per rule, such as a 429 body that should count as rate limited. Tests are what make auto publishing safe."
           action={!readOnly && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={add}>Add a test</Button>}
         />
       ) : (
@@ -558,15 +558,15 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
             const set = (p: Partial<SpecFixture>) => setList(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
             const r = resultFor(t.name, i);
             return (
-              <li key={i} className={cx("rounded-card bg-white p-4 shadow-card", r && !r.ok && "ring-1 ring-red-200")}>
-                <div className="mb-4 flex items-start justify-between gap-2">
+              <li key={i} className={cx("rounded-card bg-surface p-4 shadow-card", r && !r.ok && "ring-1 ring-red-200")}>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       {r ? (
                         r.ok ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label="Passing" />
+                          <CheckCircle2 className="h-4 w-4 text-emerald-700" aria-label="Passing" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-red-600" aria-label="Failing" />
+                          <XCircle className="h-4 w-4 text-red-700" aria-label="Failing" />
                         )
                       ) : null}
                       <span className="truncate text-[14px] font-medium text-ink">{t.name || `Test ${i + 1}`}</span>
@@ -593,7 +593,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_110px_1fr]">
                   <Field label="Name">
-                    <Input value={t.name} disabled={readOnly} onChange={(e) => set({ name: e.target.value })} placeholder="out of searches" />
+                    <Input value={t.name} disabled={readOnly} onChange={(e) => set({ name: e.target.value })} placeholder="Monthly quota used up" />
                   </Field>
                   <Field label="Status">
                     <Input type="number" inputMode="numeric" value={t.status} disabled={readOnly} onChange={(e) => set({ status: Number(e.target.value) })} className="font-mono" />
@@ -614,7 +614,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
                       disabled={readOnly}
                       spellCheck={false}
                       onChange={(e) => set({ body: e.target.value })}
-                      placeholder={'{"error":"Your account has run out of searches."}'}
+                      placeholder={'{"error":"Monthly quota exceeded."}'}
                       className="font-mono text-[12.5px]"
                     />
                   </Field>
@@ -640,7 +640,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
 
 export function JsonTab({ spec, onChange, readOnly }: SpecTabProps) {
   return (
-    <Section title="Raw spec" description="The whole spec as JSON. Edits apply as soon as the JSON parses; the other tabs pick them up.">
+    <Section title="Raw spec" description="The whole spec as JSON. Edits apply as soon as the JSON is valid, and the other tabs pick them up.">
       <JsonTextarea label="Spec JSON" rows={28} value={spec} disabled={readOnly} onChange={(v) => v && typeof v === "object" && onChange(v as ProviderSpec)} />
     </Section>
   );

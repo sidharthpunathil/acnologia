@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTitle } from "../../hooks/useTitle";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, KeyRound, Plus, RefreshCw, ScrollText } from "lucide-react";
+import { Activity, ArrowLeft, KeyRound, Plus, RefreshCw, ScrollText } from "lucide-react";
 import { useServices } from "../../stores/services";
 import { useProviders } from "../../stores/providers";
 import { useKeys } from "../../stores/keys";
 import { useApps } from "../../stores/apps";
 import { useEvents } from "../../stores/events";
+import { useInsights } from "../../stores/insights";
 import { useAuth } from "../../stores/auth";
 import { toast } from "../../stores/toast";
 import { ApiError, errorMessage } from "../../lib/api";
@@ -22,6 +23,7 @@ import { KeysTable } from "./KeysTable";
 import { KeyEditModal } from "./KeyEditModal";
 import { AddKeysModal } from "./AddKeysModal";
 import { RevealModal } from "./RevealModal";
+import { KeyDrawer } from "./KeyDrawer";
 import { IntegratePanel } from "./IntegratePanel";
 import { ServiceSettings } from "./ServiceSettings";
 import { liveStatus } from "./keyUtil";
@@ -52,6 +54,9 @@ export function ServicePage() {
   const [editing, setEditing] = useState<Key | null>(null);
   const [revealing, setRevealing] = useState<Key | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [openKey, setOpenKey] = useState<Key | null>(null);
+  const [checking, setChecking] = useState(false);
+  const checkService = useInsights((s) => s.checkService);
 
   const perms = { manage: can.manage(role), hidden: can.hidden(role), reveal: can.reveal(role) };
 
@@ -101,13 +106,28 @@ export function ServicePage() {
     return c;
   }, [service, keys, keysLoaded, now]);
 
+  const checkAll = async () => {
+    setChecking(true);
+    try {
+      const res = await checkService(id);
+      const clean = res.invalid === 0 && res.failed === 0 && res.checked > 0;
+      if (clean) toast.success(res.message);
+      else toast.info(res.message || "Check finished.");
+      await fetchKeys(id).catch(() => undefined);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+
   if (notFound)
     return (
       <Empty
         title="Service not found"
-        body="It may have been deleted."
+        body="It may have been deleted, or the link is wrong."
         action={
-          <Link to="/" className="inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-white">
+          <Link to="/" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-on-ink">
             Back to catalog
           </Link>
         }
@@ -125,14 +145,14 @@ export function ServicePage() {
   return (
     <div>
       <Link to="/" className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
-        <ArrowLeft className="h-3.5 w-3.5" /> catalog
+        <ArrowLeft className="h-3.5 w-3.5" /> Catalog
       </Link>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-center gap-4">
           <ServiceLogo service={service} size="lg" />
           <div className="min-w-0">
-            <h1 className="truncate font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">{service.name}</h1>
+            <h1 className="break-words font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">{service.name}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-xs text-muted">
               <span>{service.slug}</span>
               <span aria-hidden="true">·</span>
@@ -148,14 +168,19 @@ export function ServicePage() {
                 </>
               )}
               <span aria-hidden="true">·</span>
-              <span className="min-w-0 max-w-full truncate">{service.base_url}</span>
+              <span className="wrap-anywhere min-w-0 max-w-full">{service.base_url}</span>
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <IconButton label="Refresh" onClick={() => void refresh()} disabled={refreshing}>
             {refreshing ? <Spinner /> : <RefreshCw className="h-4 w-4" />}
           </IconButton>
+          {perms.manage && keys.length > 0 && (
+            <Button icon={<Activity className="h-4 w-4" />} loading={checking} onClick={() => void checkAll()}>
+              {checking ? "Checking keys" : "Check all"}
+            </Button>
+          )}
           {perms.manage && (
             <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
               Add keys
@@ -168,15 +193,15 @@ export function ServicePage() {
       <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Available" value={num(counts.available)} tone={counts.available > 0 ? "green" : "red"} />
         <Stat label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "amber" : undefined} />
-        <Stat label="Exhausted" value={num(counts.exhausted)} tone={counts.exhausted ? "amber" : undefined} />
+        <Stat label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "amber" : undefined} />
         <Stat label="Invalid" value={num(counts.invalid)} tone={counts.invalid ? "red" : undefined} />
         <Stat
           label="In use"
           value={num(counts.inUse)}
           tone={counts.inUse > 0 ? "violet" : undefined}
-          sub={service.max_concurrency > 0 ? `max ${service.max_concurrency}/key` : "no per key limit"}
+          sub={service.max_concurrency > 0 ? `up to ${service.max_concurrency} per key` : "no limit per key"}
         />
-        <Stat label="Requests 24h" value={compact(service.requests_24h)} sub={counts.backup ? `${counts.backup} backup keys` : undefined} />
+        <Stat label="Requests, 24h" value={compact(service.requests_24h)} sub={counts.backup ? `${counts.backup} backup` : undefined} />
       </div>
 
       <Tabs className="mt-10" items={tabs} value={tab} onChange={setTab} />
@@ -192,11 +217,11 @@ export function ServicePage() {
           ) : keys.length === 0 ? (
             <Empty
               icon={<KeyRound className="h-5 w-5" />}
-              title="No keys in this pool"
+              title="No keys in this pool yet"
               body={
                 perms.manage
-                  ? "Paste the API keys for each account you own. Cogito rotates through them and cools down any key that hits a limit."
-                  : "An admin has not added keys to this service yet."
+                  ? "Paste a key from each account you own. Cogito rotates through them and rests any key that hits a limit."
+                  : "No keys here yet. Ask an admin to add some."
               }
               action={
                 perms.manage ? (
@@ -213,6 +238,8 @@ export function ServicePage() {
               now={now}
               perms={perms}
               serviceMax={service.max_concurrency ?? 0}
+              quotaUnit={provider?.spec?.quota?.unit}
+              onOpen={setOpenKey}
               onEdit={setEditing}
               onReveal={setRevealing}
             />
@@ -229,8 +256,8 @@ export function ServicePage() {
             <Empty
               icon={<ScrollText className="h-5 w-5" />}
               title="No activity yet"
-              body="Leases, proxy calls, rate limits and health checks for this service will show up here. Try a request from the Integrate tab."
-              action={<Button onClick={() => setTab("integrate")}>Open Integrate</Button>}
+              body="Requests, rate limits and health checks for this service show up here. Send a test request from the Integrate tab."
+              action={<Button onClick={() => setTab("integrate")}>Show integration code</Button>}
             />
           ) : (
             <EventsList events={events} now={now} showService={false} />
@@ -259,6 +286,7 @@ export function ServicePage() {
         onClose={() => setEditing(null)}
       />
       <RevealModal k={revealing} onClose={() => setRevealing(null)} />
+      <KeyDrawer keyId={openKey?.id ?? null} seed={openKey} onClose={() => setOpenKey(null)} />
     </div>
   );
 }

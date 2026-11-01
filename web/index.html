@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Cogito: I think, therefore I am.</title>
     <meta name="description" content="Cogito: I think, therefore I am. A self-hosted API key pool." />
 
@@ -10,7 +10,27 @@
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
     <meta name="googlebot" content="noindex, nofollow" />
 
-    <meta name="theme-color" content="#eeede9" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eeede9" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#151412" />
+    <!-- Applies the saved theme before first paint so there is no flash. Mirrors src/stores/theme.ts. -->
+    <script>
+      (function () {
+        var pref = "system";
+        try {
+          var v = localStorage.getItem("cogito.theme");
+          if (v === "light" || v === "dark" || v === "system") pref = v;
+        } catch (e) {}
+        var dark = pref === "dark" || (pref === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+        var theme = dark ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", theme);
+        var metas = document.querySelectorAll('meta[name="theme-color"]');
+        for (var i = 0; i < metas.length; i++) {
+          metas[i].removeAttribute("media");
+          metas[i].setAttribute("content", dark ? "#151412" : "#eeede9");
+        }
+      })();
+    </script>
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />

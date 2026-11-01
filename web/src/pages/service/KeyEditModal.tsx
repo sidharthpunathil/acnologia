@@ -84,14 +84,14 @@ export function KeyEditModal({
     if (d.notes !== k.notes) patch.notes = d.notes;
     const ql = d.quota_limit.trim() === "" ? null : Number(d.quota_limit);
     if (ql !== null && (Number.isNaN(ql) || ql < 0)) {
-      toast.error("Quota limit must be a positive number or empty.");
+      toast.error("Quota limit must be 0 or more, or empty.");
       return;
     }
     if (ql !== k.quota_limit) patch.quota_limit = ql;
     if (d.secret.trim()) patch.secret = d.secret.trim();
     const mc = d.max_concurrency.trim() === "" ? null : Number(d.max_concurrency);
     if (mc !== null && (!Number.isInteger(mc) || mc < 0 || mc > 1000)) {
-      toast.error("Concurrency override must be a whole number from 0 to 1000, or empty.");
+      toast.error("Max concurrent requests must be a whole number from 0 to 1000, or empty.");
       return;
     }
     if (mc !== (k.max_concurrency ?? null)) patch.max_concurrency = mc === null ? -1 : mc;
@@ -138,34 +138,34 @@ export function KeyEditModal({
           <Field label="Label">
             <Input value={d.label} onChange={(e) => set("label", e.target.value)} />
           </Field>
-          <Field label="Status" hint={k.status === "exhausted" || k.status === "invalid" ? `Currently ${k.status}. Set active to put it back in rotation.` : undefined}>
+          <Field label="Status" hint={k.status === "exhausted" || k.status === "invalid" ? `Now ${k.status === "exhausted" ? "out of quota" : "invalid"}. Pick enabled to put it back in rotation.` : undefined}>
             <Select value={d.status} onChange={(e) => set("status", e.target.value as KeyStatus)}>
               {statusOptions.map((s) => (
                 <option key={s} value={s}>
-                  {s === "active" ? "enabled (active)" : s}
+                  {s === "active" ? "enabled" : s === "exhausted" ? "out of quota" : s}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label="Tier" hint="Backup keys are used only when no primary key is available.">
+          <Field label="Tier" hint="Backup keys are used only when no primary key is free.">
             <Select value={d.tier} onChange={(e) => set("tier", e.target.value as Tier)}>
               <option value="primary">primary</option>
               <option value="backup">backup</option>
             </Select>
           </Field>
-          <Field label="Quota limit" hint="Leave empty if the provider has no fixed quota.">
+          <Field label="Quota limit" hint="Leave empty when the provider has no fixed quota.">
             <Input type="number" min={0} value={d.quota_limit} onChange={(e) => set("quota_limit", e.target.value)} placeholder="unlimited" />
           </Field>
-          <Field label="Weight" hint="Used by the weighted random strategy.">
+          <Field label="Weight" hint="Higher weight gets picked more often with weighted random.">
             <Input type="number" min={0} value={d.weight} onChange={(e) => set("weight", Number(e.target.value))} />
           </Field>
-          <Field label="Priority" hint="Lower numbers go first with fill first.">
+          <Field label="Priority" hint="With fill first, lower numbers are used first.">
             <Input type="number" value={d.priority} onChange={(e) => set("priority", Number(e.target.value))} />
           </Field>
           <Field
             label="Max concurrent requests"
             className="sm:col-span-2"
-            hint={`Empty uses the service default (${serviceMax > 0 ? serviceMax : "unlimited"}). 0 means unlimited for this key.`}
+            hint={`Leave empty to use the service default (${serviceMax > 0 ? serviceMax : "no limit"}). 0 means no limit for this key.`}
           >
             <Input
               type="number"
@@ -174,7 +174,7 @@ export function KeyEditModal({
               max={1000}
               value={d.max_concurrency}
               onChange={(e) => set("max_concurrency", e.target.value)}
-              placeholder={`service default (${serviceMax > 0 ? serviceMax : "unlimited"})`}
+              placeholder={`Service default (${serviceMax > 0 ? serviceMax : "no limit"})`}
             />
           </Field>
         </div>
@@ -190,7 +190,7 @@ export function KeyEditModal({
           )}
           <Toggle
             label="Restricted"
-            description="Only the apps selected below may lease or proxy with this key."
+            description="Only the apps you pick below can use this key."
             checked={d.restricted}
             onChange={(v) => set("restricted", v)}
           />
@@ -205,11 +205,11 @@ export function KeyEditModal({
         </div>
 
         <Field label="Notes">
-          <Textarea rows={2} value={d.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Which account this belongs to, billing owner, renewal date" />
+          <Textarea rows={2} value={d.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Which account it belongs to, who pays, when it renews" />
         </Field>
 
-        <Field label="Replace secret" hint="Leave empty to keep the current secret. The new one is encrypted at rest.">
-          <Input type="password" autoComplete="off" value={d.secret} onChange={(e) => set("secret", e.target.value)} placeholder="paste a new key" className="font-mono" />
+        <Field label="Replace secret" hint="Leave empty to keep the current secret. A new one is stored encrypted.">
+          <Input type="password" autoComplete="off" value={d.secret} onChange={(e) => set("secret", e.target.value)} placeholder="Paste a new key" className="font-mono" />
         </Field>
       </form>
     </Modal>

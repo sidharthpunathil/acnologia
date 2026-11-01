@@ -27,6 +27,10 @@ interface AiStore {
 
 let statusInflight: Promise<unknown> | null = null;
 
+/** Monotonic poll tickets, and the newest ticket applied per run id. */
+let pollTicket = 0;
+const appliedTicket: Record<number, number> = {};
+
 export const ACTIVE_STATUSES = new Set(["queued", "running", "testing"]);
 
 export const useAi = create<AiStore>((set, get) => {
@@ -73,15 +77,31 @@ export const useAi = create<AiStore>((set, get) => {
     },
 
     poll: async (id) => {
-      const prev = get().byId[id];
-      const after = prev?.lastSeq ?? 0;
+      // Polls can overlap (interval tick plus cancel/publish). Each one takes a
+      // ticket; a response from an older ticket than the last applied one must
+      // not overwrite the newer run status.
+      const ticket = ++pollTicket;
+      const after = get().byId[id]?.lastSeq ?? 0;
       const res = await api.getRun(id, after);
-      const fresh = (res.steps ?? []).filter((s) => s.seq > after);
-      const steps = prev ? [...prev.steps, ...fresh] : fresh;
-      const lastSeq = steps.length ? Math.max(after, ...fresh.map((s) => s.seq)) : after;
-      const next: RunState = { run: res.run, steps, lastSeq };
+
+      // Merge against the state as it is now, not as it was before the await.
+      const cur = get().byId[id];
+      const curSeq = cur?.lastSeq ?? 0;
+      const fresh = (res.steps ?? []).filter((s) => s.seq > curSeq);
+      const steps = cur ? [...cur.steps, ...fresh] : fresh;
+      const lastSeq = fresh.length ? Math.max(curSeq, ...fresh.map((s) => s.seq)) : curSeq;
+
+      const stale =
+        !!cur &&
+        ((appliedTicket[id] ?? 0) > ticket ||
+          // A finished run never goes back to an active status.
+          (!ACTIVE_STATUSES.has(cur.run.status) && ACTIVE_STATUSES.has(res.run.status)));
+      const run = stale ? cur.run : res.run;
+      if (!stale) appliedTicket[id] = ticket;
+
+      const next: RunState = { run, steps, lastSeq };
       set({ byId: { ...get().byId, [id]: next } });
-      putRun(res.run);
+      if (!stale) putRun(run);
       return next;
     },
 

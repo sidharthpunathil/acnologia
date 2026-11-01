@@ -23,6 +23,7 @@ import { ApiError, errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { compact, dateTime } from "../../lib/format";
 import { normalizeSpec } from "../../lib/providerSpec";
+import { safeHref } from "../../lib/url";
 import type { AgentRun, AgentRunStatus, AgentStep, AgentStepType } from "../../lib/types";
 import { ACTIVE_STATUSES, useAi } from "../../stores/ai";
 import { useProviders } from "../../stores/providers";
@@ -64,7 +65,7 @@ const STEP_ICON: Record<AgentStepType, { icon: LucideIcon; cls: string }> = {
   tool: { icon: Wrench, cls: "bg-amber-50 text-amber-800" },
   result: { icon: CheckCircle2, cls: "bg-emerald-50 text-emerald-700" },
   error: { icon: XCircle, cls: "bg-red-50 text-red-700" },
-  done: { icon: Flag, cls: "bg-ink text-white" },
+  done: { icon: Flag, cls: "bg-ink text-on-ink" },
 };
 
 function elapsed(from: string, to: number): string {
@@ -112,7 +113,7 @@ function DraftPreview({ run }: { run: AgentRun }) {
   if (!d) return null;
   const spec = normalizeSpec(d.spec);
   return (
-    <Section title="Draft provider" description="What the agent wrote. Open the provider after publishing to edit any of it.">
+    <Section title="Draft provider" description="What the agent wrote. After publishing, open the provider to change any of it.">
       <div className="flex items-center gap-3">
         <ProviderLogo provider={{ name: d.name || d.slug, color: d.color, logo_url: null }} />
         <div className="min-w-0">
@@ -150,7 +151,7 @@ function DraftPreview({ run }: { run: AgentRun }) {
         </ol>
       )}
       <details className="mt-4">
-        <summary className="tap cursor-pointer py-1 text-[13px] font-medium text-muted hover:text-ink">Full spec JSON</summary>
+        <summary className="tap flex cursor-pointer items-center py-1 text-[13px] font-medium text-muted hover:text-ink">Full spec JSON</summary>
         <div className="mt-2">
           <CodeBlock code={JSON.stringify(d, null, 2)} label="provider.json" />
         </div>
@@ -220,9 +221,9 @@ export function AiRunPage() {
     return (
       <Empty
         title="Run not found"
-        body="It may have been removed."
+        body="It may have been removed, or the link is wrong."
         action={
-          <Link to="/providers/ai" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-white">
+          <Link to="/providers/ai" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-on-ink">
             Back to AI builder
           </Link>
         }
@@ -238,7 +239,7 @@ export function AiRunPage() {
         toast.info("Run cancelled");
       } else {
         await publish(id);
-        toast.success("Published");
+        toast.success("Published. The provider is live.");
         refreshProviders().catch(() => undefined);
         refreshServices().catch(() => undefined);
       }
@@ -257,16 +258,16 @@ export function AiRunPage() {
   return (
     <div>
       <Link to="/providers/ai" className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
-        <ArrowLeft className="h-3.5 w-3.5" /> ai builder
+        <ArrowLeft className="h-3.5 w-3.5" /> AI builder
       </Link>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate font-mono text-[24px] leading-tight tracking-tight text-ink sm:text-[28px]">{run.title || run.draft?.name || `Run #${run.id}`}</h1>
+            <h1 className="min-w-0 break-words font-mono text-[24px] leading-tight tracking-tight text-ink sm:text-[28px]">{run.title || run.draft?.name || `Run #${run.id}`}</h1>
             <RunStatusBadge status={run.status} />
           </div>
-          <div className="mt-1.5 font-mono text-xs text-muted">
+          <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
             #{run.id} · {run.kind === "update_provider" ? `update ${run.provider_slug}` : "new provider"} · {run.created_by} · started {dateTime(run.created_at)} ·{" "}
             <span className="tabular-nums">{elapsed(run.created_at, end)}</span>
           </div>
@@ -283,12 +284,12 @@ export function AiRunPage() {
             </Button>
           )}
           {canOpenProvider && slug && (
-            <Link to={`/providers/${encodeURIComponent(slug)}`} className="tap inline-flex h-10 items-center rounded-full bg-white px-4 text-sm font-medium text-ink shadow-card hover:bg-soft">
+            <Link to={`/providers/${encodeURIComponent(slug)}`} className="tap inline-flex h-10 items-center rounded-full bg-surface px-4 text-sm font-medium text-ink shadow-card hover:bg-soft">
               Open provider
             </Link>
           )}
           {run.service_id && (
-            <Link to={`/services/${run.service_id}`} className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-white hover:bg-black">
+            <Link to={`/services/${run.service_id}`} className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-on-ink hover:bg-ink-strong">
               Open service
             </Link>
           )}
@@ -298,7 +299,7 @@ export function AiRunPage() {
       <div className="mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <Stat label="Tokens" value={compact(u.input_tokens + u.output_tokens)} sub={`${compact(u.input_tokens)} in · ${compact(u.output_tokens)} out`} />
         <Stat label="Searches" value={u.web_searches} />
-        <Stat label="Turns" value={u.turns} sub="max 40" />
+        <Stat label="Turns" value={u.turns} sub="of 40 max" />
         <Stat label="Cost" value={`$${(u.cost_usd ?? 0).toFixed(2)}`} />
       </div>
 
@@ -330,12 +331,12 @@ export function AiRunPage() {
             Steps <span className="font-mono text-xs font-normal text-faint">{state.steps.length}</span>
           </h2>
           {state.steps.length === 0 ? (
-            <div className="flex items-center gap-3 rounded-card bg-white p-4 text-sm text-muted shadow-card">
+            <div className="flex items-center gap-3 rounded-card bg-surface p-4 text-sm text-muted shadow-card">
               {active ? <Loader2 className="h-4 w-4 animate-spin" /> : <Circle className="h-4 w-4" />}
-              {active ? "Waiting for the agent to start" : "No steps were recorded."}
+              {active ? "Waiting for the agent to start" : "This run recorded no steps."}
             </div>
           ) : (
-            <ol className="rounded-card bg-white p-4 shadow-card sm:p-5" aria-live="polite" aria-relevant="additions">
+            <ol className="rounded-card bg-surface p-4 shadow-card sm:p-5" aria-live="polite" aria-relevant="additions">
               {state.steps.map((s, i) => (
                 <StepRow key={s.seq} step={s} last={i === state.steps.length - 1} live={active} />
               ))}
@@ -357,10 +358,16 @@ export function AiRunPage() {
                 <div>
                   <dt className="font-mono text-[11px] uppercase tracking-wide text-faint">URLs</dt>
                   {run.input.urls.map((u2) => (
-                    <dd key={u2} className="truncate">
-                      <a href={u2} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-ink hover:underline">
-                        <Globe className="h-3 w-3 shrink-0" /> {u2}
-                      </a>
+                    <dd key={u2} className="wrap-anywhere">
+                      {safeHref(u2) ? (
+                        <a href={safeHref(u2)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-ink hover:underline">
+                          <Globe className="h-3 w-3 shrink-0" /> {u2}
+                        </a>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-mono text-xs text-ink">
+                          <Globe className="h-3 w-3 shrink-0" /> {u2}
+                        </span>
+                      )}
                     </dd>
                   ))}
                 </div>

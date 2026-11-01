@@ -94,8 +94,10 @@ function ProviderPicker({ onPick, onClose }: { onPick: (p: Provider) => void; on
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search providers"
+          type="search"
+          enterKeyHint="search"
           aria-label="Search providers"
-          className="field-input h-10 w-full rounded-xl border border-line bg-white pl-9 pr-3 text-sm placeholder:text-faint focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10"
+          className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm placeholder:text-faint focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10"
         />
       </div>
 
@@ -105,12 +107,12 @@ function ProviderPicker({ onPick, onClose }: { onPick: (p: Provider) => void; on
           onClick={onClose}
           className="group flex items-center gap-3 rounded-card border border-brand/20 bg-brand-soft/50 px-4 py-3 transition-colors hover:border-brand/40"
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-white text-brand shadow-card">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-surface text-brand shadow-card">
             <Sparkles className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium text-ink">Build a new provider with AI</span>
-            <span className="block text-xs text-muted">Not in the list? Give it a name or docs URL. It researches, tests and publishes it.</span>
+            <span className="block text-xs text-muted">Not listed? Give the AI a name or a docs URL. It researches, tests and publishes the provider.</span>
           </span>
           <ChevronRight className="h-4 w-4 shrink-0 text-faint transition-transform group-hover:translate-x-0.5" />
         </Link>
@@ -139,7 +141,7 @@ function ProviderPicker({ onPick, onClose }: { onPick: (p: Provider) => void; on
               <button
                 type="button"
                 onClick={() => onPick(p)}
-                className="group flex w-full items-center gap-3 rounded-card border border-line bg-white px-4 py-3 text-left transition-colors hover:border-ink/25 hover:bg-soft"
+                className="group flex w-full items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-ink/25 hover:bg-soft"
               >
                 <ProviderLogo provider={p} />
                 <span className="min-w-0 flex-1">
@@ -217,7 +219,7 @@ export function AddServiceModal({ open, onClose, initialProvider }: { open: bool
     setBusy(true);
     try {
       const s = await create(form);
-      toast.success(`${s.name} added. Now add some keys.`);
+      toast.success(`${s.name} is ready. Add its keys next.`);
       onClose();
       navigate(`/services/${s.id}`);
     } catch (err) {
@@ -233,7 +235,7 @@ export function AddServiceModal({ open, onClose, initialProvider }: { open: bool
       onClose={onClose}
       wide
       title={form ? `New ${provider?.name ?? ""} service` : "Add service"}
-      description={form ? "Defaults come from the provider. Adjust anything, then create." : "Pick the provider this pool of keys belongs to."}
+      description={form ? "Defaults come from the provider. Change anything you need, then create." : "Pick the provider these keys are for."}
       headerAction={form ? <AiFillButton ai={ai} /> : undefined}
       footer={
         form ? (

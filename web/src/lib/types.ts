@@ -52,6 +52,8 @@ export interface Service {
   max_concurrency: number;
   queue_timeout_sec: number;
   in_flight: number;
+  /** False after a non-superadmin changed where keys are sent; hidden keys pause until a superadmin saves. */
+  target_trusted: boolean;
 }
 
 export type ServiceInput = Pick<
@@ -103,6 +105,58 @@ export interface Key {
   /** Per key override. Null means the service default applies. */
   max_concurrency: number | null;
   in_flight: number;
+  /** Last successful request or passed health check. */
+  last_ok_at: string | null;
+  validity: Validity;
+  /** Plain words, such as "last worked 3m ago". */
+  validity_reason: string;
+  /** From the provider spec, such as "searches". May be empty. */
+  quota_unit: string;
+}
+
+export type Validity = "valid" | "invalid" | "unknown";
+
+/** A key on the all keys page, with the service it belongs to. */
+export type KeyRow = Key & {
+  service_slug: string;
+  service_name: string;
+  service_logo_url: string | null;
+  has_health_check: boolean;
+};
+
+export interface KeySummary {
+  total: number;
+  valid: number;
+  invalid: number;
+  unknown: number;
+  low_quota: number;
+  unused_7d: number;
+}
+
+export interface DayActivity {
+  day: string;
+  requests: number;
+  errors: number;
+  rate_limited: number;
+}
+
+export interface KeyInsights {
+  key: Key;
+  service: { id: number; slug: string; name: string; logo_url: string | null; max_concurrency: number };
+  has_health_check: boolean;
+  quota_unit: string;
+  events: CogitoEvent[];
+  daily: DayActivity[];
+}
+
+export interface CheckSummary {
+  checked: number;
+  valid: number;
+  invalid: number;
+  failed: number;
+  skipped: number;
+  message: string;
+  keys: Key[];
 }
 
 export interface NewKeyInput {
@@ -145,9 +199,11 @@ export interface App {
   active: boolean;
   created_at: string;
   last_used_at: string | null;
+  /** Lets the app lease hidden keys. Only a superadmin can turn it on. */
+  lease_hidden: boolean;
 }
 
-export type AppInput = Pick<App, "name" | "description" | "mode" | "allowed_services">;
+export type AppInput = Pick<App, "name" | "description" | "mode" | "allowed_services"> & { lease_hidden?: boolean };
 
 export interface AppWithToken {
   app: App;

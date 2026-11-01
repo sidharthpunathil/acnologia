@@ -127,13 +127,13 @@ export function MatchEditor({ value, onChange, disabled, compact }: { value: Spe
   const set = (patch: Partial<SpecMatch>) => onChange(clean({ ...m, ...patch }));
   return (
     <div className={cx("grid grid-cols-1 gap-3", compact ? "sm:grid-cols-2" : "sm:grid-cols-2")}>
-      <Field label="Status codes" hint="Comma separated. Empty matches any status of 400 or more.">
+      <Field label="Status codes" hint="Comma separated. Leave empty to match any status of 400 or more.">
         <StatusListInput value={m.status} onChange={(v) => set({ status: v })} placeholder="429, 402" disabled={disabled} />
       </Field>
-      <Field label="Body contains" hint="Any of these phrases, comma separated, case insensitive.">
-        <ListInput value={m.body_contains} onChange={(v) => set({ body_contains: v })} placeholder="run out of searches" disabled={disabled} />
+      <Field label="Body contains" hint="Any of these phrases, comma separated. Case does not matter.">
+        <ListInput value={m.body_contains} onChange={(v) => set({ body_contains: v })} placeholder="quota exceeded" disabled={disabled} />
       </Field>
-      <Field label="JSON path" hint="Dot path such as error.code. $. is optional.">
+      <Field label="JSON path" hint="A dot path such as error.code. The $. prefix is optional.">
         <Input value={m.json_path ?? ""} onChange={(e) => set({ json_path: e.target.value })} placeholder="detail.status" disabled={disabled} className="font-mono" />
       </Field>
       <Field label="JSON equals" hint="Value at the path, compared as text.">
@@ -141,7 +141,7 @@ export function MatchEditor({ value, onChange, disabled, compact }: { value: Spe
       </Field>
       {!compact && (
         <>
-          <Field label="Body regex" hint="Optional regular expression on the raw body.">
+          <Field label="Body regex" hint="Optional. A regular expression run on the raw body.">
             <Input value={m.body_regex ?? ""} onChange={(e) => set({ body_regex: e.target.value })} disabled={disabled} className="font-mono" />
           </Field>
           <Field label="Header present" hint="Matches when the response has this header.">
@@ -201,7 +201,7 @@ export function JsonTextarea({
             onChange(JSON.parse(e.target.value));
             setErr(null);
           } catch (x) {
-            setErr(x instanceof Error ? `Not valid JSON: ${x.message}` : "Not valid JSON");
+            setErr(x instanceof Error ? `This is not valid JSON yet. ${x.message}` : "This is not valid JSON yet.");
           }
         }}
         className="font-mono text-[12.5px] leading-relaxed"

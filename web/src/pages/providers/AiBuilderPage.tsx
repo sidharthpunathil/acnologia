@@ -39,10 +39,9 @@ function UrlList({ value, onChange }: { value: string[]; onChange: (v: string[])
   );
 }
 
-const PLACEHOLDER = `Resend
+const PLACEHOLDER = `An API name, a docs URL, or as much detail as you like. For example:
 
-or a docs URL, or as much detail as you like:
-"Resend email API. Free plan is 100 emails a day and 2 requests per second. A 429 with daily_quota_exceeded means quota is gone until midnight UTC; any other 429 is a short rate limit. GET /domains is a cheap way to check a key."`;
+"Acme Mail email API. The free plan allows 100 emails a day and 2 requests a second. A 429 with daily_quota_exceeded means the quota is gone until midnight UTC. Any other 429 is a short rate limit. GET /domains is a cheap way to check a key."`;
 
 export function AiBuilderPage() {
   useTitle("Build with AI");
@@ -84,7 +83,7 @@ export function AiBuilderPage() {
     }
     const bad = cleanUrls.find((u) => !/^https?:\/\//i.test(u));
     if (bad) {
-      toast.error(`"${bad}" is not a full URL. Start it with https://.`);
+      toast.error(`"${bad}" is not a full URL. Start it with https://`);
       return;
     }
     setBusy(true);
@@ -111,12 +110,12 @@ export function AiBuilderPage() {
   return (
     <div>
       <Link to={updateSlug ? `/providers/${encodeURIComponent(updateSlug)}` : "/providers"} className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
-        <ArrowLeft className="h-3.5 w-3.5" /> {updateSlug ? updateSlug : "providers"}
+        <ArrowLeft className="h-3.5 w-3.5" /> {updateSlug ? updateSlug : "Providers"}
       </Link>
 
       <div className="mb-8 flex items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] bg-ink text-white">
-          <Sparkles className="h-5 w-5 text-[#ff6b6b]" />
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] bg-ink text-on-ink">
+          <Sparkles className="h-5 w-5 text-spark" />
         </div>
         <div className="min-w-0">
           <h1 className="font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">
@@ -124,8 +123,8 @@ export function AiBuilderPage() {
           </h1>
           <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-muted">
             {updateSlug
-              ? "Say what to change or fix. The agent re-reads the docs, edits the spec, re-runs every test and publishes a new version. Rollback stays one click away."
-              : "The agent researches the API and fills in everything: name, category, color, description, logo, error rules, health check, examples and tests. It tests the result and publishes it live. Nothing restarts."}
+              ? "Say what to change or fix. The agent rereads the docs, edits the spec, reruns every test and publishes a new version. You can roll back in one click."
+              : "Give it an API name or docs URL. The agent researches the API, writes the error rules, health check, examples and tests, runs the tests, and publishes the provider without a restart."}
           </p>
         </div>
       </div>
@@ -134,10 +133,9 @@ export function AiBuilderPage() {
         <Skeleton className="mb-6 h-12 rounded-xl" />
       ) : !enabled ? (
         <Callout tone="amber" icon={<Terminal className="h-4 w-4" />} className="mb-6">
-          <div className="font-medium text-amber-950">The AI builder is turned off on this server.</div>
-          <div className="mt-1">
-            {status?.reason || statusError || "No Anthropic API key is configured."} To turn it on, add <code className="rounded bg-white/70 px-1 font-mono text-[12px]">ANTHROPIC_API_KEY=sk-ant-...</code> to your{" "}
-            <code className="rounded bg-white/70 px-1 font-mono text-[12px]">.env</code> and restart Cogito. You can still{" "}
+          <div className="font-medium text-amber-950">The AI builder is off on this server</div>
+          <div className="wrap-anywhere mt-1">
+            {status?.reason || statusError || "Add the AI key to your .env, then restart Cogito."} You can still{" "}
             <Link to="/providers/new" className="font-medium underline underline-offset-2">
               write a provider by hand
             </Link>
@@ -147,16 +145,16 @@ export function AiBuilderPage() {
       ) : (
         <p className="mb-6 font-mono text-xs text-muted">
           <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 align-middle" aria-hidden="true" />
-          AI ready · {status?.model}
+          AI is ready · {status?.model}
         </p>
       )}
 
       {!manage ? (
-        <Callout>Only admins can start AI builds. Recent runs are listed below.</Callout>
+        <Callout>Only admins can start an AI build. Recent runs are below.</Callout>
       ) : (
         <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="space-y-5">
-            <Section title="What should it build?" description="As short as a provider name or a docs URL. Add notes on limits, plans or quirks you already know and it will respect them.">
+            <Section title="What should it build?" description="A provider name or a docs URL is enough. Add anything you know about limits, plans or quirks, and the agent will follow it.">
               {provider && (
                 <div className="mb-4 flex items-center gap-3 rounded-xl bg-soft px-3 py-2.5">
                   <ProviderLogo provider={provider} size="sm" />
@@ -174,13 +172,13 @@ export function AiBuilderPage() {
                     setContext(e.target.value);
                     if (contextErr) setContextErr(null);
                   }}
-                  placeholder={updateSlug ? "The 429 with code too_many_requests should be a 10 second rate limit, not quota exhausted. Add a test for it." : PLACEHOLDER}
+                  placeholder={updateSlug ? "A 429 with code too_many_requests should be a 10 second rate limit, not out of quota. Add a test for it." : PLACEHOLDER}
                   className="min-h-[200px] text-[14px] leading-relaxed"
                 />
               </Field>
             </Section>
 
-            <Section title="Sources" description="Optional. Without them the agent searches the web on its own.">
+            <Section title="Sources" description="Optional. Without them, the agent searches the web itself.">
               <div className="space-y-5">
                 <div>
                   <div className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-ink">
@@ -188,23 +186,23 @@ export function AiBuilderPage() {
                   </div>
                   <UrlList value={urls} onChange={setUrls} />
                 </div>
-                <Field label="GitHub repo" hint="An official SDK or API repo, as owner/repo or a URL. The agent reads its error handling code.">
-                  <Input value={github} onChange={(e) => setGithub(e.target.value)} placeholder="resend/resend-node" spellCheck={false} className="font-mono" />
+                <Field label="GitHub repo" hint="An official SDK or API repo, as owner/repo or a URL. The agent reads how it handles errors.">
+                  <Input value={github} onChange={(e) => setGithub(e.target.value)} placeholder="owner/repo" spellCheck={false} className="font-mono" />
                 </Field>
               </div>
             </Section>
           </div>
 
           <div className="space-y-5">
-            <Section title="Test key" description="Optional. Used only for one cheap live check: the health check and the first safe example. It is encrypted during the run and wiped when the run ends.">
-              <Input type="password" autoComplete="off" value={testKey} onChange={(e) => setTestKey(e.target.value)} placeholder="paste a key to test with" aria-label="Test key" className="font-mono" />
+            <Section title="Test key" description="Optional. Used once for a cheap live check: the health check and the first safe example. It stays encrypted during the run and is wiped when the run ends.">
+              <Input type="password" autoComplete="off" value={testKey} onChange={(e) => setTestKey(e.target.value)} placeholder="Paste a key to test with" aria-label="Test key" className="font-mono" />
             </Section>
 
             <Section title="When it passes">
               <div className="space-y-4">
                 <Toggle
                   label="Publish automatically"
-                  description="Publishes once validation and every fixture test pass. Off holds it for your review."
+                  description="Goes live once the spec is valid and every test passes. Turn off to review it first."
                   checked={autoPublish}
                   onChange={setAutoPublish}
                 />
@@ -219,13 +217,16 @@ export function AiBuilderPage() {
               </div>
               <p className="mt-4 flex items-start gap-2 text-xs leading-relaxed text-muted">
                 <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                The agent only writes a JSON spec. It cannot run code, and every spec is validated and tested before it goes live.
+                The agent only writes a JSON spec. It cannot run code, and every spec is checked and tested before it goes live.
               </p>
             </Section>
 
-            <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="w-full">
-              {updateSlug ? "Start improving" : "Build provider"}
-            </Button>
+            {/* Sticky on phones so the main action stays in reach on a long form. */}
+            <div className="sticky bottom-[calc(var(--tabbar-h)+0.75rem)] z-20 lg:static">
+              <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="w-full shadow-pop lg:shadow-none">
+                {updateSlug ? "Start improving" : "Build provider"}
+              </Button>
+            </div>
           </div>
         </form>
       )}
@@ -244,17 +245,17 @@ export function AiBuilderPage() {
             ))}
           </div>
         ) : runs.length === 0 ? (
-          <p className="rounded-card border border-dashed border-[#dcdbd3] px-5 py-8 text-center text-sm text-muted">
-            No runs yet. Your first build will show up here with its full step log.
+          <p className="rounded-card border border-dashed border-line-strong px-5 py-8 text-center text-sm text-muted">
+            No runs yet. Your first build shows up here with every step it took.
           </p>
         ) : (
-          <ul className="divide-y divide-line overflow-hidden rounded-card bg-white shadow-card">
+          <ul className="divide-y divide-line overflow-hidden rounded-card bg-surface shadow-card">
             {runs.slice(0, 20).map((r) => (
               <li key={r.id}>
                 <Link to={`/providers/ai/${r.id}`} className="flex min-h-[60px] items-center gap-3 px-4 py-3 transition-colors hover:bg-soft">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-[14px] font-medium text-ink">{r.title || r.provider_slug || `Run #${r.id}`}</span>
+                      <span className="min-w-0 truncate text-[14px] font-medium text-ink">{r.title || r.provider_slug || `Run #${r.id}`}</span>
                       <RunStatusBadge status={r.status} />
                     </div>
                     <div className="mt-0.5 truncate font-mono text-[11px] text-muted">
@@ -271,7 +272,7 @@ export function AiBuilderPage() {
         )}
       </section>
       <p className="mt-4 flex items-center gap-1.5 font-mono text-[11px] text-faint">
-        <GitBranch className="h-3 w-3" /> Every publish is a new provider version. Roll back from the provider page.
+        <GitBranch className="h-3 w-3 shrink-0" /> Every publish is a new provider version. Roll back from the provider page.
       </p>
     </div>
   );

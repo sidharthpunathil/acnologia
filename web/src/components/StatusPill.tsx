@@ -5,9 +5,9 @@ import { cx } from "./ui";
 const styles: Record<string, { dot: string; pill: string; label: string }> = {
   active: { dot: "bg-emerald-500", pill: "bg-emerald-50 text-emerald-700", label: "available" },
   cooling: { dot: "bg-amber-500", pill: "bg-amber-50 text-amber-700", label: "cooling" },
-  exhausted: { dot: "bg-orange-500", pill: "bg-orange-50 text-orange-700", label: "exhausted" },
+  exhausted: { dot: "bg-orange-500", pill: "bg-orange-50 text-orange-700", label: "out of quota" },
   invalid: { dot: "bg-red-500", pill: "bg-red-50 text-red-700", label: "invalid" },
-  disabled: { dot: "bg-stone-400", pill: "bg-[#efeee8] text-muted", label: "disabled" },
+  disabled: { dot: "bg-stone-400", pill: "bg-well text-muted", label: "disabled" },
 };
 
 export function StatusPill({ k, now }: { k: Key; now: number }) {

@@ -81,7 +81,7 @@ export function LogoEditor({
   };
 
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+    <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
       <EntityLogo src={src} name={name || "?"} color={color} size="xl" />
       <div className="min-w-0 flex-1 space-y-3">
         <div className="flex flex-wrap gap-2">
@@ -128,7 +128,7 @@ export function LogoEditor({
               disabled={disabled || busy !== null}
               loading={busy === "remove"}
               onClick={() => void run("remove", onRemove, "Logo removed")}
-              className="hover:text-red-600"
+              className="hover:text-red-700"
             >
               Remove
             </Button>

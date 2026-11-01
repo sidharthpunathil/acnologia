@@ -5,8 +5,12 @@ import type {
   AuditEntry,
   AuthState,
   CogitoEvent,
+  CheckSummary,
   Key,
+  KeyInsights,
   KeyPatch,
+  KeyRow,
+  KeySummary,
   NewKeyInput,
   Overview,
   ProviderTemplate,
@@ -74,7 +78,7 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
   try {
     res = await fetch(path, init);
   } catch {
-    throw new ApiError(0, "network", "Cannot reach the Cogito server");
+    throw new ApiError(0, "network", "Cannot reach the Cogito server.");
   }
 
   const text = await res.text();
@@ -186,6 +190,10 @@ export const api = {
   revealKey: (id: number) => request<{ secret: string }>("POST", `/api/admin/keys/${id}/reveal`),
   checkKey: (id: number) => request<Key>("POST", `/api/admin/keys/${id}/check`),
   resetKey: (id: number) => request<Key>("POST", `/api/admin/keys/${id}/reset`),
+  listAllKeys: () => request<{ keys: KeyRow[]; summary: KeySummary }>("GET", "/api/admin/keys"),
+  keyInsights: (id: number) => request<KeyInsights>("GET", `/api/admin/keys/${id}/insights`),
+  checkAllKeys: () => request<CheckSummary>("POST", "/api/admin/keys/check-all"),
+  checkServiceKeys: (serviceId: number) => request<CheckSummary>("POST", `/api/admin/services/${serviceId}/check`),
 
   // Apps
   listApps: () => request<{ apps: App[] }>("GET", "/api/admin/apps"),
@@ -214,5 +222,5 @@ export const api = {
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   if (err instanceof Error) return err.message;
-  return "Something went wrong";
+  return "Something went wrong. Try again.";
 }

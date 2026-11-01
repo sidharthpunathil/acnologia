@@ -12,7 +12,7 @@ export function MultiSelect<T extends string | number>({
   options,
   value,
   onChange,
-  empty = "Nothing to choose from yet.",
+  empty = "Nothing to pick from yet.",
   disabled,
 }: {
   options: Option<T>[];
@@ -24,7 +24,7 @@ export function MultiSelect<T extends string | number>({
   if (!options.length) return <div className="rounded-xl border border-dashed border-line px-3 py-3 text-xs text-muted">{empty}</div>;
   const set = new Set(value);
   return (
-    <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-white p-2">
+    <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-surface p-2">
       {options.map((o) => {
         const on = set.has(o.value);
         return (
@@ -34,13 +34,13 @@ export function MultiSelect<T extends string | number>({
             disabled={disabled}
             onClick={() => onChange(on ? value.filter((v) => v !== o.value) : [...value, o.value])}
             className={cx(
-              "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-              on ? "border-ink bg-ink text-white" : "border-line bg-white text-ink hover:border-ink/30",
+              "tap inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+              on ? "border-ink bg-ink text-on-ink" : "border-line bg-surface text-ink hover:border-ink/30",
             )}
           >
             {on && <Check className="h-3 w-3" />}
             {o.label}
-            {o.meta && <span className={cx("font-mono text-[10px]", on ? "text-white/60" : "text-faint")}>{o.meta}</span>}
+            {o.meta && <span className={cx("font-mono text-[10px]", on ? "text-on-ink/60" : "text-faint")}>{o.meta}</span>}
           </button>
         );
       })}

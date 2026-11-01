@@ -37,12 +37,12 @@ export function CopyButton({ text, label = "Copy", className, dark }: { text: st
           setDone(true);
           window.setTimeout(() => setDone(false), 1500);
         } else {
-          toast.error("Copy failed. Select the text and copy it manually.");
+          toast.error("Could not copy. Select the text and copy it yourself.");
         }
       }}
       className={cx(
-        "inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium transition-colors",
-        dark ? "text-white/70 hover:bg-white/10 hover:text-white" : "text-muted hover:bg-black/[0.05] hover:text-ink",
+        "tap inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium transition-colors",
+        dark ? "text-white/70 hover:bg-white/10 hover:text-white" : "text-muted hover:bg-ink/[0.06] hover:text-ink",
         className,
       )}
     >

@@ -23,7 +23,7 @@ export function SetupPage() {
     setBusy(true);
     try {
       await setup(email.trim(), name.trim(), password);
-      toast.success("Superadmin created. Welcome to Cogito.");
+      toast.success("You are in. Welcome to Cogito.");
     } catch (e) {
       setErr(errorMessage(e));
     } finally {
@@ -32,7 +32,7 @@ export function SetupPage() {
   };
 
   return (
-    <AuthShell title="Set up Cogito" meta="A self-hosted API key pool · first run">
+    <AuthShell title="Set up Cogito" meta="Self-hosted API key pool · first run">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
@@ -48,10 +48,10 @@ export function SetupPage() {
         </Field>
         {err && (<p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p>)}
         <Button type="submit" variant="primary" loading={busy} className="w-full">
-          Create superadmin
+          Create my account
         </Button>
         <p className="text-xs text-muted">
-          This account can see hidden keys, reveal secrets and manage users. You can invite admins and members later.
+          This first account is the superadmin: it can see hidden keys, reveal secrets and add people. You can add admins and members later.
         </p>
       </form>
     </AuthShell>

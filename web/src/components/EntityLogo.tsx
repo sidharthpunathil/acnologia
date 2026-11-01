@@ -24,7 +24,7 @@ function initials(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-/** Picks ink or white letters for a colored tile, by relative luminance. */
+/** Picks dark or white letters for a colored tile, by relative luminance. */
 function readableOn(hex: string): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return "#ffffff";
@@ -66,7 +66,8 @@ export function EntityLogo({
 
   if (url && !failed) {
     return (
-      <div className={cx("flex shrink-0 items-center justify-center overflow-hidden bg-white shadow-[inset_0_0_0_1px_rgba(20,20,15,0.09)]", box[size], pad[size], className)}>
+      // The tile stays white in dark mode too, so provider logos keep their intended contrast.
+      <div className={cx("flex shrink-0 items-center justify-center overflow-hidden bg-white shadow-[inset_0_0_0_1px_var(--logo-ring)]", box[size], pad[size], className)}>
         <img
           src={url}
           alt=""
@@ -81,12 +82,13 @@ export function EntityLogo({
   }
 
   const valid = color && /^#?[0-9a-f]{6}$/i.test(color.trim()) ? (color.startsWith("#") ? color : `#${color}`) : null;
-  // Very light brand colors would wash out white letters, so darken those tiles to ink.
-  const bg = valid && readableOn(valid) === "#ffffff" ? valid : valid ? "#18181a" : "#6b6b66";
+  // Very light brand colors would wash out white letters, so those tiles use a dark
+  // gray that still stands apart from the dark theme's surfaces.
+  const bg = valid && readableOn(valid) === "#ffffff" ? valid : valid ? "#3a3935" : "#6b6b66";
   return (
     <div
       aria-hidden="true"
-      className={cx("flex shrink-0 select-none items-center justify-center font-mono font-medium uppercase tracking-tight text-white", box[size], className)}
+      className={cx("flex shrink-0 select-none items-center justify-center font-mono font-medium uppercase tracking-tight text-white shadow-[inset_0_0_0_1px_var(--logo-ring)]", box[size], className)}
       style={{ backgroundColor: bg }}
     >
       {initials(name)}
