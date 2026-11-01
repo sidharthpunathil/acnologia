@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { RiPauseLine, RiPlayLine, RiPulseLine } from "@remixicon/react";
 import { useTitle } from "../hooks/useTitle";
-import { Activity as ActivityIcon, Pause, Play } from "lucide-react";
 import { useEvents } from "../stores/events";
 import { useServices } from "../stores/services";
 import { toast } from "../stores/toast";
@@ -8,9 +8,15 @@ import { errorMessage } from "../lib/api";
 import { EVENT_KINDS, type EventKind } from "../lib/types";
 import { useNow } from "../hooks/useNow";
 import { EventsList } from "../components/EventsList";
-import { Button, Empty, PageHeader, PageSkeleton, Select, Spinner } from "../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { Spinner } from "@/components/base/spinner/spinner";
+import { EmptyState, PageHeader } from "@/components/acn";
+import { CARD } from "./service/parts";
 
 const REFRESH_MS = 10000;
+const ALL = "all";
 
 export function ActivityPage() {
   useTitle("Activity");
@@ -63,37 +69,56 @@ export function ActivityPage() {
         title="Activity"
         meta={`${shown.length} events · ${limited} limits hit · ${live ? "updates every 10s" : "paused"}`}
         actions={
-          <Button icon={live ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />} onClick={() => setLive(!live)}>
+          <Button variant="secondary" leadingIcon={live ? RiPauseLine : RiPlayLine} onClick={() => setLive(!live)} aria-pressed={!live}>
             {live ? "Pause" : "Resume"}
           </Button>
         }
       />
 
       <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Select value={serviceId} onChange={(e) => setServiceId(e.target.value)} aria-label="Service" className="sm:w-56">
-          <option value="">All services</option>
+        <Select
+          aria-label="Service"
+          selectedKey={serviceId || ALL}
+          onSelectionChange={(k) => setServiceId(k === ALL ? "" : String(k))}
+          className="sm:w-56"
+        >
+          <SelectItem id={ALL}>All services</SelectItem>
           {services.map((s) => (
-            <option key={s.id} value={s.id}>
+            <SelectItem key={s.id} id={String(s.id)}>
               {s.name}
-            </option>
+            </SelectItem>
           ))}
         </Select>
-        <Select value={kind} onChange={(e) => setKind(e.target.value as EventKind | "")} aria-label="Event type" className="sm:w-48">
-          <option value="">All event types</option>
+        <Select
+          aria-label="Event type"
+          selectedKey={kind || ALL}
+          onSelectionChange={(k) => setKind(k === ALL ? "" : (String(k) as EventKind))}
+          className="sm:w-52"
+        >
+          <SelectItem id={ALL}>All event types</SelectItem>
           {EVENT_KINDS.map((k) => (
-            <option key={k} value={k}>
-              {k.replace("_", " ")}
-            </option>
+            <SelectItem key={k} id={k}>
+              {k.replace(/_/g, " ")}
+            </SelectItem>
           ))}
         </Select>
-        {loading && <Spinner className="ml-1" />}
+        {loading && <Spinner size="sm" className="ms-1" aria-label="Loading events" />}
       </div>
 
       {!feedLoaded ? (
-        <PageSkeleton variant="list" bare />
+        <div className={CARD} role="status" aria-label="Loading activity">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex items-center gap-4 border-b border-separator-border px-5 py-3.5 last:border-b-0">
+              <Skeleton className="h-5 w-20 rounded-full" />
+              <Skeleton shape="text" className="h-3.5 flex-1" />
+              <Skeleton shape="text" className="h-3 w-14" />
+            </div>
+          ))}
+        </div>
       ) : shown.length === 0 ? (
-        <Empty
-          icon={<ActivityIcon className="h-5 w-5" />}
+        <EmptyState
+          as="h2"
+          icon={RiPulseLine}
           title={feed.length ? "No events match these filters" : "No activity yet"}
           body={
             feed.length
@@ -103,6 +128,7 @@ export function ActivityPage() {
           action={
             feed.length && (kind || serviceId) ? (
               <Button
+                variant="secondary"
                 onClick={() => {
                   setKind("");
                   setServiceId("");

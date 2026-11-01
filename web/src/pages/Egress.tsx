@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Focusable } from "react-aria-components";
+import { RiAddLine, RiGlobalLine, RiPencilLine, RiRadarLine } from "@remixicon/react";
 import { useTitle } from "../hooks/useTitle";
-import { Globe, Info, Pencil, Plus, Radar } from "lucide-react";
 import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
@@ -10,7 +11,14 @@ import { ops, type EgressInput, type EgressProxy } from "../lib/ops";
 import { useNow } from "../hooks/useNow";
 import { Modal } from "../components/Modal";
 import { ConfirmButton } from "../components/ConfirmButton";
-import { Badge, Button, Callout, Empty, Field, IconButton, Input, PageHeader, PageSkeleton, Textarea } from "../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/base/buttons/icon-button";
+import { Input } from "@/components/base/input/input";
+import { Textarea } from "@/components/base/textarea/textarea";
+import { Chip } from "@/components/base/badges/chip";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Callout, EmptyState, PageHeader, PageSkeleton } from "@/components/acn";
 
 const SCHEMES = ["http://", "https://", "socks5://", "socks5h://"];
 
@@ -94,52 +102,58 @@ function EgressFormModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form="egress-form" loading={busy}>
+          <Button variant="primary" type="submit" form="egress-form" disabled={busy} aria-busy={busy || undefined} leadingIcon={busy ? ButtonSpinner : undefined}>
             {initial ? "Save" : "Add proxy"}
           </Button>
         </>
       }
     >
-      <form id="egress-form" onSubmit={submit} className="space-y-4" noValidate>
-        <Field label="Name" required error={nameErr}>
-          <Input
-            value={form.name}
-            onChange={(e) => {
-              setForm({ ...form, name: e.target.value });
-              if (nameErr) setNameErr(null);
-            }}
-            placeholder="eu residential"
-            autoComplete="off"
-          />
-        </Field>
-        <Field
+      <form id="egress-form" onSubmit={submit} className="flex flex-col gap-4" noValidate>
+        <Input
+          label="Name"
+          isRequired
+          validationBehavior="aria"
+          isInvalid={!!nameErr}
+          errorMessage={nameErr}
+          value={form.name}
+          onChange={(name) => {
+            setForm({ ...form, name });
+            if (nameErr) setNameErr(null);
+          }}
+          placeholder="eu residential"
+          autoComplete="off"
+        />
+        <Input
           label="URL"
-          required={!initial}
-          error={urlErr}
+          isRequired={!initial}
+          validationBehavior="aria"
+          isInvalid={!!urlErr}
+          errorMessage={urlErr}
           hint={
             initial
               ? `Currently ${initial.url_hint}. Leave blank to keep the stored URL and password.`
               : "http://, https://, socks5:// or socks5h://. Include user:password@ if the proxy needs it."
           }
-        >
-          <Input
-            value={form.url}
-            onChange={(e) => {
-              setForm({ ...form, url: e.target.value });
-              if (urlErr) setUrlErr(null);
-            }}
-            placeholder={initial ? "Leave blank to keep it" : "socks5://user:pass@proxy.example.com:1080"}
-            autoComplete="off"
-            spellCheck={false}
-            className="font-mono"
-          />
-        </Field>
-        <Field label="Region" hint="Free text, for your reference.">
-          <Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="eu-west" autoComplete="off" />
-        </Field>
-        <Field label="Notes">
-          <Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-        </Field>
+          value={form.url}
+          onChange={(url) => {
+            setForm({ ...form, url });
+            if (urlErr) setUrlErr(null);
+          }}
+          placeholder={initial ? "Leave blank to keep it" : "socks5://user:pass@proxy.example.com:1080"}
+          autoComplete="off"
+          spellCheck="false"
+          inputDir="ltr"
+          fieldClassName="font-mono"
+        />
+        <Input
+          label="Region"
+          hint="Free text, for your reference."
+          value={form.region}
+          onChange={(region) => setForm({ ...form, region })}
+          placeholder="eu-west"
+          autoComplete="off"
+        />
+        <Textarea label="Notes" rows={2} value={form.notes} onChange={(notes) => setForm({ ...form, notes })} />
       </form>
     </Modal>
   );
@@ -200,47 +214,57 @@ export function EgressPage() {
         meta={plural(proxies.length, "proxy", "proxies")}
         actions={
           manage && (
-            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={openCreate}>
+            <Button variant="primary" leadingIcon={RiAddLine} onClick={openCreate}>
               Add proxy
             </Button>
           )
         }
       />
-      <Callout icon={<Info className="h-4 w-4" />} className="mb-6">
+      <Callout tone="neutral" className="mb-6">
         Assign a proxy in a service's settings or on a single key. A key's proxy wins over its service's. Anything without one connects directly, and deleting a proxy sends the services and keys using it direct again.
       </Callout>
 
       {error && proxies.length === 0 ? (
-        <Empty title="Egress proxies are not available" body={error} />
+        <EmptyState title="Egress proxies are not available" body={error} />
       ) : proxies.length === 0 ? (
-        <Empty
-          icon={<Globe className="h-5 w-5" />}
+        <EmptyState
+          icon={RiGlobalLine}
           title="No egress proxies yet"
           body={manage ? "Add a proxy to send upstream calls from another address or region." : "Ask an admin to add one."}
           action={
             manage ? (
-              <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={openCreate}>
+              <Button variant="primary" leadingIcon={RiAddLine} onClick={openCreate}>
                 Add your first proxy
               </Button>
             ) : undefined
           }
         />
       ) : (
-        <ul className="space-y-2.5">
+        <ul className="flex flex-col gap-3">
           {proxies.map((p) => {
             const used = p.services + p.keys;
             return (
-              <li key={p.id} className="rounded-card bg-surface p-4 shadow-card sm:px-5">
+              <li key={p.id} className="rounded-3xl border border-border-button-default bg-background-primary-default p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="wrap-anywhere min-w-0 text-[15px] font-medium text-ink">{p.name}</span>
-                      {p.region && <Badge tone="blue">{p.region}</Badge>}
-                      {used === 0 && <Badge>unused</Badge>}
+                      <span className="min-w-0 wrap-anywhere text-headline-medium text-text-primary">{p.name}</span>
+                      {p.region && (
+                        <Chip variant="caption" color="blue" className="font-mono">
+                          {p.region}
+                        </Chip>
+                      )}
+                      {used === 0 && (
+                        <Chip variant="caption" color="neutral">
+                          unused
+                        </Chip>
+                      )}
                     </div>
-                    <div className="wrap-anywhere mt-1 font-mono text-xs text-muted">{p.url_hint}</div>
-                    {p.notes && <div className="wrap-anywhere mt-1 text-[13px] text-muted">{p.notes}</div>}
-                    <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
+                    <div className="mt-1 wrap-anywhere font-mono text-caption-1-regular text-text-secondary" dir="ltr">
+                      {p.url_hint}
+                    </div>
+                    {p.notes && <div className="mt-1 wrap-anywhere text-body-2-regular text-text-secondary">{p.notes}</div>}
+                    <div className="mt-2 wrap-anywhere font-mono text-caption-1-regular text-text-secondary">
                       {plural(p.services, "service")} · {plural(p.keys, "key")} ·{" "}
                       {p.last_checked_at ? (
                         <span title={dateTime(p.last_checked_at)}>
@@ -251,22 +275,35 @@ export function EgressPage() {
                         "never tested"
                       )}
                     </div>
-                    {p.last_error && <div className="wrap-anywhere mt-1 text-xs text-red-700">{p.last_error}</div>}
+                    {p.last_error && <div className="mt-1 wrap-anywhere text-caption-1-regular text-text-error-primary">{p.last_error}</div>}
                   </div>
                   {manage && (
-                    <div className="-mx-1 flex shrink-0 flex-wrap items-center gap-1 border-t border-line pt-2 sm:mx-0 sm:border-0 sm:pt-0">
-                      <Button size="sm" variant="ghost" icon={<Radar className="h-3.5 w-3.5" />} loading={testing === p.id} onClick={() => void test(p)}>
+                    <div className="flex shrink-0 flex-wrap items-center gap-1 border-t border-separator-border pt-3 sm:border-0 sm:pt-0">
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        leadingIcon={testing === p.id ? ButtonSpinner : RiRadarLine}
+                        disabled={testing === p.id}
+                        aria-busy={testing === p.id || undefined}
+                        onClick={() => void test(p)}
+                        className="max-sm:h-11"
+                      >
                         Test
                       </Button>
-                      <IconButton
-                        label="Edit proxy"
-                        onClick={() => {
-                          setEditing(p);
-                          setFormOpen(true);
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </IconButton>
+                      <TooltipTrigger delay={400}>
+                        <Focusable>
+                          <IconButton
+                            icon={RiPencilLine}
+                            aria-label={`Edit ${p.name}`}
+                            className="max-sm:size-11"
+                            onClick={() => {
+                              setEditing(p);
+                              setFormOpen(true);
+                            }}
+                          />
+                        </Focusable>
+                        <Tooltip>Edit proxy</Tooltip>
+                      </TooltipTrigger>
                       <ConfirmButton
                         iconOnly
                         label="Delete proxy"

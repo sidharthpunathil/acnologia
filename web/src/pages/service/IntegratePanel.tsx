@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ProviderSpec, Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
-import { CodeBlock } from "../../components/CodeBlock";
-import { Card, Segmented, cx } from "../../components/ui";
+import { CodeBlock } from "@/components/acn";
+import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
+import { cx } from "@/utils/cx";
 
 type Mode = "proxy" | "lease";
 type Lang = "curl" | "python" | "typescript" | "go";
@@ -230,33 +231,70 @@ export function IntegratePanel({ service }: { service: Service }) {
   const spec = useProviders((st) => st.providers.find((p) => p.slug === service.provider)?.spec);
   const code = snippets(service, host, spec)[mode][lang];
 
+  const modeCard = (on: boolean) =>
+    cx(
+      "rounded-3xl border bg-background-primary-default p-4 transition-[border-color,box-shadow] duration-150 ease sm:p-5",
+      on ? "border-accent-line ring-1 ring-accent-line" : "border-border-button-default",
+    );
+
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Card className={cx("p-4", mode === "proxy" && "ring-1 ring-ink/20")}>
-          <div className="text-sm font-medium text-ink">Proxy mode</div>
-          <p className="mt-1 text-[13px] text-muted">
+        <div className={modeCard(mode === "proxy")}>
+          <h3 className="text-body-medium text-text-primary">Proxy mode</h3>
+          <p className="mt-1 text-body-2-regular text-text-secondary">
             Call Acnologia instead of the provider. It adds a key, retries a rate limit with the next key up to {service.max_attempts} times, and your app never sees a secret.
           </p>
-        </Card>
-        <Card className={cx("p-4", mode === "lease" && "ring-1 ring-ink/20")}>
-          <div className="text-sm font-medium text-ink">Lease mode</div>
-          <p className="mt-1 text-[13px] text-muted">
+        </div>
+        <div className={modeCard(mode === "lease")}>
+          <h3 className="text-body-medium text-text-primary">Lease mode</h3>
+          <p className="mt-1 text-body-2-regular text-text-secondary">
             Lease a key, call the provider yourself, then report how it went so Acnologia can rest the key and rotate.
           </p>
-        </Card>
+        </div>
       </div>
 
       {/* Phones: the language picker drops to its own full width row. */}
       <div className="flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
-        <Segmented label="Mode" size="sm" items={[{ id: "proxy" as Mode, label: "Proxy" }, { id: "lease" as Mode, label: "Lease" }]} value={mode} onChange={setMode} />
-        <Segmented label="Language" size="sm" block className="sm:inline-flex sm:w-auto" items={LANGS} value={lang} onChange={setLang} />
+        <SegmentedControl
+          aria-label="Mode"
+          selectedKeys={[mode]}
+          onSelectionChange={(keys) => {
+            const next = [...keys][0];
+            if (next) setMode(next as Mode);
+          }}
+        >
+          <SegmentedControlItem id="proxy">Proxy</SegmentedControlItem>
+          <SegmentedControlItem id="lease">Lease</SegmentedControlItem>
+        </SegmentedControl>
+        <SegmentedControl
+          aria-label="Language"
+          selectedKeys={[lang]}
+          onSelectionChange={(keys) => {
+            const next = [...keys][0];
+            if (next) setLang(next as Lang);
+          }}
+          className="w-full sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none"
+        >
+          {LANGS.map((l) => (
+            <SegmentedControlItem key={l.id} id={l.id}>
+              {l.label}
+            </SegmentedControlItem>
+          ))}
+        </SegmentedControl>
       </div>
 
       <CodeBlock code={code} label={`${mode} · ${LANGS.find((l) => l.id === lang)?.label}`} />
 
-      <p className="wrap-anywhere font-mono text-xs text-muted">
-        Replace {TOKEN} with an app token from <Link to="/apps" className="text-ink underline underline-offset-2">Apps</Link>. The app must allow {mode} mode and the {service.slug} service.
+      <p className="wrap-anywhere font-mono text-caption-1-regular text-text-secondary">
+        Replace {TOKEN} with an app token from{" "}
+        <Link
+          to="/apps"
+          className="rounded-sm text-text-primary underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+        >
+          Apps
+        </Link>
+        . The app must allow {mode} mode and the {service.slug} service.
       </p>
     </div>
   );

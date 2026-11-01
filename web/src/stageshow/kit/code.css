@@ -46,7 +46,7 @@
     color: var(--ss-text-faint);
   }
 
-  /* Wide enough that the + or − stands clear of the code after it */
+  /* Wide enough that the + or - stands clear of the code after it */
   .ss-code__mark {
     flex-shrink: 0;
     width: 16px;

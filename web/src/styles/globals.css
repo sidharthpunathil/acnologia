@@ -40,7 +40,7 @@
   }
 }
 
-.agent-progress-loading-text {
+.bui-shimmer-loading-text {
   color: transparent;
   background-image: linear-gradient(
     100deg,
@@ -59,7 +59,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-progress-loading-text {
+  .bui-shimmer-loading-text {
     color: var(--color-text-secondary);
     background-image: none;
     animation: none;
@@ -207,7 +207,7 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 
 /* iOS Safari auto-zooms the page when a focused form field's font-size is
- * under 16px — our text-body-regular/medium tokens are 14px by design, so
+ * under 16px: our text-body-regular/medium tokens are 14px by design, so
  * bump just the font-size (not the whole token) on small screens instead of
  * changing the design system's type scale. */
 @media (max-width: 639px) {
@@ -250,12 +250,12 @@ input[type="search"]::-webkit-search-cancel-button {
   outline: none;
 }
 
-/* Liquid glass (landing nav + hero) — the rim light.
+/* Liquid glass (landing nav + hero), the rim light.
  *
  * A fixed conic gradient standing in for a bevel lit from a single direction:
  * bright along the top edge where the light source is, dark down both sides
  * where the glass turns away, and a weaker bounce along the bottom. It does
- * not rotate — a travelling highlight reads as an animation playing on the
+ * not rotate: a travelling highlight reads as an animation playing on the
  * control, where a real edge just sits there catching the room.
  *
  * Achromatic on purpose: highlights are white, shading is black, nothing in
@@ -284,7 +284,7 @@ input[type="search"]::-webkit-search-cancel-button {
   );
   /* Shorthands first, composites last: `-webkit-mask` aliases `mask` in
    * Chromium, so a shorthand placed after a composite silently resets it to
-   * `add` — and an un-composited mask paints the full conic wash over the
+   * `add`: and an un-composited mask paints the full conic wash over the
    * button instead of a ring. */
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
@@ -301,7 +301,7 @@ input[type="search"]::-webkit-search-cancel-button {
 /* Liquid glass hover.
  *
  * Resting and hover values arrive together as inline custom properties, and
- * the swap happens here in CSS rather than in React state — hover then costs
+ * the swap happens here in CSS rather than in React state, hover then costs
  * a style recalculation instead of a re-render of everything inside the glass.
  * `.lg-hover` is the opt-in: a surface without it keeps its resting value. */
 .lg-tint {
@@ -355,12 +355,12 @@ input[type="search"]::-webkit-search-cancel-button {
  * Two leaves hinged on the card's centre seam:
  *   flap-fall  the outgoing digit's TOP half swings down over the incoming
  *              bottom half. Eased IN, because a real flap is falling under
- *              gravity — it accelerates — and it darkens as it tips away
+ *              gravity: it accelerates: and it darkens as it tips away
  *              from the light.
  *   flap-rise  the incoming digit's BOTTOM half swings up from edge-on,
  *              starting exactly when the fall lands (delay = fall duration,
  *              `both` so it waits at 90deg instead of flashing flat). The
- *              small overshoot past 0deg is the slap against the stop —
+ *              small overshoot past 0deg is the slap against the stop,
  *              that bounce is what makes it read mechanical rather than
  *              like a plain rotation. */
 @keyframes flap-fall {
@@ -411,13 +411,13 @@ input[type="search"]::-webkit-search-cancel-button {
 /* New-row entrance for the Storage settings table. Three coordinated
  * pieces (wrapper pairs with `grid grid-rows-[1fr]` + an overflow-hidden
  * middle layer, content carries the slide):
- *   row-grow-in   wrapper's grid track 0fr → 1fr — pushes the rows below
+ *   row-grow-in   wrapper's grid track 0fr → 1fr, pushes the rows below
  *                 down smoothly.
  *   row-slide-in  content translates -100% → 0 with the SAME duration and
  *                 easing, so it stays glued to the growing wrapper's bottom
- *                 edge — visually the row slides out from underneath the
+ *                 edge: visually the row slides out from underneath the
  *                 header row above it.
- *   row-fade-in   opacity/blur on a SHORTER clock than the movement — the
+ *   row-fade-in   opacity/blur on a SHORTER clock than the movement, the
  *                 row is fully visible before it finishes settling (fades
  *                 must complete before movement ends). */
 @keyframes row-grow-in {
@@ -488,14 +488,14 @@ input[type="search"]::-webkit-search-cancel-button {
   }
 }
 
-/* Transitions.dev — "Texts reveal", used by the Storage dropzone's content
+/* Transitions.dev: "Texts reveal", used by the Storage dropzone's content
  * swaps (idle copy ↔ file name + status line).
  *
  * Entrance (`.is-shown` on the parent): lines rise 12px from below while
  * un-blurring, 500ms on a soft-landing bezier, staggered 40ms per line so
  * the eye lands on the first line first.
- * Exit (`.is-hiding`): a single quiet 200ms opacity fade in place — no Y
- * return, no blur, no stagger — so the disappearance never reads as a
+ * Exit (`.is-hiding`): a single quiet 200ms opacity fade in place, no Y
+ * return, no blur, no stagger, so the disappearance never reads as a
  * reverse reveal.
  *
  * Deviations from the original snippet: custom props are scoped to
@@ -600,7 +600,7 @@ input[type="search"]::-webkit-search-cancel-button {
  * Chart entrance animations (AI profile template & contributions heatmap)
  * ------------------------------------------------------------------------- */
 
-/* Heatmap cells pop in softly — each cell gets a random-looking per-cell
+/* Heatmap cells pop in softly, each cell gets a random-looking per-cell
  * animation-delay so the grid fills in a scattered order. */
 .contributions-grid {
   --contribution-tier-0: var(--color-chart-neutral);
@@ -851,7 +851,7 @@ input[type="search"]::-webkit-search-cancel-button {
 
 /* Composer Loader (components/application/composer-loader): the light band
  * orbiting the composer while the agent works. Dash segments on a
- * pathLength-normalized SVG stroke — the offset laps once per duration. */
+ * pathLength-normalized SVG stroke: the offset laps once per duration. */
 @keyframes bui-composer-loader-dash {
   from {
     stroke-dashoffset: 0;

@@ -13,7 +13,7 @@ import {
 import { cx } from "@/utils/cx";
 
 /**
- * Toast — fire-and-forget notifications from anywhere in the app:
+ * Toast: fire-and-forget notifications from anywhere in the app:
  *
  *   toast.success("Changes saved");
  *   toast.error("Upload failed", { description: "The file is over 20MB." });

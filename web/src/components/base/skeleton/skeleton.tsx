@@ -4,7 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { cx, sortCx } from "@/utils/cx";
 
 /**
- * Skeleton — placeholders in the shape of the content that is on its way.
+ * Skeleton: placeholders in the shape of the content that is on its way.
  *
  *   <Skeleton shape="circle" className="size-10" />
  *   <SkeletonText lines={3} />

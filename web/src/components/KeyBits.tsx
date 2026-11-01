@@ -1,13 +1,15 @@
 import { useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, CircleHelp, XCircle } from "lucide-react";
+import { RiCheckboxCircleLine, RiCloseCircleLine, RiQuestionLine } from "@remixicon/react";
 import type { DayActivity, Key, Provider, Validity } from "../lib/types";
 import { compact as short, dateTime, num, plural, relTime } from "../lib/format";
-import { cx } from "./ui";
+import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Meter, type MeterTone } from "@/components/base/meter/meter";
+import { cx } from "@/utils/cx";
 
-const VALIDITY: Record<Validity, { label: string; icon: typeof CheckCircle2; cls: string }> = {
-  valid: { label: "valid", icon: CheckCircle2, cls: "bg-emerald-50 text-emerald-700" },
-  invalid: { label: "invalid", icon: XCircle, cls: "bg-red-50 text-red-700" },
-  unknown: { label: "unknown", icon: CircleHelp, cls: "bg-well text-muted" },
+const VALIDITY: Record<Validity, { label: string; icon: typeof RiCheckboxCircleLine; color: ChipColor; iconCls: string }> = {
+  valid: { label: "valid", icon: RiCheckboxCircleLine, color: "lime", iconCls: "text-notification-success-foreground" },
+  invalid: { label: "invalid", icon: RiCloseCircleLine, color: "rose", iconCls: "text-notification-error-foreground" },
+  unknown: { label: "unknown", icon: RiQuestionLine, color: "neutral", iconCls: "text-foreground-icon-tertiary" },
 };
 
 /** Valid, invalid or unknown, always with an icon and a word, never color alone. */
@@ -15,14 +17,11 @@ export function ValidityBadge({ validity, reason, className }: { validity: Valid
   const v = VALIDITY[validity ?? "unknown"] ?? VALIDITY.unknown;
   const I = v.icon;
   return (
-    <span
-      title={reason || undefined}
-      className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[11px]", v.cls, className)}
-    >
-      <I className="h-3 w-3 shrink-0" aria-hidden="true" />
+    <Chip variant="caption" color={v.color} title={reason || undefined} className={cx("gap-1 rounded-full px-2 py-0.5 font-mono", className)}>
+      <I className="size-3 shrink-0" aria-hidden />
       {v.label}
       {reason && <span className="sr-only">: {reason}</span>}
-    </span>
+    </Chip>
   );
 }
 
@@ -38,12 +37,6 @@ export function validityText(k: Pick<Key, "validity" | "validity_reason" | "last
   }
   return "Not checked or used yet";
 }
-
-const VALIDITY_ICON: Record<Validity, string> = {
-  valid: "text-emerald-600",
-  invalid: "text-red-600",
-  unknown: "text-faint",
-};
 
 /**
  * True when the validity badge would only repeat the status pill, as with an
@@ -73,8 +66,8 @@ export function ValidityLine({
   const I = v.icon;
   const text = validityText(k, now);
   return (
-    <div className={cx("flex min-w-0 items-start gap-1.5 text-[12px] leading-snug text-muted", className)} title={clamp ? text : undefined}>
-      <I className={cx("mt-[2px] h-3.5 w-3.5 shrink-0", VALIDITY_ICON[k.validity ?? "unknown"] ?? VALIDITY_ICON.unknown)} aria-hidden="true" />
+    <div className={cx("flex min-w-0 items-start gap-1.5 text-caption-1-regular text-text-secondary", className)} title={clamp ? text : undefined}>
+      <I className={cx("mt-px size-3.5 shrink-0", v.iconCls)} aria-hidden />
       <span className={cx("min-w-0", clamp ? "line-clamp-2 break-words" : "wrap-anywhere")}>
         <span className="sr-only">{v.label}: </span>
         {text}
@@ -121,7 +114,7 @@ export function AccountLine({
   const text = accountLabel(k);
   if (!text) return null;
   return (
-    <div className={cx("text-[11px] text-muted", wrap ? "wrap-anywhere" : "truncate", className)} title={text}>
+    <div className={cx("text-caption-1-regular text-text-secondary", wrap ? "wrap-anywhere" : "truncate", className)} title={text}>
       {text}
     </div>
   );
@@ -186,35 +179,29 @@ export function QuotaMeter({
   resetExact?: boolean;
 }) {
   const q = quotaInfo(k, unit);
-  if (!q) return <span className={cx("font-mono text-xs text-faint", className)}>{compact ? "-" : "No quota data yet"}</span>;
+  if (!q) return <span className={cx("font-mono text-caption-1-regular text-text-tertiary", className)}>{compact ? "-" : "No quota data yet"}</span>;
   const pct = q.frac === null ? null : q.frac * 100;
-  const bar = pct === null ? null : pct > 40 ? "bg-emerald-500" : pct > 10 ? "bg-amber-500" : "bg-red-500";
+  const tone: MeterTone = pct === null ? "accent" : pct > 40 ? "success" : pct > 10 ? "warning" : "error";
   const reset = k.quota_reset_at ? Date.parse(k.quota_reset_at) : NaN;
   const exhausted = k.effective_status === "exhausted" || k.status === "exhausted";
   return (
     <div className={cx("min-w-0", className)}>
-      <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-[12px] tabular-nums text-ink" title={compact && q.short !== q.text ? q.text : undefined}>
+      <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-caption-1-regular tabular-nums text-text-primary" title={compact && q.short !== q.text ? q.text : undefined}>
         <span className="wrap-anywhere">{compact ? q.short : q.text}</span>
-        {q.low && <span className="text-[11px] text-red-700">low</span>}
+        {q.low && <span className="text-text-error-primary">low</span>}
       </div>
       {pct !== null && (
-        <div
-          className="mt-1 h-1.5 w-full max-w-[160px] overflow-hidden rounded-full bg-well"
-          role="meter"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(pct)}
+        <Meter
           aria-label="Quota left"
-        >
-          {/* scaleX instead of width, so a quota update animates without layout. */}
-          <div
-            className={cx("h-full w-full origin-left transition-[transform,background-color] duration-500 ease-out", bar)}
-            style={{ transform: `scaleX(${pct / 100})` }}
-          />
-        </div>
+          value={Math.round(pct)}
+          valueLabel={q.text}
+          tone={tone}
+          size="sm"
+          className="mt-1.5 max-w-[160px]"
+        />
       )}
       {!Number.isNaN(reset) && (
-        <div className="mt-1 font-mono text-[11px] text-muted" title={dateTime(k.quota_reset_at)}>
+        <div className="mt-1 font-mono text-caption-1-regular text-text-secondary" title={dateTime(k.quota_reset_at)}>
           {reset <= now
             ? "reset due now"
             : exhausted && resetExact !== true
@@ -253,7 +240,7 @@ export function ActivityChart({ daily }: { daily: DayActivity[] }) {
 
   return (
     <figure>
-      <figcaption className="text-[13px] leading-relaxed text-muted">{summary}</figcaption>
+      <figcaption className="text-body-2-regular text-text-secondary">{summary}</figcaption>
       {!empty && (
         <>
           <ol className="mt-3 flex h-24 items-end gap-[3px]" aria-label="Activity per day" onPointerLeave={(e) => e.pointerType === "mouse" && setSel(pinned)}>
@@ -279,40 +266,41 @@ export function ActivityChart({ daily }: { daily: DayActivity[] }) {
                       setSel(next);
                     }}
                     className={cx(
-                      "flex h-full w-full flex-col-reverse justify-start overflow-hidden rounded-[3px] transition-colors",
-                      sel === i ? "bg-ink/[0.08]" : "hover:bg-ink/[0.04]",
+                      "flex h-full w-full cursor-pointer flex-col-reverse justify-start overflow-hidden rounded-t-[4px] outline-none transition-colors duration-150 ease",
+                      "focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+                      sel === i ? "bg-background-tertiary-hover" : "hover:bg-background-tertiary-default",
                     )}
                   >
                     {total === 0 ? (
-                      <span className="block h-[2px] w-full bg-line-strong" />
+                      <span className="block h-[2px] w-full bg-border-button-hover" />
                     ) : (
-                      <>
-                        <span className="block w-full bg-chart-ok" style={{ height: h(d.requests) }} />
-                        <span className="block w-full bg-amber-500" style={{ height: h(d.rate_limited) }} />
-                        <span className="block w-full bg-red-500" style={{ height: h(d.errors) }} />
-                      </>
+                      <span className="animate-bar-rise flex h-full w-full flex-col-reverse" style={{ animationDelay: `${i * 18}ms` }}>
+                        <span className="block w-full bg-chart-1" style={{ height: h(d.requests) }} />
+                        <span className="block w-full bg-chart-8-active" style={{ height: h(d.rate_limited) }} />
+                        <span className="block w-full bg-notification-error-foreground" style={{ height: h(d.errors) }} />
+                      </span>
                     )}
                   </button>
                 </li>
               );
             })}
           </ol>
-          <div className="mt-1.5 flex justify-between font-mono text-[10px] text-faint" aria-hidden="true">
+          <div className="mt-1.5 flex justify-between font-mono text-caption-2-regular text-text-tertiary" aria-hidden="true">
             <span>{daily[0] && dayLabel(daily[0].day)}</span>
             <span>{daily.length > 0 && dayLabel(daily[daily.length - 1].day)}</span>
           </div>
-          <p className="mt-2 min-h-[1.25rem] font-mono text-[11px] text-ink" aria-live="polite">
-            {picked ? daySentence(picked) : <span className="text-faint">Tap or hover a bar for that day.</span>}
+          <p className="mt-2 min-h-5 font-mono text-caption-1-regular text-text-primary" aria-live="polite">
+            {picked ? daySentence(picked) : <span className="text-text-tertiary">Tap or hover a bar for that day.</span>}
           </p>
-          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted" aria-label="Legend">
+          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption-1-regular text-text-secondary" aria-label="Legend">
             <li className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-xs bg-chart-ok" aria-hidden="true" /> Requests
+              <span className="size-2.5 rounded-xs bg-chart-1" aria-hidden="true" /> Requests
             </li>
             <li className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-xs bg-amber-500" aria-hidden="true" /> Rate limited
+              <span className="size-2.5 rounded-xs bg-chart-8-active" aria-hidden="true" /> Rate limited
             </li>
             <li className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-xs bg-red-500" aria-hidden="true" /> Errors
+              <span className="size-2.5 rounded-xs bg-notification-error-foreground" aria-hidden="true" /> Errors
             </li>
           </ul>
         </>

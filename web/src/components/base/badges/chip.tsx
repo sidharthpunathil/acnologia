@@ -3,15 +3,15 @@ import { cx, sortCx } from "@/utils/cx";
 
 /**
  * Figma source: Board UI → dashboard 1 "Chip" layers (status chips, delta
- * chips, price chips, role chips — e.g. nodes 3731:3273, 3731:3094, 3731:3280,
+ * chips, price chips, role chips, e.g. nodes 3731:3273, 3731:3094, 3731:3280,
  * 3731:3055).
  *
  * Colored label chip. Three emphasis levels, all rounded radius/md (6px),
  * px 6:
  *
- *   bold    py 2, Body 1/Medium   (14/20/500) — status + percentage deltas
- *   subtle  py 4, Body 1/Medium   (14/20/500) — price chips
- *   caption py 4, Caption 1/Medium (12/16/500, tracking .15) — role tags
+ *   bold    py 2, Body 1/Medium   (14/20/500), status + percentage deltas
+ *   subtle  py 4, Body 1/Medium   (14/20/500), price chips
+ *   caption py 4, Caption 1/Medium (12/16/500, tracking .15), role tags
  *
  * Status pairs are semantic so the same component follows both Figma modes:
  *   lime    light 200/800 · dark 950 @ 60% / 500

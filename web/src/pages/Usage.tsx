@@ -1,10 +1,23 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { BarChart3, Info, Plug, RotateCw, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  RiBarChartBoxLine,
+  RiPlugLine,
+  RiRefreshLine,
+  RiSparkling2Line,
+} from "@remixicon/react";
+import type { Key } from "react-aria-components";
+import { Button } from "@/components/base/buttons/button";
+import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { Spinner } from "@/components/base/spinner/spinner";
+import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
+import { cx } from "@/utils/cx";
 import { useTitle } from "../hooks/useTitle";
 import { errorMessage } from "../lib/api";
 import { compact, num, plural } from "../lib/format";
-import { fetchUsage, usd, usdAxis, type AiUsageRow, type ProviderUsageRow, type UsageReport } from "../lib/usage";
-import { Button, Callout, Empty, PageHeader, Section, Segmented, Skeleton, Spinner, Stat, cx } from "../components/ui";
+import { fetchUsage, usd, type AiUsageRow, type ProviderUsageRow, type UsageReport } from "../lib/usage";
+import { Callout, EmptyState, PageHeader, Section, StatTile } from "@/components/acn";
+import { SpendChartCard, dayLabel } from "./usage/SpendChartCard";
 
 type Range = "7" | "30" | "90";
 const RANGES: { id: Range; label: string }[] = [
@@ -19,15 +32,37 @@ const FEATURE_LABEL: Record<string, string> = {
   fill: "Fill with AI",
 };
 
-/** "Oct 4" for a UTC YYYY-MM-DD day. */
-function dayLabel(day: string, withWeekday = false): string {
-  const d = new Date(day + "T00:00:00Z");
-  return d.toLocaleDateString("en-US", {
-    timeZone: "UTC",
-    month: "short",
-    day: "numeric",
-    ...(withWeekday ? { weekday: "short" } : {}),
-  });
+/** A single select segmented control over string ids. */
+function Segments<T extends string>({
+  items,
+  value,
+  onChange,
+  label,
+  className,
+}: {
+  items: { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <SegmentedControl
+      aria-label={label}
+      selectedKeys={new Set<Key>([value])}
+      onSelectionChange={(keys) => {
+        const next = [...keys][0];
+        if (next !== undefined) onChange(String(next) as T);
+      }}
+      className={className}
+    >
+      {items.map((it) => (
+        <SegmentedControlItem key={it.id} id={it.id} className="min-h-11 flex-1 sm:min-h-0 sm:flex-none">
+          {it.label}
+        </SegmentedControlItem>
+      ))}
+    </SegmentedControl>
+  );
 }
 
 export function UsagePage() {
@@ -56,8 +91,6 @@ export function UsagePage() {
     void load(Number(range));
   }, [load, range]);
 
-  const switcher = <Segmented items={RANGES} value={range} onChange={setRange} label="Date range" block className="sm:inline-flex sm:w-auto" />;
-
   return (
     <div>
       <PageHeader
@@ -66,22 +99,22 @@ export function UsagePage() {
           data ? (
             <span className="inline-flex items-center gap-2">
               {`${dayLabel(data.since)} to ${dayLabel(data.until)}, UTC`}
-              {loading && <Spinner className="h-3 w-3" />}
+              {loading && <Spinner size="xs" aria-label="Refreshing usage" />}
             </span>
           ) : (
             "What the Claude API and your providers have cost"
           )
         }
-        actions={switcher}
+        actions={<Segments items={RANGES} value={range} onChange={setRange} label="Date range" className="w-full sm:w-auto" />}
       />
 
       {!data && error ? (
-        <Empty
-          icon={<BarChart3 className="h-5 w-5" />}
+        <EmptyState
+          icon={RiBarChartBoxLine}
           title="Usage could not load"
           body={error}
           action={
-            <Button icon={<RotateCw className="h-4 w-4" />} onClick={() => void load(Number(range))}>
+            <Button variant="secondary" leadingIcon={RiRefreshLine} onClick={() => void load(Number(range))}>
               Try again
             </Button>
           }
@@ -90,17 +123,15 @@ export function UsagePage() {
         <UsageSkeleton />
       ) : (
         // Refetching keeps the previous numbers on screen, dimmed, so nothing jumps.
-        <div className={cx("space-y-5 transition-opacity duration-150", loading && "opacity-60")} aria-busy={loading}>
+        <div className={cx("flex flex-col gap-5 transition-opacity duration-150 ease-out", loading && "opacity-60")} aria-busy={loading}>
           <Tiles data={data} />
           {data.event_retention_days > 0 && data.days > data.event_retention_days && (
-            <Callout icon={<Info className="h-4 w-4" />}>
+            <Callout tone="info">
               Provider spend only goes back {plural(data.event_retention_days, "day")}, the event retention set by COGITO_EVENT_RETENTION_DAYS. Claude
               spend is kept for the whole range.
             </Callout>
           )}
-          <Section title="Daily spend" description="Claude API and provider spend per UTC day, stacked.">
-            <SpendChart data={data} />
-          </Section>
+          <SpendChartCard data={data} />
           <Windows data={data} />
           <AiSection data={data} />
           <ProviderSection data={data} />
@@ -112,15 +143,15 @@ export function UsagePage() {
 
 function UsageSkeleton() {
   return (
-    <div role="status" aria-live="polite" aria-busy="true" className="space-y-5">
+    <div role="status" aria-live="polite" aria-busy="true" className="flex flex-col gap-5">
       <span className="sr-only">Loading usage</span>
-      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-[78px] rounded-card" />
+          <Skeleton key={i} className="h-[100px] rounded-2xl" />
         ))}
       </div>
-      <Skeleton className="h-[300px] rounded-card" />
-      <Skeleton className="h-[220px] rounded-card" />
+      <Skeleton className="h-[372px] rounded-3xl" />
+      <Skeleton className="h-[220px] rounded-3xl" />
     </div>
   );
 }
@@ -133,16 +164,38 @@ function Tiles({ data }: { data: UsageReport }) {
   const served = r.requests + r.cache_hits;
   const hitShare = served > 0 ? Math.round((r.cache_hits / served) * 100) : 0;
   return (
-    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-      <Stat label="Claude spend" value={usd(r.ai_cost_usd)} sub={`today ${usd(today.ai_cost_usd)}`} />
-      <Stat label="Provider spend" value={usd(r.provider_cost_usd)} sub={`today ${usd(today.provider_cost_usd)}`} />
-      <Stat label="Requests" value={compact(r.requests)} sub={`today ${num(today.requests)}`} />
-      <Stat label="Cache hits saved" value={compact(r.cache_hits)} sub={served > 0 ? `${hitShare}% of requests` : "no traffic yet"} />
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatTile label="Claude spend" value={usd(r.ai_cost_usd)} sub={`today ${usd(today.ai_cost_usd)}`} />
+      <StatTile label="Provider spend" value={usd(r.provider_cost_usd)} sub={`today ${usd(today.provider_cost_usd)}`} />
+      <StatTile label="Requests" value={compact(r.requests)} sub={`today ${num(today.requests)}`} />
+      <StatTile
+        label="Cache hits saved"
+        value={compact(r.cache_hits)}
+        sub={served > 0 ? `${hitShare}% of requests` : "no traffic yet"}
+      />
     </div>
   );
 }
 
-// ---- fixed windows ----
+// ---- tables ----
+
+/** Right aligned numeric cell content. */
+function Num({ children, strong }: { children: ReactNode; strong?: boolean }) {
+  return <span className={cx("block text-end font-mono tabular-nums", strong ? "text-text-primary" : "text-text-secondary")}>{children}</span>;
+}
+
+/** Header label aligned with the numbers under it. */
+function End({ children }: { children: ReactNode }) {
+  return <span className="block text-end">{children}</span>;
+}
+
+/** Columns hidden on phones; their cells use the same class. */
+const WIDE = "hidden md:table-cell";
+
+/** The table inside a card: hairline frame, rounded to sit inside rounded-3xl. */
+function TableFrame({ children }: { children: ReactNode }) {
+  return <div className="overflow-hidden rounded-2xl border border-border-table">{children}</div>;
+}
 
 function Windows({ data }: { data: UsageReport }) {
   const rows: { label: string; key: "today" | "7d" | "30d" }[] = [
@@ -152,327 +205,56 @@ function Windows({ data }: { data: UsageReport }) {
   ];
   return (
     <Section title="Totals" description="Fixed windows, whatever the range above. Days are UTC.">
-      <div className="-mx-1 overflow-x-auto">
-        <table className="w-full min-w-[320px] text-left text-[13px]">
-          <thead>
-            <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
-              <th scope="col" className="px-1 py-2 font-normal">
-                Window
-              </th>
-              <th scope="col" className="px-1 py-2 text-right font-normal">
-                Claude
-              </th>
-              <th scope="col" className="px-1 py-2 text-right font-normal">
-                Provider
-              </th>
-              <th scope="col" className="hidden px-1 py-2 text-right font-normal sm:table-cell">
-                Requests
-              </th>
-              <th scope="col" className="hidden px-1 py-2 text-right font-normal sm:table-cell">
-                Cache hits
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+      <TableFrame>
+        <Table size="sm" aria-label="Spend totals by window">
+          <TableHeader>
+            <TableColumn isRowHeader>Window</TableColumn>
+            <TableColumn>
+              <End>Claude</End>
+            </TableColumn>
+            <TableColumn>
+              <End>Provider</End>
+            </TableColumn>
+            <TableColumn className={WIDE}>
+              <End>Requests</End>
+            </TableColumn>
+            <TableColumn className={WIDE}>
+              <End>Cache hits</End>
+            </TableColumn>
+          </TableHeader>
+          <TableBody>
             {rows.map((w) => {
               const t = data.totals[w.key];
               return (
-                <tr key={w.key} className="border-b border-line last:border-0">
-                  <th scope="row" className="px-1 py-2.5 font-medium text-ink">
-                    {w.label}
-                  </th>
-                  <td className="px-1 py-2.5 text-right font-mono tabular-nums text-ink">{usd(t.ai_cost_usd)}</td>
-                  <td className="px-1 py-2.5 text-right font-mono tabular-nums text-ink">{usd(t.provider_cost_usd)}</td>
-                  <td className="hidden px-1 py-2.5 text-right font-mono tabular-nums text-muted sm:table-cell">{num(t.requests)}</td>
-                  <td className="hidden px-1 py-2.5 text-right font-mono tabular-nums text-muted sm:table-cell">{num(t.cache_hits)}</td>
-                </tr>
+                <TableRow key={w.key} id={w.key}>
+                  <TableCell>{w.label}</TableCell>
+                  <TableCell>
+                    <Num strong>{usd(t.ai_cost_usd)}</Num>
+                  </TableCell>
+                  <TableCell>
+                    <Num strong>{usd(t.provider_cost_usd)}</Num>
+                  </TableCell>
+                  <TableCell className={WIDE}>
+                    <Num>{num(t.requests)}</Num>
+                  </TableCell>
+                  <TableCell className={WIDE}>
+                    <Num>{num(t.cache_hits)}</Num>
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </TableFrame>
     </Section>
   );
 }
 
-// ---- chart ----
-
-interface DayPoint {
-  day: string;
-  ai: number;
-  prov: number;
-}
-
-/** Rounds up to 1, 2 or 5 times a power of ten so ticks land on clean numbers. */
-function niceMax(v: number): number {
-  if (v <= 0) return 1;
-  const p = Math.pow(10, Math.floor(Math.log10(v)));
-  for (const m of [1, 2, 5, 10]) if (m * p >= v) return m * p;
-  return 10 * p;
-}
-
-/** A rect with 4px rounded corners at the top only: the data end, square at the baseline. */
-function topRounded(x: number, y: number, w: number, h: number, r: number): string {
-  const rr = Math.max(0, Math.min(r, w / 2, h));
-  return `M${x},${y + h}V${y + rr}Q${x},${y} ${x + rr},${y}H${x + w - rr}Q${x + w},${y} ${x + w},${y + rr}V${y + h}Z`;
-}
-
-function useWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => setW(Math.floor(entries[0].contentRect.width)));
-    ro.observe(el);
-    setW(Math.floor(el.getBoundingClientRect().width));
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w] as const;
-}
-
-const H = 200;
-const PAD = { l: 48, r: 4, t: 10, b: 24 };
-const GAP = 2; // surface gap between stacked segments
-
-function SpendChart({ data }: { data: UsageReport }) {
-  const points: DayPoint[] = useMemo(
-    () => data.ai.by_day.map((a, i) => ({ day: a.key, ai: a.cost_usd, prov: data.provider.by_day[i]?.cost_usd ?? 0 })),
-    [data],
-  );
-  const [boxRef, width] = useWidth<HTMLDivElement>();
-  const [active, setActive] = useState<number | null>(null);
-  const descId = useId();
-
-  const totalAi = points.reduce((s, p) => s + p.ai, 0);
-  const totalProv = points.reduce((s, p) => s + p.prov, 0);
-  const peak = points.reduce<DayPoint | null>((b, p) => (!b || p.ai + p.prov > b.ai + b.prov ? p : b), null);
-  const empty = totalAi + totalProv === 0;
-
-  const summary = empty
-    ? `No spend in the last ${plural(points.length, "day")}.`
-    : `Over the last ${plural(points.length, "day")}, Claude API spend was ${usd(totalAi)} and provider spend was ${usd(totalProv)}. ` +
-      (peak ? `The highest day was ${dayLabel(peak.day, true)} at ${usd(peak.ai + peak.prov)}.` : "");
-
-  if (empty) {
-    return (
-      <Empty
-        compact
-        icon={<BarChart3 className="h-5 w-5" />}
-        title="No spend in this range"
-        body="Claude calls and priced provider requests will draw a bar per day here."
-      />
-    );
-  }
-
-  const n = points.length;
-  const plotW = Math.max(0, width - PAD.l - PAD.r);
-  const plotH = H - PAD.t - PAD.b;
-  const top = niceMax(Math.max(...points.map((p) => p.ai + p.prov)));
-  const ticks = [0, top / 2, top];
-  const slot = plotW / n;
-  const barW = Math.max(1, Math.min(24, slot - GAP));
-  const y = (v: number) => (v / top) * plotH;
-  const base = PAD.t + plotH;
-  const xLabels = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
-
-  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    const cur = active ?? n - 1;
-    let next = -1;
-    if (e.key === "ArrowRight") next = Math.min(n - 1, cur + 1);
-    else if (e.key === "ArrowLeft") next = Math.max(0, cur - 1);
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = n - 1;
-    else if (e.key === "Escape") {
-      setActive(null);
-      return;
-    }
-    if (next < 0) return;
-    e.preventDefault();
-    setActive(next);
-  };
-
-  const a = active !== null ? points[active] : null;
-  const tipX = active !== null ? PAD.l + slot * active + slot / 2 : 0;
-  // Keep the 168px tooltip inside the chart.
-  const tipLeft = Math.min(Math.max(tipX, 84), Math.max(84, width - 84));
-
-  return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted" aria-hidden="true">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-[3px] bg-brand" />
-          Claude API
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-[3px] bg-spark" />
-          Provider APIs
-        </span>
-      </div>
-      <p id={descId} className="sr-only">
-        {summary} Use the left and right arrow keys to read each day.
-      </p>
-      <div
-        ref={boxRef}
-        tabIndex={0}
-        role="group"
-        aria-label="Daily spend chart"
-        aria-describedby={descId}
-        onKeyDown={onKey}
-        onFocus={() => setActive((v) => v ?? n - 1)}
-        onBlur={() => setActive(null)}
-        className="relative rounded-lg outline-hidden focus-visible:ring-2 focus-visible:ring-ink/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-      >
-        {width > 0 && (
-          <svg width={width} height={H} className="block select-none" aria-hidden="true" onPointerLeave={() => setActive(null)}>
-            {ticks.map((t) => (
-              <g key={t}>
-                <line x1={PAD.l} x2={width - PAD.r} y1={base - y(t)} y2={base - y(t)} className="stroke-line" strokeWidth={1} shapeRendering="crispEdges" />
-                <text x={PAD.l - 8} y={base - y(t)} dy="0.32em" textAnchor="end" className="fill-faint font-mono text-[10px] tabular-nums">
-                  {usdAxis(t)}
-                </text>
-              </g>
-            ))}
-            {points.map((p, i) => {
-              const x = PAD.l + slot * i + (slot - barW) / 2;
-              const ha = p.ai > 0 ? Math.max(1, y(p.ai)) : 0;
-              const hp = p.prov > 0 ? Math.max(1, y(p.prov)) : 0;
-              const gap = ha > 0 && hp > 0 ? GAP : 0;
-              const dim = active !== null && active !== i;
-              return (
-                <g key={p.day} className="transition-opacity duration-150" style={{ opacity: dim ? 0.4 : 1 }}>
-                  {ha > 0 && <path d={topRounded(x, base - ha, barW, ha, hp > 0 ? 0 : 4)} className="fill-brand" />}
-                  {hp > 0 && <path d={topRounded(x, base - ha - gap - hp, barW, hp, 4)} className="fill-spark" />}
-                </g>
-              );
-            })}
-            {xLabels.map((i, k) => (
-              <text
-                key={i}
-                x={PAD.l + slot * i + slot / 2}
-                y={H - 6}
-                textAnchor={xLabels.length === 1 ? "middle" : k === 0 ? "start" : k === xLabels.length - 1 ? "end" : "middle"}
-                className="fill-faint font-mono text-[10px]"
-              >
-                {dayLabel(points[i].day)}
-              </text>
-            ))}
-            {/* Hit targets: the whole column, wider than the bar. */}
-            {points.map((p, i) => (
-              <rect
-                key={p.day}
-                x={PAD.l + slot * i}
-                y={PAD.t}
-                width={slot}
-                height={plotH}
-                fill="transparent"
-                onPointerEnter={() => setActive(i)}
-                onPointerMove={() => setActive(i)}
-              />
-            ))}
-          </svg>
-        )}
-        {a && (
-          <div
-            className="pointer-events-none absolute top-0 z-10 w-[168px] -translate-x-1/2 rounded-xl bg-surface px-3 py-2.5 text-[12px] shadow-card ring-1 ring-line"
-            style={{ left: tipLeft }}
-          >
-            <div className="text-[11px] text-muted">{dayLabel(a.day, true)}</div>
-            <TipRow swatch="bg-brand" label="Claude" value={usd(a.ai)} />
-            <TipRow swatch="bg-spark" label="Provider" value={usd(a.prov)} />
-            <div className="mt-1.5 flex items-baseline justify-between border-t border-line pt-1.5">
-              <span className="text-muted">Total</span>
-              <span className="font-mono font-medium tabular-nums text-ink">{usd(a.ai + a.prov)}</span>
-            </div>
-          </div>
-        )}
-      </div>
-      <div className="sr-only" aria-live="polite">
-        {a ? `${dayLabel(a.day, true)}: Claude ${usd(a.ai)}, provider ${usd(a.prov)}, total ${usd(a.ai + a.prov)}.` : ""}
-      </div>
-      <DailyTable points={points} />
-    </div>
-  );
-}
-
-function TipRow({ swatch, label, value }: { swatch: string; label: string; value: string }) {
-  return (
-    <div className="mt-1 flex items-baseline justify-between gap-3">
-      <span className="inline-flex items-center gap-1.5 text-muted">
-        <span className={cx("h-0.5 w-2.5 rounded-full", swatch)} aria-hidden="true" />
-        {label}
-      </span>
-      <span className="font-mono font-medium tabular-nums text-ink">{value}</span>
-    </div>
-  );
-}
-
-/** The chart's values as a table, so nothing is reachable only by hovering. */
-function DailyTable({ points }: { points: DayPoint[] }) {
-  const rows = points.filter((p) => p.ai + p.prov > 0).reverse();
-  return (
-    <details className="group mt-4">
-      <summary className="tap inline-flex cursor-pointer select-none items-center gap-1 rounded-md text-[12px] text-muted transition-colors duration-150 hover:text-ink">
-        <span className="inline-block transition-transform duration-150 group-open:rotate-90" aria-hidden="true">
-          ›
-        </span>
-        Daily values ({plural(rows.length, "day")} with spend)
-      </summary>
-      <table className="mt-2 w-full text-left text-[13px]">
-        <thead>
-          <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
-            <th scope="col" className="py-2 font-normal">
-              Day
-            </th>
-            <th scope="col" className="py-2 text-right font-normal">
-              Claude
-            </th>
-            <th scope="col" className="py-2 text-right font-normal">
-              Provider
-            </th>
-            <th scope="col" className="py-2 text-right font-normal">
-              Total
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => (
-            <tr key={p.day} className="border-b border-line last:border-0">
-              <th scope="row" className="py-2 font-normal text-ink">
-                {dayLabel(p.day, true)}
-              </th>
-              <td className="py-2 text-right font-mono tabular-nums text-muted">{usd(p.ai)}</td>
-              <td className="py-2 text-right font-mono tabular-nums text-muted">{usd(p.prov)}</td>
-              <td className="py-2 text-right font-mono tabular-nums text-ink">{usd(p.ai + p.prov)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </details>
-  );
-}
-
-// ---- tables ----
-
-function Th({ children, right, wide }: { children: ReactNode; right?: boolean; wide?: boolean }) {
-  return (
-    <th scope="col" className={cx("px-1 py-2 font-normal", right && "text-right", wide && "hidden md:table-cell")}>
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, wide, strong }: { children: ReactNode; wide?: boolean; strong?: boolean }) {
-  return (
-    <td className={cx("px-1 py-2.5 text-right font-mono tabular-nums", strong ? "text-ink" : "text-muted", wide && "hidden md:table-cell")}>{children}</td>
-  );
-}
-
-/** Thin share-of-cost bar under a row's name. */
-function Share({ part, whole, tone }: { part: number; whole: number; tone: "bg-brand" | "bg-spark" }) {
+/** Thin share of cost bar under a row's name, in the series colour. */
+function Share({ part, whole, tone }: { part: number; whole: number; tone: "bg-chart-1" | "bg-chart-2" }) {
   const pct = whole > 0 ? Math.max(part > 0 ? 2 : 0, (part / whole) * 100) : 0;
   return (
-    <div className="mt-1.5 h-1 w-full max-w-[160px] overflow-hidden rounded-full bg-well" aria-hidden="true">
+    <div className="mt-1.5 h-1 w-full max-w-[160px] overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
       <div className={cx("h-full rounded-full", tone)} style={{ width: `${pct}%` }} />
     </div>
   );
@@ -495,8 +277,7 @@ function AiSection({ data }: { data: UsageReport }) {
       description={`Every call the provider builder, the Assistant and Fill with AI made with your ANTHROPIC_API_KEY. Priced at ${$(p.input)} input, ${$(p.cache_write)} cache write, ${$(p.cache_read)} cache read and ${$(p.output)} output per million tokens, ${$(p.web_search)} per 1,000 web searches.`}
       actions={
         data.ai.by_feature.length > 0 ? (
-          <Segmented
-            size="sm"
+          <Segments
             label="Group Claude spend by"
             value={view}
             onChange={setView}
@@ -511,73 +292,85 @@ function AiSection({ data }: { data: UsageReport }) {
     >
       {rows.length === 0 ? (
         data.ai_enabled ? (
-          <Empty
+          <EmptyState
             compact
-            icon={<Sparkles className="h-5 w-5" />}
+            icon={RiSparkling2Line}
             title="No Claude calls in this range"
             body="The provider builder, the Assistant and Fill with AI record each call here with its tokens and cost."
           />
         ) : (
-          <Empty
+          <EmptyState
             compact
-            icon={<Sparkles className="h-5 w-5" />}
+            icon={RiSparkling2Line}
             title="No Claude calls yet. AI features are off"
             body="Set ANTHROPIC_API_KEY and restart Acnologia to turn on the provider builder, the Assistant and Fill with AI. What they cost shows up here."
           />
         )
       ) : (
-        <>
-          {!data.ai_enabled && (
-            <Callout className="mb-4" icon={<Info className="h-4 w-4" />}>
-              AI features are off now. These calls were made while ANTHROPIC_API_KEY was set.
-            </Callout>
-          )}
-          <div className="-mx-1 overflow-x-auto">
-            <table className="w-full min-w-[300px] text-left text-[13px]">
-              <thead>
-                <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
-                  <Th>{head}</Th>
-                  <Th right>Calls</Th>
-                  <Th right wide>
-                    Input
-                  </Th>
-                  <Th right wide>
-                    Cache write
-                  </Th>
-                  <Th right wide>
-                    Cache read
-                  </Th>
-                  <Th right wide>
-                    Output
-                  </Th>
-                  <Th right wide>
-                    Searches
-                  </Th>
-                  <Th right>Cost</Th>
-                </tr>
-              </thead>
-              <tbody>
+        <div className="flex flex-col gap-4">
+          {!data.ai_enabled && <Callout tone="info">AI features are off now. These calls were made while ANTHROPIC_API_KEY was set.</Callout>}
+          <TableFrame>
+            <Table size="sm" aria-label={`Claude spend by ${head.toLowerCase()}`}>
+              <TableHeader>
+                <TableColumn isRowHeader>{head}</TableColumn>
+                <TableColumn>
+                  <End>Calls</End>
+                </TableColumn>
+                <TableColumn className={WIDE}>
+                  <End>Input</End>
+                </TableColumn>
+                <TableColumn className={WIDE}>
+                  <End>Cache write</End>
+                </TableColumn>
+                <TableColumn className={WIDE}>
+                  <End>Cache read</End>
+                </TableColumn>
+                <TableColumn className={WIDE}>
+                  <End>Output</End>
+                </TableColumn>
+                <TableColumn className={WIDE}>
+                  <End>Searches</End>
+                </TableColumn>
+                <TableColumn>
+                  <End>Cost</End>
+                </TableColumn>
+              </TableHeader>
+              <TableBody>
                 {rows.map((r) => (
-                  <tr key={r.key} className="border-b border-line last:border-0">
-                    <th scope="row" className="max-w-0 px-1 py-2.5 font-normal sm:max-w-none">
-                      <div className={cx("truncate text-ink", view !== "feature" && "font-mono text-[12px]")} title={label(r)}>
+                  <TableRow key={r.key || "unknown"} id={r.key || "unknown"}>
+                    <TableCell className="w-full max-w-0">
+                      <div className={cx("truncate", view !== "feature" && "font-mono text-body-2-regular")} title={label(r)}>
                         {label(r)}
                       </div>
-                      <Share part={r.cost_usd} whole={total} tone="bg-brand" />
-                    </th>
-                    <Td>{num(r.calls)}</Td>
-                    <Td wide>{compact(r.input_tokens)}</Td>
-                    <Td wide>{compact(r.cache_write_tokens)}</Td>
-                    <Td wide>{compact(r.cache_read_tokens)}</Td>
-                    <Td wide>{compact(r.output_tokens)}</Td>
-                    <Td wide>{num(r.web_searches)}</Td>
-                    <Td strong>{usd(r.cost_usd)}</Td>
-                  </tr>
+                      <Share part={r.cost_usd} whole={total} tone="bg-chart-1" />
+                    </TableCell>
+                    <TableCell>
+                      <Num>{num(r.calls)}</Num>
+                    </TableCell>
+                    <TableCell className={WIDE}>
+                      <Num>{compact(r.input_tokens)}</Num>
+                    </TableCell>
+                    <TableCell className={WIDE}>
+                      <Num>{compact(r.cache_write_tokens)}</Num>
+                    </TableCell>
+                    <TableCell className={WIDE}>
+                      <Num>{compact(r.cache_read_tokens)}</Num>
+                    </TableCell>
+                    <TableCell className={WIDE}>
+                      <Num>{compact(r.output_tokens)}</Num>
+                    </TableCell>
+                    <TableCell className={WIDE}>
+                      <Num>{num(r.web_searches)}</Num>
+                    </TableCell>
+                    <TableCell>
+                      <Num strong>{usd(r.cost_usd)}</Num>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+              </TableBody>
+            </Table>
+          </TableFrame>
+        </div>
       )}
     </Section>
   );
@@ -597,8 +390,7 @@ function ProviderSection({ data }: { data: UsageReport }) {
       description="Requests through /proxy and key leases, priced per successful call. Cache hits never reach the provider, so they cost nothing."
       actions={
         rows.length > 0 || data.provider.by_app.length > 0 ? (
-          <Segmented
-            size="sm"
+          <Segments
             label="Group provider spend by"
             value={view}
             onChange={setView}
@@ -610,53 +402,63 @@ function ProviderSection({ data }: { data: UsageReport }) {
         ) : undefined
       }
     >
-      {unpriced && (
-        <Callout className="mb-4" tone="amber" icon={<Info className="h-4 w-4" />}>
-          Provider spend needs cost_per_request on providers. Set quota.cost_per_request in the provider spec, or a cost per request on the service,
-          and each successful call is priced from then on.
-        </Callout>
-      )}
-      {rows.length === 0 ? (
-        <Empty
-          compact
-          icon={<Plug className="h-5 w-5" />}
-          title="No provider requests in this range"
-          body="Call a service through /proxy or lease a key from an app. Spend shows up here once providers have cost_per_request set."
-        />
-      ) : (
-        <div className="-mx-1 overflow-x-auto">
-          <table className="w-full min-w-[300px] text-left text-[13px]">
-            <thead>
-              <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
-                <Th>{view === "service" ? "Service" : "App"}</Th>
-                <Th right>Requests</Th>
-                <Th right wide>
-                  Cache hits
-                </Th>
-                <Th right>Cost</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.key} className="border-b border-line last:border-0">
-                  <th scope="row" className="max-w-0 px-1 py-2.5 font-normal sm:max-w-none">
-                    <div className="truncate text-ink" title={r.name || r.key}>
-                      {r.name || r.key}
-                      {view === "service" && r.name && r.name !== r.key && (
-                        <span className="ml-1.5 hidden font-mono text-[11px] text-faint sm:inline">{r.key}</span>
-                      )}
-                    </div>
-                    <Share part={r.cost_usd} whole={t.provider_cost_usd} tone="bg-spark" />
-                  </th>
-                  <Td>{num(r.requests)}</Td>
-                  <Td wide>{num(r.cache_hits)}</Td>
-                  <Td strong>{usd(r.cost_usd)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="flex flex-col gap-4">
+        {unpriced && (
+          <Callout tone="warning">
+            Provider spend needs cost_per_request on providers. Set quota.cost_per_request in the provider spec, or a cost per request on the service,
+            and each successful call is priced from then on.
+          </Callout>
+        )}
+        {rows.length === 0 ? (
+          <EmptyState
+            compact
+            icon={RiPlugLine}
+            title="No provider requests in this range"
+            body="Call a service through /proxy or lease a key from an app. Spend shows up here once providers have cost_per_request set."
+          />
+        ) : (
+          <TableFrame>
+            <Table size="sm" aria-label={`Provider spend by ${view}`}>
+              <TableHeader>
+                <TableColumn isRowHeader>{view === "service" ? "Service" : "App"}</TableColumn>
+                <TableColumn>
+                  <End>Requests</End>
+                </TableColumn>
+                <TableColumn className={WIDE}>
+                  <End>Cache hits</End>
+                </TableColumn>
+                <TableColumn>
+                  <End>Cost</End>
+                </TableColumn>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow key={r.key} id={r.key}>
+                    <TableCell className="w-full max-w-0">
+                      <div className="truncate" title={r.name || r.key}>
+                        {r.name || r.key}
+                        {view === "service" && r.name && r.name !== r.key && (
+                          <span className="ms-1.5 hidden font-mono text-caption-1-regular text-text-tertiary sm:inline">{r.key}</span>
+                        )}
+                      </div>
+                      <Share part={r.cost_usd} whole={t.provider_cost_usd} tone="bg-chart-2" />
+                    </TableCell>
+                    <TableCell>
+                      <Num>{num(r.requests)}</Num>
+                    </TableCell>
+                    <TableCell className={WIDE}>
+                      <Num>{num(r.cache_hits)}</Num>
+                    </TableCell>
+                    <TableCell>
+                      <Num strong>{usd(r.cost_usd)}</Num>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableFrame>
+        )}
+      </div>
     </Section>
   );
 }

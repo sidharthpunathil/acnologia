@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link as RouterLink, useParams } from "react-router-dom";
+import { RiAddLine, RiFileList3Line, RiInformationLine, RiKey2Line, RiPulseLine, RiRefreshLine } from "@remixicon/react";
 import { useTitle } from "../../hooks/useTitle";
-import { Link, useParams } from "react-router-dom";
-import { Activity, ArrowLeft, Info, KeyRound, Plus, RefreshCw, ScrollText } from "lucide-react";
 import { useServices } from "../../stores/services";
 import { useProviders } from "../../stores/providers";
 import { useKeys } from "../../stores/keys";
@@ -19,9 +19,12 @@ import { usePoll } from "../../hooks/usePoll";
 import { isBusy } from "../../components/StatusPill";
 import { providerGivesReset } from "../../components/KeyBits";
 import { ServiceLogo } from "../../components/EntityLogo";
-import { Tabs } from "../../components/Tabs";
 import { EventsList } from "../../components/EventsList";
-import { Button, Empty, IconButton, PageSkeleton, Skeleton, Spinner, Stat } from "../../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Tab as TabItem, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
+import { cx } from "@/utils/cx";
 import { KeysTable } from "./KeysTable";
 import { KeyEditModal } from "./KeyEditModal";
 import { AddKeysModal } from "./AddKeysModal";
@@ -30,6 +33,8 @@ import { KeyDrawer } from "./KeyDrawer";
 import { IntegratePanel } from "./IntegratePanel";
 import { ServiceSettings } from "./ServiceSettings";
 import { liveStatus } from "./keyUtil";
+import { EmptyState, PageHeader, StatTile } from "@/components/acn";
+import { ActionIcon, CARD } from "./parts";
 
 type Tab = "keys" | "activity" | "integrate" | "settings";
 
@@ -139,17 +144,21 @@ export function ServicePage() {
 
   if (notFound)
     return (
-      <Empty
+      <EmptyState
+        as="h1"
         title="Service not found"
         body="It may have been deleted, or the link is wrong."
         action={
-          <Link to="/" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-on-ink">
+          <RouterLink
+            to="/"
+            className="inline-flex h-9 items-center rounded-2lg bg-button-primary px-3 text-body-medium text-text-white shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring focus-visible:ring-offset-2"
+          >
             Back to catalog
-          </Link>
+          </RouterLink>
         }
       />
     );
-  if (!service || !counts) return <PageSkeleton tiles={6} variant="list" />;
+  if (!service || !counts) return <ServiceSkeleton />;
 
   const tabs = [
     { id: "keys" as Tab, label: "Keys", count: counts.total },
@@ -158,103 +167,130 @@ export function ServicePage() {
     { id: "settings" as Tab, label: "Settings" },
   ];
 
+  const rowSkeleton = (label: string) => (
+    <div className={CARD} role="status" aria-label={label}>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center gap-4 border-b border-separator-border px-5 py-4 last:border-b-0">
+          <Skeleton shape="text" className="h-4 w-32" />
+          <Skeleton shape="text" className="h-3.5 flex-1" />
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div>
-      <Link to="/" className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
-        <ArrowLeft className="h-3.5 w-3.5" /> Catalog
-      </Link>
-
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
-          <ServiceLogo service={service} size="md" className="mt-0.5 sm:hidden" />
-          <ServiceLogo service={service} size="lg" className="hidden sm:flex" />
-          <div className="min-w-0">
-            <h1 className="break-words font-mono text-[21px] leading-tight tracking-tight text-ink sm:text-[30px]">{service.name}</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-xs text-muted">
-              <span>{service.slug}</span>
-              <span aria-hidden="true">·</span>
-              <Link to={`/providers/${service.provider}`} className="tap-inline underline-offset-2 hover:text-ink hover:underline">
-                {provider?.name ?? service.provider}
-              </Link>
-              <span aria-hidden="true">·</span>
-              <span>{STRATEGY_LABEL[service.strategy]}</span>
-              {service.max_concurrency > 0 && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span>{service.max_concurrency} per key</span>
-                </>
-              )}
-              <span aria-hidden="true">·</span>
-              <span className="wrap-anywhere min-w-0 max-w-full">{service.base_url}</span>
-            </div>
+      <PageHeader
+        back={{ href: "/", label: "Catalog" }}
+        leading={
+          <>
+            <ServiceLogo service={service} size="md" className="mt-0.5 sm:hidden" />
+            <ServiceLogo service={service} size="lg" className="hidden sm:flex" />
+          </>
+        }
+        title={service.name}
+        meta={
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span>{service.slug}</span>
+            <span aria-hidden="true">·</span>
+            <RouterLink
+              to={`/providers/${service.provider}`}
+              className="rounded-sm underline-offset-2 outline-none hover:text-text-primary hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+            >
+              {provider?.name ?? service.provider}
+            </RouterLink>
+            <span aria-hidden="true">·</span>
+            <span>{STRATEGY_LABEL[service.strategy]}</span>
+            {service.max_concurrency > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{service.max_concurrency} per key</span>
+              </>
+            )}
+            <span aria-hidden="true">·</span>
+            <span className="wrap-anywhere min-w-0 max-w-full" dir="ltr">
+              {service.base_url}
+            </span>
           </div>
-        </div>
-        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
-          <IconButton label="Refresh" onClick={() => void refresh()} disabled={refreshing}>
-            {refreshing ? <Spinner /> : <RefreshCw className="h-4 w-4" />}
-          </IconButton>
-          {perms.manage && keys.length > 0 && provider?.spec?.health && (
-            <Button icon={<Activity className="h-4 w-4" />} loading={checking} onClick={() => void checkAll()} className="flex-1 sm:flex-none">
-              {checking ? "Checking" : "Check all"}
-            </Button>
-          )}
-          {perms.manage && (
-            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)} className="flex-1 sm:flex-none">
-              Add keys
-            </Button>
-          )}
-        </div>
-      </div>
-      {service.description && <p className="mt-4 max-w-2xl text-[13px] text-muted">{service.description}</p>}
+        }
+        actions={
+          <>
+            <ActionIcon icon={RiRefreshLine} label="Refresh" size="medium" busy={refreshing} disabled={refreshing} onClick={() => void refresh()} />
+            {perms.manage && keys.length > 0 && provider?.spec?.health && (
+              <Button
+                variant="secondary"
+                leadingIcon={checking ? ButtonSpinner : RiPulseLine}
+                disabled={checking}
+                onClick={() => void checkAll()}
+                className="flex-1 sm:flex-none"
+              >
+                {checking ? "Checking" : "Check all"}
+              </Button>
+            )}
+            {perms.manage && (
+              <Button variant="primary" leadingIcon={RiAddLine} onClick={() => setAdding(true)} className="flex-1 sm:flex-none">
+                Add keys
+              </Button>
+            )}
+          </>
+        }
+        className="mb-0"
+      />
+      {service.description && <p className="mt-4 max-w-2xl text-body-2-regular text-text-secondary">{service.description}</p>}
       {perms.manage && keys.length > 0 && provider && !provider.spec?.health && (
-        <p className="mt-3 flex items-start gap-1.5 text-[13px] text-muted">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <p className="mt-3 flex items-start gap-1.5 text-body-2-regular text-text-secondary">
+          <RiInformationLine className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           This provider has no health check. Validity comes from real requests.
         </p>
       )}
 
       {/* Phones: one swipeable row, so the keys start on the first screen instead of after four rows of tiles. */}
       <div
-        className="-mx-4 mt-6 grid snap-x snap-mandatory auto-cols-[minmax(132px,40%)] grid-flow-col gap-2.5 overflow-x-auto scroll-px-4 px-4 pb-1 [scrollbar-width:none] pt-px sm:mx-0 sm:mt-8 sm:snap-none sm:pt-0 sm:auto-cols-auto sm:grid-flow-row sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-7 [&::-webkit-scrollbar]:hidden"
+        className="-mx-4 mt-6 grid snap-x snap-mandatory auto-cols-[minmax(132px,40%)] grid-flow-col gap-2.5 overflow-x-auto scroll-px-4 px-4 pb-1 pt-px [scrollbar-width:none] sm:mx-0 sm:mt-8 sm:snap-none sm:auto-cols-auto sm:grid-flow-row sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 sm:pt-0 lg:grid-cols-7 [&::-webkit-scrollbar]:hidden"
         role="group"
         aria-label="Key pool summary"
       >
-        <Stat className="snap-start" label="Available" value={num(counts.available)} tone={counts.available > 0 ? "green" : counts.busy > 0 ? undefined : "red"} />
-        <Stat className="snap-start" label="Busy" value={num(counts.busy)} tone={counts.busy ? "violet" : undefined} sub="at their limit" />
-        <Stat className="snap-start" label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "amber" : undefined} />
-        <Stat className="snap-start" label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "amber" : undefined} />
+        <StatTile className="snap-start" label="Available" value={num(counts.available)} tone={counts.available > 0 ? "success" : counts.busy > 0 ? undefined : "error"} />
+        <StatTile className="snap-start" label="Busy" value={num(counts.busy)} tone={counts.busy ? "accent" : undefined} sub="at their limit" />
+        <StatTile className="snap-start" label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "warning" : undefined} />
+        <StatTile className="snap-start" label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "warning" : undefined} />
         {/* Banned keys count as invalid here; the sub line splits them out. */}
-        <Stat
+        <StatTile
           className="snap-start"
           label="Invalid"
           value={num(counts.invalid + counts.banned)}
-          tone={counts.invalid + counts.banned ? "red" : undefined}
+          tone={counts.invalid + counts.banned ? "error" : undefined}
           sub={counts.banned ? `${counts.banned} banned` : undefined}
         />
-        <Stat
+        <StatTile
           className="snap-start"
           label="In use"
           value={num(counts.inUse)}
-          tone={counts.inUse > 0 ? "violet" : undefined}
+          tone={counts.inUse > 0 ? "accent" : undefined}
           sub={service.max_concurrency > 0 ? `up to ${service.max_concurrency} per key` : "no limit per key"}
         />
-        <Stat className="snap-start" label="Requests, 24h" value={compact(service.requests_24h)} sub={counts.backup ? `${counts.backup} backup` : undefined} />
+        <StatTile className="snap-start" label="Requests, 24h" value={compact(service.requests_24h)} sub={counts.backup ? `${counts.backup} backup` : undefined} />
       </div>
 
-      <Tabs className="mt-10" items={tabs} value={tab} onChange={setTab} />
+      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="mt-10 gap-6">
+        <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+          <TabList aria-label="Service sections" className="min-w-max">
+            {tabs.map((t) => (
+              <TabItem key={t.id} id={t.id} count={t.count}>
+                {t.label}
+              </TabItem>
+            ))}
+          </TabList>
+        </div>
 
-      {/* Keyed on the tab so the new panel settles in instead of swapping in place. */}
-      <div key={tab} className="fade-up mt-6">
-        {tab === "keys" &&
-          (!keysLoaded ? (
-            <div className="space-y-2" role="status" aria-label="Loading keys">
-              {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-[64px] rounded-card" />
-              ))}
-            </div>
+        {/* Only the selected panel mounts, so each switch settles in with fade-up instead of swapping in place. */}
+        <TabPanel id="keys" className="fade-up">
+          {!keysLoaded ? (
+            rowSkeleton("Loading keys")
           ) : keys.length === 0 ? (
-            <Empty
-              icon={<KeyRound className="h-5 w-5" />}
+            <EmptyState
+              as="h2"
+              icon={RiKey2Line}
               title="No keys in this pool yet"
               body={
                 perms.manage
@@ -263,7 +299,7 @@ export function ServicePage() {
               }
               action={
                 perms.manage ? (
-                  <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
+                  <Button variant="primary" leadingIcon={RiAddLine} onClick={() => setAdding(true)}>
                     Add keys
                   </Button>
                 ) : undefined
@@ -282,30 +318,37 @@ export function ServicePage() {
               onEdit={setEditing}
               onReveal={setRevealing}
             />
-          ))}
+          )}
+        </TabPanel>
 
-        {tab === "activity" &&
-          (events === undefined ? (
-            <div className="space-y-2" role="status" aria-label="Loading activity">
-              {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-[52px] rounded-card" />
-              ))}
-            </div>
+        <TabPanel id="activity" className="fade-up">
+          {events === undefined ? (
+            rowSkeleton("Loading activity")
           ) : events.length === 0 ? (
-            <Empty
-              icon={<ScrollText className="h-5 w-5" />}
+            <EmptyState
+              as="h2"
+              icon={RiFileList3Line}
               title="No activity yet"
               body="Requests, rate limits and health checks for this service show up here. Send a test request from the Integrate tab."
-              action={<Button onClick={() => setTab("integrate")}>Show integration code</Button>}
+              action={
+                <Button variant="secondary" onClick={() => setTab("integrate")}>
+                  Show integration code
+                </Button>
+              }
             />
           ) : (
             <EventsList events={events} now={now} showService={false} />
-          ))}
+          )}
+        </TabPanel>
 
-        {tab === "integrate" && <IntegratePanel service={service} />}
+        <TabPanel id="integrate" className="fade-up">
+          <IntegratePanel service={service} />
+        </TabPanel>
 
-        {tab === "settings" && <ServiceSettings service={service} canManage={perms.manage} />}
-      </div>
+        <TabPanel id="settings" className="fade-up">
+          <ServiceSettings service={service} canManage={perms.manage} />
+        </TabPanel>
+      </Tabs>
 
       {perms.manage && (
         <AddKeysModal
@@ -326,6 +369,26 @@ export function ServicePage() {
       />
       <RevealModal k={revealing} onClose={() => setRevealing(null)} />
       <KeyDrawer keyId={openKey?.id ?? null} seed={openKey} onClose={() => setOpenKey(null)} />
+    </div>
+  );
+}
+
+function ServiceSkeleton() {
+  return (
+    <div role="status" aria-label="Loading service">
+      <Skeleton shape="text" className="h-3.5 w-20" />
+      <div className="mt-5 flex items-center gap-4">
+        <Skeleton className="size-14 rounded-2xl" />
+        <div>
+          <Skeleton shape="text" className="h-7 w-48" />
+          <Skeleton shape="text" className="mt-2 h-3.5 w-72 max-w-full" />
+        </div>
+      </div>
+      <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7">
+        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+          <Skeleton key={i} className={cx("h-[74px] rounded-3xl", i > 3 && "hidden sm:block")} />
+        ))}
+      </div>
     </div>
   );
 }

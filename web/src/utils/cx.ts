@@ -4,8 +4,8 @@ import { extendTailwindMerge } from "tailwind-merge";
  * Text-style classes from styles/typography.css.
  *
  * IMPORTANT: every text-* utility we define via @theme (e.g. `text-body-medium`,
- * `text-title-1-semibold`) must be listed here. Otherwise tailwind-merge — which
- * has no view of our Tailwind theme — treats them as text-color utilities and
+ * `text-title-1-semibold`) must be listed here. Otherwise tailwind-merge, which
+ * has no view of our Tailwind theme, treats them as text-color utilities and
  * silently drops them when they appear in the same className as a real color
  * (`text-foreground-full`, `text-text-primary`, etc).
  *

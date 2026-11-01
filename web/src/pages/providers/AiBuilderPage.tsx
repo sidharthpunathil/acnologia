@@ -1,8 +1,19 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useTitle } from "../../hooks/useTitle";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ChevronRight, GitBranch, Link2, Plus, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
-import { useAi } from "../../stores/ai";
+import { Focusable } from "react-aria-components";
+import {
+  RiAddLine,
+  RiArrowLeftLine,
+  RiArrowRightSLine,
+  RiCloseLine,
+  RiGitBranchLine,
+  RiLink,
+  RiShieldCheckLine,
+  RiSparkling2Line,
+  RiTerminalBoxLine,
+} from "@remixicon/react";
+import { useTitle } from "../../hooks/useTitle";
+import { useAi, ACTIVE_STATUSES } from "../../stores/ai";
 import { useProviders } from "../../stores/providers";
 import { useAuth } from "../../stores/auth";
 import { toast } from "../../stores/toast";
@@ -10,35 +21,70 @@ import { errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { relTime, sentence } from "../../lib/format";
 import { ProviderLogo } from "../../components/EntityLogo";
-import { Button, Callout, Field, IconButton, Input, Section, Skeleton, Textarea, Toggle } from "../../components/ui";
 import { KeyPasteArea, KeyPreview, useKeyInput } from "../../components/KeyPaste";
 import { FadeText, plainText } from "../../components/FadeText";
-import { ACTIVE_STATUSES } from "../../stores/ai";
+import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/base/buttons/icon-button";
+import { Input } from "@/components/base/input/input";
+import { Textarea } from "@/components/base/textarea/textarea";
+import { Switch } from "@/components/base/switch/switch";
+import { Badge } from "@/components/base/badges/badge";
+import { StatusDot } from "@/components/base/badges/status-dot";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
+import { cx } from "@/utils/cx";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Callout, EmptyState, Section } from "@/components/acn";
 import { RunStatusBadge } from "./AiRunPage";
 
 function UrlList({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
   return (
-    <div className="space-y-2">
-      {value.map((u, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <Input
-            type="url"
-            inputMode="url"
-            value={u}
-            onChange={(e) => onChange(value.map((x, j) => (j === i ? e.target.value : x)))}
-            placeholder="https://docs.example.com/api"
-            aria-label={`Docs URL ${i + 1}`}
-            className="font-mono text-[13px]"
-          />
-          <IconButton label={`Remove URL ${i + 1}`} onClick={() => onChange(value.filter((_, j) => j !== i))} disabled={value.length === 1 && !u}>
-            <X className="h-4 w-4" />
-          </IconButton>
-        </div>
-      ))}
-      <Button size="sm" variant="ghost" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => onChange([...value, ""])}>
+    <div className="flex flex-col gap-2">
+      {value.map((u, i) => {
+        const removeOff = value.length === 1 && !u;
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <Input
+              type="url"
+              inputMode="url"
+              value={u}
+              onChange={(v) => onChange(value.map((x, j) => (j === i ? v : x)))}
+              placeholder="https://docs.example.com/api"
+              aria-label={`Docs URL ${i + 1}`}
+              inputDir="ltr"
+              className="min-w-0 flex-1"
+              fieldClassName="font-mono"
+            />
+            {removeOff ? (
+              // A disabled button cannot take focus, so it gets no tooltip.
+              <IconButton icon={RiCloseLine} aria-label={`Remove URL ${i + 1}`} disabled />
+            ) : (
+              <TooltipTrigger delay={300}>
+                <Focusable>
+                  <IconButton icon={RiCloseLine} aria-label={`Remove URL ${i + 1}`} onClick={() => onChange(value.filter((_, j) => j !== i))} />
+                </Focusable>
+                <Tooltip>Remove</Tooltip>
+              </TooltipTrigger>
+            )}
+          </div>
+        );
+      })}
+      <Button type="button" size="small" variant="ghost" leadingIcon={RiAddLine} onClick={() => onChange([...value, ""])} className="w-fit">
         Add another URL
       </Button>
     </div>
+  );
+}
+
+/** A switch row: label and description on the start side, the switch on the end. */
+function SwitchRow({ label, description, isSelected, onChange }: { label: string; description: ReactNode; isSelected: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <Switch isSelected={isSelected} onChange={onChange} className="w-full flex-row-reverse items-start justify-between gap-4">
+      <span className="flex flex-col gap-0.5">
+        <span className="text-body-medium text-text-primary">{label}</span>
+        <span className="text-caption-1-regular text-text-secondary">{description}</span>
+      </span>
+    </Switch>
   );
 }
 
@@ -120,44 +166,51 @@ export function AiBuilderPage() {
     }
   };
 
+  const submitLabel = updateSlug ? "Start improving" : "Build provider";
+
   return (
     <div>
-      <Link to={updateSlug ? `/providers/${encodeURIComponent(updateSlug)}` : "/providers"} className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
-        <ArrowLeft className="h-3.5 w-3.5" /> {updateSlug ? updateSlug : "Providers"}
+      <Link
+        to={updateSlug ? `/providers/${encodeURIComponent(updateSlug)}` : "/providers"}
+        className="mb-5 inline-flex items-center gap-1 rounded-md text-body-2-medium text-text-secondary outline-none transition-colors duration-150 ease hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+      >
+        <RiArrowLeftLine className="size-4" aria-hidden /> <span className={updateSlug ? "font-mono" : undefined}>{updateSlug || "Providers"}</span>
       </Link>
 
-      <div className="mb-8 flex items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] bg-ink text-on-ink">
-          <Sparkles className="h-5 w-5 text-spark" />
+      <header className="mb-8 flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border-button-default bg-background-tertiary-default text-status-purple-text">
+          <RiSparkling2Line className="size-6" aria-hidden />
         </div>
         <div className="min-w-0">
-          <h1 className="font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">
+          <h1 className="break-words font-mono text-title-1-medium text-text-primary">
             {updateSlug ? `Improve ${provider?.name ?? updateSlug}` : "Build a provider with AI"}
           </h1>
-          <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-muted">
+          <p className="mt-1.5 max-w-2xl text-body-regular text-text-secondary">
             {updateSlug
               ? "Say what to change or fix. The agent rereads the docs, edits the spec, reruns every test and publishes a new version. You can roll back in one click."
               : "Give it an API name or docs URL. The agent researches the API, writes the error rules, health check, examples and tests, runs the tests, and publishes the provider without a restart."}
           </p>
         </div>
-      </div>
+      </header>
 
       {status === null && !statusError ? (
-        <Skeleton className="mb-6 h-12 rounded-xl" />
+        <Skeleton className="mb-6 h-12 rounded-2xl" />
       ) : !enabled ? (
-        <Callout tone="amber" icon={<Terminal className="h-4 w-4" />} className="mb-6">
-          <div className="font-medium text-amber-950">The AI builder is off on this server</div>
-          <div className="wrap-anywhere mt-1">
+        <Callout tone="warning" icon={RiTerminalBoxLine} title="The AI builder is off on this server" className="mb-6">
+          <div className="mt-0.5 wrap-anywhere">
             {sentence(status?.reason || statusError || "Add the AI key to your .env, then restart Acnologia")} You can still{" "}
-            <Link to="/providers/new" className="font-medium underline underline-offset-2">
+            <Link
+              to="/providers/new"
+              className="rounded-sm text-body-2-semibold underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+            >
               write a provider by hand
             </Link>
             .
           </div>
         </Callout>
       ) : (
-        <p className="mb-6 font-mono text-xs text-muted">
-          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 align-middle" aria-hidden="true" />
+        <p className="mb-6 flex items-center gap-1.5 font-mono text-caption-1-regular text-text-secondary">
+          <StatusDot color="green" aria-hidden />
           AI is ready · {status?.model}
         </p>
       )}
@@ -165,94 +218,116 @@ export function AiBuilderPage() {
       {!manage ? (
         <Callout>Only admins can start an AI build. Recent runs are below.</Callout>
       ) : (
-        <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-5 pb-16 lg:grid-cols-[minmax(0,1fr)_320px] lg:pb-0">
-          <div className="space-y-5">
+        <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-5 pb-16 lg:grid-cols-[minmax(0,1fr)_340px] lg:pb-0">
+          <div className="flex min-w-0 flex-col gap-5">
             <Section title="What should it build?" description="A provider name or a docs URL is enough. Add anything you know about limits, plans or quirks, and the agent will follow it.">
               {provider && (
-                <div className="mb-4 flex items-center gap-3 rounded-xl bg-soft px-3 py-2.5">
+                <div className="mb-4 flex items-center gap-3 rounded-2xl bg-background-secondary-default px-3 py-2.5">
                   <ProviderLogo provider={provider} size="sm" />
-                  <span className="font-mono text-xs text-muted">
-                    updating <span className="text-ink">{provider.slug}</span> · v{provider.version}
+                  <span className="font-mono text-caption-1-regular text-text-secondary">
+                    updating <span className="text-text-primary">{provider.slug}</span> · v{provider.version}
                   </span>
                 </div>
               )}
-              <Field label={updateSlug ? "What to change" : "Context"} error={contextErr}>
-                <Textarea
-                  id="ai-context"
-                  rows={9}
-                  value={context}
-                  onChange={(e) => {
-                    setContext(e.target.value);
-                    if (contextErr) setContextErr(null);
-                  }}
-                  placeholder={updateSlug ? "A 429 with code too_many_requests should be a 10 second rate limit, not out of quota. Add a test for it." : PLACEHOLDER}
-                  className="min-h-[200px] text-[14px] leading-relaxed"
-                />
-              </Field>
+              <Textarea
+                id="ai-context"
+                label={updateSlug ? "What to change" : "Context"}
+                rows={9}
+                value={context}
+                onChange={(v) => {
+                  setContext(v);
+                  if (contextErr) setContextErr(null);
+                }}
+                isInvalid={!!contextErr}
+                hint={contextErr ?? undefined}
+                placeholder={updateSlug ? "A 429 with code too_many_requests should be a 10 second rate limit, not out of quota. Add a test for it." : PLACEHOLDER}
+                fieldClassName="min-h-[200px]"
+              />
             </Section>
 
             <Section title="Sources" description="Optional. Without them, the agent searches the web itself.">
-              <div className="space-y-5">
-                <div>
-                  <div className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-ink">
-                    <Link2 className="h-3.5 w-3.5 text-muted" /> Docs URLs
-                  </div>
+              <div className="flex flex-col gap-5">
+                <fieldset className="flex flex-col gap-1.5">
+                  <legend className="mb-1.5 flex items-center gap-1.5 text-body-medium text-text-primary">
+                    <RiLink className="size-4 text-foreground-icon-secondary" aria-hidden /> Docs URLs
+                  </legend>
                   <UrlList value={urls} onChange={setUrls} />
-                </div>
-                <Field label="GitHub repo" hint="An official SDK or API repo, as owner/repo or a URL. The agent reads how it handles errors.">
-                  <Input value={github} onChange={(e) => setGithub(e.target.value)} placeholder="owner/repo" spellCheck={false} className="font-mono" />
-                </Field>
+                </fieldset>
+                <Input
+                  label="GitHub repo"
+                  hint="An official SDK or API repo, as owner/repo or a URL. The agent reads how it handles errors."
+                  value={github}
+                  onChange={setGithub}
+                  placeholder="owner/repo"
+                  spellCheck="false"
+                  inputDir="ltr"
+                  fieldClassName="font-mono"
+                />
               </div>
             </Section>
           </div>
 
-          <div className="space-y-5">
+          <div className="flex min-w-0 flex-col gap-5">
             <Section
               title="Keys"
               description="Optional. The first key is used once for a cheap live check. If the builder creates a service, every key is added to it. Keys stay encrypted during the run and are wiped when it ends."
             >
-              <div className="space-y-3">
+              <div className="flex flex-col gap-3">
                 <KeyPasteArea input={keys} id="ai-keys" label="Keys" rows={4} placeholder={"Paste keys, one per line or in any format, or drop a file"} />
                 {(keys.text.trim() || keys.parsed.keys.length > 0) && <KeyPreview parsed={keys.parsed} stale={keys.stale} show={5} />}
                 {keys.parsed.keys.length > 1 && updateSlug && (
-                  <p className="text-xs leading-relaxed text-muted">This run updates a provider and does not create a service, so only the first key is used.</p>
+                  <p className="text-caption-1-regular text-text-secondary">This run updates a provider and does not create a service, so only the first key is used.</p>
                 )}
               </div>
             </Section>
 
             <Section title="When it passes">
-              <div className="space-y-4">
-                <Toggle
+              <div className="flex flex-col gap-4">
+                <SwitchRow
                   label="Publish automatically"
                   description="Goes live once the spec is valid and every test passes. Turn off to review it first."
-                  checked={autoPublish}
+                  isSelected={autoPublish}
                   onChange={setAutoPublish}
                 />
                 {!updateSlug && (
-                  <Toggle
+                  <SwitchRow
                     label="Create a service"
                     description="Adds it to the catalog right away, ready for keys."
-                    checked={createService}
+                    isSelected={createService}
                     onChange={setCreateService}
                   />
                 )}
               </div>
-              <p className="mt-4 flex items-start gap-2 text-xs leading-relaxed text-muted">
-                <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <p className="mt-4 flex items-start gap-2 text-caption-1-regular text-text-secondary">
+                <RiShieldCheckLine className="mt-px size-3.5 shrink-0 text-foreground-icon-tertiary" aria-hidden />
                 The agent only writes a JSON spec. It cannot run code, and every spec is checked and tested before it goes live.
               </p>
             </Section>
 
-            <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="hidden w-full lg:inline-flex">
-              {updateSlug ? "Start improving" : "Build provider"}
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={!enabled || busy}
+              aria-busy={busy || undefined}
+              leadingIcon={busy ? ButtonSpinner : RiSparkling2Line}
+              className="hidden w-full lg:inline-flex"
+            >
+              {submitLabel}
             </Button>
           </div>
 
           {/* Phones and tablets: the submit bar is pinned to the bottom (above the tab bar), so it stays in reach anywhere in the form. */}
-          <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 px-4 py-2.5 backdrop-blur-sm lg:hidden">
+          <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-separator-border bg-background-full/90 px-4 py-2.5 backdrop-blur-sm lg:hidden">
             <div className="mx-auto max-w-[1076px] sm:px-2">
-              <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="w-full">
-                {updateSlug ? "Start improving" : "Build provider"}
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={!enabled || busy}
+                aria-busy={busy || undefined}
+                leadingIcon={busy ? ButtonSpinner : RiSparkling2Line}
+                className="h-11 w-full"
+              >
+                {submitLabel}
               </Button>
             </div>
           </div>
@@ -260,52 +335,60 @@ export function AiBuilderPage() {
       )}
 
       <section className="mt-12" aria-labelledby="recent-runs">
-        <div className="mb-3 flex items-baseline gap-3">
-          <h2 id="recent-runs" className="text-[19px] font-semibold tracking-tight text-ink">
+        <div className="mb-3 flex items-center gap-2">
+          <h2 id="recent-runs" className="text-title-3-semibold text-text-primary">
             Recent runs
           </h2>
-          {runsLoaded && <span className="font-mono text-xs text-faint">{runs.length}</span>}
+          {runsLoaded && <Badge className="font-mono tabular-nums">{runs.length}</Badge>}
         </div>
         {!runsLoaded ? (
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2">
             {[0, 1, 2].map((i) => (
-              <Skeleton key={i} className="h-[60px] rounded-card" />
+              <Skeleton key={i} className="h-[64px] rounded-2xl" />
             ))}
           </div>
         ) : runs.length === 0 ? (
-          <p className="rounded-card border border-dashed border-line-strong px-5 py-8 text-center text-sm text-muted">
-            No runs yet. Your first build shows up here with every step it took.
-          </p>
+          <EmptyState compact icon={RiSparkling2Line} title="No runs yet" body="Your first build shows up here with every step it took." />
         ) : (
-          <ul className="divide-y divide-line overflow-hidden rounded-card bg-surface shadow-card">
+          <ul className="divide-y divide-separator-border overflow-hidden rounded-3xl border border-border-button-default bg-background-primary-default">
             {runs.slice(0, 20).map((r) => (
               <li key={r.id}>
-                <Link to={`/providers/ai/${r.id}`} className="flex min-h-[60px] items-center gap-3 px-4 py-3 transition-colors hover:bg-soft">
+                <Link
+                  to={`/providers/ai/${r.id}`}
+                  className={cx(
+                    "group flex min-h-[64px] items-center gap-3 px-5 py-3 outline-none transition-colors duration-150 ease",
+                    "hover:bg-background-secondary-default active:bg-background-secondary-hover",
+                    "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-focus-ring",
+                  )}
+                >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <FadeText text={plainText(r.title) || r.provider_slug || `Run #${r.id}`} className="truncate text-[14px] font-medium text-ink" />
+                      <FadeText text={plainText(r.title) || r.provider_slug || `Run #${r.id}`} className="truncate text-body-medium text-text-primary" />
                       <span className="shrink-0">
                         <RunStatusBadge status={r.status} />
                       </span>
                     </div>
                     {plainText(r.description) && (
-                      <FadeText text={plainText(r.description)} className="mt-0.5 line-clamp-2 max-w-3xl text-[13px] leading-snug text-muted" />
+                      <FadeText text={plainText(r.description)} className="mt-0.5 line-clamp-2 max-w-3xl text-body-2-regular text-text-secondary" />
                     )}
-                    <div className="mt-0.5 truncate font-mono text-[11px] text-muted">
+                    <div className="mt-0.5 truncate font-mono text-caption-1-regular text-text-tertiary">
                       #{r.id} · {r.kind === "update_provider" ? "update" : "create"}
                       {r.provider_slug ? ` · ${r.provider_slug}` : ""} · {r.created_by} · {relTime(r.created_at)}
                       {r.usage?.cost_usd ? ` · $${r.usage.cost_usd.toFixed(2)}` : ""}
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-faint" />
+                  <RiArrowRightSLine
+                    className="size-4 shrink-0 text-foreground-icon-tertiary transition-transform duration-150 ease-out group-hover:translate-x-0.5 motion-reduce:transition-none"
+                    aria-hidden
+                  />
                 </Link>
               </li>
             ))}
           </ul>
         )}
       </section>
-      <p className="mt-4 flex items-center gap-1.5 font-mono text-[11px] text-faint">
-        <GitBranch className="h-3 w-3 shrink-0" /> Every publish is a new provider version. Roll back from the provider page.
+      <p className="mt-4 flex items-center gap-1.5 font-mono text-caption-1-regular text-text-tertiary">
+        <RiGitBranchLine className="size-3.5 shrink-0" aria-hidden /> Every publish is a new provider version. Roll back from the provider page.
       </p>
     </div>
   );

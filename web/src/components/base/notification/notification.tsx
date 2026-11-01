@@ -333,7 +333,7 @@ export function Notification({
             <span
               ref={barRef}
               aria-hidden
-              className="absolute inset-x-0 bottom-0 h-[3px] origin-left rtl:origin-right bg-accent-600"
+              className="absolute inset-x-0 bottom-0 h-[3px] origin-left rtl:origin-right bg-accent-fill"
             />
           ) : null}
         </motion.div>

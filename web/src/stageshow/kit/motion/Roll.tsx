@@ -103,7 +103,7 @@ function RollNow({
     while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++
     // Digits can change one at a time; words can't. Snap a wordy change out to
     // whole words.
-    const numeric = /^[\d.,$€£%+\-−\s]*$/.test(a.slice(head, a.length - tail) + b.slice(head, b.length - tail))
+    const numeric = /^[\d.,$€£%+\-\s]*$/.test(a.slice(head, a.length - tail) + b.slice(head, b.length - tail))
     if (!numeric) {
       const space = (c: string | undefined) => c === undefined || /\s/.test(c)
       while (head > 0 && !space(b[head - 1]) && !space(b[head])) head--

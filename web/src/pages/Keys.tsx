@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { Activity, ChevronRight, KeyRound, RefreshCw, Search, X } from "lucide-react";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
+import { RiArrowRightSLine, RiCloseLine, RiKey2Line, RiPulseLine, RiRefreshLine } from "@remixicon/react";
 import type { KeyRow, KeySummary, Validity } from "../lib/types";
 import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
@@ -15,10 +15,19 @@ import { useTitle } from "../hooks/useTitle";
 import { EntityLogo, ServiceLogo } from "../components/EntityLogo";
 import { AccountLine, QuotaMeter, TimeAgo, providerGivesReset, quotaInfo } from "../components/KeyBits";
 import { usePoll } from "../hooks/usePoll";
-import { Button, Callout, Empty, IconButton, PageHeader, PageSkeleton, Select, Spinner, cx } from "../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { ProgressTrack } from "@/components/base/progress/progress";
+import { SearchField } from "@/components/base/search-field/search-field";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
+import { cx } from "@/utils/cx";
 import { KeyHealth } from "./service/KeysTable";
 import { KeyDrawer } from "./service/KeyDrawer";
 import { withLiveStatus } from "./service/keyUtil";
+import { Callout, EmptyState, PageHeader, StatTile, type StatTone } from "@/components/acn";
+import { ActionIcon, CARD, Tip } from "./service/parts";
 
 type Sort = "last_used" | "quota" | "validity" | "label";
 type Only = "" | "low_quota" | "unused_7d";
@@ -46,39 +55,6 @@ function summarize(rows: KeyRow[], now: number): KeySummary {
     if (isUnused(k, now)) s.unused_7d++;
   }
   return s;
-}
-
-function Tile({
-  label,
-  value,
-  hint,
-  active,
-  tone,
-  onClick,
-}: {
-  label: string;
-  value: number;
-  hint: string;
-  active: boolean;
-  tone?: "green" | "red" | "amber";
-  onClick: () => void;
-}) {
-  const color = value > 0 && tone ? { green: "text-emerald-700", red: "text-red-700", amber: "text-amber-700" }[tone] : "text-ink";
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      title={hint}
-      onClick={onClick}
-      className={cx(
-        "min-w-0 rounded-card px-4 py-3 text-left shadow-card transition-[background-color,box-shadow,transform] duration-150 ease-out active:scale-[0.98]",
-        active ? "bg-surface ring-2 ring-ink" : "bg-surface hover:shadow-lift",
-      )}
-    >
-      <div className="truncate text-[12px] font-medium text-muted">{label}</div>
-      <div className={cx("mt-1 font-mono text-xl tabular-nums", color)}>{num(value)}</div>
-    </button>
-  );
 }
 
 function RowLogo({ k }: { k: KeyRow }) {
@@ -208,14 +184,14 @@ export function KeysPage() {
     }
   };
 
-  if (!loaded) return <PageSkeleton variant="list" tiles={6} />;
+  if (!loaded) return <KeysSkeleton />;
 
-  const tiles: Array<{ key: string; label: string; value: number; hint: string; tone?: "green" | "red" | "amber"; active: boolean; apply: () => void }> = [
+  const tiles: Array<{ key: string; label: string; value: number; hint: string; tone?: StatTone; active: boolean; apply: () => void }> = [
     { key: "all", label: "All keys", value: summary.total, hint: "Show every key", active: !validity && !only, apply: () => setParam({ validity: "", only: "" }) },
-    { key: "valid", label: "Valid", value: summary.valid, hint: "Worked recently or passed a check", tone: "green", active: validity === "valid", apply: () => setParam({ validity: validity === "valid" ? "" : "valid", only: "" }) },
-    { key: "invalid", label: "Invalid", value: summary.invalid, hint: "Rejected by the provider", tone: "red", active: validity === "invalid", apply: () => setParam({ validity: validity === "invalid" ? "" : "invalid", only: "" }) },
+    { key: "valid", label: "Valid", value: summary.valid, hint: "Worked recently or passed a check", tone: "success", active: validity === "valid", apply: () => setParam({ validity: validity === "valid" ? "" : "valid", only: "" }) },
+    { key: "invalid", label: "Invalid", value: summary.invalid, hint: "Rejected by the provider", tone: "error", active: validity === "invalid", apply: () => setParam({ validity: validity === "invalid" ? "" : "invalid", only: "" }) },
     { key: "unknown", label: "Unknown", value: summary.unknown, hint: "Not checked or used yet", active: validity === "unknown", apply: () => setParam({ validity: validity === "unknown" ? "" : "unknown", only: "" }) },
-    { key: "low", label: "Low quota", value: summary.low_quota, hint: "Less than 10% of the quota left", tone: "amber", active: only === "low_quota", apply: () => setParam({ only: only === "low_quota" ? "" : "low_quota", validity: "" }) },
+    { key: "low", label: "Low quota", value: summary.low_quota, hint: "Less than 10% of the quota left", tone: "warning", active: only === "low_quota", apply: () => setParam({ only: only === "low_quota" ? "" : "low_quota", validity: "" }) },
     { key: "unused", label: "Unused 7 days", value: summary.unused_7d, hint: "Not used in the last 7 days", active: only === "unused_7d", apply: () => setParam({ only: only === "unused_7d" ? "" : "unused_7d", validity: "" }) },
   ];
 
@@ -226,11 +202,15 @@ export function KeysPage() {
         meta={`${plural(rows.length, "key")} across ${plural(serviceOptions.length, "service")} · ${allInvalid ? `${allInvalid} rejected` : "none rejected"}`}
         actions={
           <>
-            <IconButton label="Refresh" onClick={() => void load(false)} disabled={refreshing}>
-              {refreshing ? <Spinner /> : <RefreshCw className="h-4 w-4" />}
-            </IconButton>
+            <ActionIcon icon={RiRefreshLine} label="Refresh" size="medium" busy={refreshing} disabled={refreshing} onClick={() => void load(false)} />
             {manage && rows.length > 0 && (
-              <Button variant="primary" icon={<Activity className="h-4 w-4" />} loading={checking !== null} onClick={() => void runCheckAll()}>
+              <Button
+                variant="primary"
+                leadingIcon={checking !== null ? ButtonSpinner : RiPulseLine}
+                disabled={checking !== null}
+                onClick={() => void runCheckAll()}
+                className="flex-1 sm:flex-none"
+              >
                 {checking !== null ? "Checking keys" : "Check all keys"}
               </Button>
             )}
@@ -239,181 +219,207 @@ export function KeysPage() {
       />
 
       {checking !== null && (
-        <div className="mb-6 rounded-card bg-surface p-4 shadow-card" role="status" aria-live="polite">
-          <div className="flex items-center justify-between gap-3 text-[13px]">
-            <span className="text-ink">Checking {plural(rows.length, "key")}, four at a time.</span>
-            <span className="font-mono text-xs tabular-nums text-muted">{Math.max(0, Math.round((now - checking) / 1000))}s</span>
+        <div className={cx(CARD, "mb-6 p-4 sm:px-5")} role="status" aria-live="polite">
+          <div className="flex items-center justify-between gap-3 text-body-2-regular">
+            <span className="text-text-primary">Checking {plural(rows.length, "key")}, four at a time.</span>
+            <span className="font-mono text-caption-1-regular tabular-nums text-text-secondary">{Math.max(0, Math.round((now - checking) / 1000))}s</span>
           </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-well" aria-hidden="true">
-            <div className="progress-indeterminate h-full w-2/5 rounded-full bg-ink" />
-          </div>
-          <p className="mt-2 text-xs text-muted">Large pools can take up to 3 minutes. You can leave this page; the check keeps running.</p>
+          <ProgressTrack percentage={0} isIndeterminate size="sm" className="mt-3" />
+          <p className="mt-2 text-caption-1-regular text-text-secondary">Large pools can take up to 3 minutes. You can leave this page; the check keeps running.</p>
         </div>
       )}
       {lastCheck && checking === null && (
-        <Callout tone={lastCheck.clean ? "green" : "amber"} className="mb-6">
-          <div className="flex items-start justify-between gap-3">
-            <span>{lastCheck.message}</span>
-            <button type="button" onClick={() => setLastCheck(null)} aria-label="Dismiss" className="icon-btn -my-1 -mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg opacity-70 hover:opacity-100">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
+        <Callout
+          tone={lastCheck.clean ? "success" : "warning"}
+          className="mb-6"
+          action={<ActionIcon icon={RiCloseLine} label="Dismiss" onClick={() => setLastCheck(null)} className="border-transparent bg-transparent shadow-none" />}
+        >
+          {lastCheck.message}
         </Callout>
       )}
 
       {error && rows.length === 0 ? (
-        <Callout tone="red">
-          Could not load keys: {error}.{" "}
-          <button type="button" className="font-medium underline underline-offset-2" onClick={() => void load(false)}>
-            Try again
-          </button>
+        <Callout
+          tone="error"
+          action={
+            <Button variant="secondary" size="small" onClick={() => void load(false)}>
+              Try again
+            </Button>
+          }
+        >
+          Could not load keys: {error}.
         </Callout>
       ) : rows.length === 0 ? (
-        <Empty
-          icon={<KeyRound className="h-5 w-5" />}
+        <EmptyState
+          as="h2"
+          icon={RiKey2Line}
           title="No keys yet"
           body={manage ? "Add a service from the catalog, then paste in its keys. They all show up here with their health and quota." : "No keys have been added yet. Ask an admin to add some."}
           action={
-            <Link to="/" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-on-ink hover:bg-ink-strong">
+            <RouterLink
+              to="/"
+              className="inline-flex h-9 items-center rounded-2lg bg-button-primary px-3 text-body-medium text-text-white shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring focus-visible:ring-offset-2"
+            >
               Go to catalog
-            </Link>
+            </RouterLink>
           }
         />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6" role="group" aria-label="Filter by health">
             {tiles.map((tl) => (
-              <Tile key={tl.key} label={tl.label} value={tl.value} hint={tl.hint} tone={tl.tone} active={tl.active} onClick={tl.apply} />
+              <Tip key={tl.key} label={tl.hint} aria>
+                <StatTile
+                  label={tl.label}
+                  value={num(tl.value)}
+                  tone={tl.value > 0 ? tl.tone : undefined}
+                  isSelected={tl.active}
+                  onChange={tl.apply}
+                />
+              </Tip>
             ))}
           </div>
 
           <div className="mt-6 flex flex-col gap-2 lg:flex-row lg:items-center">
-            <div className="relative min-w-0 lg:flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
-              <input
-                type="search"
-                value={q}
-                onChange={(e) => setParam({ q: e.target.value })}
-                placeholder="Search by label, account, service or note"
-                aria-label="Search keys"
-                enterKeyHint="search"
-                className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-hidden focus:ring-2 focus:ring-ink/20"
-              />
-            </div>
+            <SearchField
+              value={q}
+              onChange={(v) => setParam({ q: v })}
+              placeholder="Search by label, account, service or note"
+              aria-label="Search keys"
+              enterKeyHint="search"
+              className="min-w-0 lg:flex-1"
+              fieldClassName="border border-border-button-default bg-background-primary-default"
+            />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex">
-              <Select value={serviceId} onChange={(e) => setParam({ service: e.target.value })} aria-label="Service" className="col-span-2 sm:col-span-1 lg:w-48">
-                <option value="">All services</option>
+              <Select
+                aria-label="Service"
+                selectedKey={serviceId || "all"}
+                onSelectionChange={(k) => setParam({ service: k === "all" ? "" : String(k) })}
+                className="col-span-2 sm:col-span-1 lg:w-48"
+              >
+                <SelectItem id="all">All services</SelectItem>
                 {serviceOptions.map(([id, name]) => (
-                  <option key={id} value={id}>
+                  <SelectItem key={id} id={String(id)} textValue={name}>
                     {name}
-                  </option>
+                  </SelectItem>
                 ))}
               </Select>
-              <Select value={validity} onChange={(e) => setParam({ validity: e.target.value, only: "" })} aria-label="Validity" className="lg:w-40">
-                <option value="">Any validity</option>
-                <option value="valid">Valid</option>
-                <option value="invalid">Invalid</option>
-                <option value="unknown">Unknown</option>
+              <Select
+                aria-label="Validity"
+                selectedKey={validity || "any"}
+                onSelectionChange={(k) => setParam({ validity: k === "any" ? "" : String(k), only: "" })}
+                className="lg:w-40"
+              >
+                <SelectItem id="any">Any validity</SelectItem>
+                <SelectItem id="valid">Valid</SelectItem>
+                <SelectItem id="invalid">Invalid</SelectItem>
+                <SelectItem id="unknown">Unknown</SelectItem>
               </Select>
-              <Select value={sort} onChange={(e) => setParam({ sort: e.target.value === "last_used" ? "" : e.target.value })} aria-label="Sort by" className="lg:w-44">
+              <Select
+                aria-label="Sort by"
+                selectedKey={sort}
+                onSelectionChange={(k) => setParam({ sort: k === "last_used" ? "" : String(k) })}
+                className="lg:w-48"
+              >
                 {SORTS.map((s) => (
-                  <option key={s.id} value={s.id}>
+                  <SelectItem key={s.id} id={s.id} textValue={s.label}>
                     Sort: {s.label}
-                  </option>
+                  </SelectItem>
                 ))}
               </Select>
             </div>
           </div>
 
-          <div className="mt-3 flex min-h-[28px] items-center justify-between gap-3 font-mono text-xs text-muted">
-            <span aria-live="polite">
-              {filtered ? `${plural(shown.length, "key")} match` : `${plural(shown.length, "key")}`}
-            </span>
+          <div className="mt-3 flex min-h-8 items-center justify-between gap-3 font-mono text-caption-1-regular text-text-secondary">
+            <span aria-live="polite">{filtered ? `${plural(shown.length, "key")} match` : `${plural(shown.length, "key")}`}</span>
             {filtered && (
-              <button type="button" onClick={clear} className="tap inline-flex items-center gap-1 rounded-full px-2 font-sans text-[13px] font-medium text-ink hover:bg-ink/[0.06]">
-                <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear filters
-              </button>
+              <Button variant="ghost" size="small" leadingIcon={RiCloseLine} onClick={clear}>
+                Clear filters
+              </Button>
             )}
           </div>
 
           {shown.length === 0 ? (
-            <Empty
+            <EmptyState
               className="mt-3"
+              as="h2"
               title="No keys match these filters"
               body="Try another search, or clear the filters to see every key."
-              action={<Button onClick={clear}>Clear filters</Button>}
+              action={
+                <Button variant="secondary" onClick={clear}>
+                  Clear filters
+                </Button>
+              }
             />
           ) : (
             <>
               {/* Large screens: a table. Each row opens the key details. */}
-              <div className="mt-3 hidden overflow-hidden rounded-card bg-surface shadow-card lg:block">
-                <table className="w-full table-fixed text-left text-[13px]">
-                  <colgroup>
-                    <col className="w-[31%]" />
-                    <col className="w-[31%]" />
-                    <col className="w-[15%]" />
-                    <col className="w-[19%]" />
-                    <col className="w-[4%]" />
-                  </colgroup>
-                  <thead>
-                    <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
-                      <th className="px-4 py-3 font-normal">Key</th>
-                      <th className="px-3 py-3 font-normal">Health</th>
-                      <th className="px-3 py-3 font-normal">Last used</th>
-                      <th className="px-3 py-3 font-normal">Quota</th>
-                      <th className="py-3">
-                        <span className="sr-only">Open</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
-                    {shown.map((k) => (
-                      <tr
-                        key={k.id}
-                        tabIndex={0}
-                        aria-label={`Open details for ${k.label || k.hint}, ${k.service_name}`}
-                        onClick={() => !window.getSelection()?.toString() && setOpenKey(k)}
-                        onKeyDown={(e) => {
-                          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-                            e.preventDefault();
-                            setOpenKey(k);
-                          }
-                        }}
-                        className="group cursor-pointer align-top transition-colors duration-150 hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
+              <div className={cx(CARD, "mt-3 hidden overflow-hidden lg:block")}>
+                <Table
+                  aria-label="Keys"
+                  size="sm"
+                  containerClassName="-mt-px"
+                  className="table-fixed"
+                  onRowAction={(id) => {
+                    if (window.getSelection()?.toString()) return;
+                    const k = shown.find((x) => x.id === Number(id));
+                    if (k) setOpenKey(k);
+                  }}
+                >
+                  <TableHeader>
+                    <TableColumn isRowHeader className="w-[31%] ps-5">
+                      Key
+                    </TableColumn>
+                    <TableColumn className="w-[31%]">Health</TableColumn>
+                    <TableColumn className="w-[15%]">Last used</TableColumn>
+                    <TableColumn className="w-[19%]">Quota</TableColumn>
+                    <TableColumn className="w-[4%]">
+                      <span className="sr-only">Open</span>
+                    </TableColumn>
+                  </TableHeader>
+                  <TableBody items={shown}>
+                    {(k) => (
+                      <TableRow
+                        id={k.id}
+                        textValue={`${k.label || k.hint}, ${k.service_name}`}
+                        className="group cursor-pointer align-top hover:bg-background-secondary-default"
                       >
-                        <td className="px-4 py-3.5">
+                        <TableCell className="py-3 ps-5 align-top">
                           <div className="flex min-w-0 items-center gap-3">
                             <RowLogo k={k} />
                             <div className="min-w-0">
-                              <div className="truncate font-medium text-ink" title={k.label || undefined}>
+                              <div className="truncate text-body-2-medium text-text-primary" title={k.label || undefined}>
                                 {k.label || "Untitled"}
                               </div>
                               <AccountLine k={k} />
-                              <div className="truncate font-mono text-[11px] text-muted">
+                              <div className="truncate font-mono text-caption-1-regular text-text-secondary">
                                 {k.hint} · {k.service_name}
                               </div>
                             </div>
                           </div>
-                        </td>
-                        <td className="px-3 py-3.5">
+                        </TableCell>
+                        <TableCell className="py-3 align-top">
                           <KeyHealth k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
-                        </td>
-                        <td className="px-3 py-3.5 font-mono text-xs">
-                          <TimeAgo iso={k.last_used_at} now={now} className="block truncate text-ink" />
-                          <div className="mt-0.5 truncate text-[11px] text-muted">
+                        </TableCell>
+                        <TableCell className="py-3 align-top font-mono">
+                          <TimeAgo iso={k.last_used_at} now={now} className="block truncate text-caption-1-regular text-text-primary" />
+                          <div className="mt-0.5 truncate text-caption-1-regular text-text-secondary">
                             worked <TimeAgo iso={k.last_ok_at} now={now} />
                           </div>
-                        </td>
-                        <td className="px-3 py-3.5">
+                        </TableCell>
+                        <TableCell className="py-3 align-top">
                           <QuotaMeter k={k} unit={k.quota_unit} now={now} compact resetExact={resetBy[k.service_id]} />
-                        </td>
-                        <td className="py-3.5 pr-3">
-                          <ChevronRight className="mt-0.5 h-4 w-4 text-faint transition-transform duration-150 ease-out group-hover:translate-x-0.5" aria-hidden="true" />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </TableCell>
+                        <TableCell className="py-3 pe-3 align-top">
+                          <RiArrowRightSLine
+                            className="mt-0.5 size-4 text-foreground-icon-tertiary transition-transform duration-150 ease-out group-hover:translate-x-0.5 rtl:rotate-180"
+                            aria-hidden
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
 
               {/* Phones and tablets: cards. */}
@@ -423,22 +429,27 @@ export function KeysPage() {
                     <button
                       type="button"
                       onClick={() => setOpenKey(k)}
-                      className="flex h-full w-full min-w-0 flex-col gap-3 rounded-card bg-surface p-4 text-left shadow-card transition-transform duration-150 ease-out active:scale-[0.99]"
+                      aria-label={`Open details for ${k.label || k.hint}, ${k.service_name}`}
+                      className={cx(
+                        CARD,
+                        "flex h-full w-full min-w-0 cursor-pointer flex-col gap-3 p-4 text-start outline-none transition-colors duration-150 ease",
+                        "hover:bg-background-primary-hover active:bg-background-primary-active focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+                      )}
                     >
                       <div className="flex w-full items-start gap-3">
                         <RowLogo k={k} />
                         <div className="min-w-0 flex-1">
-                          <div className="wrap-anywhere font-medium text-ink">{k.label || "Untitled"}</div>
+                          <div className="wrap-anywhere text-body-medium text-text-primary">{k.label || "Untitled"}</div>
                           <AccountLine k={k} wrap />
-                          <div className="wrap-anywhere line-clamp-2 font-mono text-[11px] text-muted">
+                          <div className="wrap-anywhere line-clamp-2 font-mono text-caption-1-regular text-text-secondary">
                             {k.hint} · {k.service_name}
                           </div>
                         </div>
-                        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-faint" aria-hidden="true" />
+                        <RiArrowRightSLine className="mt-0.5 size-4 shrink-0 text-foreground-icon-tertiary rtl:rotate-180" aria-hidden />
                       </div>
                       <KeyHealth k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
                       {quotaInfo(k, k.quota_unit) && <QuotaMeter k={k} unit={k.quota_unit} now={now} compact resetExact={resetBy[k.service_id]} />}
-                      <div className="font-mono text-[11px] text-muted">
+                      <div className="font-mono text-caption-1-regular text-text-secondary">
                         used <TimeAgo iso={k.last_used_at} now={now} /> · worked <TimeAgo iso={k.last_ok_at} now={now} />
                       </div>
                     </button>
@@ -451,6 +462,29 @@ export function KeysPage() {
       )}
 
       <KeyDrawer keyId={openKey?.id ?? null} seed={openKey} onClose={() => setOpenKey(null)} />
+    </div>
+  );
+}
+
+function KeysSkeleton() {
+  return (
+    <div role="status" aria-label="Loading keys">
+      <Skeleton shape="text" className="h-7 w-24" />
+      <Skeleton shape="text" className="mt-2 h-3.5 w-64" />
+      <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <Skeleton key={i} className="h-[74px] rounded-3xl" />
+        ))}
+      </div>
+      <Skeleton className="mt-6 h-9 w-full rounded-full" />
+      <div className={cx(CARD, "mt-6")}>
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="flex items-center gap-3 border-b border-separator-border px-5 py-4 last:border-b-0">
+            <Skeleton className="size-10" />
+            <Skeleton shape="text" className="h-4 w-40" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

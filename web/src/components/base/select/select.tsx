@@ -23,6 +23,8 @@ import {
   MENU_POPOVER_WIDTH,
 } from "@/components/base/dropdown/menu-styles";
 import { Label } from "@/components/base/input/label";
+import { HintText, hintTextClassName } from "@/components/base/input/hint-text";
+import { FieldError as AriaFieldError } from "react-aria-components";
 import { ChevronDownSmall } from "@/components/foundations/icons/chevrons";
 import { cx } from "@/utils/cx";
 import { useDismissOnOutsidePress, useTriggerToggle } from "@/utils/use-dismiss-on-outside-press";
@@ -69,6 +71,10 @@ export interface SelectProps<T extends object>
   /** Customise the trigger's rendered value (e.g. a compact flag + dial code).
    *  Falls back to the selected item's own content when omitted. */
   renderValue?: ReactNode | ((values: AriaSelectValueRenderProps<T>) => ReactNode);
+  /** Helper text under the trigger, matching Input. */
+  hint?: ReactNode;
+  /** Shown in place of `hint` while the select is invalid (`isInvalid`). */
+  errorMessage?: ReactNode;
   ref?: Ref<HTMLDivElement>;
 }
 
@@ -81,16 +87,18 @@ export function Select<T extends object>({
   children,
   items,
   renderValue,
+  hint,
+  errorMessage,
   ref,
   ...props
 }: SelectProps<T>) {
   // The popover is `isNonModal`: react-aria's modal scroll lock puts
-  // `overflow: hidden` on <html>, which — with this app's `h-full` root —
+  // `overflow: hidden` on <html>, which (with this app's `h-full` root)
   // collapses the page scroll position and visibly yanks the sticky
   // sidebar upward every time a select opens. Non-modal skips the lock,
   // but also disables react-aria's outside-press dismissal (`isDismissable`
   // is hard-coupled to `!isNonModal` in usePopover), so open state is
-  // controlled here and dismissal restored manually — the same fix as the
+  // controlled here and dismissal restored manually, the same fix as the
   // date-picker family (see utils/use-dismiss-on-outside-press.ts).
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLElement>(null);
@@ -107,7 +115,7 @@ export function Select<T extends object>({
       onOpenChange={(o) => allowOpenChange(o) && setIsOpen(o)}
       className={cx("group flex flex-col", label ? "gap-1" : undefined, className)}
     >
-      {({ isOpen, isRequired }) => (
+      {({ isOpen, isRequired, isInvalid }) => (
         <>
           {label ? <Label isRequired={isRequired}>{label}</Label> : null}
           <AriaButton
@@ -162,6 +170,11 @@ export function Select<T extends object>({
               <SelectSizeContext.Provider value={size}>{children}</SelectSizeContext.Provider>
             </AriaListBox>
           </AriaPopover>
+          {isInvalid && errorMessage != null ? (
+            <AriaFieldError className={hintTextClassName(true)}>{errorMessage}</AriaFieldError>
+          ) : hint ? (
+            <HintText isInvalid={isInvalid}>{hint}</HintText>
+          ) : null}
         </>
       )}
     </AriaSelect>

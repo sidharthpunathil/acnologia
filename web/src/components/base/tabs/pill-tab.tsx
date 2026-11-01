@@ -9,13 +9,13 @@ const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffec
 
 /**
  * Figma source: Board UI → "ai_chat" → Changes / Browser panel switcher
- * (node 4030:5993 region) — the fully-rounded pill tab, in two styles:
+ * (node 4030:5993 region): the fully-rounded pill tab, in two styles:
  *
  *   pill      px 8, py 5, gap 4
  *   blue      fully rounded (40px); selected bg uses the semantic blue pill
  *             surface, icon + label color/blue/500 (the AI chat panel switcher)
  *   gray      radius/2lg (10px); selected bg background/tertiary, label
- *             text/primary (quieter — scope/filter rows like the settings
+ *             text/primary (quieter: scope/filter rows like the settings
  *             Tools page)
  *   idle      label text/secondary, icon foreground/icon/secondary,
  *             background/primary/hover on hover (both styles)

@@ -64,7 +64,7 @@ export interface RadioDotProps {
 }
 
 /**
- * The bare radio glyph — presentation only, no interaction or semantics.
+ * The bare radio glyph, presentation only, no interaction or semantics.
  *
  * Select/deselect animates: the default bordered surface and the selected
  * gradient are stacked layers cross-fading over 200ms (a gradient background
@@ -101,7 +101,7 @@ export function RadioDot({ selected = false, size = "sm", focusVisible = false, 
         )}
       />
       {/* Inner dot: absolutely centered (flex centering of fractional sizes can
-          land on subpixels) and no drop shadow — a downward shadow makes the
+          land on subpixels) and no drop shadow, a downward shadow makes the
           dot read as sitting below center. */}
       <span
         className={cx(

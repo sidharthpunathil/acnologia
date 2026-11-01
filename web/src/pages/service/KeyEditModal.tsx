@@ -1,12 +1,19 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { App, Key, KeyPatch, KeyStatus, Tier } from "../../lib/types";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
 import { errorMessage } from "../../lib/api";
-import { Modal } from "../../components/Modal";
 import { MultiSelect } from "../../components/MultiSelect";
-import { Button, Field, Input, Select, Textarea, Toggle } from "../../components/ui";
 import { ops, type EgressProxy } from "../../lib/ops";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
+import { NumberField } from "@/components/base/number-field/number-field";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { SwitchCard } from "@/components/base/switch/switch-card";
+import { Textarea } from "@/components/base/textarea/textarea";
+import { cx } from "@/utils/cx";
 
 /** Egress proxy picker for one key. 0 follows the service's proxy. Loads the proxy list itself. */
 function KeyEgressField({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
@@ -21,22 +28,49 @@ function KeyEgressField({ value, onChange, disabled }: { value: number; onChange
       live = false;
     };
   }, []);
+  const options = [
+    { id: "0", label: "Use the service's proxy" },
+    ...(proxies ?? []).map((p) => ({ id: String(p.id), label: p.region ? `${p.name} (${p.region})` : p.name })),
+  ];
+  if (value > 0 && !proxies?.some((p) => p.id === value)) options.push({ id: String(value), label: `Proxy #${value}` });
   return (
-    <Field
-      label="Egress proxy"
-      className="sm:col-span-2"
-      hint={disabled ? "Only a superadmin can change the proxy of a hidden key." : "Send this key's traffic through a specific proxy, for example one per account region."}
-    >
-      <Select value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))}>
-        <option value={0}>Use the service's proxy</option>
-        {(proxies ?? []).map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.region ? `${p.name} (${p.region})` : p.name}
-          </option>
+    <div className="sm:col-span-2">
+      <Select
+        label="Egress proxy"
+        selectedKey={String(value)}
+        isDisabled={disabled}
+        onSelectionChange={(k) => onChange(Number(k))}
+        className="w-full"
+      >
+        {options.map((o) => (
+          <SelectItem key={o.id} id={o.id}>
+            {o.label}
+          </SelectItem>
         ))}
-        {value > 0 && !proxies?.some((p) => p.id === value) && <option value={value}>{`Proxy #${value}`}</option>}
       </Select>
-    </Field>
+      <p className="mt-1 text-caption-1-regular text-text-secondary">
+        {disabled ? "Only a superadmin can change the proxy of a hidden key." : "Send this key's traffic through a specific proxy, for example one per account region."}
+      </p>
+    </div>
+  );
+}
+
+/** A number field over a string draft, where empty means "not set". */
+const numOrNaN = (v: string) => (v.trim() === "" ? NaN : Number(v));
+const strOf = (n: number) => (Number.isNaN(n) ? "" : String(n));
+
+/** A labelled group: section title, one line of help, then its fields. */
+function Group({ id, title, help, children, className }: { id: string; title: string; help?: string; children: ReactNode; className?: string }) {
+  return (
+    <div role="group" aria-labelledby={id} className={cx("space-y-3", className)}>
+      <div>
+        <h3 id={id} className="text-body-2-semibold text-text-primary">
+          {title}
+        </h3>
+        {help && <p className="mt-0.5 text-caption-1-regular text-text-secondary">{help}</p>}
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -112,7 +146,7 @@ export function KeyEditModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyId]);
 
-  if (!k || !d) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
+  if (!k || !d) return null;
 
   const set = <K extends keyof Draft>(key: K, v: Draft[K]) => setD({ ...d, [key]: v });
 
@@ -172,134 +206,118 @@ export function KeyEditModal({
   const statusOptions: KeyStatus[] = ["active", "disabled"];
   if (k.status === "exhausted" || k.status === "invalid" || k.status === "banned") statusOptions.push(k.status);
 
+  const statusLabel = (st: KeyStatus) => (st === "active" ? "enabled" : st === "exhausted" ? "out of quota" : st);
+  const statusHint =
+    k.status === "banned"
+      ? "The provider suspended this account. Pick enabled only after the account is restored."
+      : k.status === "exhausted" || k.status === "invalid"
+        ? `Now ${k.status === "exhausted" ? "out of quota" : "invalid"}. Pick enabled to put it back in rotation.`
+        : undefined;
+
   return (
-    <Modal
-      open
-      onClose={onClose}
-      wide
-      title={`Edit ${k.label || "key"}`}
-      description={<span className="font-mono">{k.hint}</span>}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" type="submit" form="edit-key-form" loading={busy}>
-            Save changes
-          </Button>
-        </>
-      }
-    >
-      <form id="edit-key-form" onSubmit={submit} className="space-y-5">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Label">
-            <Input value={d.label} onChange={(e) => set("label", e.target.value)} />
-          </Field>
-          <Field
-            label="Status"
-            hint={
-              k.status === "banned"
-                ? "The provider suspended this account. Pick enabled only after the account is restored."
-                : k.status === "exhausted" || k.status === "invalid"
-                  ? `Now ${k.status === "exhausted" ? "out of quota" : "invalid"}. Pick enabled to put it back in rotation.`
-                  : undefined
-            }
-          >
-            <Select value={d.status} onChange={(e) => set("status", e.target.value as KeyStatus)}>
-              {statusOptions.map((s) => (
-                <option key={s} value={s}>
-                  {s === "active" ? "enabled" : s === "exhausted" ? "out of quota" : s}
-                </option>
+    <Modal isOpen onOpenChange={(o) => !o && !busy && onClose()} size="lg" isKeyboardDismissDisabled={busy}>
+      <ModalHeader title={`Edit ${k.label || "key"}`} description={<span className="font-mono">{k.hint}</span>} />
+      <ModalBody>
+        <form id="edit-key-form" onSubmit={submit} className="space-y-6 pb-1">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input label="Label" value={d.label} onChange={(v) => set("label", v)} />
+            <Select label="Status" selectedKey={d.status} onSelectionChange={(v) => set("status", v as KeyStatus)} className="w-full">
+              {statusOptions.map((st) => (
+                <SelectItem key={st} id={st}>
+                  {statusLabel(st)}
+                </SelectItem>
               ))}
             </Select>
-          </Field>
-          <Field label="Tier" hint="Backup keys are used only when no primary key is free.">
-            <Select value={d.tier} onChange={(e) => set("tier", e.target.value as Tier)}>
-              <option value="primary">primary</option>
-              <option value="backup">backup</option>
-            </Select>
-          </Field>
-          <Field label="Quota limit" hint="Leave empty when the provider has no fixed quota.">
-            <Input type="number" min={0} value={d.quota_limit} onChange={(e) => set("quota_limit", e.target.value)} placeholder="unlimited" />
-          </Field>
-          <Field label="Weight" hint="Higher weight gets picked more often with weighted random.">
-            <Input type="number" min={0} value={d.weight} onChange={(e) => set("weight", Number(e.target.value))} />
-          </Field>
-          <Field label="Priority" hint="With fill first, lower numbers are used first.">
-            <Input type="number" value={d.priority} onChange={(e) => set("priority", Number(e.target.value))} />
-          </Field>
-          <Field
-            label="Max concurrent requests"
-            className="sm:col-span-2"
-            hint={`Leave empty to use the service default (${serviceMax > 0 ? serviceMax : "no limit"}). 0 means no limit for this key.`}
-          >
-            <Input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={1000}
-              value={d.max_concurrency}
-              onChange={(e) => set("max_concurrency", e.target.value)}
+            {statusHint && <p className="-mt-2 text-caption-1-regular text-text-secondary sm:col-span-2">{statusHint}</p>}
+            <div>
+              <Select label="Tier" selectedKey={d.tier} onSelectionChange={(v) => set("tier", v as Tier)} className="w-full">
+                <SelectItem id="primary">primary</SelectItem>
+                <SelectItem id="backup">backup</SelectItem>
+              </Select>
+              <p className="mt-1 text-caption-1-regular text-text-secondary">Backup keys are used only when no primary key is free.</p>
+            </div>
+            <NumberField
+              label="Quota limit"
+              hint="Leave empty when the provider has no fixed quota."
+              minValue={0}
+              value={numOrNaN(d.quota_limit)}
+              onChange={(n) => set("quota_limit", strOf(n))}
+              placeholder="unlimited"
+            />
+            <NumberField label="Weight" hint="Higher weight gets picked more often with weighted random." minValue={0} value={d.weight} onChange={(n) => set("weight", Number.isNaN(n) ? 0 : n)} />
+            <NumberField label="Priority" hint="With fill first, lower numbers are used first." value={d.priority} onChange={(n) => set("priority", Number.isNaN(n) ? 0 : n)} />
+            <NumberField
+              label="Max concurrent requests"
+              className="sm:col-span-2"
+              hint={`Leave empty to use the service default (${serviceMax > 0 ? serviceMax : "no limit"}). 0 means no limit for this key.`}
+              minValue={0}
+              maxValue={1000}
+              formatOptions={{ maximumFractionDigits: 0 }}
+              value={numOrNaN(d.max_concurrency)}
+              onChange={(n) => set("max_concurrency", strOf(n))}
               placeholder={`Service default (${serviceMax > 0 ? serviceMax : "no limit"})`}
             />
-          </Field>
-          <KeyEgressField value={egressId} onChange={setEgressId} disabled={k.hidden && !canHidden} />
-        </div>
+            <KeyEgressField value={egressId} onChange={setEgressId} disabled={k.hidden && !canHidden} />
+          </div>
 
-        <div className="space-y-4 rounded-xl border border-line p-4">
-          {canHidden && (
-            <Toggle
-              label="Hidden"
-              description="Only superadmins can see or count this key."
-              checked={d.hidden}
-              onChange={(v) => set("hidden", v)}
+          <Group id="edit-key-access" title="Access">
+            {canHidden && (
+              <SwitchCard title="Hidden" description="Only superadmins can see or count this key." isSelected={d.hidden} onChange={(v) => set("hidden", v)} />
+            )}
+            <SwitchCard
+              title="Restricted"
+              description="Only the apps you pick below can use this key."
+              isSelected={d.restricted}
+              onChange={(v) => set("restricted", v)}
             />
-          )}
-          <Toggle
-            label="Restricted"
-            description="Only the apps you pick below can use this key."
-            checked={d.restricted}
-            onChange={(v) => set("restricted", v)}
+            {d.restricted && (
+              <MultiSelect
+                options={apps.map((a) => ({ value: a.id, label: a.name, meta: a.token_prefix }))}
+                value={d.app_ids}
+                onChange={(v) => set("app_ids", v)}
+                empty="No apps yet. Create an app first, then allow it here."
+              />
+            )}
+          </Group>
+
+          <Group id="edit-key-account" title="Account" help="Who this key belongs to. Only admins can see these details.">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input label="Name" value={d.account_name} maxLength={200} autoComplete="off" onChange={(v) => set("account_name", v)} />
+              <Input label="Email" type="email" value={d.account_email} maxLength={254} autoComplete="off" onChange={(v) => set("account_email", v)} />
+              <Input label="Phone" type="tel" value={d.account_phone} maxLength={40} autoComplete="off" onChange={(v) => set("account_phone", v)} />
+              <Input
+                label="Other"
+                hint="Username, account ID or anything else that identifies the account"
+                value={d.account_ref}
+                maxLength={200}
+                autoComplete="off"
+                onChange={(v) => set("account_ref", v)}
+              />
+            </div>
+          </Group>
+
+          <Textarea label="Notes" rows={2} value={d.notes} onChange={(v) => set("notes", v)} placeholder="Which account it belongs to, who pays, when it renews" />
+
+          <Input
+            label="Replace secret"
+            hint="Leave empty to keep the current secret. A new one is stored encrypted."
+            type="password"
+            autoComplete="off"
+            value={d.secret}
+            onChange={(v) => set("secret", v)}
+            placeholder="Paste a new key"
+            fieldClassName="font-mono"
           />
-          {d.restricted && (
-            <MultiSelect
-              options={apps.map((a) => ({ value: a.id, label: a.name, meta: a.token_prefix }))}
-              value={d.app_ids}
-              onChange={(v) => set("app_ids", v)}
-              empty="No apps yet. Create an app first, then allow it here."
-            />
-          )}
-        </div>
-
-        <div role="group" aria-labelledby="edit-key-account" className="space-y-4 rounded-xl border border-line p-4">
-          <div>
-            <h3 id="edit-key-account" className="text-[13px] font-medium text-ink">Account</h3>
-            <p className="mt-0.5 text-xs leading-relaxed text-muted">Who this key belongs to. Only admins can see these details.</p>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Name">
-              <Input value={d.account_name} maxLength={200} autoComplete="off" onChange={(e) => set("account_name", e.target.value)} />
-            </Field>
-            <Field label="Email">
-              <Input type="email" value={d.account_email} maxLength={254} autoComplete="off" onChange={(e) => set("account_email", e.target.value)} />
-            </Field>
-            <Field label="Phone">
-              <Input type="tel" value={d.account_phone} maxLength={40} autoComplete="off" onChange={(e) => set("account_phone", e.target.value)} />
-            </Field>
-            <Field label="Other" hint="Username, account ID or anything else that identifies the account">
-              <Input value={d.account_ref} maxLength={200} autoComplete="off" onChange={(e) => set("account_ref", e.target.value)} />
-            </Field>
-          </div>
-        </div>
-
-        <Field label="Notes">
-          <Textarea rows={2} value={d.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Which account it belongs to, who pays, when it renews" />
-        </Field>
-
-        <Field label="Replace secret" hint="Leave empty to keep the current secret. A new one is stored encrypted.">
-          <Input type="password" autoComplete="off" value={d.secret} onChange={(e) => set("secret", e.target.value)} placeholder="Paste a new key" className="font-mono" />
-        </Field>
-      </form>
+        </form>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="secondary" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button variant="primary" type="submit" form="edit-key-form" leadingIcon={busy ? ButtonSpinner : undefined} disabled={busy}>
+          {busy ? "Saving" : "Save changes"}
+        </Button>
+      </ModalFooter>
     </Modal>
   );
 }

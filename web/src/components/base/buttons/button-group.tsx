@@ -8,7 +8,7 @@ import { cx, sortCx } from "@/utils/cx";
 import { directionalIconClass } from "@/utils/directional-icon";
 
 /**
- * Button group — a row of secondary-style buttons fused into one control:
+ * Button group: a row of secondary-style buttons fused into one control:
  * shared 1px border/button/default container with radius/2lg and shadow/xs,
  * items divided by 1px hairlines, only the outer corners rounded. The classic
  * toolbar / filter pattern ("Left | Center | Right").
@@ -18,7 +18,7 @@ import { directionalIconClass } from "@/utils/directional-icon";
  *   small   h=32, px=10, Body 1/Medium, 18px icons
  *
  * Items can be text, icon + text, or icon-only (pass `iconOnly` +
- * `aria-label`). A pressed/selected item (`selected`) keeps the hover fill —
+ * `aria-label`). A pressed/selected item (`selected`) keeps the hover fill,
  * drive it from state for single or multi select toolbars, or leave every
  * item unselected for pure action rows. For a full segmented switcher with
  * animated thumb, see SegmentedControl instead.

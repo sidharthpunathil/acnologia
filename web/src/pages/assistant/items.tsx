@@ -1,22 +1,43 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { motion, useReducedMotion } from "motion/react";
 import {
-  ArrowRight,
-  Ban,
-  Check,
-  ChevronRight,
-  Clock,
-  KeyRound,
-  Pencil,
-  RotateCcw,
-  TriangleAlert,
-  X,
-} from "lucide-react";
-import { safeAppPath } from "../../lib/url";
-import type { ChatEntity, ChatItem } from "../../lib/types";
+  Button as AriaButton,
+  Disclosure,
+  DisclosurePanel,
+} from "react-aria-components";
+import {
+  RiArrowDownSLine,
+  RiArrowRightLine,
+  RiCheckLine,
+  RiCloseLine,
+  RiFileCopyLine,
+  RiForbidLine,
+  RiKey2Line,
+  RiPencilLine,
+  RiRefreshLine,
+  RiTimeLine,
+} from "@remixicon/react";
+import { safeAppPath } from "@/lib/url";
+import type { ChatEntity, ChatItem } from "@/lib/types";
+import { toast } from "@/stores/toast";
+import { Mark as BrandMark } from "@/components/acn/brand";
+import { Callout } from "@/components/acn/callout";
+import { Button } from "@/components/base/buttons/button";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { CodeBlock } from "@/components/CodeBlock";
+import { SecretBox, copyText } from "@/components/CopyButton";
+import {
+  AgentMessage,
+  LINE_HIDDEN,
+  LINE_SHOWN,
+  LINE_TRANSITION,
+  MessageAction,
+  QUIET_BUTTON,
+} from "@/components/application/agent-chat/agent-chat-message";
+import { LogRow } from "@/components/application/agent-log/agent-log";
+import { cx } from "@/utils/cx";
 import { linkify } from "./cards";
-import { CopyButton, SecretBox } from "../../components/CopyButton";
-import { Button, Callout, cx } from "../../components/ui";
 
 /** "add_keys" becomes "Add keys". */
 function humanize(tool: string): string {
@@ -35,62 +56,33 @@ function pretty(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
-/**
- * Word by word reveal for text that just arrived. Each call hands out the next
- * delay, so words fade in reading order across paragraphs and list items.
- */
-class Reveal {
-  private n = 0;
-  constructor(private readonly base: number) {}
-  next(): number {
-    // Fast at first, and capped so a long reply is fully in within about a second.
-    return this.base + Math.min(this.n++ * 14, 900);
-  }
-}
-
-function words(text: string, reveal: Reveal | null): ReactNode {
-  if (!reveal) return text;
-  return text.split(/(\s+)/).map((w, i) =>
-    /^\s*$/.test(w) ? (
-      <Fragment key={i}>{w}</Fragment>
-    ) : (
-      <span
-        key={i}
-        className="chat-word"
-        style={{ animationDelay: `${reveal.next()}ms` }}
-      >
-        {w}
-      </span>
-    ),
-  );
-}
-
 type Entities = Map<string, ChatEntity> | undefined;
 
 /** Renders `inline code` inside a line of plain text, and names from tool results as chips. */
-function inline(text: string, reveal: Reveal | null, entities?: Entities): ReactNode {
+function inline(text: string, entities?: Entities): ReactNode {
   const parts = text.split(/(`[^`\n]+`)/g);
   return parts.map((p, i) =>
     p.length > 2 && p.startsWith("`") && p.endsWith("`") ? (
       <code
         key={i}
-        className={cx(
-          "wrap-anywhere rounded-md bg-ink/[0.06] px-1.5 py-0.5 font-mono text-[0.86em] text-ink",
-          reveal && "chat-word",
-        )}
-        style={reveal ? { animationDelay: `${reveal.next()}ms` } : undefined}
+        className="wrap-anywhere rounded-md bg-background-tertiary-default px-1.5 py-0.5 font-mono text-body-2-regular text-text-primary"
       >
         {p.slice(1, -1)}
       </code>
     ) : (
-      <Fragment key={i}>{linkify(p, entities, (seg, k) => <Fragment key={k}>{words(seg, reveal)}</Fragment>)}</Fragment>
+      <Fragment key={i}>{linkify(p, entities, (seg, k) => <Fragment key={k}>{seg}</Fragment>)}</Fragment>
     ),
   );
 }
 
-/** Plain text with two small extras: `inline code` and lines starting with "- " as a list. */
+/**
+ * Plain text with two small extras: `inline code` and lines starting with
+ * "- " as a list. A reply that just arrived softens in block by block with
+ * the Chat Starter's line entrance; `reveal` is the first block's delay in ms.
+ */
 export function RichText({ text, reveal, entities }: { text: string; reveal?: number; entities?: Entities }) {
-  const r = reveal !== undefined ? new Reveal(reveal) : null;
+  const reduce = useReducedMotion();
+  const animate = reveal !== undefined && !reduce;
   const blocks: Array<{ list: boolean; lines: string[] }> = [];
   for (const line of text.split("\n")) {
     const bullet = /^\s*[-*] /.test(line);
@@ -99,118 +91,108 @@ export function RichText({ text, reveal, entities }: { text: string; reveal?: nu
     if (last && last.list === bullet) last.lines.push(value);
     else blocks.push({ list: bullet, lines: [value] });
   }
+  // Blank lines between blocks are already spacing; drop empty paragraphs.
+  const shown = blocks.filter((b) => b.list || b.lines.join("\n").trim());
+  const motionFor = (i: number) =>
+    animate
+      ? {
+          initial: LINE_HIDDEN,
+          animate: LINE_SHOWN,
+          transition: { ...LINE_TRANSITION, delay: ((reveal ?? 0) + i * 90) / 1000 },
+        }
+      : { initial: false as const };
   return (
-    <div className="space-y-2.5">
-      {blocks.map((b, i) =>
+    <div className="flex flex-col gap-2.5">
+      {shown.map((b, i) =>
         b.list ? (
-          <ul key={i} className="list-disc space-y-1 pl-5 marker:text-faint">
+          <motion.ul key={i} {...motionFor(i)} className="flex list-disc flex-col gap-1 ps-5 marker:text-text-tertiary">
             {b.lines.map((l, j) => (
-              <li key={j} className="whitespace-pre-wrap pl-0.5">
-                {inline(l, r, entities)}
+              <li key={j} className="whitespace-pre-wrap ps-0.5">
+                {inline(l, entities)}
               </li>
             ))}
-          </ul>
-        ) : // Blank lines between blocks are already spacing; drop them at the edges.
-        b.lines.join("\n").trim() ? (
-          <p key={i} className="whitespace-pre-wrap">
-            {inline(b.lines.join("\n").replace(/^\n+|\n+$/g, ""), r, entities)}
-          </p>
-        ) : null,
+          </motion.ul>
+        ) : (
+          <motion.p key={i} {...motionFor(i)} className="whitespace-pre-wrap">
+            {inline(b.lines.join("\n").replace(/^\n+|\n+$/g, ""), entities)}
+          </motion.p>
+        ),
       )}
     </div>
   );
 }
 
-function OpenLink({ link, className }: { link?: string; className?: string }) {
+/** A quiet "Open" link to the page a reply or step points at. */
+export function OpenLink({ link, label = "Open", className }: { link?: string; label?: string; className?: string }) {
   const to = safeAppPath(link);
   if (!to) return null;
   return (
     <Link
       to={to}
       className={cx(
-        "tap-inline inline-flex shrink-0 items-center gap-1 rounded-md text-[12.5px] font-medium text-ink underline-offset-4 hover:underline",
+        "inline-flex min-h-6 shrink-0 items-center gap-1 rounded-sm pointer-coarse:min-h-10 text-body-2-medium text-text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring",
         className,
       )}
     >
-      Open <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+      {label}
+      <RiArrowRightLine className="size-3.5" aria-hidden />
     </Link>
   );
 }
 
-/** The product's dragon mark. The rounded violet tile is baked into the image, so nothing is drawn around it. */
-export function Mark({
-  size = 24,
-  className,
-}: {
-  size?: number;
-  className?: string;
-}) {
+/** The product's dragon mark, as the assistant's avatar. The rounded violet tile is baked into the image. */
+export function Mark({ size = 24, className }: { size?: number; className?: string }) {
+  return <BrandMark size={size} className={className} />;
+}
+
+/** Width of the avatar column (24px mark plus a 12px gap), so steps and cards line up with the text. */
+export const GUTTER = "ps-9";
+
+/** Copy, with a check for a moment after it worked. */
+function CopyAction({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
   return (
-    <img
-      src="/mark.png"
-      alt=""
-      aria-hidden="true"
-      width={size}
-      height={size}
-      draggable={false}
-      className={cx("shrink-0 select-none", className)}
-      style={{ width: size, height: size }}
+    <MessageAction
+      icon={done ? RiCheckLine : RiFileCopyLine}
+      label={done ? "Copied" : "Copy"}
+      aria-label={done ? "Copied" : "Copy message"}
+      onClick={async () => {
+        if (await copyText(text)) {
+          setDone(true);
+          window.setTimeout(() => setDone(false), 1500);
+        } else toast.error("Could not copy. Select the text and copy it yourself.");
+      }}
     />
   );
 }
-
-/** Width of the avatar column (24px mark plus a 12px gap), so steps and approvals line up with the text. */
-export const GUTTER = "pl-9";
-
-/** A quiet text action under a message: Copy, Retry, Edit. */
-function MsgAction({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="press tap-inline inline-flex items-center gap-1 rounded-md px-1 text-[12px] text-faint transition-[color,transform] duration-150 hover:text-ink"
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-/** Shown on hover or focus with a mouse; always shown on touch screens. */
-const ACTIONS_ROW =
-  "flex items-center gap-3 transition-opacity duration-150 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100";
 
 export function UserBubble({ text, keys, onEdit }: { text: string; keys?: number; onEdit?: () => void }) {
   // A message with many keys stays compact: the server keeps only their hints anyway.
   const long = text.length > 600;
   const [open, setOpen] = useState(false);
   return (
-    <div className="group/user flex flex-col items-end">
-      <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-[20px] bg-surface px-4 py-2 text-[15px] leading-[1.55] text-ink shadow-card sm:max-w-[75%] sm:text-[14px]">
-        {keys ? (
-          <span className="mb-1 flex items-center gap-1.5 font-mono text-[11px] text-muted">
-            <KeyRound className="h-3 w-3" aria-hidden="true" />
-            {keys} {keys === 1 ? "key" : "keys"}, sent to Claude as placeholders
-          </span>
-        ) : null}
-        {long && !open ? `${text.slice(0, 600)}…` : text}
-        {long && (
-          <button
-            type="button"
-            onClick={() => setOpen(!open)}
-            className="press ml-1 text-[12px] font-medium text-muted underline-offset-4 hover:text-ink hover:underline"
-            aria-expanded={open}
-          >
-            {open ? "Show less" : "Show all"}
-          </button>
-        )}
-      </div>
-      {onEdit && (
-        <div className={cx(ACTIONS_ROW, "-mr-1 mt-1 [@media(hover:hover)]:group-hover/user:opacity-100")}>
-          <MsgAction icon={<Pencil className="h-3 w-3" aria-hidden="true" />} label="Edit" onClick={onEdit} />
-        </div>
+    <AgentMessage
+      role="user"
+      actions={onEdit ? <MessageAction icon={RiPencilLine} label="Edit" aria-label="Edit your last message" onClick={onEdit} /> : null}
+    >
+      {keys ? (
+        <span className="mb-1 flex items-center gap-1.5 font-mono text-caption-1-regular text-text-secondary">
+          <RiKey2Line className="size-3 shrink-0" aria-hidden />
+          {keys} {keys === 1 ? "key" : "keys"}, sent to Claude as placeholders
+        </span>
+      ) : null}
+      {long && !open ? `${text.slice(0, 600)}…` : text}
+      {long && (
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="ms-1 rounded-sm text-caption-1-medium text-text-secondary underline-offset-4 outline-none hover:text-text-primary hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+          aria-expanded={open}
+        >
+          {open ? "Show less" : "Show all"}
+        </button>
       )}
-    </div>
+    </AgentMessage>
   );
 }
 
@@ -229,105 +211,95 @@ export function AssistantText({
   onRetry?: () => void;
 }) {
   return (
-    <div className="group/msg flex gap-3">
-      <Mark className="mt-px" />
-      <div className="min-w-0 flex-1">
-        <div className="wrap-anywhere text-[15px] leading-[1.65] text-ink sm:text-[14px]">
-          <RichText text={item.text ?? ""} reveal={reveal} entities={entities} />
-        </div>
-        {actions ? (
-          <div className={cx(ACTIONS_ROW, "-ml-2 mt-1 [@media(hover:hover)]:group-hover/msg:opacity-100")}>
-            <CopyButton text={item.text ?? ""} label="Copy" className="press text-faint" />
-            {onRetry && (
-              <MsgAction icon={<RotateCcw className="h-3 w-3" aria-hidden="true" />} label="Retry" onClick={onRetry} />
-            )}
-            <OpenLink link={item.link} />
-          </div>
-        ) : (
-          item.link && (
-            <div className="mt-1.5">
-              <OpenLink link={item.link} />
-            </div>
-          )
-        )}
+    <AgentMessage
+      role="assistant"
+      avatar={<Mark />}
+      actions={
+        actions ? (
+          <>
+            <CopyAction text={item.text ?? ""} />
+            {onRetry && <MessageAction icon={RiRefreshLine} label="Retry" aria-label="Retry your last message" onClick={onRetry} />}
+            <OpenLink link={item.link} className="ms-1" />
+          </>
+        ) : item.link ? (
+          <OpenLink link={item.link} />
+        ) : null
+      }
+    >
+      <div className="wrap-anywhere">
+        <RichText text={item.text ?? ""} reveal={reveal} entities={entities} />
       </div>
-    </div>
+    </AgentMessage>
   );
 }
 
-function StepRow({ item, delay }: { item: ChatItem; delay?: number }) {
+function StepRow({
+  item,
+  first,
+  last,
+  fresh,
+}: {
+  item: ChatItem;
+  first: boolean;
+  last: boolean;
+  fresh: boolean;
+}) {
+  const reduceMotion = useReducedMotion() ?? false;
   const [open, setOpen] = useState(false);
   const hasInput = !!item.input && Object.keys(item.input).length > 0;
   const hasDetail = !!item.detail?.trim();
   const panelId = `step-${item.id}`;
   return (
-    <li
-      className={cx("relative", delay !== undefined && "fade-up")}
-      style={delay ? { animationDelay: `${delay}ms` } : undefined}
-    >
-      <div className="flex items-start gap-2.5">
+    // Steps already in the thread when it opened render still; new ones blur in on the guide.
+    <LogRow first={first} last={last} reduce={reduceMotion || !fresh} className="pb-2">
+      <div className="flex items-start gap-2 py-1">
         <span
           className={cx(
-            "relative z-[1] mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full",
-            item.ok ? "bg-ink text-on-ink" : "bg-red-600 text-white",
+            "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full",
+            item.ok ? "bg-background-tertiary-default text-foreground-icon-primary" : "bg-status-rose-background text-status-rose-text",
           )}
-          aria-hidden="true"
+          aria-hidden
         >
-          {item.ok ? (
-            <Check className="h-2.5 w-2.5" strokeWidth={3} />
-          ) : (
-            <X className="h-2.5 w-2.5" strokeWidth={3} />
-          )}
+          {item.ok ? <RiCheckLine className="size-3" /> : <RiCloseLine className="size-3" />}
         </span>
-        <div className="min-w-0 flex-1 text-[13px] leading-snug">
-          <span className="font-medium text-ink">
-            {humanize(item.tool ?? "")}
-          </span>
-          {item.ok ? (
-            <span className="sr-only">, done</span>
-          ) : (
-            <span className="font-medium text-red-700"> failed</span>
-          )}
+        <div className="min-w-0 flex-1 text-body-2-regular">
+          <span className="text-body-2-medium text-text-primary">{humanize(item.tool ?? "")}</span>
+          {item.ok ? <span className="sr-only">, done</span> : <span className="text-body-2-medium text-text-error-primary"> failed</span>}
           {item.summary && (
-            <span className="wrap-anywhere text-muted">
+            <span className="wrap-anywhere text-text-secondary">
               {" "}
               {linkify(item.summary, entityMap(item.entities), (seg, k) => <Fragment key={k}>{seg}</Fragment>)}
             </span>
           )}
-          <span className="ml-2 inline-flex items-center gap-3 align-baseline">
+          <span className="ms-2 inline-flex items-center gap-3 align-baseline">
             {(hasInput || hasDetail) && (
               <button
                 type="button"
                 onClick={() => setOpen(!open)}
                 aria-expanded={open}
                 aria-controls={panelId}
-                className="tap-inline rounded-sm text-[12px] text-faint underline-offset-4 transition-colors hover:text-ink hover:underline"
+                className="rounded-sm text-caption-1-regular text-text-tertiary underline-offset-4 pointer-coarse:-my-3 pointer-coarse:inline-block pointer-coarse:py-3 outline-none transition-colors duration-150 hover:text-text-primary hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
               >
                 {open ? "Hide details" : "Details"}
               </button>
             )}
-            <OpenLink link={item.link} className="text-[12px]" />
+            <OpenLink link={item.link} className="text-caption-1-medium" />
           </span>
         </div>
       </div>
       {item.secret && (
-        <div className="mt-2 space-y-2 pl-6">
-          <Callout
-            tone="amber"
-            icon={<TriangleAlert className="h-4 w-4" aria-hidden="true" />}
-          >
-            Copy this token now. It is shown once.
-          </Callout>
+        <div className="mt-1 flex flex-col gap-2 ps-6">
+          <Callout tone="warning">Copy this token now. It is shown once.</Callout>
           <SecretBox value={item.secret} />
         </div>
       )}
       {open && (
-        <div id={panelId} className="chat-reveal mt-2 space-y-2.5 pl-6">
-          {hasInput && <Code label="Input" value={pretty(item.input)} />}
-          {hasDetail && <Code label="Result" value={pretty(item.detail)} />}
+        <div id={panelId} className="chat-reveal mt-1 flex flex-col gap-2.5 ps-6">
+          {hasInput && <CodeBlock label="input" code={pretty(item.input)} />}
+          {hasDetail && <CodeBlock label="result" code={pretty(item.detail)} />}
         </div>
       )}
-    </li>
+    </LogRow>
   );
 }
 
@@ -338,26 +310,15 @@ function entityMap(list?: ChatEntity[]): Entities {
   return m;
 }
 
-function Code({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="mb-1 font-mono text-[11px] uppercase tracking-wide text-faint">
-        {label}
-      </div>
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[12px] leading-relaxed text-muted">
-        {value}
-      </pre>
-    </div>
-  );
-}
-
 function plural(n: number, one: string, many: string) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
 /**
- * A run of tool calls folded into one quiet line, "Worked for 6s · 2 actions",
- * that opens to the steps. It starts open when a step holds a one time token.
+ * A run of tool calls folded into one quiet line, "Worked for 6s, 2 actions",
+ * that opens to the steps on Agent Log's tree guide. It starts open when a
+ * step holds a one time token. The panel uses Accordion's height and blur
+ * recipe on a React Aria Disclosure.
  */
 export function Steps({
   items,
@@ -371,63 +332,43 @@ export function Steps({
   const hasSecret = items.some((it) => it.secret);
   const [open, setOpen] = useState(hasSecret);
   const failed = items.filter((it) => !it.ok).length;
-  const id = `steps-${items[0]?.id}`;
+  const ease = "ease-[cubic-bezier(0.22,1,0.36,1)]";
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        aria-controls={id}
-        className="tap-inline group/steps -ml-1 inline-flex items-center gap-1 rounded-md px-1 text-[13px] text-muted transition-colors hover:text-ink"
+    <Disclosure isExpanded={open} onExpandedChange={setOpen} className="group/steps">
+      <AriaButton
+        slot="trigger"
+        className="-ms-1 inline-flex min-h-7 cursor-pointer pointer-coarse:min-h-10 items-center gap-1 rounded-md px-1 text-body-2-regular text-text-secondary outline-none transition-colors duration-150 hover:text-text-primary data-[focus-visible]:ring-2 data-[focus-visible]:ring-border-focus-ring"
       >
         <span>
-          {seconds !== null && seconds >= 1
-            ? `Worked for ${seconds}s`
-            : "Worked"}
-          <span className="text-faint">
-            {" "}
-            · {plural(items.length, "action", "actions")}
-          </span>
-          {failed > 0 && (
-            <span className="text-red-700"> · {failed} failed</span>
-          )}
+          {seconds !== null && seconds >= 1 ? `Worked for ${seconds}s` : "Worked"}
+          <span className="text-text-tertiary">, {plural(items.length, "action", "actions")}</span>
+          {failed > 0 && <span className="text-text-error-primary">, {failed} failed</span>}
         </span>
-        <ChevronRight
+        <RiArrowDownSLine
           className={cx(
-            "h-3.5 w-3.5 text-faint transition-transform duration-200 ease-out group-hover/steps:text-ink",
-            open && "rotate-90",
+            "size-4 text-foreground-icon-tertiary transition-[rotate] duration-300 motion-reduce:transition-none group-data-[expanded]/steps:rotate-180",
+            ease,
           )}
-          aria-hidden="true"
+          aria-hidden
         />
-      </button>
-      {open && (
-        <ol
-          id={id}
-          className="chat-reveal relative mt-2 space-y-2.5 pb-1 before:absolute before:bottom-2 before:left-[6.5px] before:top-2 before:w-px before:bg-line-strong"
-        >
-          {items.map((it) => (
-            <StepRow key={it.id} item={it} delay={fresh(it)} />
+      </AriaButton>
+      <DisclosurePanel
+        className={cx("h-(--disclosure-panel-height) overflow-clip transition-[height] duration-300 motion-reduce:transition-none", ease)}
+      >
+        <ol className="mt-1.5 ms-2">
+          {items.map((it, i) => (
+            <StepRow key={it.id} item={it} first={i === 0} last={i === items.length - 1} fresh={fresh(it) !== undefined} />
           ))}
         </ol>
-      )}
-    </div>
+      </DisclosurePanel>
+    </Disclosure>
   );
 }
 
-const RESOLVED: Record<string, { label: string; icon: ReactNode }> = {
-  approved: {
-    label: "Approved and done",
-    icon: <Check className="h-3.5 w-3.5 text-ink" aria-hidden="true" />,
-  },
-  cancelled: {
-    label: "Cancelled. Nothing was changed.",
-    icon: <Ban className="h-3.5 w-3.5 text-faint" aria-hidden="true" />,
-  },
-  expired: {
-    label: "Expired. Nothing was changed.",
-    icon: <Clock className="h-3.5 w-3.5 text-faint" aria-hidden="true" />,
-  },
+const RESOLVED: Record<string, { label: string; icon: typeof RiCheckLine; tone: string }> = {
+  approved: { label: "Approved and done", icon: RiCheckLine, tone: "text-foreground-icon-primary" },
+  cancelled: { label: "Cancelled. Nothing was changed.", icon: RiForbidLine, tone: "text-foreground-icon-tertiary" },
+  expired: { label: "Expired. Nothing was changed.", icon: RiTimeLine, tone: "text-foreground-icon-tertiary" },
 };
 
 /** An action waiting for approval. Neutral throughout; only the Confirm button carries the danger color. */
@@ -456,39 +397,32 @@ export function ConfirmCard({
     <div
       role="group"
       aria-label={waiting ? "Approval needed" : "Approval"}
-      className="rounded-2xl border border-line bg-surface shadow-card"
+      className="rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs"
     >
-      <div className="px-4 pb-3 pt-3.5">
-        <div className="font-mono text-[11px] uppercase tracking-wide text-faint">
-          {waiting ? "Needs your approval" : "Approval"}
-        </div>
-        <div
-          className={cx(
-            "mt-1.5 text-[14px] leading-relaxed transition-colors duration-200",
-            waiting ? "text-ink" : "text-muted",
-          )}
-        >
+      <div className="px-4 pt-3.5 pb-3">
+        <div className="text-caption-2-semibold text-text-tertiary uppercase">{waiting ? "Needs your approval" : "Approval"}</div>
+        <div className={cx("mt-1.5 text-body-regular transition-colors duration-200", waiting ? "text-text-primary" : "text-text-secondary")}>
           <RichText text={item.text || "Confirm this change?"} />
         </div>
       </div>
       {waiting ? (
         <div className="flex flex-wrap items-center justify-end gap-2 px-4 pb-3.5">
-          <OpenLink link={item.link} className="mr-auto" />
+          <OpenLink link={item.link} className="me-auto" />
           <Button
-            size="sm"
-            variant="ghost"
+            size="small"
+            variant="secondary"
             className="flex-1 sm:flex-none"
-            loading={which === false}
+            leadingIcon={which === false ? ButtonSpinner : undefined}
             disabled={busy}
             onClick={() => void answer(false)}
           >
             Cancel
           </Button>
           <Button
-            size="sm"
+            size="small"
             variant="danger"
             className="flex-1 sm:flex-none"
-            loading={which === true}
+            leadingIcon={which === true ? ButtonSpinner : undefined}
             disabled={busy}
             onClick={() => void answer(true)}
           >
@@ -499,9 +433,9 @@ export function ConfirmCard({
         done && (
           <div
             key={status}
-            className="chat-reveal flex items-center gap-2 border-t border-line px-4 py-2.5 text-[13px] text-muted"
+            className="chat-reveal flex items-center gap-2 border-t border-separator-border px-4 py-2.5 text-body-2-regular text-text-secondary"
           >
-            {done.icon}
+            <done.icon className={cx("size-3.5 shrink-0", done.tone)} aria-hidden />
             <span className="flex-1">{done.label}</span>
             <OpenLink link={item.link} />
           </div>
@@ -511,11 +445,13 @@ export function ConfirmCard({
   );
 }
 
-export function ErrorItem({ text }: { text?: string }) {
+export function ErrorItem({ text, onRetry }: { text?: string; onRetry?: () => void }) {
   return (
-    <div className="flex items-start gap-2 text-[13px] leading-relaxed text-red-700">
-      <X className="mt-[3px] h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+    <Callout
+      tone="error"
+      action={onRetry ? <Button size="xs" variant="ghost" className={QUIET_BUTTON} leadingIcon={RiRefreshLine} onClick={onRetry}>Retry</Button> : undefined}
+    >
       <span className="wrap-anywhere">{text || "Something went wrong."}</span>
-    </div>
+    </Callout>
   );
 }

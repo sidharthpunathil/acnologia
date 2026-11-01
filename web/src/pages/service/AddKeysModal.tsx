@@ -1,14 +1,22 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { CheckCircle2 } from "lucide-react";
+import { RiCheckboxCircleLine, RiKey2Line } from "@remixicon/react";
 import type { App, NewKeyInput, Service, Tier } from "../../lib/types";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
 import { api, errorMessage } from "../../lib/api";
 import { num, plural } from "../../lib/format";
-import { Modal } from "../../components/Modal";
 import { MultiSelect } from "../../components/MultiSelect";
 import { KeyPasteArea, KeyPreview, useKeyInput } from "../../components/KeyPaste";
-import { Button, Callout, Field, Input, Select, Toggle } from "../../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
+import { NumberField } from "@/components/base/number-field/number-field";
+import { ProgressTrack } from "@/components/base/progress/progress";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { SwitchCard } from "@/components/base/switch/switch-card";
+import { cx } from "@/utils/cx";
+import { Callout } from "@/components/acn";
 
 /** The server takes up to 1000 keys a request; smaller chunks give steadier progress. */
 const CHUNK = 500;
@@ -124,159 +132,145 @@ export function AddKeysModal({
   if (phase.kind === "done") {
     const notSent = phase.total - phase.added - phase.skipped;
     return (
-      <Modal
-        open={open}
-        onClose={onClose}
-        title={phase.error ? "Some keys were not added" : `Added to ${service.name}`}
-        footer={
-          <>
-            {phase.error && (
-              <Button variant="ghost" onClick={() => setPhase({ kind: "edit" })}>
-                Back to the list
-              </Button>
-            )}
-            <Button variant="primary" onClick={onClose}>
-              Done
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4" aria-live="polite">
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className={phase.added ? "mt-0.5 h-5 w-5 shrink-0 text-emerald-600" : "mt-0.5 h-5 w-5 shrink-0 text-faint"} aria-hidden="true" />
+      <Modal isOpen={open} onOpenChange={(o) => !o && onClose()} size="md">
+        <ModalHeader
+          title={phase.error ? "Some keys were not added" : `Added to ${service.name}`}
+          icon={RiCheckboxCircleLine}
+          tone={phase.error ? "danger" : "default"}
+        />
+        <ModalBody>
+          <div className="space-y-4" aria-live="polite">
             <div>
-              <p className="text-[15px] font-medium text-ink">{plural(phase.added, "key")} added</p>
-              <p className="mt-0.5 text-[13px] leading-relaxed text-muted">
+              <p className="text-body-medium text-text-primary">{plural(phase.added, "key")} added</p>
+              <p className="mt-0.5 text-body-2-regular text-text-secondary">
                 {phase.skipped > 0 ? `${plural(phase.skipped, "key")} skipped because ${phase.skipped === 1 ? "it was" : "they were"} already in this service.` : "None were already in this service."}
                 {phase.added > 0 && " New keys are checked in the background, so quotas show up on their own."}
               </p>
             </div>
+            <dl className="grid grid-cols-3 gap-2">
+              {[
+                ["added", phase.added],
+                ["already there", phase.skipped],
+                ["not sent", notSent],
+              ].map(([k, v]) => (
+                <div key={k} className="rounded-2xl bg-background-secondary-default px-3 py-2.5">
+                  <dt className="text-caption-1-regular text-text-secondary">{k}</dt>
+                  <dd className="mt-0.5 font-mono text-title-3-medium tabular-nums text-text-primary">{num(v as number)}</dd>
+                </div>
+              ))}
+            </dl>
+            {phase.error && (
+              <Callout tone="error">
+                Stopped after {num(phase.added + phase.skipped)} of {num(phase.total)}: {phase.error}
+              </Callout>
+            )}
           </div>
-          <dl className="grid grid-cols-3 gap-2 font-mono">
-            {[
-              ["added", phase.added],
-              ["already there", phase.skipped],
-              ["not sent", notSent],
-            ].map(([k, v]) => (
-              <div key={k} className="rounded-xl bg-soft px-3 py-2.5">
-                <dt className="text-[11px] text-muted">{k}</dt>
-                <dd className="mt-0.5 text-[18px] tabular-nums text-ink">{num(v as number)}</dd>
-              </div>
-            ))}
-          </dl>
+        </ModalBody>
+        <ModalFooter>
           {phase.error && (
-            <Callout tone="red">
-              Stopped after {num(phase.added + phase.skipped)} of {num(phase.total)}: {phase.error}
-            </Callout>
+            <Button variant="secondary" onClick={() => setPhase({ kind: "edit" })}>
+              Back to the list
+            </Button>
           )}
-        </div>
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        </ModalFooter>
       </Modal>
     );
   }
 
   return (
     <Modal
-      open={open}
-      onClose={busy ? () => undefined : onClose}
-      wide
-      title={`Add keys to ${service.name}`}
-      description="Paste keys in any shape: one per line, comma or space separated, label then key, an env file, CSV with a header, or JSON. You see what was found before anything is saved."
-      footer={
-        <>
-          {busy && (
-            <div className="mr-auto flex min-w-0 flex-1 items-center gap-3" role="status">
-              <div className="h-1.5 min-w-[60px] flex-1 overflow-hidden rounded-full bg-well">
-                <div
-                  className="h-full rounded-full bg-brand transition-[width] duration-300 ease-[var(--ease-out)]"
-                  style={{ width: `${Math.max(4, (phase.done / phase.total) * 100)}%` }}
+      isOpen={open}
+      onOpenChange={(o) => !o && !busy && onClose()}
+      isDismissable={!busy}
+      isKeyboardDismissDisabled={busy}
+      size="lg"
+    >
+      <ModalHeader
+        title={`Add keys to ${service.name}`}
+        description="Paste keys in any shape: one per line, comma or space separated, label then key, an env file, CSV with a header, or JSON. You see what was found before anything is saved."
+        icon={RiKey2Line}
+        showCloseButton={!busy}
+      />
+      <ModalBody>
+        <form id="add-keys-form" onSubmit={submit} className="pb-1" {...input.dropProps}>
+          <fieldset disabled={busy} className="min-w-0 space-y-6">
+            <div className="space-y-3">
+              <KeyPasteArea input={input} id="add-keys-text" label="Keys" rows={8} placeholder={PLACEHOLDER} />
+              <KeyPreview parsed={parsed} stale={input.stale} fallbackLabel={fallbackLabel} />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Select label="Tier" selectedKey={tier} onSelectionChange={(v) => setTier(v as Tier)} className="w-full">
+                <SelectItem id="primary">primary</SelectItem>
+                <SelectItem id="backup">backup</SelectItem>
+              </Select>
+              <NumberField label="Weight" minValue={0} value={weight} onChange={(n) => setWeight(Number.isNaN(n) ? 0 : n)} />
+              <NumberField label="Priority" value={priority} onChange={(n) => setPriority(Number.isNaN(n) ? 0 : n)} />
+            </div>
+
+            <div role="group" aria-labelledby="add-keys-access" className="space-y-3">
+              <h3 id="add-keys-access" className="text-body-2-semibold text-text-primary">
+                Access
+              </h3>
+              {canHidden && <SwitchCard title="Hidden" description="Only superadmins can see or count these keys." isSelected={hidden} onChange={setHidden} />}
+              <SwitchCard title="Restricted" description="Only the apps you pick can use these keys." isSelected={restricted} onChange={setRestricted} />
+              {restricted && (
+                <MultiSelect
+                  options={apps.map((a) => ({ value: a.id, label: a.name, meta: a.token_prefix }))}
+                  value={appIds}
+                  onChange={setAppIds}
+                  empty="No apps yet. Create an app first, then allow it here."
+                />
+              )}
+            </div>
+
+            <div role="group" aria-labelledby="add-keys-account" className="space-y-3">
+              <div>
+                <h3 id="add-keys-account" className="text-body-2-semibold text-text-primary">
+                  Account (optional)
+                </h3>
+                <p className="mt-0.5 text-caption-1-regular text-text-secondary">Applied to every key in this batch. Only admins can see these details.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input label="Name" value={account.name} maxLength={200} autoComplete="off" onChange={(v) => setAccount({ ...account, name: v })} />
+                <Input label="Email" type="email" value={account.email} maxLength={254} autoComplete="off" onChange={(v) => setAccount({ ...account, email: v })} />
+                <Input label="Phone" type="tel" value={account.phone} maxLength={40} autoComplete="off" onChange={(v) => setAccount({ ...account, phone: v })} />
+                <Input
+                  label="Other"
+                  hint="Username, account ID or anything else that identifies the account"
+                  value={account.ref}
+                  maxLength={200}
+                  autoComplete="off"
+                  onChange={(v) => setAccount({ ...account, ref: v })}
                 />
               </div>
-              <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
-                {num(phase.done)} / {num(phase.total)}
-              </span>
             </div>
-          )}
-          {!busy && (
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-          )}
-          <Button variant="primary" type="submit" form="add-keys-form" loading={busy} disabled={!count}>
-            {busy ? "Adding" : count ? `Add ${num(count)} ${count === 1 ? "key" : "keys"}` : "Add keys"}
+
+            <Input label="Notes" hint="Applied to every key in this batch." value={notes} onChange={setNotes} />
+          </fieldset>
+        </form>
+      </ModalBody>
+      <ModalFooter className={cx(busy && "sm:justify-between")}>
+        {busy && (
+          <div className="flex min-w-0 flex-1 items-center gap-3" role="status">
+            <ProgressTrack percentage={Math.max(4, (phase.done / phase.total) * 100)} size="sm" className="min-w-[60px] flex-1" />
+            <span className="shrink-0 font-mono text-caption-1-regular tabular-nums text-text-secondary">
+              {num(phase.done)} / {num(phase.total)}
+            </span>
+          </div>
+        )}
+        {!busy && (
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
           </Button>
-        </>
-      }
-    >
-      <form id="add-keys-form" onSubmit={submit} className="space-y-5" {...input.dropProps}>
-        <fieldset disabled={busy} className="min-w-0 space-y-5">
-          <div className="space-y-3">
-            <KeyPasteArea input={input} id="add-keys-text" label="Keys" rows={8} placeholder={PLACEHOLDER} />
-            <KeyPreview parsed={parsed} stale={input.stale} fallbackLabel={fallbackLabel} />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label="Tier">
-              <Select value={tier} onChange={(e) => setTier(e.target.value as Tier)}>
-                <option value="primary">primary</option>
-                <option value="backup">backup</option>
-              </Select>
-            </Field>
-            <Field label="Weight">
-              <Input type="number" min={0} value={weight} onChange={(e) => setWeight(Number(e.target.value))} />
-            </Field>
-            <Field label="Priority">
-              <Input type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
-            </Field>
-          </div>
-
-          <div className="space-y-4 rounded-xl border border-line p-4">
-            {canHidden && (
-              <Toggle label="Hidden" description="Only superadmins can see or count these keys." checked={hidden} onChange={setHidden} />
-            )}
-            <Toggle
-              label="Restricted"
-              description="Only the apps you pick can use these keys."
-              checked={restricted}
-              onChange={setRestricted}
-            />
-            {restricted && (
-              <MultiSelect
-                options={apps.map((a) => ({ value: a.id, label: a.name, meta: a.token_prefix }))}
-                value={appIds}
-                onChange={setAppIds}
-                empty="No apps yet. Create an app first, then allow it here."
-              />
-            )}
-          </div>
-
-          <div role="group" aria-labelledby="add-keys-account" className="space-y-4 rounded-xl border border-line p-4">
-            <div>
-              <h3 id="add-keys-account" className="text-[13px] font-medium text-ink">Account (optional)</h3>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted">
-                Applied to every key in this batch. Only admins can see these details.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Name">
-                <Input value={account.name} maxLength={200} autoComplete="off" onChange={(e) => setAccount({ ...account, name: e.target.value })} />
-              </Field>
-              <Field label="Email">
-                <Input type="email" value={account.email} maxLength={254} autoComplete="off" onChange={(e) => setAccount({ ...account, email: e.target.value })} />
-              </Field>
-              <Field label="Phone">
-                <Input type="tel" value={account.phone} maxLength={40} autoComplete="off" onChange={(e) => setAccount({ ...account, phone: e.target.value })} />
-              </Field>
-              <Field label="Other" hint="Username, account ID or anything else that identifies the account">
-                <Input value={account.ref} maxLength={200} autoComplete="off" onChange={(e) => setAccount({ ...account, ref: e.target.value })} />
-              </Field>
-            </div>
-          </div>
-
-          <Field label="Notes" hint="Applied to every key in this batch.">
-            <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </Field>
-        </fieldset>
-      </form>
+        )}
+        <Button variant="primary" type="submit" form="add-keys-form" leadingIcon={busy ? ButtonSpinner : undefined} disabled={busy || !count}>
+          {busy ? "Adding" : count ? `Add ${num(count)} ${count === 1 ? "key" : "keys"}` : "Add keys"}
+        </Button>
+      </ModalFooter>
     </Modal>
   );
 }

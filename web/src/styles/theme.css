@@ -3,8 +3,8 @@
  *
  * Layered as Tailwind v4 expects:
  *   @theme { ... }     primitives + ramp overrides → Tailwind utilities
- *   :root { ... }      semantic tokens (light mode) — reference primitives
- *   .dark { ... }      semantic overrides (dark mode) — landed when designed
+ *   :root { ... }      semantic tokens (light mode), reference primitives
+ *   .dark { ... }      semantic overrides (dark mode), landed when designed
  *   @theme inline {..} re-export of semantic tokens so they become utilities
  *
  * See docs/FIGMA_WORKFLOW.md for how tokens get added (Figma is source of truth).
@@ -78,7 +78,7 @@
   --shadow-lg: 0 4px 6px -2px rgb(0 0 0 / 0.05), 0 10px 15px -3px rgb(0 0 0 / 0.10);
   --shadow-xl: 0 10px 10px -5px rgb(0 0 0 / 0.04), 0 20px 25px -5px rgb(0 0 0 / 0.10);
 
-  /* Figma effect style "Background/Sidebar Elevation" — copied 1:1:
+  /* Figma effect style "Background/Sidebar Elevation", copied 1:1:
    *   DROP_SHADOW #00000005 offset(0,1) radius 0  spread 0  → 0 1px 0px  0 / 0.0196
    *   DROP_SHADOW #0000000F offset(0,1) radius 12 spread 0  → 0 1px 12px 0 / 0.0588
    *   DROP_SHADOW #00000052 offset(0,0) radius 1  spread 0  → 0 0   1px  0 / 0.3216
@@ -88,7 +88,7 @@
     0 1px 12px 0 rgb(0 0 0 / 0.0588),
     0 0 1px 0 rgb(0 0 0 / 0.3216);
 
-  /* Figma effect style "Sidebar selected" — copied 1:1:
+  /* Figma effect style "Sidebar selected", copied 1:1:
    *   DROP_SHADOW  color/blue/500 offset(0,0) radius 0 spread 1 → 0 0 0 1px blue-500
    *   INNER_SHADOW #FFFFFF40       offset(0,1) radius 0 spread 0 → inset 0 1px 0 0 / 0.251
    * (#FFFFFF40 alpha = 0x40/255 = 0.251). */
@@ -132,7 +132,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Semantic tokens — light mode.
+ * Semantic tokens: light mode.
  *
  * All values reference primitives via var(--color-{family}-{shade}). Edit the
  * primitives in @theme above and these update automatically.
@@ -156,7 +156,7 @@
  *
  * Button gradients (linear, 180°, light stop → dark stop) sourced from the
  * blue/red primitives that each Button/{type}/{state} style references in
- * Figma. Direction inferred — confirm visually against Figma.
+ * Figma. Direction inferred: confirm visually against Figma.
  * --------------------------------------------------------------------------- */
 :root {
   /* Foreground (icons + on-fill content) */
@@ -218,7 +218,7 @@
   --color-background-tertiary-error:    var(--color-red-100);
   --color-background-recent-hire-role:  var(--color-neutral-100);
   --color-avatar-neutral-background:    var(--color-neutral-300);
-  /* Figma background/quaternary/default — first used by the Storage
+  /* Figma background/quaternary/default: first used by the Storage
    * dropzone's upload-icon disc (node 4106:26587). */
   --color-background-quaternary-default: var(--color-neutral-300);
   --color-background-quaternary-hover:   var(--color-neutral-400);
@@ -377,7 +377,7 @@
   /* Placeholder colors that don't map cleanly to existing text tokens */
   --color-text-error-placeholder: var(--color-red-400);
 
-  /* Charts (graphs) — shared neutrals + a categorical accent ramp.
+  /* Charts (graphs): shared neutrals + a categorical accent ramp.
    * `track` is the background bar/ring behind a series; `cursor` the hover
    * outline / dashed reference line; `neutral` a data color for "other"-style
    * slices. Each numbered accent pairs a base fill with a one-tone-darker
@@ -832,7 +832,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Component utilities — Buttons
+ * Component utilities: Buttons
  *
  * Each variant collapses the four interactive states (default / hover / active
  * / disabled) into a single class. Use them on the component:

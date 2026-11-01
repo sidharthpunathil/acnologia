@@ -5,7 +5,7 @@ import type { RefObject } from "react";
 
 /**
  * React Aria's `Popover` couples "non-modal" with "not dismissable on
- * outside interaction" — `isNonModal` (which we set to avoid the scroll
+ * outside interaction": `isNonModal` (which we set to avoid the scroll
  * lock / focus trap that comes with a modal popover) also silently disables
  * its built-in outside-click-to-close behavior. This restores just that
  * piece manually: closes when a pointerdown lands outside every given ref

@@ -2,9 +2,12 @@ import { useEffect, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./stores/auth";
 import { can } from "./lib/perms";
-import { Layout, Mark } from "./components/Layout";
+import { RiRefreshLine } from "@remixicon/react";
+import { Layout } from "./components/Layout";
 import { Toaster } from "./components/Toaster";
-import { Button, PageLoading } from "./components/ui";
+import { Mark } from "@/components/acn/brand";
+import { Button } from "@/components/base/buttons/button";
+import { Spinner } from "@/components/base/spinner/spinner";
 import { SetupPage } from "./pages/Setup";
 import { LoginPage } from "./pages/Login";
 import { CatalogPage } from "./pages/Catalog";
@@ -44,17 +47,17 @@ export function App() {
   let body: ReactNode;
   if (status === "loading") {
     body = (
-      <div className="delayed-in flex min-h-dvh items-center justify-center bg-canvas">
-        <PageLoading />
+      <div className="delayed-in flex min-h-dvh items-center justify-center bg-background-full" role="status" aria-live="polite">
+        <Spinner size="lg" aria-label="Loading Acnologia" />
       </div>
     );
   } else if (status === "error") {
     body = (
-      <div role="alert" className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-canvas px-6 text-center">
-        <Mark size={48} className="rounded-[22%]" />
-        <h1 className="font-mono text-lg text-ink">Cannot reach Acnologia</h1>
-        <p className="max-w-sm text-sm text-muted">{error} Make sure the server is running, then try again.</p>
-        <Button variant="primary" onClick={() => void load()}>
+      <div role="alert" className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-background-full px-6 text-center">
+        <Mark size={48} />
+        <h1 className="font-mono text-title-2-medium text-text-primary">Cannot reach Acnologia</h1>
+        <p className="max-w-sm text-body-regular text-text-secondary">{error} Make sure the server is running, then try again.</p>
+        <Button variant="primary" leadingIcon={RiRefreshLine} onClick={() => void load()}>
           Try again
         </Button>
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { cx } from "./ui";
+import { cx } from "@/utils/cx";
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
 
@@ -14,7 +14,8 @@ export function plainText(s: string | null | undefined): string {
     .trim();
 }
 
-const EASE = "cubic-bezier(0.23, 1, 0.32, 1)";
+/** BoardUI ease out for movement with presence. */
+const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 function reduced() {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -22,8 +23,9 @@ function reduced() {
 
 /**
  * Text that crossfades when it changes. Old and new copies share one grid
- * cell, so the swap never moves anything around it. With reduced motion the
- * fade stays but the blur is dropped.
+ * cell, so the swap never moves anything around it. The exit (150ms) is
+ * faster than the entrance (200ms). Colors come from the caller's token
+ * classes. With reduced motion the fade stays but the blur is dropped.
  */
 export function FadeText({ text, className }: { text: string; className?: string }) {
   const [layers, setLayers] = useState<{ id: number; text: string; leaving?: boolean }[]>([{ id: 0, text }]);

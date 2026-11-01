@@ -27,7 +27,7 @@ import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/
 import { cx } from "@/utils/cx";
 
 /**
- * ComboBox — a text field that filters a list as you type: pick an assignee,
+ * ComboBox: a text field that filters a list as you type: pick an assignee,
  * a country, a timezone. Built on React Aria's ComboBox, so the list is a
  * real listbox with arrow-key navigation, typeahead filtering, and
  * screen-reader announcements.

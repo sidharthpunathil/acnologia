@@ -263,7 +263,7 @@ export function ThemeToggle({
           small && "gap-0.5 p-0.5",
           glass
             ? // No track of its own: the host supplies the surface. A fill
-              // here would paint over it. Kept registry-safe — this component
+              // here would paint over it. Kept registry-safe: this component
               // never imports the landing page's glass.
               "z-10 bg-transparent"
             : sidebarSurface
@@ -318,7 +318,7 @@ export function ThemeToggle({
                 glass
                   ? selected
                     ? // Reads against the selected pill, which is white in
-                      // light and dark grey in dark — so it flips with it.
+                      // light and dark grey in dark, so it flips with it.
                       "text-black dark:text-white"
                     : "text-black/45 hover:text-black/70 dark:text-white/45 dark:hover:text-white/70"
                   : selected

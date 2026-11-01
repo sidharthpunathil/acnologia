@@ -2,14 +2,14 @@ import type { ButtonHTMLAttributes, Ref } from "react";
 import { cx, sortCx } from "@/utils/cx";
 
 /**
- * Compact circular dismiss control — the "X" used to close announcements,
+ * Compact circular dismiss control, the "X" used to close announcements,
  * toasts, modals, and drawers. Companion to `IconButton`, but ships its own
  * glyph (rather than taking an `icon` prop) so every consumer gets an
  * identical X with a stroke that's a true CSS pixel value per size, not a
  * scaled approximation.
  *
  * The glyph is a hand-drawn SVG per size (not a shared icon scaled up/down)
- * because scaling a single glyph across sizes scales its stroke too — a 2px
+ * because scaling a single glyph across sizes scales its stroke too, a 2px
  * line at 20px becomes ~3.2px at 32px. Each size below renders its own X in a
  * viewBox equal to its own pixel dimensions, so `strokeWidth` is always a
  * literal CSS pixel value, at every size (not a scaled approximation).
@@ -18,7 +18,7 @@ import { cx, sortCx } from "@/utils/cx";
  *   2xs = 16 container, 6.8px glyph, 1.6px stroke   (compact floating surfaces)
  *   xs = 20 container, 10.8px glyph, 2px stroke     (Announcement dismiss corner)
  *   sm = 24 container, 12.6px glyph, 2px stroke
- *   md = 32 container, 16.2px glyph, 2.5px stroke   (modal header close — a touch
+ *   md = 32 container, 16.2px glyph, 2.5px stroke   (modal header close, a touch
  *                                                     bolder to hold its own at
  *                                                     the larger size)
  *
@@ -32,7 +32,7 @@ type CloseButtonSize = "2xs" | "xs" | "sm" | "md";
 export interface CloseButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
   size?: CloseButtonSize;
-  /** Accessible name — required since there is no visible label. */
+  /** Accessible name: required since there is no visible label. */
   "aria-label": string;
   ref?: Ref<HTMLButtonElement>;
 }

@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { useTitle } from "../../hooks/useTitle";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
-  AlertTriangle,
-  ArrowLeft,
-  CheckCircle2,
-  CircleDashed,
-  ExternalLink,
-  History,
-  KeyRound,
-  Loader2,
-  Plus,
-  Sparkles,
-  XCircle,
-} from "lucide-react";
+  RiAddLine,
+  RiAlertLine,
+  RiCheckboxBlankCircleLine,
+  RiCheckboxCircleLine,
+  RiCheckLine,
+  RiCloseCircleLine,
+  RiExternalLinkLine,
+  RiHistoryLine,
+  RiKey2Line,
+  RiPlugLine,
+  RiSparkling2Line,
+} from "@remixicon/react";
 import { ApiError, api, errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { dateTime, plural, relTime, slugify } from "../../lib/format";
@@ -25,15 +25,28 @@ import { useAuth } from "../../stores/auth";
 import { toast } from "../../stores/toast";
 import { ProviderLogo } from "../../components/EntityLogo";
 import { LogoEditor } from "../../components/LogoEditor";
-import { Tabs } from "../../components/Tabs";
-import { ConfirmButton } from "../../components/ConfirmButton";
 import { AiFillButton, AiFillPanel, useAiFill } from "../../components/AiFill";
-import { Badge, Button, Callout, Empty, Field, Input, PageSkeleton, Section, Select, Textarea, cx } from "../../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { LinkButton } from "@/components/base/buttons/link-button";
+import { Chip } from "@/components/base/badges/chip";
+import { Input } from "@/components/base/input/input";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { Textarea } from "@/components/base/textarea/textarea";
+import { Tab, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
+import { ButtonSpinner, SpinnerGlyph } from "@/components/base/spinner/spinner";
+import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/scroll-fade";
+import { Callout } from "@/components/acn/callout";
+import { ConfirmButton } from "@/components/acn/confirm-button";
+import { EmptyState } from "@/components/acn/empty-state";
+import { PageHeader } from "@/components/acn/page-header";
+import { PageSkeleton } from "@/components/acn/page-skeleton";
+import { Section } from "@/components/acn/section";
+import { cx } from "@/utils/cx";
 import { ConnectionTab, ExamplesTab, HealthTab, JsonTab, OutcomeBadge, RulesTab, TestsTab } from "./SpecTabs";
-import { SourceBadge } from "./ProvidersPage";
+import { RouteButton, SourceBadge } from "./ProvidersPage";
 import { AddServiceModal } from "../AddServiceModal";
 
-type Tab = "overview" | "connection" | "rules" | "health" | "examples" | "tests" | "json" | "versions" | "live";
+type TabId = "overview" | "connection" | "rules" | "health" | "examples" | "tests" | "json" | "versions" | "live";
 
 type Validation =
   | { state: "idle" }
@@ -46,20 +59,20 @@ const PROVIDER_AI_FIELDS = ["name", "category", "description", "website", "docs_
 // ---------------------------------------------------------------- validation panel
 
 export function TestReportList({ report }: { report: TestReport }) {
-  if (!report.results?.length) return <p className="text-xs text-muted">This spec has no tests yet.</p>;
+  if (!report.results?.length) return <p className="text-caption-1-regular text-text-secondary">This spec has no tests yet.</p>;
   return (
-    <ul className="space-y-1.5">
+    <ul className="flex flex-col gap-1.5">
       {report.results.map((r, i) => (
-        <li key={i} className="flex items-start gap-2 text-[13px]">
+        <li key={i} className="flex items-start gap-2 text-body-2-regular">
           {r.ok ? (
-            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700" aria-label="passed" />
+            <RiCheckboxCircleLine className="mt-0.5 size-3.5 shrink-0 text-status-lime-text" aria-label="passed" />
           ) : (
-            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-700" aria-label="failed" />
+            <RiCloseCircleLine className="mt-0.5 size-3.5 shrink-0 text-text-error-primary" aria-label="failed" />
           )}
           <div className="min-w-0">
-            <div className="break-words text-ink">{r.name || `Test ${i + 1}`}</div>
+            <div className="break-words text-text-primary">{r.name || `Test ${i + 1}`}</div>
             {!r.ok && (
-              <div className="wrap-anywhere font-mono text-[11px] text-red-700">
+              <div className="wrap-anywhere font-mono text-caption-2-regular text-text-error-primary">
                 expected {r.expect}, got {r.got || "nothing"}
                 {r.detail ? `. ${r.detail}` : ""}
               </div>
@@ -81,6 +94,7 @@ function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void })
     if (v.state === "done") setLast(v);
     else if (v.state === "idle") setLast(null);
   }, [v]);
+  const fade = useScrollFade();
   const shown: DoneValidation | null = v.state === "done" ? v : v.state === "checking" ? last : null;
   const checking = v.state === "checking";
   const failed = shown?.report?.failed ?? 0;
@@ -89,31 +103,31 @@ function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void })
   let head: JSX.Element;
   if (v.state === "idle")
     head = (
-      <span className="flex items-center gap-2 text-muted">
-        <CircleDashed className="h-4 w-4 shrink-0" /> Not checked yet
+      <span className="flex items-center gap-2 text-text-secondary">
+        <RiCheckboxBlankCircleLine className="size-4 shrink-0" aria-hidden /> Not checked yet
       </span>
     );
   else if (v.state === "error")
     head = (
-      <span className="flex items-center gap-2 text-amber-800">
-        <AlertTriangle className="h-4 w-4 shrink-0" /> Could not check the spec
+      <span className="flex items-center gap-2 text-status-yellow-text">
+        <RiAlertLine className="size-4 shrink-0" aria-hidden /> Could not check the spec
       </span>
     );
   else if (!shown)
     head = (
-      <span className="flex items-center gap-2 text-muted">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> Checking the spec and running tests
+      <span className="flex items-center gap-2 text-text-secondary">
+        <SpinnerGlyph size="sm" className="text-current" /> Checking the spec and running tests
       </span>
     );
   else
     head = (
-      <span className={cx("flex items-center gap-2", ok ? "text-emerald-700" : "text-red-700")}>
+      <span className={cx("flex items-center gap-2", ok ? "text-status-lime-text" : "text-text-error-primary")}>
         {checking ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted" aria-hidden="true" />
+          <SpinnerGlyph size="sm" className="text-text-tertiary" />
         ) : ok ? (
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <RiCheckboxCircleLine className="size-4 shrink-0" aria-hidden />
         ) : (
-          <XCircle className="h-4 w-4 shrink-0" />
+          <RiCloseCircleLine className="size-4 shrink-0" aria-hidden />
         )}
         <span className="min-w-0">
           {ok ? (
@@ -126,38 +140,50 @@ function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void })
             </>
           )}
         </span>
-        {checking && <span className="ml-auto shrink-0 font-mono text-[11px] font-normal text-faint">checking</span>}
+        {checking && <span className="ms-auto shrink-0 font-mono text-caption-2-regular text-text-tertiary">checking</span>}
       </span>
     );
   return (
-    <section aria-label="Validation" aria-live="polite" aria-busy={checking} className="rounded-card bg-surface p-4 shadow-card">
-      <div className="text-[13px] font-medium">{head}</div>
+    <section
+      aria-label="Validation"
+      aria-live="polite"
+      aria-busy={checking}
+      className="flex flex-col rounded-3xl border border-border-button-default bg-background-primary-default p-5 lg:max-h-[calc(100dvh-7rem)]"
+    >
+      <div className="shrink-0 text-body-2-medium">{head}</div>
       {v.state === "error" && (
-        <p className="mt-2 text-xs text-muted">
+        <p className="mt-2 text-caption-1-regular text-text-secondary">
           {v.message}.{" "}
-          <button type="button" onClick={onRetry} className="font-medium text-ink underline underline-offset-2">
+          <LinkButton size="xs" onClick={onRetry}>
             Retry
-          </button>
+          </LinkButton>
         </p>
       )}
-      {shown && (
-        <div className={cx("transition-opacity duration-200 ease-out", checking && "opacity-60")}>
-          {shown.errors.length > 0 && (
-            <ul className="mt-3 space-y-1.5 border-t border-line pt-3">
-              {shown.errors.map((e, i) => (
-                <li key={i} className="flex items-start gap-2 text-[13px] text-red-800">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
-                  <span className="min-w-0 break-words">{e}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {/* Phones show the editor right under this panel: list tests only when one fails. */}
-          {shown.report && (
-            <div className={cx("mt-3 border-t border-line pt-3", ok && "hidden lg:block")}>
-              <TestReportList report={shown.report} />
-            </div>
-          )}
+      {shown && (shown.errors.length > 0 || shown.report) && (
+        // Long reports scroll inside the sticky card; the fade softens the top edge.
+        <div className={cx("relative mt-3 min-h-0 border-t border-separator-border", ok && !shown.errors.length && "hidden lg:block")}>
+          <div
+            onScroll={fade.onScroll}
+            className={cx("max-h-full overflow-y-auto overscroll-contain pt-3 transition-opacity duration-200 ease-out lg:max-h-[calc(100dvh-12rem)]", checking && "opacity-60")}
+          >
+            {shown.errors.length > 0 && (
+              <ul className="flex flex-col gap-1.5">
+                {shown.errors.map((e, i) => (
+                  <li key={i} className="flex items-start gap-2 text-body-2-regular text-text-error-primary">
+                    <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
+                    <span className="min-w-0 break-words">{e}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {/* Phones show the editor right under this panel: list tests only when one fails. */}
+            {shown.report && (
+              <div className={cx(shown.errors.length > 0 && "mt-3 border-t border-separator-border pt-3", ok && "hidden lg:block")}>
+                <TestReportList report={shown.report} />
+              </div>
+            )}
+          </div>
+          <ScrollFade progress={fade.progress} />
         </div>
       )}
     </section>
@@ -165,6 +191,8 @@ function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void })
 }
 
 // ---------------------------------------------------------------- overview
+
+const HEX = /^#[0-9a-f]{6}$/i;
 
 function OverviewTab({
   draft,
@@ -196,62 +224,111 @@ function OverviewTab({
   const set = <K extends keyof ProviderInput>(k: K, v: ProviderInput[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <Section title="Identity" description="How this provider shows up across Acnologia." actions={!readOnly && <AiFillButton ai={ai} />}>
         <AiFillPanel ai={ai} />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Name" required error={errors.name} className={ai.flash("name")}>
-            <Input
-              value={draft.name}
-              disabled={readOnly}
-              onChange={(e) => {
-                const name = e.target.value;
-                setDraft((d) => ({ ...d, name, slug: isNew && (d.slug === "" || d.slug === slugify(d.name)) ? slugify(name) : d.slug }));
-              }}
-              placeholder="Acme Mail"
-            />
-          </Field>
-          <Field label="Slug" required error={errors.slug} hint={isNew ? "Lowercase id that services use. You cannot change it later." : "Fixed, because services use it."}>
-            <Input
-              value={draft.slug}
-              disabled={!isNew || readOnly}
-              onChange={(e) => set("slug", e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
-              placeholder="acme-mail"
-              spellCheck={false}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Category" className={ai.flash("category")}>
-            <Input value={draft.category} disabled={readOnly} onChange={(e) => set("category", e.target.value)} placeholder="Email" />
-          </Field>
-          <Field label="Status" hint="New services cannot use a disabled provider.">
-            <Select value={draft.status} disabled={readOnly} onChange={(e) => set("status", e.target.value as ProviderInput["status"])}>
-              <option value="active">active</option>
-              <option value="disabled">disabled</option>
-            </Select>
-          </Field>
-          <Field label="Description" className={cx("sm:col-span-2", ai.flash("description"))}>
-            <Textarea rows={2} value={draft.description} disabled={readOnly} onChange={(e) => set("description", e.target.value)} placeholder="Transactional email API" />
-          </Field>
-          <Field label="Website" error={errors.website} className={ai.flash("website")}>
-            <Input type="url" inputMode="url" value={draft.website} disabled={readOnly} onChange={(e) => set("website", e.target.value)} placeholder="https://example.com" className="font-mono" />
-          </Field>
-          <Field label="Docs URL" error={errors.docs_url} className={ai.flash("docs_url")}>
-            <Input type="url" inputMode="url" value={draft.docs_url} disabled={readOnly} onChange={(e) => set("docs_url", e.target.value)} placeholder="https://example.com/docs" className="font-mono" />
-          </Field>
-          <Field label="Color" hint="Fills the lettermark when there is no logo." className={ai.flash("color")}>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                aria-label="Pick color"
-                value={/^#[0-9a-f]{6}$/i.test(draft.color) ? draft.color : "#6b6b66"}
-                disabled={readOnly}
-                onChange={(e) => set("color", e.target.value)}
-                className="tap h-10 w-12 shrink-0 cursor-pointer rounded-xl border border-line bg-surface p-1"
+          <Input
+            label="Name"
+            isRequired
+            isInvalid={!!errors.name}
+            errorMessage={errors.name}
+            className={cx("rounded-xl", ai.flash("name"))}
+            value={draft.name}
+            isDisabled={readOnly}
+            onChange={(name) => {
+              setDraft((d) => ({ ...d, name, slug: isNew && (d.slug === "" || d.slug === slugify(d.name)) ? slugify(name) : d.slug }));
+            }}
+            placeholder="Acme Mail"
+          />
+          <Input
+            label="Slug"
+            isRequired
+            isInvalid={!!errors.slug}
+            errorMessage={errors.slug}
+            hint={isNew ? "Lowercase id that services use. You cannot change it later." : "Fixed, because services use it."}
+            value={draft.slug}
+            isDisabled={!isNew || readOnly}
+            onChange={(v) => set("slug", v.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+            placeholder="acme-mail"
+            spellCheck="false"
+            inputClassName="font-mono"
+            inputDir="ltr"
+          />
+          <Input
+            label="Category"
+            className={cx("rounded-xl", ai.flash("category"))}
+            value={draft.category}
+            isDisabled={readOnly}
+            onChange={(v) => set("category", v)}
+            placeholder="Email"
+          />
+          <Select
+            label="Status"
+            hint="New services cannot use a disabled provider."
+            selectedKey={draft.status}
+            isDisabled={readOnly}
+            onSelectionChange={(k) => k != null && set("status", k as ProviderInput["status"])}
+            triggerClassName="font-mono"
+          >
+            <SelectItem id="active">active</SelectItem>
+            <SelectItem id="disabled">disabled</SelectItem>
+          </Select>
+          <Textarea
+            label="Description"
+            className={cx("rounded-xl sm:col-span-2", ai.flash("description"))}
+            rows={2}
+            autoResize
+            value={draft.description}
+            isDisabled={readOnly}
+            onChange={(v) => set("description", v)}
+            placeholder="Transactional email API"
+          />
+          <Input
+            label="Website"
+            type="url"
+            inputMode="url"
+            isInvalid={!!errors.website}
+            errorMessage={errors.website}
+            className={cx("rounded-xl", ai.flash("website"))}
+            value={draft.website}
+            isDisabled={readOnly}
+            onChange={(v) => set("website", v)}
+            placeholder="https://example.com"
+            inputClassName="font-mono"
+          />
+          <Input
+            label="Docs URL"
+            type="url"
+            inputMode="url"
+            isInvalid={!!errors.docs_url}
+            errorMessage={errors.docs_url}
+            className={cx("rounded-xl", ai.flash("docs_url"))}
+            value={draft.docs_url}
+            isDisabled={readOnly}
+            onChange={(v) => set("docs_url", v)}
+            placeholder="https://example.com/docs"
+            inputClassName="font-mono"
+          />
+          <Input
+            label="Color"
+            hint="A six digit hex value. Fills the lettermark when there is no logo."
+            className={cx("rounded-xl", ai.flash("color"))}
+            value={draft.color}
+            isDisabled={readOnly}
+            onChange={(v) => set("color", v)}
+            placeholder="Hex value"
+            inputClassName="font-mono"
+            inputDir="ltr"
+            leadingAddon={
+              // Preview of the colour; the value itself is data, so it rides an inline style.
+              <span
+                aria-hidden
+                className="ms-1 size-5 shrink-0 rounded-md border border-border-button-default"
+                style={{ backgroundColor: HEX.test(draft.color) ? draft.color : "transparent" }}
               />
-              <Input value={draft.color} disabled={readOnly} onChange={(e) => set("color", e.target.value)} placeholder="#3b6ef5" className="font-mono" />
-            </div>
-          </Field>
+            }
+          />
         </div>
       </Section>
 
@@ -259,7 +336,7 @@ function OverviewTab({
         {isNew ? (
           <div className="flex items-center gap-4">
             <ProviderLogo provider={{ name: draft.name || "?", color: draft.color, logo_url: null }} size="xl" />
-            <p className="text-[13px] text-muted">Create the provider first, then upload a logo or fetch one from its website.</p>
+            <p className="text-body-2-regular text-text-secondary">Create the provider first, then upload a logo or fetch one from its website.</p>
           </div>
         ) : (
           <LogoEditor
@@ -278,6 +355,7 @@ function OverviewTab({
 
       {!isNew && detail && !readOnly && (
         <Section
+          tone={!detail.builtin && detail.services_count === 0 ? "danger" : "default"}
           title="Delete provider"
           description={
             detail.builtin
@@ -292,6 +370,7 @@ function OverviewTab({
               <ConfirmButton
                 label="Delete provider"
                 confirmLabel="Delete forever"
+                description={`${detail.name} and all of its versions are removed. This cannot be undone.`}
                 onConfirm={async () => {
                   try {
                     await remove(detail.slug);
@@ -315,20 +394,20 @@ function OverviewTab({
 function VersionsTab({ detail, readOnly, onRolledBack }: { detail: ProviderDetail; readOnly: boolean; onRolledBack: () => void }) {
   const rollback = useProviders((s) => s.rollback);
   const versions = [...(detail.versions ?? [])].sort((a, b) => b.version - a.version);
-  if (!versions.length) return <Empty icon={<History className="h-5 w-5" />} title="No version history" body="Each save creates a version you can roll back to." />;
+  if (!versions.length) return <EmptyState icon={RiHistoryLine} title="No version history" body="Each save creates a version you can roll back to." />;
   return (
-    <ol className="divide-y divide-line overflow-hidden rounded-card bg-surface shadow-card">
+    <ol className="divide-y divide-separator-border overflow-hidden rounded-3xl border border-border-button-default bg-background-primary-default">
       {versions.map((v) => {
         const current = v.version === detail.version;
         return (
-          <li key={v.version} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+          <li key={v.version} className="flex flex-col gap-2 px-5 py-3.5 sm:flex-row sm:items-center sm:gap-4">
             <div className="flex items-center gap-2 sm:w-28">
-              <span className="font-mono text-[15px] text-ink">v{v.version}</span>
-              {current && <Badge tone="dark">current</Badge>}
+              <span className="font-mono text-body-medium text-text-primary">v{v.version}</span>
+              {current && <Chip variant="caption" color="purple">current</Chip>}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] text-ink">{v.note || <span className="text-faint">No note</span>}</div>
-              <div className="font-mono text-[11px] text-muted">
+              <div className="truncate text-body-2-regular text-text-primary">{v.note || <span className="text-text-tertiary">No note</span>}</div>
+              <div className="font-mono text-caption-2-regular text-text-secondary">
                 {v.source || "manual"} · {v.created_by || "system"} · <span title={dateTime(v.created_at)}>{relTime(v.created_at)}</span>
               </div>
             </div>
@@ -336,7 +415,8 @@ function VersionsTab({ detail, readOnly, onRolledBack }: { detail: ProviderDetai
               <ConfirmButton
                 label={`Roll back to v${v.version}`}
                 confirmLabel={`Restore v${v.version}`}
-                icon={<History className="h-3.5 w-3.5" />}
+                description="The old spec is saved again as a new version. Nothing is lost."
+                icon={RiHistoryLine}
                 onConfirm={async () => {
                   try {
                     await rollback(detail.slug, v.version);
@@ -357,44 +437,48 @@ function VersionsTab({ detail, readOnly, onRolledBack }: { detail: ProviderDetai
 
 // ---------------------------------------------------------------- live check
 
+function OkText({ ok }: { ok: boolean }) {
+  return <span className={ok ? "text-status-lime-text" : "text-text-error-primary"}>{ok ? "ok" : "failed"}</span>;
+}
+
 export function LiveReportView({ live }: { live: LiveReport }) {
   return (
-    <div className="space-y-3">
-      <div className={cx("flex items-center gap-2 text-[14px] font-medium", live.ok ? "text-emerald-700" : "text-red-700")}>
-        {live.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+    <div className="flex flex-col gap-3">
+      <div className={cx("flex items-center gap-2 text-body-medium", live.ok ? "text-status-lime-text" : "text-text-error-primary")}>
+        {live.ok ? <RiCheckboxCircleLine className="size-4" aria-hidden /> : <RiCloseCircleLine className="size-4" aria-hidden />}
         {live.ok ? "The key works with the real API" : "The live check failed"}
       </div>
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="rounded-xl bg-soft p-3">
-          <dt className="font-mono text-[11px] uppercase tracking-wide text-faint">Health check</dt>
-          <dd className="mt-1 text-[13px] text-ink">
-            <span className={live.health.ok ? "text-emerald-700" : "text-red-700"}>{live.health.ok ? "ok" : "failed"}</span>
-            {live.health.status ? <span className="font-mono text-muted"> · HTTP {live.health.status}</span> : null}
+        <div className="rounded-2xl bg-background-secondary-default p-3.5">
+          <dt className="text-caption-2-semibold uppercase text-text-tertiary">Health check</dt>
+          <dd className="mt-1 text-body-2-regular text-text-primary">
+            <OkText ok={live.health.ok} />
+            {live.health.status ? <span className="font-mono text-text-secondary"> · HTTP {live.health.status}</span> : null}
             {(live.health.quota_remaining !== null || live.health.quota_limit !== null) && (
-              <div className="mt-1 font-mono text-xs text-muted">
+              <div className="mt-1 font-mono text-caption-1-regular text-text-secondary">
                 quota {live.health.quota_remaining ?? "?"} / {live.health.quota_limit ?? "?"}
               </div>
             )}
-            {live.health.detail && <div className="mt-1 break-words text-xs text-muted">{live.health.detail}</div>}
+            {live.health.detail && <div className="mt-1 break-words text-caption-1-regular text-text-secondary">{live.health.detail}</div>}
           </dd>
         </div>
-        <div className="rounded-xl bg-soft p-3">
-          <dt className="font-mono text-[11px] uppercase tracking-wide text-faint">First safe example</dt>
-          <dd className="mt-1 text-[13px] text-ink">
+        <div className="rounded-2xl bg-background-secondary-default p-3.5">
+          <dt className="text-caption-2-semibold uppercase text-text-tertiary">First safe example</dt>
+          <dd className="mt-1 text-body-2-regular text-text-primary">
             {live.example.ran ? (
               <>
-                <span className={live.example.ok ? "text-emerald-700" : "text-red-700"}>{live.example.ok ? "ok" : "failed"}</span>
-                {live.example.status ? <span className="font-mono text-muted"> · HTTP {live.example.status}</span> : null}
+                <OkText ok={live.example.ok} />
+                {live.example.status ? <span className="font-mono text-text-secondary"> · HTTP {live.example.status}</span> : null}
                 {live.example.outcome && (
-                  <span className="ml-2">
+                  <span className="ms-2">
                     <OutcomeBadge outcome={live.example.outcome} />
                   </span>
                 )}
               </>
             ) : (
-              <span className="text-muted">Not run: no example is marked safe</span>
+              <span className="text-text-secondary">Not run: no example is marked safe</span>
             )}
-            {live.example.detail && <div className="mt-1 break-words text-xs text-muted">{live.example.detail}</div>}
+            {live.example.detail && <div className="mt-1 break-words text-caption-1-regular text-text-secondary">{live.example.detail}</div>}
           </dd>
         </div>
       </dl>
@@ -425,26 +509,44 @@ function LiveCheckTab({ slug, dirty, readOnly }: { slug: string; dirty: boolean;
       description="Runs the health check and the first safe example against the real API with a key you paste. Acnologia does not store the key."
     >
       {dirty && (
-        <Callout tone="amber" icon={<AlertTriangle className="h-4 w-4" />} className="mb-4">
+        <Callout tone="warning" className="mb-4">
           This checks the saved version. Save first to test your changes.
         </Callout>
       )}
       <form
-        className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        className="flex flex-col gap-2 sm:flex-row sm:items-start"
         onSubmit={(e) => {
           e.preventDefault();
           if (secret.trim()) void run();
         }}
       >
-        <Field label="Test key" className="flex-1" error={err}>
-          <Input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Paste an API key" disabled={readOnly} className="font-mono" />
-        </Field>
-        <Button type="submit" variant="primary" loading={busy} disabled={!secret.trim() || readOnly} icon={<KeyRound className="h-4 w-4" />}>
+        <Input
+          label="Test key"
+          className="flex-1"
+          type="password"
+          autoComplete="off"
+          value={secret}
+          onChange={setSecret}
+          placeholder="Paste an API key"
+          isDisabled={readOnly}
+          isInvalid={!!err}
+          errorMessage={err}
+          inputClassName="font-mono"
+          inputDir="ltr"
+        />
+        <Button
+          type="submit"
+          variant="primary"
+          className="sm:mt-6"
+          disabled={!secret.trim() || readOnly || busy}
+          aria-busy={busy || undefined}
+          leadingIcon={busy ? ButtonSpinner : RiKey2Line}
+        >
           Run live check
         </Button>
       </form>
       {live && (
-        <div className="fade-up mt-5 border-t border-line pt-5">
+        <div className="fade-up mt-5 border-t border-separator-border pt-5">
           <LiveReportView live={live} />
         </div>
       )}
@@ -475,7 +577,7 @@ export function ProviderEditorPage() {
 
   const [draft, setDraftState] = useState<ProviderInput | null>(isNew ? blankProviderInput() : null);
   const [baseline, setBaseline] = useState<string>(isNew ? JSON.stringify(blankProviderInput()) : "");
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<TabId>("overview");
   const [notFound, setNotFound] = useState(false);
   const [validation, setValidation] = useState<Validation>({ state: "idle" });
   const [note, setNote] = useState("");
@@ -602,13 +704,15 @@ export function ProviderEditorPage() {
 
   if (notFound)
     return (
-      <Empty
+      <EmptyState
+        as="h1"
+        icon={RiPlugLine}
         title="Provider not found"
         body="It may have been deleted, or the link is wrong."
         action={
-          <Link to="/providers" className="tap inline-flex h-10 items-center rounded-full bg-ink px-4 text-sm font-medium text-on-ink">
+          <RouteButton to="/providers" variant="primary">
             All providers
-          </Link>
+          </RouteButton>
         }
       />
     );
@@ -618,7 +722,7 @@ export function ProviderEditorPage() {
   const setSpec = (spec: ProviderSpec) => setDraft((d) => ({ ...d, spec }));
   const specTab = { spec: draft.spec, onChange: setSpec, readOnly };
 
-  const tabs: { id: Tab; label: string; count?: number }[] = [
+  const tabs: { id: TabId; label: string; count?: number }[] = [
     { id: "overview", label: "Overview" },
     { id: "connection", label: "Connection" },
     { id: "rules", label: "Rules", count: draft.spec.rules?.length ?? 0 },
@@ -626,73 +730,67 @@ export function ProviderEditorPage() {
     { id: "examples", label: "Examples", count: draft.spec.examples?.length ?? 0 },
     { id: "tests", label: "Tests", count: draft.spec.tests?.length ?? 0 },
     { id: "json", label: "JSON" },
-    ...(!isNew ? [{ id: "versions" as Tab, label: "Versions", count: detail?.versions?.length }, { id: "live" as Tab, label: "Live check" }] : []),
+    ...(!isNew ? [{ id: "versions" as TabId, label: "Versions", count: detail?.versions?.length }, { id: "live" as TabId, label: "Live check" }] : []),
   ];
 
-  const changeTab = (t: Tab) => {
+  const changeTab = (t: TabId) => {
     // The JSON tab may leave fields out; fill them before the structured tabs render.
     if (tab === "json") setDraft((d) => ({ ...d, spec: normalizeSpec(d.spec) }));
     setTab(t);
   };
 
+  const docs = detail ? safeHref(detail.docs_url) : undefined;
+  const meta =
+    !isNew && detail ? (
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span>{detail.slug}</span>
+        <SourceBadge source={detail.source} />
+        <Chip variant="caption" color="neutral" className="font-mono">
+          v{detail.version}
+        </Chip>
+        {detail.status === "disabled" && <Chip variant="caption" color="yellow">disabled</Chip>}
+        {/* Kept on one line so a narrow screen never strands "docs" on its own row. */}
+        <span className="ms-1 inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span>{plural(detail.services_count, "service")}</span>
+          {docs && (
+            <>
+              <span aria-hidden>·</span>
+              <LinkButton href={docs} target="_blank" rel="noreferrer" variant="secondary" size="xs" trailingIcon={RiExternalLinkLine} className="font-mono">
+                docs
+              </LinkButton>
+            </>
+          )}
+        </span>
+      </span>
+    ) : (
+      <span>Write the rules by hand, or let the AI builder write them from a docs URL.</span>
+    );
+
+  const actions = readOnly ? undefined : isNew ? (
+    <RouteButton to="/providers/ai" variant="secondary" leadingIcon={RiSparkling2Line}>
+      Build with AI instead
+    </RouteButton>
+  ) : (
+    <>
+      <Button variant="secondary" leadingIcon={RiAddLine} onClick={() => setAddingService(true)}>
+        Add service
+      </Button>
+      <RouteButton to={`/providers/ai?provider=${encodeURIComponent(draft.slug)}`} variant="primary" leadingIcon={RiSparkling2Line}>
+        Improve with AI
+      </RouteButton>
+    </>
+  );
+
   return (
     <div className={(dirty || isNew) && !readOnly ? "pb-28" : undefined}>
-      <Link to="/providers" className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
-        <ArrowLeft className="h-3.5 w-3.5" /> Providers
-      </Link>
-
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <ProviderLogo provider={{ name: draft.name || "New", color: draft.color, logo_url: detail?.logo_url ?? null }} size="lg" />
-          <div className="min-w-0">
-            <h1 className="break-words font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">
-              {isNew ? draft.name || "New provider" : draft.name}
-            </h1>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono text-xs text-muted">
-              {!isNew && detail ? (
-                <>
-                  <span>{detail.slug}</span>
-                  <SourceBadge source={detail.source} />
-                  <Badge>v{detail.version}</Badge>
-                  {detail.status === "disabled" && <Badge tone="amber">disabled</Badge>}
-                  {/* Kept on one line so a narrow screen never strands "docs" on its own row. */}
-                  <span className="ml-1 inline-flex items-center gap-1.5 whitespace-nowrap">
-                    <span>{plural(detail.services_count, "service")}</span>
-                    {safeHref(detail.docs_url) && (
-                      <a href={safeHref(detail.docs_url)} target="_blank" rel="noreferrer" className="tap-inline inline-flex items-center gap-1 hover:text-ink">
-                        · docs <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                      </a>
-                    )}
-                  </span>
-                </>
-              ) : (
-                <span>Write the rules by hand, or let the AI builder write them from a docs URL.</span>
-              )}
-            </div>
-          </div>
-        </div>
-        {!readOnly && (
-          <div className="flex shrink-0 flex-wrap gap-2">
-            {isNew ? (
-              <Link to="/providers/ai" className="tap inline-flex h-10 items-center gap-2 rounded-full bg-surface px-4 text-sm font-medium text-ink shadow-card hover:bg-soft">
-                <Sparkles className="h-4 w-4 text-brand" /> Build with AI instead
-              </Link>
-            ) : (
-              <>
-                <Button icon={<Plus className="h-4 w-4" />} onClick={() => setAddingService(true)}>
-                  Add service
-                </Button>
-                <Link
-                  to={`/providers/ai?provider=${encodeURIComponent(draft.slug)}`}
-                  className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-on-ink hover:bg-ink-strong"
-                >
-                  <Sparkles className="h-4 w-4 text-spark" /> Improve with AI
-                </Link>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+      <PageHeader
+        back={{ href: "/providers", label: "Providers" }}
+        leading={<ProviderLogo provider={{ name: draft.name || "New", color: draft.color, logo_url: detail?.logo_url ?? null }} size="lg" />}
+        title={isNew ? draft.name || "New provider" : draft.name}
+        meta={meta}
+        actions={actions}
+        className="mb-0"
+      />
 
       {readOnly && (
         <Callout className="mt-6">You can view this provider. Only admins can change it.</Callout>
@@ -700,18 +798,47 @@ export function ProviderEditorPage() {
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0">
-          <Tabs items={tabs} value={tab} onChange={changeTab} />
-          <div className="mt-6">
-            {tab === "overview" && <OverviewTab draft={draft} setDraft={setDraft} isNew={isNew} readOnly={readOnly} detail={detail} errors={errors} />}
-            {tab === "connection" && <ConnectionTab {...specTab} />}
-            {tab === "rules" && <RulesTab {...specTab} />}
-            {tab === "health" && <HealthTab {...specTab} />}
-            {tab === "examples" && <ExamplesTab {...specTab} />}
-            {tab === "tests" && <TestsTab {...specTab} report={report} />}
-            {tab === "json" && <JsonTab {...specTab} />}
-            {tab === "versions" && detail && <VersionsTab detail={detail} readOnly={readOnly} onRolledBack={() => void load()} />}
-            {tab === "live" && <LiveCheckTab slug={draft.slug} dirty={dirty} readOnly={readOnly} />}
-          </div>
+          <Tabs selectedKey={tab} onSelectionChange={(k) => changeTab(k as TabId)} className="gap-6">
+            {/* The strip scrolls sideways on narrow screens instead of wrapping. */}
+            <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] sm:mx-0 sm:px-0">
+              <TabList aria-label="Provider sections" className="w-max min-w-full pe-8">
+                {tabs.map((t) => (
+                  <Tab key={t.id} id={t.id} count={t.count}>
+                    {t.label}
+                  </Tab>
+                ))}
+              </TabList>
+            </div>
+            <TabPanel id="overview">
+              <OverviewTab draft={draft} setDraft={setDraft} isNew={isNew} readOnly={readOnly} detail={detail} errors={errors} />
+            </TabPanel>
+            <TabPanel id="connection">
+              <ConnectionTab {...specTab} />
+            </TabPanel>
+            <TabPanel id="rules">
+              <RulesTab {...specTab} />
+            </TabPanel>
+            <TabPanel id="health">
+              <HealthTab {...specTab} />
+            </TabPanel>
+            <TabPanel id="examples">
+              <ExamplesTab {...specTab} />
+            </TabPanel>
+            <TabPanel id="tests">
+              <TestsTab {...specTab} report={report} />
+            </TabPanel>
+            <TabPanel id="json">
+              <JsonTab {...specTab} />
+            </TabPanel>
+            {!isNew && (
+              <TabPanel id="versions">{detail && <VersionsTab detail={detail} readOnly={readOnly} onRolledBack={() => void load()} />}</TabPanel>
+            )}
+            {!isNew && (
+              <TabPanel id="live">
+                <LiveCheckTab slug={draft.slug} dirty={dirty} readOnly={readOnly} />
+              </TabPanel>
+            )}
+          </Tabs>
         </div>
         {!readOnly && (
           <aside className="order-first lg:order-none">
@@ -723,53 +850,59 @@ export function ProviderEditorPage() {
       </div>
 
       {!readOnly && (dirty || isNew) && (
-        <div className="fade-up fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 backdrop-blur-sm">
+        <div className="fade-up fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-separator-border bg-background-primary-default/95 backdrop-blur-sm">
           <div className="mx-auto flex max-w-[1076px] flex-col gap-2 px-4 py-2.5 sm:px-6 sm:py-3 lg:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {/* Phones: the version note opens on demand so the bar stays one row above the keyboard. */}
             {!isNew && noteOpen && (
               <Input
                 value={note}
-                onChange={(e) => setNote(e.target.value)}
+                onChange={setNote}
                 placeholder="What changed (optional)"
                 aria-label="Version note"
-                data-autofocus
+                autoFocus
                 className="sm:hidden"
               />
             )}
             <div className="flex items-center gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-muted">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden="true" />
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-body-2-regular text-text-secondary">
+                <span className="size-2 shrink-0 rounded-full bg-accent-500" aria-hidden="true" />
                 <span className="truncate sm:hidden">{isNew ? "Not created" : "Unsaved"}</span>
                 <span className="hidden truncate sm:inline">{isNew ? "New provider, not created yet" : "Unsaved changes. Saving creates a new version."}</span>
               </div>
               {!isNew && (
                 <Input
                   value={note}
-                  onChange={(e) => setNote(e.target.value)}
+                  onChange={setNote}
                   placeholder="What changed (optional)"
                   aria-label="Version note"
-                  className="hidden sm:block sm:w-64"
+                  className="hidden sm:flex sm:w-64"
                 />
               )}
               {!isNew && (
                 <Button
-                  size="sm"
+                  size="small"
                   variant="ghost"
                   className="sm:hidden"
                   aria-expanded={noteOpen}
                   aria-label={note.trim() ? "Version note, added" : "Add a version note"}
-                  icon={note.trim() ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : undefined}
+                  leadingIcon={note.trim() ? RiCheckLine : undefined}
                   onClick={() => setNoteOpen(!noteOpen)}
                 >
                   Note
                 </Button>
               )}
               {!isNew && (
-                <Button size="sm" variant="ghost" onClick={discard} className="sm:h-10 sm:px-4 sm:text-sm">
+                <Button variant="ghost" onClick={discard}>
                   Discard
                 </Button>
               )}
-              <Button variant="primary" loading={saving} onClick={() => void save()}>
+              <Button
+                variant="primary"
+                disabled={saving}
+                aria-busy={saving || undefined}
+                leadingIcon={saving ? ButtonSpinner : undefined}
+                onClick={() => void save()}
+              >
                 {isNew ? "Create provider" : "Save version"}
               </Button>
             </div>

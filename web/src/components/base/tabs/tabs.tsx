@@ -96,7 +96,7 @@ export function TabList<T extends object>({ className, ref, ...props }: TabListP
   }, [direction]);
 
   return (
-    <div ref={wrapperRef} className="relative w-full">
+    <div ref={wrapperRef} className="relative w-full min-w-max">
       <AriaTabList
         ref={ref}
         {...props}
@@ -110,7 +110,7 @@ export function TabList<T extends object>({ className, ref, ...props }: TabListP
       {underline && (
         <span
           aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-accent-600 transition-[transform,width] duration-200 ease"
+          className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-accent-fill transition-[transform,width] duration-200 ease"
           style={{
             transform: `translateX(${underline.left}px)`,
             width: underline.width,
@@ -151,7 +151,7 @@ export function Tab({ className, children, icon: Icon, count, ref, ...props }: T
             className={cx(
               "inline-flex items-center gap-1.5",
               isSelected
-                ? "text-body-medium text-accent-600"
+                ? "text-body-medium text-accent-fg"
                 : "text-body-regular text-text-primary",
             )}
           >
@@ -163,8 +163,8 @@ export function Tab({ className, children, icon: Icon, count, ref, ...props }: T
               className={cx(
                 "inline-flex items-center justify-center rounded-sm px-1 py-px text-caption-1-medium whitespace-nowrap",
                 isSelected
-                  ? "bg-tab-count-selected-background text-accent-600"
-                  : "bg-black/10 text-text-primary opacity-50",
+                  ? "bg-accent-subtle text-accent-fg"
+                  : "bg-background-tertiary-default text-text-secondary",
               )}
             >
               {count}

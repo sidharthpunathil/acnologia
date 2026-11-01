@@ -9,7 +9,7 @@ import { useDirection } from "@/components/foundations/direction/direction";
 import { cx, sortCx } from "@/utils/cx";
 
 /**
- * Progress — how far along a task is: an upload, an import, an onboarding
+ * Progress: how far along a task is: an upload, an import, an onboarding
  * checklist. Built on React Aria's ProgressBar, so it is announced with its
  * label and value, and formats the value for the locale.
  *

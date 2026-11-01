@@ -1,14 +1,22 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Info, RefreshCw, TriangleAlert } from "lucide-react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { RiRefreshLine } from "@remixicon/react";
 import { Modal } from "../components/Modal";
 import { CodeBlock } from "../components/CodeBlock";
-import { Tabs } from "../components/Tabs";
-import { Badge, Button, Callout, Field, Input, Skeleton, Textarea, Toggle, cx } from "../components/ui";
 import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
 import { plural } from "../lib/format";
 import type { App, MCPSettingsInput, MCPTool, MCPToolSet, MCPView } from "../lib/types";
 import { enabledCount, inputOf, toolOn, useMcp } from "../stores/mcp";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { Textarea } from "@/components/base/textarea/textarea";
+import { Switch } from "@/components/base/switch/switch";
+import { Chip } from "@/components/base/badges/chip";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { Tab as TabItem, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
+import { cx } from "@/utils/cx";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Callout } from "@/components/acn";
 
 const MAX_INSTRUCTIONS = 8000;
 const MAX_KB = 2048;
@@ -98,15 +106,54 @@ const CLIENT_NOTE: Record<Client, string> = {
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section>
-      <h3 className="mb-2 font-mono text-[11px] uppercase tracking-wide text-faint">{title}</h3>
-      <div className="divide-y divide-line rounded-xl border border-line">{children}</div>
+    <section className="flex flex-col gap-2">
+      <h3 className="text-caption-2-semibold uppercase text-text-tertiary">{title}</h3>
+      <div className="divide-y divide-separator-border rounded-2xl border border-border-button-default">{children}</div>
     </section>
   );
 }
 
 function Row({ children }: { children: ReactNode }) {
-  return <div className="px-3.5 py-3">{children}</div>;
+  return <div className="px-4 py-3.5">{children}</div>;
+}
+
+/** A labelled switch row: title and description on the start side, the switch on the end. */
+function SwitchRow({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  description?: ReactNode;
+  disabled?: boolean;
+}) {
+  const id = useId();
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <div id={`${id}-l`} className="text-body-medium text-text-primary">
+          {label}
+        </div>
+        {description && (
+          <p id={`${id}-d`} className="mt-0.5 text-caption-1-regular text-text-secondary">
+            {description}
+          </p>
+        )}
+      </div>
+      <Switch
+        isSelected={checked}
+        onChange={onChange}
+        isDisabled={disabled}
+        aria-labelledby={`${id}-l`}
+        aria-describedby={description ? `${id}-d` : undefined}
+        className="mt-0.5 shrink-0"
+      />
+    </div>
+  );
 }
 
 function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit: (p: Partial<MCPSettingsInput>) => void; readOnly: boolean }) {
@@ -120,13 +167,13 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
   const len = draft.instructions.length;
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <Group title="Tool sets">
         {SETS.map((s) => (
           <Row key={s.id}>
-            <Toggle checked={draft[s.id]} onChange={(v) => edit({ [s.id]: v })} label={s.label} description={s.body} disabled={readOnly} />
+            <SwitchRow checked={draft[s.id]} onChange={(v) => edit({ [s.id]: v })} label={s.label} description={s.body} disabled={readOnly} />
             {s.id === "manage" && (
-              <Callout tone="amber" icon={<TriangleAlert className="h-4 w-4" />} className="mt-3">
+              <Callout tone="warning" className="mt-3">
                 The agent can change your pool. A key it disables stops serving every app until someone turns it back on.
               </Callout>
             )}
@@ -136,7 +183,7 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
 
       <Group title="Context">
         <Row>
-          <Toggle
+          <SwitchRow
             checked={draft.resources}
             onChange={(v) => edit({ resources: v })}
             label="Resources"
@@ -145,7 +192,7 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
           />
         </Row>
         <Row>
-          <Toggle
+          <SwitchRow
             checked={draft.prompts}
             onChange={(v) => edit({ prompts: v })}
             label="Prompts"
@@ -157,7 +204,7 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
 
       <Group title="Leases">
         <Row>
-          <Toggle
+          <SwitchRow
             checked={draft.exclusive_default}
             onChange={(v) => edit({ exclusive_default: v })}
             label="Reserve keys exclusively by default"
@@ -167,47 +214,46 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
         </Row>
       </Group>
 
-      <section className="space-y-4">
-        <h3 className="font-mono text-[11px] uppercase tracking-wide text-faint">Output</h3>
-        <Field label="Max result size (KB)" error={readOnly ? null : kbErr} hint={`Tool results larger than this are cut before they reach the model. 1–${MAX_KB} KB, default 200.`}>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={MAX_KB}
-            step={1}
-            value={kb}
-            readOnly={readOnly}
-            onChange={(e) => {
-              setKb(e.target.value);
-              const n = Number(e.target.value);
-              const ok = e.target.value.trim() !== "" && Number.isInteger(n) && n >= 1 && n <= MAX_KB;
-              edit({ max_result_kb: ok ? n : NaN });
-            }}
-            className="max-w-[160px] font-mono tabular-nums"
-          />
-        </Field>
-        <Field
-          label={
-            <span className="flex items-baseline justify-between gap-3">
-              <span>Instructions for the agent</span>
-              <span className={cx("font-mono text-[11px] font-normal tabular-nums", len > MAX_INSTRUCTIONS * 0.9 ? "text-amber-700" : "text-faint")}>
-                {len.toLocaleString()} / {MAX_INSTRUCTIONS.toLocaleString()}
-              </span>
-            </span>
-          }
-          hint="Sent when the agent connects, after Acnologia's own instructions. Good for house rules, such as which service to try first."
-        >
+      <section className="flex flex-col gap-4">
+        <h3 className="text-caption-2-semibold uppercase text-text-tertiary">Output</h3>
+        <Input
+          label="Max result size (KB)"
+          inputMode="numeric"
+          value={kb}
+          isReadOnly={readOnly}
+          isInvalid={!readOnly && !!kbErr}
+          errorMessage={readOnly ? null : kbErr}
+          hint={`Tool results larger than this are cut before they reach the model. 1–${MAX_KB} KB, default 200.`}
+          onChange={(v) => {
+            setKb(v);
+            const n = Number(v);
+            const ok = v.trim() !== "" && Number.isInteger(n) && n >= 1 && n <= MAX_KB;
+            edit({ max_result_kb: ok ? n : NaN });
+          }}
+          className="max-w-[240px]"
+          inputClassName="font-mono tabular-nums"
+        />
+        <div className="flex flex-col gap-1">
           <Textarea
+            label="Instructions for the agent"
             rows={5}
             maxLength={MAX_INSTRUCTIONS}
             value={draft.instructions}
-            readOnly={readOnly}
-            onChange={(e) => edit({ instructions: e.target.value })}
+            isReadOnly={readOnly}
+            onChange={(v) => edit({ instructions: v })}
             placeholder={readOnly ? "No extra instructions." : "Prefer the search service. Report every lease, even on success."}
-            className="resize-y"
+            resize="vertical"
+            hint="Sent when the agent connects, after Acnologia's own instructions. Good for house rules, such as which service to try first."
           />
-        </Field>
+          <span
+            className={cx(
+              "self-end font-mono text-caption-1-regular tabular-nums",
+              len > MAX_INSTRUCTIONS * 0.9 ? "text-status-yellow-text" : "text-text-tertiary",
+            )}
+          >
+            {len.toLocaleString()} / {MAX_INSTRUCTIONS.toLocaleString()}
+          </span>
+        </div>
       </section>
     </div>
   );
@@ -238,27 +284,27 @@ function ToolsTab({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       {SETS.map(({ id, label }) => {
         const tools = bySet[id];
         const setOn = draft[id];
         const savedOn = view.settings[id];
         const on = tools.filter((t) => toolOn(draft, t)).length;
         return (
-          <section key={id}>
-            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <h3 className="text-[13px] font-medium text-ink">{label}</h3>
-              <span className="font-mono text-[11px] text-faint">{setOn ? (tools.length ? `${on} of ${tools.length} on` : "") : "set is off"}</span>
+          <section key={id} className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <h3 className="text-body-medium text-text-primary">{label}</h3>
+              <span className="font-mono text-caption-1-regular text-text-tertiary">{setOn ? (tools.length ? `${on} of ${tools.length} on` : "") : "set is off"}</span>
             </div>
             {!setOn ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-line-strong px-3.5 py-3 text-[13px] text-muted">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-dashed border-border-button-hover px-4 py-3 text-body-2-regular text-text-secondary">
                 <span>Turn on {label} in Settings to give the agent these tools.</span>
-                <Button size="sm" variant="ghost" onClick={goSettings}>
+                <Button size="small" variant="ghost" onClick={goSettings}>
                   Open Settings
                 </Button>
               </div>
             ) : tools.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-line-strong px-3.5 py-3 text-[13px] text-muted">
+              <div className="rounded-2xl border border-dashed border-border-button-hover px-4 py-3 text-body-2-regular text-text-secondary">
                 {!savedOn
                   ? "Save to see the tools in this set."
                   : id === "service_tools"
@@ -266,18 +312,23 @@ function ToolsTab({
                     : "No tools in this set."}
               </div>
             ) : (
-              <ul className="divide-y divide-line rounded-xl border border-line">
+              <ul className="divide-y divide-separator-border rounded-2xl border border-border-button-default">
                 {tools.map((t) => {
                   const checked = toolOn(draft, t);
                   return (
-                    <li key={t.name} className="flex items-start gap-3 px-3.5 py-3">
+                    <li key={t.name} className="flex items-start gap-3 px-4 py-3">
                       <div className="min-w-0 flex-1">
-                        <div className="break-all font-mono text-[13px] text-ink">{t.name}</div>
-                        {t.description && <p className="mt-0.5 text-xs leading-relaxed text-muted">{t.description}</p>}
+                        <div className="break-all font-mono text-body-2-regular text-text-primary">{t.name}</div>
+                        {t.description && <p className="mt-0.5 text-caption-1-regular text-text-secondary">{t.description}</p>}
                       </div>
-                      <div className="pt-0.5">
-                        <Toggle checked={checked} onChange={(v) => setTool(t.name, v)} disabled={readOnly} ariaLabel={`${t.name} ${checked ? "on" : "off"}`} />
-                      </div>
+                      <Switch
+                        size="sm"
+                        isSelected={checked}
+                        onChange={(v) => setTool(t.name, v)}
+                        isDisabled={readOnly}
+                        aria-label={`${t.name} ${checked ? "on" : "off"}`}
+                        className="mt-0.5 shrink-0"
+                      />
                     </li>
                   );
                 })}
@@ -290,36 +341,53 @@ function ToolsTab({
   );
 }
 
+/** Tab strip that scrolls sideways on narrow screens instead of wrapping. */
+function ScrollTabs({ children }: { children: ReactNode }) {
+  return <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{children}</div>;
+}
+
 function ConnectTab({ app, endpoint }: { app: App; endpoint: string }) {
   const [client, setClient] = useState<Client>("claude-code");
   const name = serverName(app);
   const all = useMemo(() => snippets(name, endpoint), [name, endpoint]);
   return (
-    <div className="space-y-4">
-      <Callout icon={<Info className="h-4 w-4" />}>
-        Replace <code className="font-mono text-ink">{TOKEN}</code> with this app's token, which starts with{" "}
-        <code className="break-all font-mono text-ink">{app.token_prefix}</code>. Acnologia showed the full token once, when the app was created. Lost it? An admin can
+    <div className="flex flex-col gap-4">
+      <Callout tone="info">
+        Replace <code className="font-mono">{TOKEN}</code> with this app's token, which starts with{" "}
+        <code className="break-all font-mono">{app.token_prefix}</code>. Acnologia showed the full token once, when the app was created. Lost it? An admin can
         rotate it from the app's actions to get a new one. The old token stops working right away.
       </Callout>
-      <Tabs items={CLIENTS} value={client} onChange={setClient} label="MCP client" />
-      <p className="text-[13px] leading-relaxed text-muted">{CLIENT_NOTE[client]}</p>
-      <div className="space-y-3">
-        {all[client].map((s) => (
-          <CodeBlock key={s.label} label={s.label} code={s.code} />
+      <Tabs selectedKey={client} onSelectionChange={(k) => setClient(k as Client)} className="gap-3">
+        <ScrollTabs>
+          <TabList aria-label="MCP client" className="w-max min-w-full">
+            {CLIENTS.map((c) => (
+              <TabItem key={c.id} id={c.id}>
+                {c.label}
+              </TabItem>
+            ))}
+          </TabList>
+        </ScrollTabs>
+        {CLIENTS.map((c) => (
+          <TabPanel key={c.id} id={c.id} className="flex flex-col gap-3">
+            <p className="text-body-2-regular text-text-secondary">{CLIENT_NOTE[c.id]}</p>
+            {all[c.id].map((s) => (
+              <CodeBlock key={s.label} label={s.label} code={s.code} />
+            ))}
+          </TabPanel>
         ))}
-      </div>
+      </Tabs>
     </div>
   );
 }
 
 function LoadingBody() {
   return (
-    <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
+    <div className="flex flex-col gap-3" role="status" aria-live="polite" aria-busy="true">
       <span className="sr-only">Loading MCP settings</span>
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="rounded-xl border border-line px-3.5 py-3">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="mt-2 h-3 w-4/5" />
+        <div key={i} className="flex flex-col gap-2 rounded-2xl border border-border-button-default px-4 py-3.5">
+          <Skeleton className="h-4 w-32 rounded-md" />
+          <Skeleton className="h-3 w-4/5 rounded-md" />
         </div>
       ))}
     </div>
@@ -374,11 +442,41 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
   };
 
   const onCount = view ? enabledCount(view) : null;
-  const tabs = [
-    { id: "settings" as const, label: "Settings" },
-    { id: "tools" as const, label: "Tools", count: view ? view.tools.length : undefined },
-    { id: "connect" as const, label: "Connect a client" },
+  const tabs: Array<{ id: Tab; label: string; count?: number }> = [
+    { id: "settings", label: "Settings" },
+    { id: "tools", label: "Tools", count: view ? view.tools.length : undefined },
+    { id: "connect", label: "Connect a client" },
   ];
+
+  const body = (which: Tab) =>
+    !view || !draft ? (
+      loadErr ? (
+        <Callout
+          tone="error"
+          action={
+            <Button
+              size="small"
+              variant="secondary"
+              leadingIcon={retrying ? ButtonSpinner : RiRefreshLine}
+              disabled={retrying}
+              onClick={() => void retry()}
+            >
+              Try again
+            </Button>
+          }
+        >
+          Could not load MCP settings. {loadErr}
+        </Callout>
+      ) : (
+        <LoadingBody />
+      )
+    ) : which === "settings" ? (
+      <SettingsTab draft={draft} edit={edit} readOnly={readOnly} />
+    ) : which === "tools" ? (
+      <ToolsTab view={view} draft={draft} edit={edit} readOnly={readOnly} goSettings={() => setTab("settings")} />
+    ) : (
+      app && <ConnectTab app={app} endpoint={view.endpoint} />
+    );
 
   return (
     <Modal
@@ -387,11 +485,17 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
       wide
       title={app ? `MCP for ${app.name}` : "MCP"}
       description="Choose what an AI agent using this app's token can see and do."
-      headerAction={onCount !== null ? <Badge tone="dark">{plural(onCount, "tool")} on</Badge> : undefined}
+      headerAction={
+        onCount !== null ? (
+          <Chip variant="caption" color="purple" className="font-mono">
+            {plural(onCount, "tool")} on
+          </Chip>
+        ) : undefined
+      }
       footer={
         canEdit ? (
           <div className="flex w-full flex-wrap items-center justify-end gap-2">
-            {dirty && <span className="mr-auto text-xs text-muted">Unsaved changes</span>}
+            {dirty && <span className="me-auto text-caption-1-regular text-text-secondary">Unsaved changes</span>}
             {dirty ? (
               <Button variant="ghost" onClick={() => discard(id)} disabled={busy}>
                 Discard
@@ -401,7 +505,7 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
                 Close
               </Button>
             )}
-            <Button variant="primary" onClick={() => void onSave()} loading={busy} disabled={!dirty || invalid}>
+            <Button variant="primary" onClick={() => void onSave()} leadingIcon={busy ? ButtonSpinner : undefined} disabled={busy || !dirty || invalid}>
               Save changes
             </Button>
           </div>
@@ -412,38 +516,28 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
         )
       }
     >
-      <div data-autofocus tabIndex={-1} className="space-y-5 focus:outline-hidden">
-        {readOnly && (
-          <Callout icon={<Info className="h-4 w-4" />}>You can view these settings. Ask an admin to change them.</Callout>
-        )}
-        <Tabs items={tabs} value={tab} onChange={setTab} label="MCP sections" />
-        {!view || !draft ? (
-          loadErr ? (
-            <Callout tone="red" icon={<TriangleAlert className="h-4 w-4" />}>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>Could not load MCP settings. {loadErr}</span>
-                <Button size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} loading={retrying} onClick={() => void retry()}>
-                  Try again
-                </Button>
-              </div>
-            </Callout>
-          ) : (
-            <LoadingBody />
-          )
-        ) : tab === "settings" ? (
-          <SettingsTab draft={draft} edit={edit} readOnly={readOnly} />
-        ) : tab === "tools" ? (
-          <ToolsTab view={view} draft={draft} edit={edit} readOnly={readOnly} goSettings={() => setTab("settings")} />
-        ) : (
-          app && <ConnectTab app={app} endpoint={view.endpoint} />
-        )}
+      <div data-autofocus tabIndex={-1} className="flex flex-col gap-5 outline-none">
+        {readOnly && <Callout tone="info">You can view these settings. Ask an admin to change them.</Callout>}
+        <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="gap-5">
+          <ScrollTabs>
+            <TabList aria-label="MCP sections" className="w-max min-w-full">
+              {tabs.map((t) => (
+                <TabItem key={t.id} id={t.id} count={t.count}>
+                  {t.label}
+                </TabItem>
+              ))}
+            </TabList>
+          </ScrollTabs>
+          {tabs.map((t) => (
+            <TabPanel key={t.id} id={t.id}>
+              {body(t.id)}
+            </TabPanel>
+          ))}
+        </Tabs>
         {view && tab !== "connect" && dirty && (
-          <p className="text-xs text-muted">
-            Some clients keep the old tool list until you reconnect them after saving.
-          </p>
+          <p className="text-caption-1-regular text-text-secondary">Some clients keep the old tool list until you reconnect them after saving.</p>
         )}
       </div>
     </Modal>
   );
 }
-

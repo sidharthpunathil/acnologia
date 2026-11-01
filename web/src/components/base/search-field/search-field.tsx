@@ -15,7 +15,7 @@ import { useTemplateCopy } from "@/components/foundations/template-copy/template
 import { cx } from "@/utils/cx";
 
 /**
- * Search field — a text field for a query: filter a list, search a table,
+ * Search field: a text field for a query: filter a list, search a table,
  * look something up.
  *
  *   <SearchField aria-label="Search teammates" placeholder="Search" value={query} onChange={setQuery} />

@@ -1,26 +1,62 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useTitle } from "../../hooks/useTitle";
-import { Link } from "react-router-dom";
-import { Blocks, Plus, Search, Sparkles } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { RiAddLine, RiPlugLine, RiSearchLine, RiSparkling2Line } from "@remixicon/react";
 import { useProviders } from "../../stores/providers";
 import { useAuth } from "../../stores/auth";
 import { can } from "../../lib/perms";
 import { dateTime, plural, relTime } from "../../lib/format";
 import type { Provider } from "../../lib/types";
 import { ProviderLogo } from "../../components/EntityLogo";
-import { Tabs } from "../../components/Tabs";
-import { Badge, Callout, Empty, PageHeader, PageSkeleton, cx } from "../../components/ui";
+import { ButtonLink, type ButtonLinkProps } from "@/components/base/buttons/button";
+import { Chip } from "@/components/base/badges/chip";
+import { SearchField } from "@/components/base/search-field/search-field";
+import { Tab, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
+import { cx } from "@/utils/cx";
+import { Callout } from "@/components/acn/callout";
+import { EmptyState } from "@/components/acn/empty-state";
+import { PageHeader } from "@/components/acn/page-header";
+import { PageSkeleton } from "@/components/acn/page-skeleton";
+
+/**
+ * ButtonLink that routes on the client. A plain click goes through the
+ * router; modified clicks (new tab, new window) keep the browser default.
+ */
+export function RouteButton({ to, ...props }: Omit<ButtonLinkProps, "href"> & { to: string }) {
+  const navigate = useNavigate();
+  return (
+    <ButtonLink
+      {...props}
+      href={to}
+      onClick={(e: MouseEvent<HTMLAnchorElement>) => {
+        props.onClick?.(e);
+        if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        navigate(to);
+      }}
+    />
+  );
+}
 
 export function SourceBadge({ source }: { source: Provider["source"] }) {
   if (source === "ai")
     return (
-      <Badge tone="violet" title="Written by the AI builder">
-        <Sparkles className="h-3 w-3" aria-hidden="true" />
+      <Chip variant="caption" color="purple" title="Written by the AI builder" className="gap-1 font-mono">
+        <RiSparkling2Line className="size-3" aria-hidden />
         ai
-      </Badge>
+      </Chip>
     );
-  if (source === "builtin") return <Badge title="Ships with Acnologia">builtin</Badge>;
-  return <Badge tone="blue">manual</Badge>;
+  if (source === "builtin")
+    return (
+      <Chip variant="caption" color="neutral" title="Ships with Acnologia" className="font-mono">
+        builtin
+      </Chip>
+    );
+  return (
+    <Chip variant="caption" color="blue" className="font-mono">
+      manual
+    </Chip>
+  );
 }
 
 function ProviderCard({ p }: { p: Provider }) {
@@ -31,34 +67,54 @@ function ProviderCard({ p }: { p: Provider }) {
     <Link
       to={`/providers/${encodeURIComponent(p.slug)}`}
       className={cx(
-        "group flex flex-col gap-3 rounded-card p-4 transition-[box-shadow,transform,background-color] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift",
-        idle ? "bg-surface/55 shadow-none ring-1 ring-inset ring-line hover:bg-surface" : "bg-surface shadow-card",
+        "group flex flex-col gap-3 rounded-3xl border p-5 outline-none",
+        "transition-[background-color,border-color] duration-150 ease",
+        "focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+        idle
+          ? "border-border-button-default bg-background-primary-default/50 hover:border-border-button-hover hover:bg-background-primary-default"
+          : "border-border-button-default bg-background-primary-default hover:border-border-button-hover active:bg-background-primary-active",
       )}
     >
       <div className="flex items-start gap-3.5">
-        <span className={cx("shrink-0", idle && "grayscale opacity-50 transition-[filter,opacity] duration-200 ease-out group-hover:grayscale-0 group-hover:opacity-100 group-focus-visible:grayscale-0 group-focus-visible:opacity-100")}>
+        <span
+          className={cx(
+            "shrink-0",
+            idle &&
+              "opacity-50 grayscale transition-[filter,opacity] duration-200 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 group-focus-visible:grayscale-0",
+          )}
+        >
           <ProviderLogo provider={p} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={disabled || idle ? "truncate text-[15px] font-medium text-muted" : "truncate text-[15px] font-medium text-ink"}>{p.name}</span>
-            {disabled && <Badge>disabled</Badge>}
+            <span className={cx("truncate text-body-medium", disabled || idle ? "text-text-secondary" : "text-text-primary")}>{p.name}</span>
+            {disabled && <Chip variant="caption" color="yellow">disabled</Chip>}
           </div>
-          <div className="mt-1 truncate font-mono text-xs text-muted">
+          <div className="mt-0.5 truncate font-mono text-caption-1-regular text-text-secondary">
             {p.slug} · {p.category || "Other"} · v{p.version}
           </div>
         </div>
       </div>
-      {p.description && <p className="line-clamp-2 text-[13px] leading-relaxed text-muted">{p.description}</p>}
-      <div className="mt-auto flex items-center gap-2 border-t border-line pt-3">
+      {p.description && <p className="line-clamp-2 text-body-2-regular text-text-secondary">{p.description}</p>}
+      <div className="mt-auto flex items-center gap-2 border-t border-separator-border pt-3">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <SourceBadge source={p.source} />
-          <Badge tone={p.services_count > 0 ? "green" : "neutral"}>{plural(p.services_count, "service")}</Badge>
-          {idle ? <Badge>No keys</Badge> : <Badge tone="green">{plural(p.keys_count, "key")}</Badge>}
+          <Chip variant="caption" color={p.services_count > 0 ? "lime" : "neutral"} className="font-mono">
+            {plural(p.services_count, "service")}
+          </Chip>
+          {idle ? (
+            <Chip variant="caption" color="neutral" className="font-mono">
+              No keys
+            </Chip>
+          ) : (
+            <Chip variant="caption" color="lime" className="font-mono">
+              {plural(p.keys_count, "key")}
+            </Chip>
+          )}
         </div>
-        {/* Short, so it stays on the badge row instead of wrapping to a line of its own. */}
+        {/* Short, so it stays on the chip row instead of wrapping to a line of its own. */}
         {p.updated_at && (
-          <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-faint" title={`Updated ${dateTime(p.updated_at)}`}>
+          <span className="shrink-0 whitespace-nowrap font-mono text-caption-2-regular text-text-tertiary" title={`Updated ${dateTime(p.updated_at)}`}>
             {relTime(p.updated_at)}
           </span>
         )}
@@ -101,22 +157,16 @@ export function ProvidersPage() {
   ];
   const shown = tab === ALL ? filtered : filtered.filter((p) => p.source === tab);
 
-  if (!loaded) return <PageSkeleton />;
+  if (!loaded) return <PageSkeleton variant="grid" />;
 
   const actions = manage ? (
     <>
-      <Link
-        to="/providers/new"
-        className="tap inline-flex h-10 items-center gap-2 rounded-full bg-surface px-4 text-sm font-medium text-ink shadow-card transition-colors hover:bg-soft"
-      >
-        <Plus className="h-4 w-4" /> New provider
-      </Link>
-      <Link
-        to="/providers/ai"
-        className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-on-ink transition-colors hover:bg-ink-strong"
-      >
-        <Sparkles className="h-4 w-4 text-spark" /> Build with AI
-      </Link>
+      <RouteButton to="/providers/new" variant="secondary" leadingIcon={RiAddLine}>
+        New provider
+      </RouteButton>
+      <RouteButton to="/providers/ai" variant="primary" leadingIcon={RiSparkling2Line}>
+        Build with AI
+      </RouteButton>
     </>
   ) : undefined;
 
@@ -129,54 +179,64 @@ export function ProvidersPage() {
       />
 
       {error && providers.length === 0 && (
-        <Callout tone="red" className="mb-6">
+        <Callout tone="error" className="mb-6">
           Could not load providers: {error}
         </Callout>
       )}
 
-      <div className="relative max-w-[760px]">
-        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search providers"
-          enterKeyHint="search"
-          aria-label="Search providers"
-          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-hidden focus:ring-2 focus:ring-ink/20"
-        />
-      </div>
+      <SearchField
+        aria-label="Search providers"
+        placeholder="Search providers"
+        icon={RiSearchLine}
+        value={q}
+        onChange={setQ}
+        enterKeyHint="search"
+        className="max-w-[760px]"
+        // On the bare page the field needs the card surface to read as a field.
+        fieldClassName="h-11 border border-border-button-default bg-background-primary-default shadow-xs"
+      />
 
-      <Tabs className="mt-8" items={tabs} value={tab} onChange={setTab} />
-
-      {providers.length === 0 ? (
-        <Empty
-          className="mt-8"
-          icon={<Blocks className="h-5 w-5" />}
-          title="No providers yet"
-          body="A provider tells Acnologia how an API signals rate limits and quota. Build one with AI from a name or docs URL, or write the rules yourself."
-          action={actions}
-        />
-      ) : shown.length === 0 ? (
-        <Empty
-          className="mt-8"
-          title={q ? `Nothing matches "${q}"` : "None in this group yet"}
-          body={manage ? "Try another search, or build the provider with AI." : "Try another search."}
-          action={
-            manage ? (
-              <Link to="/providers/ai" className="tap inline-flex h-10 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-on-ink hover:bg-ink-strong">
-                <Sparkles className="h-4 w-4" /> Build with AI
-              </Link>
-            ) : undefined
-          }
-        />
-      ) : (
-        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map((p) => (
-            <ProviderCard key={p.slug} p={p} />
-          ))}
+      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))} className="mt-8 gap-0">
+        <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] sm:mx-0 sm:px-0">
+          <TabList aria-label="Provider source" className="w-max min-w-full">
+            {tabs.map((t) => (
+              <Tab key={t.id} id={t.id} count={t.count}>
+                {t.label}
+              </Tab>
+            ))}
+          </TabList>
         </div>
-      )}
+        <TabPanel id={tab}>
+        {providers.length === 0 ? (
+          <EmptyState
+            className="mt-8"
+            icon={RiPlugLine}
+            title="No providers yet"
+            body="A provider tells Acnologia how an API signals rate limits and quota. Build one with AI from a name or docs URL, or write the rules yourself."
+            action={actions}
+          />
+        ) : shown.length === 0 ? (
+          <EmptyState
+            className="mt-8"
+            title={q ? `Nothing matches "${q}"` : "None in this group yet"}
+            body={manage ? "Try another search, or build the provider with AI." : "Try another search."}
+            action={
+              manage ? (
+                <RouteButton to="/providers/ai" variant="primary" leadingIcon={RiSparkling2Line}>
+                  Build with AI
+                </RouteButton>
+              ) : undefined
+            }
+          />
+        ) : (
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {shown.map((p) => (
+              <ProviderCard key={p.slug} p={p} />
+            ))}
+          </div>
+        )}
+        </TabPanel>
+      </Tabs>
     </div>
   );
 }

@@ -1,6 +1,40 @@
-import { cloneElement, forwardRef, type KeyboardEvent, isValidElement, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactElement, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
-import { Loader2 } from "lucide-react";
+/**
+ * Legacy primitives, kept as thin adapters over BoardUI and components/acn so
+ * pages that have not migrated keep rendering with the new look. Same exports
+ * and props as before. New code imports BoardUI and acn directly; this file
+ * goes away once nothing imports it.
+ */
+import {
+  cloneElement,
+  forwardRef,
+  isValidElement,
+  useId,
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactElement,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from "react";
+import { Button as BoardButton } from "@/components/base/buttons/button";
+import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Skeleton as BoardSkeleton } from "@/components/base/skeleton/skeleton";
+import { Spinner as BoardSpinner, SpinnerGlyph, ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Switch } from "@/components/base/switch/switch";
+import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
+import { hintTextClassName } from "@/components/base/input/hint-text";
+import { Callout as AcnCallout, type CalloutTone } from "@/components/acn/callout";
+import { EmptyState } from "@/components/acn/empty-state";
+import { PageHeader as AcnPageHeader } from "@/components/acn/page-header";
+import { PageSkeleton as AcnPageSkeleton } from "@/components/acn/page-skeleton";
+import { Section as AcnSection } from "@/components/acn/section";
+import { StatTile, type StatTone } from "@/components/acn/stat-tile";
+import { cx as mergeCx } from "@/utils/cx";
 
+/**
+ * Retired: plain class join kept for unmigrated callers. New code uses `cx`
+ * from `@/utils/cx`, which also merges conflicting Tailwind classes.
+ */
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
@@ -8,22 +42,11 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md";
 
-const variants: Record<Variant, string> = {
-  primary: "bg-ink text-on-ink hover:bg-ink-strong disabled:bg-well disabled:text-faint",
-  secondary: "bg-surface text-ink shadow-card hover:bg-soft disabled:text-faint",
-  ghost: "text-muted hover:text-ink hover:bg-ink/[0.05] disabled:text-faint",
-  danger: "bg-red-600 text-on-ink hover:bg-red-600/90 disabled:bg-well disabled:text-faint",
-};
-
-const sizes: Record<Size, string> = {
-  sm: "h-8 px-3 text-[13px] gap-1.5",
-  md: "h-10 px-4 text-sm gap-2",
-};
-
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: Size;
   loading?: boolean;
+  /** Legacy: an icon element. New code passes `leadingIcon` to the BoardUI Button. */
   icon?: ReactNode;
 }
 
@@ -31,22 +54,28 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   { variant = "secondary", size = "md", loading, icon, className, children, disabled, type = "button", ...rest },
   ref,
 ) {
+  const lead = loading ? null : icon;
   return (
-    <button
+    <BoardButton
       ref={ref}
       type={type}
+      variant={variant}
+      size={size === "sm" ? "small" : "medium"}
       disabled={disabled || loading}
-      className={cx(
-        "tap inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:active:scale-100",
-        variants[variant],
-        sizes[size],
-        className,
-      )}
+      aria-busy={loading || undefined}
+      leadingIcon={loading ? ButtonSpinner : undefined}
+      className={mergeCx("[&_svg]:shrink-0", className)}
       {...rest}
     >
-      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
-      {children}
-    </button>
+      {lead ? (
+        <span className="inline-flex items-center gap-1.5 [&>svg]:size-4">
+          {lead}
+          {children}
+        </span>
+      ) : (
+        children
+      )}
+    </BoardButton>
   );
 });
 
@@ -57,47 +86,42 @@ export function IconButton({
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
   return (
-    <button
-      type="button"
+    <BoardButton
+      variant="ghost"
+      size="small"
       aria-label={label}
       title={label}
-      className={cx(
-        "icon-btn inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-ink/[0.06] hover:text-ink active:scale-[0.94] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100",
-        className,
-      )}
+      className={mergeCx("size-8 justify-center p-0 text-foreground-icon-secondary hover:text-foreground-icon-primary [&_svg]:size-4", className)}
       {...rest}
     >
       {children}
-    </button>
+    </BoardButton>
   );
 }
 
-const fieldBase =
-  "field-input rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/60 focus:outline-hidden focus:ring-2 focus:ring-ink/20 disabled:bg-canvas disabled:text-muted";
+/** BoardUI field look on a native control, so `onChange(e)` callers keep working. */
+const fieldBase = [
+  "w-full min-w-0 rounded-2lg bg-background-tertiary-default px-3 text-body-regular text-text-primary",
+  "ring-1 ring-inset ring-input-idle-ring outline-none transition-[background-color,box-shadow] duration-150 ease",
+  "placeholder:text-text-tertiary hover:ring-border-button-hover focus:ring-2 focus:ring-border-button-active",
+  "disabled:cursor-not-allowed disabled:bg-input-disabled-background disabled:text-input-disabled-text",
+  "aria-invalid:bg-background-tertiary-error aria-invalid:ring-border-error-default",
+].join(" ");
 
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
-  { className, ...rest },
-  ref,
-) {
-  return (
-    <input
-      ref={ref}
-      className={cx(fieldBase, "h-10", rest["aria-invalid"] ? "border-red-400 focus:border-red-500 focus:ring-red-500/15" : "", className)}
-      {...rest}
-    />
-  );
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
+  return <input ref={ref} className={cx(fieldBase, "h-9", className)} {...rest} />;
 });
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea(
   { className, ...rest },
   ref,
 ) {
-  return <textarea ref={ref} className={cx(fieldBase, "py-2.5", className)} {...rest} />;
+  return <textarea ref={ref} className={cx(fieldBase, "py-2", className)} {...rest} />;
 });
 
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select className={cx(fieldBase, "h-10 appearance-none bg-[length:16px] pr-8", "select-chevron", className)} {...rest}>
+    <select className={cx(fieldBase, "select-chevron h-9 cursor-pointer appearance-none bg-[length:16px] pe-8", className)} {...rest}>
       {children}
     </select>
   );
@@ -124,31 +148,32 @@ export function Field({
   const describedBy = [hint ? hintId : "", error ? errId : ""].filter(Boolean).join(" ") || undefined;
   // Wire the control to its label, hint and error without each caller passing ids.
   const control = isValidElement(children) ? (children as ReactElement<Record<string, unknown>>) : null;
+  const controlId = control ? ((control.props as { id?: string }).id ?? id) : undefined;
   const wired = control
     ? cloneElement(control, {
-        id: (control.props as { id?: string }).id ?? id,
+        id: controlId,
         "aria-describedby": describedBy,
         "aria-invalid": error ? true : (control.props as { "aria-invalid"?: boolean })["aria-invalid"],
       })
     : children;
   return (
-    <div className={cx("block min-w-0", className)}>
-      <label htmlFor={control ? ((control.props as { id?: string }).id ?? id) : undefined} className="mb-1.5 block text-[13px] font-medium text-ink">
+    <div className={cx("flex min-w-0 flex-col gap-1", className)}>
+      <label htmlFor={controlId} className="flex items-center gap-0.5 text-body-medium text-text-primary">
         {label}
         {required && (
-          <span className="ml-0.5 text-brand" aria-hidden="true">
+          <span className="text-text-error-primary" aria-hidden="true">
             *
           </span>
         )}
       </label>
       {wired}
       {error ? (
-        <span id={errId} role="alert" className="mt-1 block text-xs text-red-700">
+        <span id={errId} role="alert" className={hintTextClassName(true)}>
           {error}
         </span>
       ) : (
         hint && (
-          <span id={hintId} className="mt-1 block text-xs leading-relaxed text-muted">
+          <span id={hintId} className={hintTextClassName(false)}>
             {hint}
           </span>
         )
@@ -173,100 +198,55 @@ export function Toggle({
   disabled?: boolean;
   /** Accessible name when there is no visible label. */
   ariaLabel?: string;
-  /**
-   * Short state text shown beside a bare switch, such as "Active" or "Paused".
-   * Clicking it toggles. With an ariaLabel it is hidden from assistive tech so
-   * the name is not read twice; without one it names the switch.
-   */
+  /** Short state text beside a bare switch, such as "Active" or "Paused". Pressing it toggles. */
   caption?: ReactNode;
 }) {
-  const sw = (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label ?? ariaLabel}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={cx(
-        "switch-hit relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-ink" : "bg-line-strong ring-1 ring-inset ring-faint",
-      )}
-    >
-      <span
-        className={cx(
-          "inline-block h-4 w-4 rounded-full shadow-sm transition-transform duration-200 ease-out",
-          // The knob contrasts with the track in both themes: surface on ink when on, white on gray when off.
-          checked ? "bg-surface" : "bg-white",
-          checked ? "translate-x-[18px]" : "translate-x-0.5",
-        )}
-      />
-    </button>
-  );
   if (!label && caption != null)
     return (
-      <label className={cx("inline-flex select-none items-center gap-2", disabled ? "cursor-not-allowed" : "cursor-pointer")}>
-        <span aria-hidden={ariaLabel ? true : undefined} className={cx("text-xs transition-colors duration-150", disabled ? "text-faint" : "text-muted")}>
+      <Switch isSelected={checked} onChange={onChange} isDisabled={disabled} aria-label={ariaLabel} size="sm" className="flex-row-reverse">
+        <span aria-hidden={ariaLabel ? true : undefined} className="text-caption-1-regular text-text-secondary">
           {caption}
         </span>
-        {sw}
-      </label>
+      </Switch>
     );
-  if (!label) return sw;
+  if (!label) return <Switch isSelected={checked} onChange={onChange} isDisabled={disabled} aria-label={ariaLabel} size="sm" />;
   return (
     <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0 cursor-pointer" onClick={() => !disabled && onChange(!checked)}>
-        <div className="text-[13px] font-medium text-ink">{label}</div>
-        {description && <div className="mt-0.5 text-xs leading-relaxed text-muted">{description}</div>}
+      <div className={cx("min-w-0", !disabled && "cursor-pointer")} onClick={() => !disabled && onChange(!checked)}>
+        <div className="text-body-2-medium text-text-primary">{label}</div>
+        {description && <div className="mt-0.5 text-caption-1-regular text-text-secondary">{description}</div>}
       </div>
-      {sw}
+      <Switch isSelected={checked} onChange={onChange} isDisabled={disabled} aria-label={label} size="sm" />
     </div>
   );
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cx("rounded-card bg-surface shadow-card", className)}>{children}</div>;
+  return <div className={mergeCx("rounded-3xl border border-border-button-default bg-background-primary-default", className)}>{children}</div>;
 }
 
 type BadgeTone = "neutral" | "green" | "amber" | "red" | "blue" | "violet" | "dark";
 
-const tones: Record<BadgeTone, string> = {
-  neutral: "bg-well text-muted",
-  green: "bg-emerald-50 text-emerald-700",
-  amber: "bg-amber-50 text-amber-700",
-  red: "bg-red-50 text-red-700",
-  blue: "bg-sky-50 text-sky-700",
-  violet: "bg-violet-50 text-violet-700",
-  dark: "bg-ink/[0.12] font-medium text-ink",
+const BADGE_COLOR: Record<BadgeTone, ChipColor> = {
+  neutral: "neutral",
+  green: "lime",
+  amber: "yellow",
+  red: "rose",
+  blue: "blue",
+  violet: "purple",
+  dark: "gray",
 };
 
-export function Badge({
-  tone = "neutral",
-  children,
-  className,
-  title,
-}: {
-  tone?: BadgeTone;
-  children: ReactNode;
-  className?: string;
-  title?: string;
-}) {
+export function Badge({ tone = "neutral", children, className, title }: { tone?: BadgeTone; children: ReactNode; className?: string; title?: string }) {
   return (
-    <span
-      title={title}
-      className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-mono text-[11px] leading-4",
-        tones[tone],
-        className,
-      )}
-    >
+    <Chip variant="caption" color={BADGE_COLOR[tone]} title={title} className={mergeCx("gap-1 py-0.5 font-mono", className)}>
       {children}
-    </span>
+    </Chip>
   );
 }
 
 export function Meta({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cx("font-mono text-xs text-muted", className)}>{children}</div>;
+  return <div className={cx("font-mono text-caption-1-regular text-text-secondary", className)}>{children}</div>;
 }
 
 export function Empty({
@@ -282,122 +262,40 @@ export function Empty({
   body?: ReactNode;
   action?: ReactNode;
   className?: string;
-  /** Smaller padding, icon and type, for sidebars and narrow panels. */
   compact?: boolean;
 }) {
-  return (
-    <div
-      className={cx(
-        "flex flex-col items-center border border-dashed border-line-strong text-center",
-        compact ? "rounded-xl px-3 py-4" : "rounded-card px-6 py-12",
-        className,
-      )}
-    >
-      {icon && (
-        <div
-          className={cx(
-            "flex items-center justify-center bg-surface text-muted shadow-card",
-            compact ? "mb-2 h-7 w-7 rounded-lg [&>svg]:h-3.5 [&>svg]:w-3.5" : "mb-3 h-10 w-10 rounded-xl",
-          )}
-        >
-          {icon}
-        </div>
-      )}
-      <div className={cx("font-medium text-ink", compact ? "text-[13px]" : "text-[15px]")}>{title}</div>
-      {body && <div className={cx("mt-1 max-w-md text-muted", compact ? "text-xs leading-relaxed" : "text-sm")}>{body}</div>}
-      {action && <div className={cx("flex flex-wrap justify-center gap-2", compact ? "mt-3" : "mt-5")}>{action}</div>}
-    </div>
-  );
+  return <EmptyState icon={icon} title={title} body={body} action={action} className={className} compact={compact} />;
 }
 
 export function Spinner({ className }: { className?: string }) {
-  return <Loader2 className={cx("h-4 w-4 animate-spin text-muted", className)} />;
+  const big = /\bh-(5|6)\b/.test(className ?? "");
+  return <SpinnerGlyph size={big ? "md" : "sm"} className={cx("text-text-tertiary", className?.replace(/\b[hw]-[\d.]+\b/g, ""))} />;
 }
 
 export function PageLoading({ label = "Loading" }: { label?: string }) {
   return (
     <div className="flex items-center justify-center py-24" role="status" aria-live="polite">
-      <Spinner className="h-5 w-5" />
-      <span className="sr-only">{label}</span>
+      <BoardSpinner size="md" aria-label={label} />
     </div>
   );
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div aria-hidden="true" className={cx("skeleton rounded-lg", className)} />;
+  return <BoardSkeleton className={mergeCx("rounded-lg", className)} />;
 }
 
-/** Placeholder for a page: header line, a row of tiles and a list or grid. */
-export function PageSkeleton({ variant = "grid", tiles = 0, bare }: { variant?: "grid" | "list"; tiles?: number; bare?: boolean }) {
-  return (
-    <div role="status" aria-live="polite" aria-busy="true" className={bare ? "-mt-8" : undefined}>
-      <span className="sr-only">Loading</span>
-      {!bare && (
-        <>
-          <Skeleton className="h-8 w-64 max-w-full" />
-          <Skeleton className="mt-3 h-3 w-48" />
-        </>
-      )}
-      {tiles > 0 && (
-        <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: tiles }).map((_, i) => (
-            <Skeleton key={i} className="h-[66px] rounded-card" />
-          ))}
-        </div>
-      )}
-      {variant === "grid" ? (
-        <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3.5 rounded-card bg-surface px-4 py-4 shadow-card">
-              <Skeleton className="h-10 w-10 rounded-[11px]" />
-              <div className="flex-1">
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="mt-2 h-3 w-4/5" />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-8 space-y-2.5">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-card bg-surface p-4 shadow-card">
-              <Skeleton className="h-4 w-40" />
-              <Skeleton className="mt-2 h-3 w-3/4" />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+export const PageSkeleton = AcnPageSkeleton;
+
+export function Section(props: { title: ReactNode; description?: ReactNode; actions?: ReactNode; children?: ReactNode; className?: string }) {
+  return <AcnSection {...props} />;
 }
 
-/** A titled card section with optional actions, used for settings and editors. */
-export function Section({
-  title,
-  description,
-  actions,
-  children,
-  className,
-}: {
-  title: ReactNode;
-  description?: ReactNode;
-  actions?: ReactNode;
-  children?: ReactNode;
-  className?: string;
-}) {
-  return (
-    <section className={cx("rounded-card bg-surface p-5 shadow-card sm:p-6", className)}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
-          {description && <p className="mt-0.5 max-w-2xl text-[13px] leading-relaxed text-muted">{description}</p>}
-        </div>
-        {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}
-      </div>
-      {children && <div className="mt-5">{children}</div>}
-    </section>
-  );
-}
+const CALLOUT_TONE: Record<"neutral" | "amber" | "red" | "green", CalloutTone> = {
+  neutral: "neutral",
+  amber: "warning",
+  red: "error",
+  green: "success",
+};
 
 export function Callout({
   tone = "neutral",
@@ -410,39 +308,24 @@ export function Callout({
   children: ReactNode;
   className?: string;
 }) {
-  const t = {
-    neutral: "bg-soft text-muted border-line",
-    amber: "bg-amber-50 text-amber-900 border-amber-200/70",
-    red: "bg-red-50 text-red-800 border-red-200/70",
-    green: "bg-emerald-50 text-emerald-900 border-emerald-200/70",
-  }[tone];
   return (
-    <div className={cx("flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[13px] leading-relaxed", t, className)}>
-      {icon && <span className="mt-0.5 shrink-0">{icon}</span>}
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
+    <AcnCallout tone={CALLOUT_TONE[tone]} icon={icon ?? false} className={className}>
+      {children}
+    </AcnCallout>
   );
 }
 
-export function PageHeader({
-  title,
-  meta,
-  actions,
-}: {
-  title: ReactNode;
-  meta?: ReactNode;
-  actions?: ReactNode;
-}) {
-  return (
-    <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div className="min-w-0">
-        <h1 className="font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">{title}</h1>
-        {meta && <Meta className="mt-2">{meta}</Meta>}
-      </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
-    </div>
-  );
+export function PageHeader({ title, meta, actions }: { title: ReactNode; meta?: ReactNode; actions?: ReactNode }) {
+  return <AcnPageHeader title={title} meta={meta} actions={actions} />;
 }
+
+const STAT_TONE: Record<"green" | "amber" | "red" | "neutral" | "violet", StatTone> = {
+  green: "success",
+  amber: "warning",
+  red: "error",
+  neutral: "neutral",
+  violet: "accent",
+};
 
 export function Stat({
   label,
@@ -457,23 +340,7 @@ export function Stat({
   sub?: ReactNode;
   className?: string;
 }) {
-  const color =
-    tone === "green"
-      ? "text-emerald-700"
-      : tone === "amber"
-        ? "text-amber-700"
-        : tone === "red"
-          ? "text-red-700"
-          : tone === "violet"
-            ? "text-violet-700"
-            : "text-ink";
-  return (
-    <div className={cx("min-w-0 rounded-card bg-surface px-4 py-3 shadow-card", className)}>
-      <div className="truncate font-mono text-[11px] uppercase tracking-wide text-faint">{label}</div>
-      <div className={cx("mt-1 font-mono text-xl tabular-nums", color)}>{value}</div>
-      {sub && <div className="mt-0.5 truncate font-mono text-[11px] text-faint">{sub}</div>}
-    </div>
-  );
+  return <StatTile label={label} value={value} sub={sub} tone={tone ? STAT_TONE[tone] : "neutral"} className={className} />;
 }
 
 export interface SegmentItem<T extends string> {
@@ -482,7 +349,7 @@ export interface SegmentItem<T extends string> {
   icon?: ReactNode;
 }
 
-/** Segmented control with radio semantics. Arrow keys move the selection. */
+/** Segmented control with single selection. Arrow keys move between segments. */
 export function Segmented<T extends string>({
   items,
   value,
@@ -498,43 +365,29 @@ export function Segmented<T extends string>({
   label: string;
   className?: string;
   size?: "sm" | "md";
-  /** Fill the row: segments share the full width. Pair with a breakpoint class such as `sm:inline-flex sm:w-auto` to fill only on phones. */
+  /** Fill the row: segments share the full width. */
   block?: boolean;
 }) {
-  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
-    let j = -1;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % items.length;
-    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + items.length) % items.length;
-    if (j < 0) return;
-    e.preventDefault();
-    onChange(items[j].id);
-    const group = e.currentTarget.parentElement;
-    (group?.children[j] as HTMLElement | undefined)?.focus();
-  };
   return (
-    <div role="radiogroup" aria-label={label} className={cx(block ? "flex w-full" : "inline-flex", "max-w-full rounded-full bg-well p-0.5", className)}>
-      {items.map((it, i) => {
-        const on = it.id === value;
-        return (
-          <button
-            key={it.id}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            tabIndex={on ? 0 : -1}
-            onClick={() => onChange(it.id)}
-            onKeyDown={(e) => onKey(e, i)}
-            className={cx(
-              "tap inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full transition-[background-color,color,box-shadow] duration-150",
-              size === "sm" ? "px-2.5 py-1 text-[12px]" : "px-3 py-1.5 text-[13px]",
-              on ? "bg-surface font-medium text-ink shadow-card" : "text-muted hover:text-ink",
-            )}
-          >
-            {it.icon}
-            {it.label}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      aria-label={label}
+      selectedKeys={[value]}
+      onSelectionChange={(keys) => {
+        const next = [...keys][0] as T | undefined;
+        if (next !== undefined) onChange(next);
+      }}
+      className={mergeCx(block ? "flex w-full" : "inline-flex", "max-w-full", className)}
+    >
+      {items.map((it) => (
+        <SegmentedControlItem
+          key={it.id}
+          id={it.id}
+          className={cx("min-w-0 flex-1 gap-1.5 [&>svg]:size-3.5 [&>svg]:shrink-0", size === "sm" && "px-2 py-0.5 text-caption-1-medium")}
+        >
+          {it.icon}
+          {it.label}
+        </SegmentedControlItem>
+      ))}
+    </SegmentedControl>
   );
 }

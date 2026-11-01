@@ -1,11 +1,38 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, CheckCircle2, ChevronDown, Copy, FlaskConical, ListOrdered, Plus, Trash2, XCircle } from "lucide-react";
+import { cloneElement, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import {
+  RiAddLine,
+  RiArrowDownLine,
+  RiArrowDownSLine,
+  RiArrowRightLine,
+  RiArrowUpLine,
+  RiCheckboxCircleFill,
+  RiCloseCircleFill,
+  RiDeleteBinLine,
+  RiFileCopyLine,
+  RiFlaskLine,
+  RiListOrdered2,
+} from "@remixicon/react";
+import { Focusable } from "react-aria-components";
+import type { ComponentType } from "react";
 import type { AuthType, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecRule, Strategy, TestReport } from "../../lib/types";
 import { OUTCOMES } from "../../lib/types";
 import { STRATEGY_HELP } from "../../lib/format";
 import { ConcurrencyFields, StrategySelect } from "../../components/ServiceForm";
 import { JsonTextarea, KeyValueEditor, ListInput, MatchEditor, OptionalNumberInput } from "../../components/SpecInputs";
-import { Badge, Button, Empty, Field, IconButton, Input, Section, Select, Textarea, Toggle, cx } from "../../components/ui";
+import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/base/buttons/icon-button";
+import { TextField, InputBase, type InputBaseProps } from "@/components/base/input/input";
+import { Label } from "@/components/base/input/label";
+import { hintTextClassName } from "@/components/base/input/hint-text";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { Switch } from "@/components/base/switch/switch";
+import { TextareaBase } from "@/components/base/textarea/textarea";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
+import { cx } from "@/utils/cx";
+import { EmptyState, Section } from "@/components/acn";
+
+type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
 
 export interface SpecTabProps {
   spec: ProviderSpec;
@@ -23,18 +50,212 @@ const OUTCOME_LABEL: Record<Outcome, string> = {
   error: "error (provider problem, key keeps working)",
 };
 
-const OUTCOME_TONE: Record<string, "green" | "amber" | "red" | "neutral"> = {
-  ok: "green",
-  rate_limited: "amber",
-  busy: "amber",
-  quota_exhausted: "amber",
-  invalid: "red",
-  banned: "red",
+const OUTCOME_TONE: Record<string, ChipColor> = {
+  ok: "lime",
+  rate_limited: "yellow",
+  busy: "yellow",
+  quota_exhausted: "yellow",
+  invalid: "rose",
+  banned: "rose",
   error: "neutral",
 };
 
 export function OutcomeBadge({ outcome }: { outcome: string }) {
-  return <Badge tone={OUTCOME_TONE[outcome] ?? "neutral"}>{outcome.replace("_", " ") || "none"}</Badge>;
+  return (
+    <Chip variant="caption" color={OUTCOME_TONE[outcome] ?? "neutral"} className="font-mono">
+      {outcome.replace("_", " ") || "none"}
+    </Chip>
+  );
+}
+
+// ---------------------------------------------------------------- Fields
+
+/** Mono, small eyebrow above a group of fields. */
+const LEGEND = "mb-1 text-caption-2-semibold uppercase text-text-tertiary";
+
+/**
+ * A text field: BoardUI TextField, Label, InputBase and hint, composed here so
+ * native input attributes (min, step, spellCheck) still reach the input.
+ */
+function TextInput({
+  label,
+  hint,
+  isRequired,
+  mono,
+  value,
+  onChange,
+  disabled,
+  className,
+  ...input
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  isRequired?: boolean;
+  mono?: boolean;
+  value: string | number;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  className?: string;
+} & Omit<InputBaseProps, "value" | "onChange" | "disabled" | "className">) {
+  return (
+    <TextField
+      value={String(value)}
+      onChange={onChange}
+      isDisabled={disabled}
+      isRequired={isRequired}
+      inputClassName={mono ? "font-mono" : undefined}
+      className={cx("min-w-0", className)}
+    >
+      <Label isRequired={isRequired}>{label}</Label>
+      <InputBase {...input} />
+      {hint && <p className={hintTextClassName(false)}>{hint}</p>}
+    </TextField>
+  );
+}
+
+/**
+ * Label and hint around a control that is not a BoardUI field (the shared
+ * spec inputs, the strategy select). The control gets the id and the hint id.
+ */
+function FieldShell({ label, hint, children, className }: { label: ReactNode; hint?: ReactNode; children: ReactElement<Record<string, unknown>>; className?: string }) {
+  const id = useId();
+  const hintId = `${id}-hint`;
+  const control = cloneElement(children, { id, "aria-describedby": hint ? hintId : undefined });
+  return (
+    <div className={cx("flex min-w-0 flex-col gap-1", className)}>
+      <Label htmlFor={id}>{label}</Label>
+      {control}
+      {hint && (
+        <p id={hintId} className={hintTextClassName(false)}>
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** BoardUI Select with string keys, a label and an optional hint. */
+function SelectField({
+  label,
+  hint,
+  value,
+  onChange,
+  options,
+  disabled,
+  className,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ id: string; label: string }>;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const hintId = useId();
+  return (
+    <div className={cx("flex min-w-0 flex-col gap-1", className)}>
+      <Select
+        label={label}
+        selectedKey={value}
+        onSelectionChange={(k) => k != null && onChange(String(k))}
+        isDisabled={disabled}
+        aria-describedby={hint ? hintId : undefined}
+        className="w-full"
+        popoverClassName="w-(--trigger-width) min-w-[240px]"
+      >
+        {options.map((o) => (
+          <SelectItem key={o.id} id={o.id} textValue={o.label}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </Select>
+      {hint && (
+        <p id={hintId} className={hintTextClassName(false)}>
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A labelled switch row with a description under the label. */
+function ToggleRow({
+  label,
+  description,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
+  const descId = useId();
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <Switch
+        size="sm"
+        isSelected={checked}
+        onChange={onChange}
+        isDisabled={disabled}
+        aria-describedby={description ? descId : undefined}
+        className="w-full flex-row-reverse justify-between gap-4"
+      >
+        {label}
+      </Switch>
+      {description && (
+        <p id={descId} className="max-w-2xl pe-14 text-caption-1-regular text-text-secondary">
+          {description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A small subheading for a sub editor (query parameters, headers). */
+function SubLabel({ children }: { children: ReactNode }) {
+  return <div className="mb-1.5 text-body-medium text-text-primary">{children}</div>;
+}
+
+/** Icon only button with a tooltip and a 44px hit area. */
+function RowIconButton({
+  icon,
+  label,
+  onClick,
+  disabled,
+  danger,
+  move,
+}: {
+  icon: IconComponent;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  /** Marks the up and down arrows, so focus can return to them after a move. */
+  move?: boolean;
+}) {
+  const button = (
+    <IconButton
+      icon={icon}
+      size="small"
+      aria-label={label}
+      data-move={move ? "" : undefined}
+      disabled={disabled}
+      onClick={onClick}
+      className={cx("after:absolute after:-inset-1.5 after:content-['']", danger && "hover:text-text-error-primary")}
+    />
+  );
+  // A disabled button cannot take focus, so it gets no tooltip.
+  if (disabled) return button;
+  return (
+    <TooltipTrigger delay={400}>
+      <Focusable>{button}</Focusable>
+      <Tooltip>{label}</Tooltip>
+    </TooltipTrigger>
+  );
 }
 
 function move<T>(list: T[], i: number, d: -1 | 1): T[] {
@@ -146,22 +367,17 @@ function ItemControls({
   disabled?: boolean;
 }) {
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-0.5">
-      <IconButton data-move label={`Move ${label} up`} disabled={disabled || index === 0} onClick={() => onMove(-1)}>
-        <ArrowUp className="h-4 w-4" />
-      </IconButton>
-      <IconButton data-move label={`Move ${label} down`} disabled={disabled || index === count - 1} onClick={() => onMove(1)}>
-        <ArrowDown className="h-4 w-4" />
-      </IconButton>
-      <IconButton label={`Duplicate ${label}`} disabled={disabled} onClick={onDuplicate}>
-        <Copy className="h-4 w-4" />
-      </IconButton>
-      <IconButton label={`Delete ${label}`} disabled={disabled} onClick={onRemove} className="hover:text-red-700">
-        <Trash2 className="h-4 w-4" />
-      </IconButton>
+    <div className="ms-auto flex shrink-0 items-center gap-1.5">
+      <RowIconButton move icon={RiArrowUpLine} label={`Move ${label} up`} disabled={disabled || index === 0} onClick={() => onMove(-1)} />
+      <RowIconButton move icon={RiArrowDownLine} label={`Move ${label} down`} disabled={disabled || index === count - 1} onClick={() => onMove(1)} />
+      <RowIconButton icon={RiFileCopyLine} label={`Duplicate ${label}`} disabled={disabled} onClick={onDuplicate} />
+      <RowIconButton danger icon={RiDeleteBinLine} label={`Delete ${label}`} disabled={disabled} onClick={onRemove} />
     </div>
   );
 }
+
+/** The card an ordered list item sits in. */
+const ITEM_CARD = "rounded-3xl border border-border-button-default bg-background-primary-default";
 
 // ---------------------------------------------------------------- Connection
 
@@ -178,92 +394,114 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
     set({ quota: { ...quota, headers: Object.keys(next).length ? next : undefined } });
   };
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <Section title="Upstream" description="Where requests go and where the key goes on each request.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Base URL" required className="sm:col-span-3">
-            <Input
-              type="url"
-              inputMode="url"
-              value={spec.base_url}
-              disabled={readOnly}
-              onChange={(e) => set({ base_url: e.target.value })}
-              placeholder="https://api.example.com"
-              spellCheck={false}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Auth type">
-            <Select value={spec.auth.type} disabled={readOnly} onChange={(e) => set({ auth: { ...spec.auth, type: e.target.value as AuthType } })}>
-              <option value="query">query parameter</option>
-              <option value="header">header</option>
-              <option value="bearer">bearer token</option>
-            </Select>
-          </Field>
-          <Field label={spec.auth.type === "query" ? "Parameter name" : "Header name"}>
-            <Input
-              value={spec.auth.name}
-              disabled={readOnly}
-              onChange={(e) => set({ auth: { ...spec.auth, name: e.target.value } })}
-              placeholder={spec.auth.type === "query" ? "api_key" : "Authorization"}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Value prefix" hint={spec.auth.type === "bearer" ? "Bearer adds its own prefix." : "Text before the key, if the API needs any."}>
-            <Input value={spec.auth.prefix} disabled={readOnly} onChange={(e) => set({ auth: { ...spec.auth, prefix: e.target.value } })} placeholder="Token " className="font-mono" />
-          </Field>
+          <TextInput
+            label="Base URL"
+            isRequired
+            className="sm:col-span-3"
+            type="url"
+            inputMode="url"
+            dir="ltr"
+            mono
+            value={spec.base_url}
+            disabled={readOnly}
+            onChange={(v) => set({ base_url: v })}
+            placeholder="https://api.example.com"
+            spellCheck={false}
+          />
+          <SelectField
+            label="Auth type"
+            value={spec.auth.type}
+            disabled={readOnly}
+            onChange={(v) => set({ auth: { ...spec.auth, type: v as AuthType } })}
+            options={[
+              { id: "query", label: "query parameter" },
+              { id: "header", label: "header" },
+              { id: "bearer", label: "bearer token" },
+            ]}
+          />
+          <TextInput
+            label={spec.auth.type === "query" ? "Parameter name" : "Header name"}
+            mono
+            value={spec.auth.name}
+            disabled={readOnly}
+            onChange={(v) => set({ auth: { ...spec.auth, name: v } })}
+            placeholder={spec.auth.type === "query" ? "api_key" : "Authorization"}
+            spellCheck={false}
+          />
+          <TextInput
+            label="Value prefix"
+            hint={spec.auth.type === "bearer" ? "Bearer adds its own prefix." : "Text before the key, if the API needs any."}
+            mono
+            value={spec.auth.prefix}
+            disabled={readOnly}
+            onChange={(v) => set({ auth: { ...spec.auth, prefix: v } })}
+            placeholder="Token "
+            spellCheck={false}
+          />
         </div>
       </Section>
 
       <Section title="Defaults for new services" description="Services created from this provider start with these values. Existing services keep their own settings.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Strategy" hint={STRATEGY_HELP[d.strategy]}>
+          <FieldShell label="Strategy" hint={STRATEGY_HELP[d.strategy]}>
             <StrategySelect value={d.strategy as Strategy} disabled={readOnly} onChange={(s) => setD({ strategy: s })} />
-          </Field>
-          <Field label="Cooldown (sec)" hint="How long a key rests after a rate limit.">
-            <Input type="number" min={0} inputMode="numeric" value={d.cooldown_sec} disabled={readOnly} onChange={(e) => setD({ cooldown_sec: Number(e.target.value) })} />
-          </Field>
-          <Field label="Max attempts" hint="How many keys the proxy tries.">
-            <Input type="number" min={1} max={20} inputMode="numeric" value={d.max_attempts} disabled={readOnly} onChange={(e) => setD({ max_attempts: Number(e.target.value) })} />
-          </Field>
-        </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <ConcurrencyFields
-            maxConcurrency={d.max_concurrency}
-            queueSec={d.queue_timeout_sec}
+          </FieldShell>
+          <TextInput
+            label="Cooldown (sec)"
+            hint="How long a key rests after a rate limit."
+            type="number"
+            min={0}
+            inputMode="numeric"
+            mono
+            value={d.cooldown_sec}
             disabled={readOnly}
-            onChange={(p) => setD(p)}
+            onChange={(v) => setD({ cooldown_sec: Number(v) })}
+          />
+          <TextInput
+            label="Max attempts"
+            hint="How many keys the proxy tries."
+            type="number"
+            min={1}
+            max={20}
+            inputMode="numeric"
+            mono
+            value={d.max_attempts}
+            disabled={readOnly}
+            onChange={(v) => setD({ max_attempts: Number(v) })}
           />
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Response cache (sec)" hint="How long identical successful responses are reused. Empty or 0 turns caching off.">
-            <OptionalNumberInput min={0} value={d.cache_ttl_sec} disabled={readOnly} onChange={(v) => setD({ cache_ttl_sec: v })} placeholder="off" />
-          </Field>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <ConcurrencyFields maxConcurrency={d.max_concurrency} queueSec={d.queue_timeout_sec} disabled={readOnly} onChange={(p) => setD(p)} />
         </div>
-        <fieldset className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <legend className="mb-1 font-mono text-[11px] uppercase tracking-wide text-faint">Circuit breaker</legend>
-          <p className="text-xs leading-relaxed text-muted sm:col-span-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <OptionalNumberInput label="Response cache (sec)" hint="How long identical successful responses are reused. Empty or 0 turns caching off." min={0} value={d.cache_ttl_sec} disabled={readOnly} onChange={(v) => setD({ cache_ttl_sec: v })} placeholder="off" />
+        </div>
+        <fieldset className="mt-6 grid grid-cols-1 gap-4 border-t border-separator-border pt-5 sm:grid-cols-3">
+          <legend className={cx(LEGEND, "float-left w-full")}>Circuit breaker</legend>
+          <p className="text-body-2-regular text-text-secondary sm:col-span-3">
             Pauses the whole service after too many provider errors in a row. Leave empty or 0 for the defaults: 10 errors in 60s pause it for 30s. A threshold of -1 turns the breaker off.
           </p>
-          <Field label="Error threshold">
-            <OptionalNumberInput min={-1} value={d.breaker_threshold} disabled={readOnly} onChange={(v) => setD({ breaker_threshold: v })} placeholder="10" />
-          </Field>
-          <Field label="Window (sec)">
-            <OptionalNumberInput min={0} value={d.breaker_window_sec} disabled={readOnly} onChange={(v) => setD({ breaker_window_sec: v })} placeholder="60" />
-          </Field>
-          <Field label="Pause (sec)">
-            <OptionalNumberInput min={0} value={d.breaker_reset_sec} disabled={readOnly} onChange={(v) => setD({ breaker_reset_sec: v })} placeholder="30" />
-          </Field>
+          <OptionalNumberInput label="Error threshold" min={-1} value={d.breaker_threshold} disabled={readOnly} onChange={(v) => setD({ breaker_threshold: v })} placeholder="10" />
+          <OptionalNumberInput label="Window (sec)" min={0} value={d.breaker_window_sec} disabled={readOnly} onChange={(v) => setD({ breaker_window_sec: v })} placeholder="60" />
+          <OptionalNumberInput label="Pause (sec)" min={0} value={d.breaker_reset_sec} disabled={readOnly} onChange={(v) => setD({ breaker_reset_sec: v })} placeholder="30" />
         </fieldset>
       </Section>
 
       <Section title="Quota" description="How Acnologia counts usage between health checks.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Unit" hint="Shows next to quota numbers, such as searches or characters.">
-            <Input value={quota.unit} disabled={readOnly} onChange={(e) => set({ quota: { ...quota, unit: e.target.value } })} placeholder="requests" />
-          </Field>
+          <TextInput
+            label="Unit"
+            hint="Shows next to quota numbers, such as searches or characters."
+            value={quota.unit}
+            disabled={readOnly}
+            onChange={(v) => set({ quota: { ...quota, unit: v } })}
+            placeholder="requests"
+          />
           <div className="sm:pt-7">
-            <Toggle
+            <ToggleRow
               label="Each successful request uses one unit"
               description="Counts down the remaining quota on each success. Leave off when the cost changes per request."
               checked={quota.counts_per_request}
@@ -271,51 +509,37 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
               onChange={(v) => set({ quota: { ...quota, counts_per_request: v } })}
             />
           </div>
-          <Field label="Cost per request (USD)" hint="Used for spend totals and app budgets. Empty means free or unknown.">
-            <OptionalNumberInput
-              min={0}
-              step="any"
-              value={quota.cost_per_request}
-              disabled={readOnly}
-              onChange={(v) => set({ quota: { ...quota, cost_per_request: v } })}
-              placeholder="0.002"
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Free tier" hint="Short note shown in the catalog.">
-            <Input
-              value={quota.free_tier ?? ""}
-              disabled={readOnly}
-              onChange={(e) => set({ quota: { ...quota, free_tier: e.target.value || undefined } })}
-              placeholder="1,000 searches a month"
-            />
-          </Field>
+          <OptionalNumberInput label="Cost per request (USD)" hint="Used for spend totals and app budgets. Empty means free or unknown." min={0} value={quota.cost_per_request} disabled={readOnly} onChange={(v) => set({ quota: { ...quota, cost_per_request: v } })} placeholder="0.002" />
+          <TextInput
+            label="Free tier"
+            hint="Short note shown in the catalog."
+            value={quota.free_tier ?? ""}
+            disabled={readOnly}
+            onChange={(v) => set({ quota: { ...quota, free_tier: v || undefined } })}
+            placeholder="1,000 searches a month"
+          />
         </div>
-        <fieldset className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <legend className="mb-1 font-mono text-[11px] uppercase tracking-wide text-faint">Quota from response headers (optional)</legend>
-          <p className="text-xs leading-relaxed text-muted sm:col-span-3">Header names Acnologia reads on every response to keep the remaining quota fresh.</p>
-          <Field label="Limit header">
-            <Input value={qh.limit ?? ""} disabled={readOnly} onChange={(e) => setQH({ limit: e.target.value })} placeholder="X-RateLimit-Limit" className="font-mono" spellCheck={false} />
-          </Field>
-          <Field label="Remaining header">
-            <Input value={qh.remaining ?? ""} disabled={readOnly} onChange={(e) => setQH({ remaining: e.target.value })} placeholder="X-RateLimit-Remaining" className="font-mono" spellCheck={false} />
-          </Field>
-          <Field label="Reset header">
-            <Input value={qh.reset ?? ""} disabled={readOnly} onChange={(e) => setQH({ reset: e.target.value })} placeholder="X-RateLimit-Reset" className="font-mono" spellCheck={false} />
-          </Field>
-          <Field label="Reset format">
-            <Select value={qh.reset_format ?? ""} disabled={readOnly} onChange={(e) => setQH({ reset_format: e.target.value as QuotaHeaders["reset_format"] })}>
-              <option value="">not set</option>
-              <option value="seconds">seconds from now</option>
-              <option value="unix">unix seconds</option>
-              <option value="unix_ms">unix milliseconds</option>
-              <option value="iso8601">ISO 8601</option>
-              <option value="http_date">HTTP date</option>
-            </Select>
-          </Field>
-          <Field label="Index" hint="Pick entry N of a comma list such as 1, 2000; use the longest window." className="sm:col-span-2">
-            <OptionalNumberInput min={0} step={1} value={qh.index} disabled={readOnly} onChange={(v) => setQH({ index: v })} placeholder="0" />
-          </Field>
+        <fieldset className="mt-6 grid grid-cols-1 gap-4 border-t border-separator-border pt-5 sm:grid-cols-3">
+          <legend className={cx(LEGEND, "float-left w-full")}>Quota from response headers (optional)</legend>
+          <p className="text-body-2-regular text-text-secondary sm:col-span-3">Header names Acnologia reads on every response to keep the remaining quota fresh.</p>
+          <TextInput label="Limit header" mono value={qh.limit ?? ""} disabled={readOnly} onChange={(v) => setQH({ limit: v })} placeholder="X-RateLimit-Limit" spellCheck={false} />
+          <TextInput label="Remaining header" mono value={qh.remaining ?? ""} disabled={readOnly} onChange={(v) => setQH({ remaining: v })} placeholder="X-RateLimit-Remaining" spellCheck={false} />
+          <TextInput label="Reset header" mono value={qh.reset ?? ""} disabled={readOnly} onChange={(v) => setQH({ reset: v })} placeholder="X-RateLimit-Reset" spellCheck={false} />
+          <SelectField
+            label="Reset format"
+            value={qh.reset_format || "none"}
+            disabled={readOnly}
+            onChange={(v) => setQH({ reset_format: (v === "none" ? "" : v) as QuotaHeaders["reset_format"] })}
+            options={[
+              { id: "none", label: "not set" },
+              { id: "seconds", label: "seconds from now" },
+              { id: "unix", label: "unix seconds" },
+              { id: "unix_ms", label: "unix milliseconds" },
+              { id: "iso8601", label: "ISO 8601" },
+              { id: "http_date", label: "HTTP date" },
+            ]}
+          />
+          <OptionalNumberInput label="Index" hint="Pick entry N of a comma list such as 1, 2000; use the longest window." className="sm:col-span-2" min={0} step={1} value={qh.index} disabled={readOnly} onChange={(v) => setQH({ index: v })} placeholder="0" />
         </fieldset>
       </Section>
     </div>
@@ -356,6 +580,7 @@ function RuleCard({
   enter?: boolean;
 }) {
   const [open, setOpen] = useState(!rule.name);
+  const panelId = useId();
   const src = rule.retry_after?.source ?? "none";
   const srcMeta = RETRY_SOURCES.find((s) => s.id === src);
   const summary = [
@@ -366,74 +591,78 @@ function RuleCard({
     .filter(Boolean)
     .join(" and ");
   return (
-    <li ref={rowRef} className={cx("rounded-card bg-surface shadow-card", enter && "fade-up")}>
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:flex-nowrap sm:px-4">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-soft font-mono text-[11px] text-muted">{index + 1}</span>
+    <li ref={rowRef} className={cx(ITEM_CARD, enter && "fade-up")}>
+      <div className="flex flex-wrap items-center gap-2 px-3 py-3 sm:flex-nowrap sm:px-4">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background-secondary-default font-mono text-caption-1-medium text-text-secondary">
+          {index + 1}
+        </span>
         <button
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          className="tap flex min-w-0 flex-1 basis-[60%] items-center gap-2 text-left"
+          aria-controls={panelId}
+          className="flex min-h-11 min-w-0 flex-1 basis-[60%] cursor-pointer items-center gap-2 rounded-xl text-start outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
         >
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[14px] font-medium text-ink">{rule.name || "Untitled rule"}</span>
-            <span className="block truncate font-mono text-[11px] text-muted">{summary}</span>
+            <span className="block truncate text-body-medium text-text-primary">{rule.name || "Untitled rule"}</span>
+            <span className="block truncate font-mono text-caption-1-regular text-text-secondary">{summary}</span>
           </span>
           <OutcomeBadge outcome={rule.outcome} />
-          <ChevronDown className={cx("h-4 w-4 shrink-0 text-faint transition-transform", open && "rotate-180")} />
+          <RiArrowDownSLine
+            aria-hidden
+            className={cx("size-4 shrink-0 text-foreground-icon-tertiary transition-transform duration-200 ease-out motion-reduce:transition-none", open && "rotate-180")}
+          />
         </button>
         <ItemControls index={index} count={count} label={rule.name || `rule ${index + 1}`} onMove={onMove} onDuplicate={onDuplicate} onRemove={onRemove} disabled={readOnly} />
       </div>
       {open && (
-        <div className="space-y-4 border-t border-line px-4 py-4">
+        <div id={panelId} className="fade-up flex flex-col gap-4 border-t border-separator-border px-4 py-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Name" hint="A short label shown in test reports.">
-              <Input value={rule.name} disabled={readOnly} onChange={(e) => onChange({ ...rule, name: e.target.value })} placeholder="Monthly quota used up" />
-            </Field>
-            <Field label="Outcome">
-              <Select value={rule.outcome} disabled={readOnly} onChange={(e) => onChange({ ...rule, outcome: e.target.value as Outcome })}>
-                {OUTCOMES.map((o) => (
-                  <option key={o} value={o}>
-                    {OUTCOME_LABEL[o]}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            <TextInput
+              label="Name"
+              hint="A short label shown in test reports."
+              value={rule.name}
+              disabled={readOnly}
+              onChange={(v) => onChange({ ...rule, name: v })}
+              placeholder="Monthly quota used up"
+            />
+            <SelectField
+              label="Outcome"
+              value={rule.outcome}
+              disabled={readOnly}
+              onChange={(v) => onChange({ ...rule, outcome: v as Outcome })}
+              options={OUTCOMES.map((o) => ({ id: o, label: OUTCOME_LABEL[o] }))}
+            />
           </div>
           <fieldset>
-            <legend className="mb-2 font-mono text-[11px] uppercase tracking-wide text-faint">Match when</legend>
+            <legend className={cx(LEGEND, "mb-2")}>Match when</legend>
             <MatchEditor value={rule.match} disabled={readOnly} onChange={(m) => onChange({ ...rule, match: m })} />
           </fieldset>
           {rule.outcome === "rate_limited" && (
             <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <legend className="mb-2 font-mono text-[11px] uppercase tracking-wide text-faint">Retry after</legend>
-              <Field label="Source" hint="Where the rest time comes from. None uses the service cooldown.">
-                <Select
-                  value={src}
-                  disabled={readOnly}
-                  onChange={(e) => {
-                    const s = e.target.value as RetrySource;
-                    onChange({ ...rule, retry_after: s === "none" ? undefined : { source: s, value: rule.retry_after?.value ?? "" } });
-                  }}
-                >
-                  {RETRY_SOURCES.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
+              <legend className={cx(LEGEND, "mb-2 float-left w-full")}>Retry after</legend>
+              <SelectField
+                label="Source"
+                hint="Where the rest time comes from. None uses the service cooldown."
+                value={src}
+                disabled={readOnly}
+                onChange={(v) => {
+                  const s = v as RetrySource;
+                  onChange({ ...rule, retry_after: s === "none" ? undefined : { source: s, value: rule.retry_after?.value ?? "" } });
+                }}
+                options={RETRY_SOURCES.map((s) => ({ id: s.id, label: s.label }))}
+              />
               {srcMeta?.value && (
-                <Field label={srcMeta.value}>
-                  <Input
-                    value={rule.retry_after?.value ?? ""}
-                    disabled={readOnly}
-                    inputMode={src === "fixed" ? "numeric" : undefined}
-                    onChange={(e) => onChange({ ...rule, retry_after: { source: src, value: e.target.value } })}
-                    placeholder={src === "header" ? "Retry-After" : src === "fixed" ? "60" : "error.retry_after"}
-                    className="font-mono"
-                  />
-                </Field>
+                <TextInput
+                  label={srcMeta.value}
+                  mono
+                  value={rule.retry_after?.value ?? ""}
+                  disabled={readOnly}
+                  inputMode={src === "fixed" ? "numeric" : undefined}
+                  onChange={(v) => onChange({ ...rule, retry_after: { source: src, value: v } })}
+                  placeholder={src === "header" ? "Retry-After" : src === "fixed" ? "60" : "error.retry_after"}
+                  spellCheck={false}
+                />
               )}
             </fieldset>
           )}
@@ -449,19 +678,19 @@ export function RulesTab({ spec, onChange, readOnly }: SpecTabProps) {
   const add = () => setRules([...rules, { name: "", match: { status: [429] }, outcome: "rate_limited" }]);
   const order = useOrderedList(rules.length);
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <Section
         title="Classification rules"
         description="Checked top to bottom on every error response, and the first match wins. Every field in a rule must match. Any value in a list can match."
         actions={
           !readOnly && (
-            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={add}>
+            <Button size="small" variant="secondary" leadingIcon={RiAddLine} onClick={add}>
               Add rule
             </Button>
           )
         }
       >
-        <Toggle
+        <ToggleRow
           label="Fall back to standard rules"
           description="Runs after your rules. 429 is rate limited (respects Retry-After), 402 is out of quota, 401 and 403 are invalid, 5xx is an error."
           checked={spec.use_standard_rules}
@@ -470,14 +699,24 @@ export function RulesTab({ spec, onChange, readOnly }: SpecTabProps) {
         />
       </Section>
       {rules.length === 0 ? (
-        <Empty
-          icon={<ListOrdered className="h-5 w-5" />}
+        <EmptyState
+          icon={RiListOrdered2}
           title="No custom rules"
-          body={spec.use_standard_rules ? "The standard rules apply. Add a rule when the API signals limits its own way, such as a 200 with an error in the body." : "Nothing sorts errors yet. Add a rule, or turn on the standard rules."}
-          action={!readOnly && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={add}>Add a rule</Button>}
+          body={
+            spec.use_standard_rules
+              ? "The standard rules apply. Add a rule when the API signals limits its own way, such as a 200 with an error in the body."
+              : "Nothing sorts errors yet. Add a rule, or turn on the standard rules."
+          }
+          action={
+            !readOnly && (
+              <Button variant="primary" leadingIcon={RiAddLine} onClick={add}>
+                Add a rule
+              </Button>
+            )
+          }
         />
       ) : (
-        <ol className="space-y-2.5">
+        <ol className="flex flex-col gap-3">
           {rules.map((r, i) => (
             <RuleCard
               key={order.key(i)}
@@ -516,12 +755,9 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
   const q = h?.quota ?? {};
   const setQ = (p: Partial<NonNullable<SpecHealth["quota"]>>) => setH({ quota: { ...q, ...p } });
   return (
-    <div className="space-y-5">
-      <Section
-        title="Health check"
-        description="A cheap request Acnologia sends with each key every few hours to catch invalid keys and read the quota left."
-      >
-        <Toggle
+    <div className="flex flex-col gap-5">
+      <Section title="Health check" description="A cheap request Acnologia sends with each key every few hours to catch invalid keys and read the quota left.">
+        <ToggleRow
           label="Enable health checks"
           description="When off, Acnologia judges keys by real requests only."
           checked={!!h}
@@ -530,18 +766,25 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
         />
         {h && (
           <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-[140px_1fr]">
-            <Field label="Method">
-              <Select value={h.method} disabled={readOnly} onChange={(e) => setH({ method: e.target.value })}>
-                <option>GET</option>
-                <option>POST</option>
-                <option>HEAD</option>
-              </Select>
-            </Field>
-            <Field label="Path" hint="Relative to the base URL.">
-              <Input value={h.path} disabled={readOnly} onChange={(e) => setH({ path: e.target.value })} placeholder="/account" className="font-mono" />
-            </Field>
+            <SelectField
+              label="Method"
+              value={h.method}
+              disabled={readOnly}
+              onChange={(v) => setH({ method: v })}
+              options={["GET", "POST", "HEAD"].map((m) => ({ id: m, label: m }))}
+            />
+            <TextInput
+              label="Path"
+              hint="Relative to the base URL."
+              mono
+              value={h.path}
+              disabled={readOnly}
+              onChange={(v) => setH({ path: v })}
+              placeholder="/account"
+              spellCheck={false}
+            />
             <div className="sm:col-span-2">
-              <div className="mb-1.5 text-[13px] font-medium text-ink">Query parameters</div>
+              <SubLabel>Query parameters</SubLabel>
               <KeyValueEditor value={h.query} disabled={readOnly} onChange={(v) => setH({ query: v })} addLabel="Add parameter" />
             </div>
           </div>
@@ -558,57 +801,57 @@ export function HealthTab({ spec, onChange, readOnly }: SpecTabProps) {
           </Section>
           <Section title="Quota from the response" description="JSON paths in the health check response. Several paths in one field are added together.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Field label="Limit paths">
-                <ListInput value={q.limit} disabled={readOnly} onChange={(v) => setQ({ limit: v })} placeholder="plan.limit" className="font-mono" />
-              </Field>
-              <Field label="Remaining paths">
-                <ListInput value={q.remaining} disabled={readOnly} onChange={(v) => setQ({ remaining: v })} placeholder="plan.remaining" className="font-mono" />
-              </Field>
-              <Field label="Used paths" hint="When remaining is empty, Acnologia uses limit minus used.">
-                <ListInput value={q.used} disabled={readOnly} onChange={(v) => setQ({ used: v })} placeholder="usage.used" className="font-mono" />
-              </Field>
-              <Field label="Reset time path">
-                <Input value={q.reset_at ?? ""} disabled={readOnly} onChange={(e) => setQ({ reset_at: e.target.value })} placeholder="plan.resets_at" className="font-mono" />
-              </Field>
-              <Field label="Reset format">
-                <Select value={q.reset_format || "unix"} disabled={readOnly} onChange={(e) => setQ({ reset_format: e.target.value })}>
-                  <option value="unix">unix seconds</option>
-                  <option value="unix_ms">unix milliseconds</option>
-                  <option value="iso8601">ISO 8601</option>
-                </Select>
-              </Field>
+              <ListInput label="Limit paths" value={q.limit} disabled={readOnly} onChange={(v) => setQ({ limit: v })} placeholder="plan.limit" />
+              <ListInput label="Remaining paths" value={q.remaining} disabled={readOnly} onChange={(v) => setQ({ remaining: v })} placeholder="plan.remaining" />
+              <ListInput label="Used paths" hint="When remaining is empty, Acnologia uses limit minus used." value={q.used} disabled={readOnly} onChange={(v) => setQ({ used: v })} placeholder="usage.used" />
+              <TextInput
+                label="Reset time path"
+                mono
+                value={q.reset_at ?? ""}
+                disabled={readOnly}
+                onChange={(v) => setQ({ reset_at: v })}
+                placeholder="plan.resets_at"
+                spellCheck={false}
+              />
+              <SelectField
+                label="Reset format"
+                value={q.reset_format || "unix"}
+                disabled={readOnly}
+                onChange={(v) => setQ({ reset_format: v })}
+                options={[
+                  { id: "unix", label: "unix seconds" },
+                  { id: "unix_ms", label: "unix milliseconds" },
+                  { id: "iso8601", label: "ISO 8601" },
+                ]}
+              />
             </div>
-            <fieldset className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <legend className="mb-2 font-mono text-[11px] uppercase tracking-wide text-faint">Rolling window (optional)</legend>
-              <Field label="Window limit path">
-                <Input
-                  value={q.window?.limit ?? ""}
-                  disabled={readOnly}
-                  onChange={(e) => setQ({ window: { limit: e.target.value, used: q.window?.used ?? "", period: q.window?.period ?? "hour" } })}
-                  placeholder="rate_limit.limit"
-                  className="font-mono"
-                />
-              </Field>
-              <Field label="Window used path">
-                <Input
-                  value={q.window?.used ?? ""}
-                  disabled={readOnly}
-                  onChange={(e) => setQ({ window: { limit: q.window?.limit ?? "", used: e.target.value, period: q.window?.period ?? "hour" } })}
-                  placeholder="rate_limit.used"
-                  className="font-mono"
-                />
-              </Field>
-              <Field label="Period">
-                <Select
-                  value={q.window?.period ?? "hour"}
-                  disabled={readOnly}
-                  onChange={(e) => setQ({ window: { limit: q.window?.limit ?? "", used: q.window?.used ?? "", period: e.target.value } })}
-                >
-                  <option value="minute">minute</option>
-                  <option value="hour">hour</option>
-                  <option value="day">day</option>
-                </Select>
-              </Field>
+            <fieldset className="mt-6 grid grid-cols-1 gap-4 border-t border-separator-border pt-5 sm:grid-cols-3">
+              <legend className={cx(LEGEND, "float-left w-full")}>Rolling window (optional)</legend>
+              <TextInput
+                label="Window limit path"
+                mono
+                value={q.window?.limit ?? ""}
+                disabled={readOnly}
+                onChange={(v) => setQ({ window: { limit: v, used: q.window?.used ?? "", period: q.window?.period ?? "hour" } })}
+                placeholder="rate_limit.limit"
+                spellCheck={false}
+              />
+              <TextInput
+                label="Window used path"
+                mono
+                value={q.window?.used ?? ""}
+                disabled={readOnly}
+                onChange={(v) => setQ({ window: { limit: q.window?.limit ?? "", used: v, period: q.window?.period ?? "hour" } })}
+                placeholder="rate_limit.used"
+                spellCheck={false}
+              />
+              <SelectField
+                label="Period"
+                value={q.window?.period ?? "hour"}
+                disabled={readOnly}
+                onChange={(v) => setQ({ window: { limit: q.window?.limit ?? "", used: q.window?.used ?? "", period: v } })}
+                options={["minute", "hour", "day"].map((p) => ({ id: p, label: p }))}
+              />
             </fieldset>
           </Section>
         </>
@@ -625,25 +868,47 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
   const add = () => setList([...list, { name: "", method: "GET", path: "/", query: {}, body: null, safe: true }]);
   const order = useOrderedList(list.length);
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <Section
         title="Examples"
         description="Typical calls. They feed the integration snippets, and the first safe one runs during a live check."
-        actions={!readOnly && <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={add}>Add example</Button>}
+        actions={
+          !readOnly && (
+            <Button size="small" variant="secondary" leadingIcon={RiAddLine} onClick={add}>
+              Add example
+            </Button>
+          )
+        }
       />
       {list.length === 0 ? (
-        <Empty title="No examples yet" body="Add one cheap call, such as a search or a list endpoint, so a live check can prove a key works." action={!readOnly && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={add}>Add an example</Button>} />
+        <EmptyState
+          title="No examples yet"
+          body="Add one cheap call, such as a search or a list endpoint, so a live check can prove a key works."
+          action={
+            !readOnly && (
+              <Button variant="primary" leadingIcon={RiAddLine} onClick={add}>
+                Add an example
+              </Button>
+            )
+          }
+        />
       ) : (
-        <ol className="space-y-2.5">
+        <ol className="flex flex-col gap-3">
           {list.map((ex, i) => {
             const set = (p: Partial<SpecExample>) => setList(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
             return (
-              <li key={order.key(i)} ref={order.ref(i)} className={cx("rounded-card bg-surface p-4 shadow-card", order.isNew(i) && "fade-up")}>
+              <li key={order.key(i)} ref={order.ref(i)} className={cx(ITEM_CARD, "p-4 sm:p-5", order.isNew(i) && "fade-up")}>
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
-                    <Badge tone="dark">{ex.method}</Badge>
-                    <span className="truncate font-mono text-[13px] text-ink">{ex.path || "/"}</span>
-                    {ex.safe && <Badge tone="green">safe</Badge>}
+                    <Chip variant="caption" color="gray" className="font-mono">
+                      {ex.method}
+                    </Chip>
+                    <span className="truncate font-mono text-body-2-regular text-text-primary">{ex.path || "/"}</span>
+                    {ex.safe && (
+                      <Chip variant="caption" color="lime" className="font-mono">
+                        safe
+                      </Chip>
+                    )}
                   </div>
                   <ItemControls
                     index={i}
@@ -664,22 +929,18 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
                     }}
                   />
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_120px_1fr]">
-                  <Field label="Name">
-                    <Input value={ex.name} disabled={readOnly} onChange={(e) => set({ name: e.target.value })} placeholder="Search" />
-                  </Field>
-                  <Field label="Method">
-                    <Select value={ex.method} disabled={readOnly} onChange={(e) => set({ method: e.target.value })}>
-                      {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
-                        <option key={m}>{m}</option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field label="Path">
-                    <Input value={ex.path} disabled={readOnly} onChange={(e) => set({ path: e.target.value })} placeholder="/search" className="font-mono" />
-                  </Field>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_130px_1fr]">
+                  <TextInput label="Name" value={ex.name} disabled={readOnly} onChange={(v) => set({ name: v })} placeholder="Search" />
+                  <SelectField
+                    label="Method"
+                    value={ex.method}
+                    disabled={readOnly}
+                    onChange={(v) => set({ method: v })}
+                    options={["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => ({ id: m, label: m }))}
+                  />
+                  <TextInput label="Path" mono value={ex.path} disabled={readOnly} onChange={(v) => set({ path: v })} placeholder="/search" spellCheck={false} />
                   <div className="sm:col-span-3">
-                    <div className="mb-1.5 text-[13px] font-medium text-ink">Query parameters</div>
+                    <SubLabel>Query parameters</SubLabel>
                     <KeyValueEditor value={ex.query} disabled={readOnly} onChange={(v) => set({ query: v })} addLabel="Add parameter" />
                   </div>
                   {ex.method !== "GET" && (
@@ -688,7 +949,7 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
                     </div>
                   )}
                   <div className="sm:col-span-3">
-                    <Toggle
+                    <ToggleRow
                       label="Safe to run in a live check"
                       description="Only for calls that are cheap and change nothing."
                       checked={ex.safe}
@@ -715,52 +976,69 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
   const order = useOrderedList(list.length);
   const resultFor = (name: string, i: number) => report?.results.find((r) => r.name === name) ?? report?.results[i];
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <Section
         title="Fixture tests"
         description="Real or documented responses, each with the outcome it should produce. Every save runs them through the real engine."
-        actions={!readOnly && <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={add}>Add test</Button>}
+        actions={
+          !readOnly && (
+            <Button size="small" variant="secondary" leadingIcon={RiAddLine} onClick={add}>
+              Add test
+            </Button>
+          )
+        }
       >
         {report && (
-          <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-            <Badge tone={report.failed ? "red" : "green"}>
-              {report.passed} passed · {report.failed} failed
-            </Badge>
-            <span className="text-muted">from the latest check of this draft</span>
+          <div className="flex flex-wrap items-center gap-2" role="status">
+            <Chip variant="caption" color={report.failed ? "rose" : "lime"} className="font-mono">
+              {report.passed} passed, {report.failed} failed
+            </Chip>
+            <span className="text-caption-1-regular text-text-secondary">from the latest check of this draft</span>
           </div>
         )}
       </Section>
       {list.length === 0 ? (
-        <Empty
-          icon={<FlaskConical className="h-5 w-5" />}
+        <EmptyState
+          icon={RiFlaskLine}
           title="No tests yet"
           body="Add at least one response per rule, such as a 429 body that should count as rate limited. Tests are what make auto publishing safe."
-          action={!readOnly && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={add}>Add a test</Button>}
+          action={
+            !readOnly && (
+              <Button variant="primary" leadingIcon={RiAddLine} onClick={add}>
+                Add a test
+              </Button>
+            )
+          }
         />
       ) : (
-        <ol className="space-y-2.5">
+        <ol className="flex flex-col gap-3">
           {list.map((t, i) => {
             const set = (p: Partial<SpecFixture>) => setList(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
             const r = resultFor(t.name, i);
+            const headerCount = t.headers ? Object.keys(t.headers).length : 0;
             return (
-              <li key={order.key(i)} ref={order.ref(i)} className={cx("rounded-card bg-surface p-4 shadow-card", r && !r.ok && "ring-1 ring-red-200", order.isNew(i) && "fade-up")}>
+              <li
+                key={order.key(i)}
+                ref={order.ref(i)}
+                className={cx(ITEM_CARD, "p-4 sm:p-5", r && !r.ok && "border-border-error-default", order.isNew(i) && "fade-up")}
+              >
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex min-h-8 flex-wrap items-center gap-2">
                       {r ? (
                         r.ok ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-700" aria-label="Passing" />
+                          <RiCheckboxCircleFill className="size-4 shrink-0 text-status-lime-text" aria-label="Passing" role="img" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-red-700" aria-label="Failing" />
+                          <RiCloseCircleFill className="size-4 shrink-0 text-text-error-primary" aria-label="Failing" role="img" />
                         )
                       ) : null}
-                      <span className="truncate text-[14px] font-medium text-ink">{t.name || `Test ${i + 1}`}</span>
-                      <span className="font-mono text-[11px] text-muted">{t.status}</span>
-                      <span className="text-faint" aria-hidden="true">→</span>
+                      <span className="truncate text-body-medium text-text-primary">{t.name || `Test ${i + 1}`}</span>
+                      <span className="font-mono text-caption-1-regular text-text-secondary">{t.status}</span>
+                      <RiArrowRightLine className="size-3.5 shrink-0 text-foreground-icon-quaternary" aria-hidden />
                       <OutcomeBadge outcome={t.expect} />
                     </div>
                     {r && !r.ok && (
-                      <p className="mt-1 text-xs text-red-700">
+                      <p className="mt-1 text-caption-1-regular text-text-error-primary">
                         Got <span className="font-mono">{r.got || "nothing"}</span>
                         {r.detail ? `: ${r.detail}` : ""}
                       </p>
@@ -786,35 +1064,37 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
                   />
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_110px_1fr]">
-                  <Field label="Name">
-                    <Input value={t.name} disabled={readOnly} onChange={(e) => set({ name: e.target.value })} placeholder="Monthly quota used up" />
-                  </Field>
-                  <Field label="Status">
-                    <Input type="number" inputMode="numeric" value={t.status} disabled={readOnly} onChange={(e) => set({ status: Number(e.target.value) })} className="font-mono" />
-                  </Field>
-                  <Field label="Expected outcome">
-                    <Select value={t.expect} disabled={readOnly} onChange={(e) => set({ expect: e.target.value as Outcome })}>
-                      {OUTCOMES.map((o) => (
-                        <option key={o} value={o}>
-                          {o.replace("_", " ")}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field label="Response body" className="sm:col-span-3">
-                    <Textarea
-                      rows={3}
-                      value={t.body}
-                      disabled={readOnly}
-                      spellCheck={false}
-                      onChange={(e) => set({ body: e.target.value })}
-                      placeholder={'{"error":"Monthly quota exceeded."}'}
-                      className="font-mono text-[12.5px]"
-                    />
-                  </Field>
-                  <details className="sm:col-span-3">
-                    <summary className="tap cursor-pointer py-1 text-[13px] font-medium text-muted hover:text-ink">
-                      Response headers {t.headers && Object.keys(t.headers).length ? `(${Object.keys(t.headers).length})` : ""}
+                  <TextInput label="Name" value={t.name} disabled={readOnly} onChange={(v) => set({ name: v })} placeholder="Monthly quota used up" />
+                  <TextInput
+                    label="Status"
+                    type="number"
+                    inputMode="numeric"
+                    mono
+                    value={t.status}
+                    disabled={readOnly}
+                    onChange={(v) => set({ status: Number(v) })}
+                  />
+                  <SelectField
+                    label="Expected outcome"
+                    value={t.expect}
+                    disabled={readOnly}
+                    onChange={(v) => set({ expect: v as Outcome })}
+                    options={OUTCOMES.map((o) => ({ id: o, label: o.replace("_", " ") }))}
+                  />
+                  <TextField
+                    value={t.body}
+                    onChange={(v) => set({ body: v })}
+                    isDisabled={readOnly}
+                    inputClassName="font-mono text-body-2-regular"
+                    className="min-w-0 sm:col-span-3"
+                  >
+                    <Label>Response body</Label>
+                    <TextareaBase rows={3} spellCheck={false} placeholder={'{"error":"Monthly quota exceeded."}'} />
+                  </TextField>
+                  <details className="group/headers sm:col-span-3">
+                    <summary className="flex min-h-11 w-fit cursor-pointer list-none items-center gap-1 rounded-md text-body-2-medium text-text-secondary outline-none transition-colors duration-150 ease hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring [&::-webkit-details-marker]:hidden">
+                      <RiArrowDownSLine aria-hidden className="size-4 -rotate-90 transition-transform duration-200 ease-out group-open/headers:rotate-0 motion-reduce:transition-none" />
+                      Response headers {headerCount ? `(${headerCount})` : ""}
                     </summary>
                     <div className="mt-2">
                       <KeyValueEditor value={t.headers} disabled={readOnly} onChange={(v) => set({ headers: v })} keyLabel="Header" addLabel="Add header" />

@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
-import { Globe, ImageUp, Trash2 } from "lucide-react";
+import { RiDeleteBinLine, RiGlobalLine, RiImageAddLine } from "@remixicon/react";
 import type { LogoUpload } from "../lib/types";
 import { errorMessage } from "../lib/api";
 import { toast } from "../stores/toast";
 import { EntityLogo } from "./EntityLogo";
-import { Button, Input } from "./ui";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
 
 export const LOGO_MAX_BYTES = 512 * 1024;
 const MIME_BY_EXT: Record<string, string> = {
@@ -83,7 +85,7 @@ export function LogoEditor({
   return (
     <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
       <EntityLogo src={src} name={name || "?"} color={color} size="xl" />
-      <div className="min-w-0 flex-1 space-y-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex flex-wrap gap-2">
           <input
             ref={input}
@@ -105,15 +107,21 @@ export function LogoEditor({
               }
             }}
           />
-          <Button size="sm" icon={<ImageUp className="h-3.5 w-3.5" />} disabled={disabled || busy !== null} loading={busy === "upload"} onClick={() => input.current?.click()}>
+          <Button
+            variant="secondary"
+            size="small"
+            leadingIcon={busy === "upload" ? ButtonSpinner : RiImageAddLine}
+            disabled={disabled || busy !== null}
+            onClick={() => input.current?.click()}
+          >
             Upload image
           </Button>
           {onFetch && (
             <Button
-              size="sm"
-              icon={<Globe className="h-3.5 w-3.5" />}
+              variant="secondary"
+              size="small"
+              leadingIcon={busy === "fetch" ? ButtonSpinner : RiGlobalLine}
               disabled={disabled || busy !== null || (!website && !fetchUrl.trim())}
-              loading={busy === "fetch"}
               onClick={() => void run("fetch", () => onFetch(fetchUrl.trim() || undefined), "Logo fetched from the website")}
               title={!website && !fetchUrl.trim() ? "Add a website first, or paste a URL below" : undefined}
             >
@@ -122,13 +130,12 @@ export function LogoEditor({
           )}
           {hasOwn && (
             <Button
-              size="sm"
+              size="small"
               variant="ghost"
-              icon={<Trash2 className="h-3.5 w-3.5" />}
+              leadingIcon={busy === "remove" ? ButtonSpinner : RiDeleteBinLine}
               disabled={disabled || busy !== null}
-              loading={busy === "remove"}
               onClick={() => void run("remove", onRemove, "Logo removed")}
-              className="hover:text-red-700"
+              className="hover:text-text-error-primary"
             >
               Remove
             </Button>
@@ -137,19 +144,21 @@ export function LogoEditor({
         {onFetch && (
           <Input
             value={fetchUrl}
-            onChange={(e) => setFetchUrl(e.target.value)}
+            onChange={setFetchUrl}
             placeholder={website ? `Paste an image URL, or leave empty to use ${website}` : "Paste an image or website URL"}
             aria-label="Image or website URL to fetch the logo from"
-            disabled={disabled}
-            className="max-w-md font-mono text-[13px]"
+            isDisabled={disabled}
+            inputDir="ltr"
+            className="max-w-md"
+            inputClassName="font-mono text-body-2-regular"
           />
         )}
         {err ? (
-          <p role="alert" className="text-xs text-red-700">
+          <p role="alert" className="text-caption-1-medium text-text-error-primary">
             {err}
           </p>
         ) : (
-          <p className="text-xs text-muted">
+          <p className="text-caption-1-regular text-text-secondary">
             PNG, JPEG, WebP, SVG or ICO up to 512 KB. Square images look best.
             {!hasOwn && inheritedNote ? ` ${inheritedNote}` : ""}
           </p>

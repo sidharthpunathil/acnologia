@@ -14,7 +14,7 @@ import { useDirection } from "@/components/foundations/direction/direction";
 import { cx, sortCx } from "@/utils/cx";
 
 /**
- * Drawer — a panel that slides in from an edge of the screen over a dimmed
+ * Drawer: a panel that slides in from an edge of the screen over a dimmed
  * page. It is Modal's sibling on the same React Aria ModalOverlay, so focus
  * is trapped and returns to the trigger, the page stops scrolling, and
  * Escape or a press on the backdrop closes it. The header, body, footer,

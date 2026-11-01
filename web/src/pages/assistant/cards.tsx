@@ -1,22 +1,29 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight,
-  Boxes,
-  Check,
-  CircleDashed,
-  Clock,
-  FlaskConical,
-  KeyRound,
-  Sparkles,
-  X,
-} from "lucide-react";
-import { api } from "../../lib/api";
-import type { ChatAnswer, ChatCard, ChatEntity, ChatItem, Key, Service } from "../../lib/types";
-import { useNow } from "../../hooks/useNow";
-import { EntityLogo } from "../../components/EntityLogo";
-import { StatusPill } from "../../components/StatusPill";
-import { Button, cx } from "../../components/ui";
+  RiArrowRightLine,
+  RiBox3Line,
+  RiCheckLine,
+  RiCloseLine,
+  RiFlaskLine,
+  RiKey2Line,
+  RiSparkling2Line,
+  RiTimeLine,
+} from "@remixicon/react";
+import { api } from "@/lib/api";
+import type { ChatAnswer, ChatCard, ChatEntity, ChatItem, Key, Service } from "@/lib/types";
+import { useNow } from "@/hooks/useNow";
+import { EntityLogo } from "@/components/EntityLogo";
+import { StatusPill } from "@/components/StatusPill";
+import { Chip } from "@/components/base/badges/chip";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { ProgressTrack } from "@/components/base/progress/progress";
+import { ButtonSpinner, SpinnerGlyph } from "@/components/base/spinner/spinner";
+import { cx } from "@/utils/cx";
+
+/** The card surface every tool result in the transcript shares. */
+const CARD = "rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs";
 
 // ---- entity chips ----
 
@@ -35,6 +42,7 @@ export function entityPath(e: ChatEntity): string | null {
   return null;
 }
 
+/** A name from a tool result, as a subtle violet chip that links to its page. */
 export function EntityChip({ e, children }: { e: ChatEntity; children?: ReactNode }) {
   const to = entityPath(e);
   const label = children ?? e.name;
@@ -43,9 +51,15 @@ export function EntityChip({ e, children }: { e: ChatEntity; children?: ReactNod
     <Link
       to={to}
       title={`Open ${e.type} ${e.name}`}
-      className="chat-chip press mx-px inline-flex max-w-full items-baseline gap-1 rounded-md bg-ink/[0.06] px-1.5 align-baseline font-medium text-ink transition-[background-color,transform] duration-150 hover:bg-ink/[0.11] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ink/30"
+      className="group/chip mx-px inline-flex max-w-full rounded-md align-baseline outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
     >
-      <span className="truncate">{label}</span>
+      <Chip
+        variant="caption"
+        color="purple"
+        className="max-w-full truncate px-1.5 py-0 text-body-medium leading-[inherit] transition-[filter] duration-150 ease-out group-hover/chip:brightness-95"
+      >
+        {label}
+      </Chip>
     </Link>
   );
 }
@@ -70,7 +84,11 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * Splits text around entity names and turns each into a chip. Matches whole
  * words only, longest name first, so "Gemini" never eats "Gemini Pro".
  */
-export function linkify(text: string, entities: Map<string, ChatEntity> | undefined, render: (s: string, key: number) => ReactNode): ReactNode {
+export function linkify(
+  text: string,
+  entities: Map<string, ChatEntity> | undefined,
+  render: (s: string, key: number) => ReactNode,
+): ReactNode {
   if (!entities || entities.size === 0 || !text) return render(text, 0);
   const names = [...entities.keys()].sort((a, b) => b.length - a.length).map(escapeRe);
   const re = new RegExp(`(?<![\\w/.-])(${names.join("|")})(?![\\w-])`, "g");
@@ -81,7 +99,15 @@ export function linkify(text: string, entities: Map<string, ChatEntity> | undefi
     const at = m.index ?? 0;
     if (at > last) out.push(render(text.slice(last, at), n++));
     const e = entities.get(m[1]);
-    out.push(e ? <EntityChip key={`e${n++}`} e={e}>{m[1]}</EntityChip> : render(m[1], n++));
+    out.push(
+      e ? (
+        <EntityChip key={`e${n++}`} e={e}>
+          {m[1]}
+        </EntityChip>
+      ) : (
+        render(m[1], n++)
+      ),
+    );
     last = at + m[1].length;
   }
   if (last < text.length) out.push(render(text.slice(last), n++));
@@ -100,7 +126,11 @@ function elapsed(from: string | undefined, to: number): string {
 export function Elapsed({ from, to }: { from?: string; to?: string }) {
   const now = useNow(1000);
   const end = to ? Date.parse(to) : now;
-  return <span className="font-mono text-[12px] tabular-nums text-faint">{elapsed(from, Number.isNaN(end) ? now : end)}</span>;
+  return (
+    <span className="font-mono text-caption-1-regular text-text-tertiary tabular-nums">
+      {elapsed(from, Number.isNaN(end) ? now : end)}
+    </span>
+  );
 }
 
 /** Text that crossfades when it changes. Reduced motion swaps it plainly (see assistant.css). */
@@ -116,10 +146,26 @@ function OpenRun({ to, label = "Open run" }: { to: string; label?: string }) {
   return (
     <Link
       to={to}
-      className="press tap-inline inline-flex shrink-0 items-center gap-1 rounded-md text-[12.5px] font-medium text-ink underline-offset-4 hover:underline"
+      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-body-2-medium text-text-primary outline-none transition-colors duration-150 hover:bg-button-ghost-hover focus-visible:ring-2 focus-visible:ring-border-focus-ring"
     >
-      {label} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+      {label}
+      <RiArrowRightLine className="size-4" aria-hidden />
     </Link>
+  );
+}
+
+/** A small round state glyph: a check, or a cross for a failure. */
+function Tick({ failed }: { failed?: boolean }) {
+  return (
+    <span
+      className={cx(
+        "flex size-5 shrink-0 items-center justify-center rounded-full",
+        failed ? "bg-status-rose-background text-status-rose-text" : "bg-status-lime-background text-status-lime-text",
+      )}
+      aria-hidden
+    >
+      {failed ? <RiCloseLine className="size-3.5" /> : <RiCheckLine className="size-3.5" />}
+    </span>
   );
 }
 
@@ -129,6 +175,11 @@ const PHASES = ["Research", "Spec", "Tests", "Live check", "Publish"];
 /** Shorter labels for phone widths. */
 const PHASES_SHORT = ["Research", "Spec", "Tests", "Live", "Publish"];
 
+/**
+ * A provider build the assistant started. While it runs: the phase rail,
+ * the live step and the elapsed time, refreshed by the thread poll (the
+ * build finishes itself after a reload). Once done: one line with the result.
+ */
 export function BuildCard({ item }: { item: ChatItem }) {
   const b = item.build;
   if (!b) return null;
@@ -138,45 +189,43 @@ export function BuildCard({ item }: { item: ChatItem }) {
   if (done || failed) {
     const p = item.card?.provider;
     return (
-      <div className="chat-reveal flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] shadow-card">
-        <span
-          className={cx(
-            "flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
-            failed ? "bg-red-600 text-white" : "bg-ink text-on-ink",
-          )}
-          aria-hidden="true"
-        >
-          {failed ? <X className="h-2.5 w-2.5" strokeWidth={3} /> : <Check className="h-2.5 w-2.5" strokeWidth={3} />}
-        </span>
+      <div className={cx(CARD, "chat-reveal flex flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-2.5 text-body-2-regular")}>
+        <Tick failed={failed} />
         <span className="min-w-0 flex-1">
           {b.status === "published" && p ? (
             <>
-              <span className="font-medium text-ink">
+              <span className="text-body-2-medium text-text-primary">
                 Published <EntityChip e={{ type: "provider", slug: p.slug, name: p.name }} />
               </span>
-              <span className="text-muted">
+              <span className="text-text-secondary">
                 {" "}
                 v{p.version || 1}
-                <span className="mx-1.5 text-faint" aria-hidden="true">·</span>
-                <FlaskConical className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-faint" aria-hidden="true" />
+                <span className="mx-1.5 text-text-tertiary" aria-hidden>
+                  ·
+                </span>
+                <RiFlaskLine className="me-1 inline size-3.5 align-[-2px] text-foreground-icon-tertiary" aria-hidden />
                 {p.tests_passed}/{p.tests_passed + p.tests_failed} tests pass
               </span>
               {item.card?.service && (
-                <span className="text-muted">
-                  <span className="mx-1.5 text-faint" aria-hidden="true">·</span>
+                <span className="text-text-secondary">
+                  <span className="mx-1.5 text-text-tertiary" aria-hidden>
+                    ·
+                  </span>
                   service <EntityChip e={item.card.service} />
                 </span>
               )}
             </>
           ) : b.status === "needs_review" ? (
-            <span className="font-medium text-ink">{b.title}: ready for your review</span>
+            <span className="text-body-2-medium text-text-primary">{b.title}: ready for your review</span>
           ) : (
             <>
-              <span className="font-medium text-red-700">{b.title}: build {b.status}</span>
-              {b.error && <span className="wrap-anywhere text-muted"> {b.error}</span>}
+              <span className="text-body-2-medium text-text-error-primary">
+                {b.title}: build {b.status}
+              </span>
+              {b.error && <span className="wrap-anywhere text-text-secondary"> {b.error}</span>}
             </>
           )}
-          <span className="ml-2">
+          <span className="ms-2">
             <Elapsed from={b.started_at} to={b.finished_at} />
           </span>
         </span>
@@ -186,37 +235,33 @@ export function BuildCard({ item }: { item: ChatItem }) {
   }
   const phase = Math.max(0, Math.min(4, b.phase));
   return (
-    <div
-      role="group"
-      aria-label={`Building ${b.title}`}
-      className="rounded-2xl border border-line bg-surface px-4 pb-3 pt-3.5 shadow-card"
-    >
-      <div className="flex items-center gap-2">
-        <Boxes className="h-4 w-4 shrink-0 text-brand" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-ink">Building {b.title}</span>
+    <div role="group" aria-label={`Building ${b.title}`} className={cx(CARD, "px-4 pt-3.5 pb-3")}>
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-status-purple-background text-status-purple-text">
+          <RiBox3Line className="size-4" aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-body-medium text-text-primary">Building {b.title}</span>
         <Elapsed from={b.started_at} />
       </div>
       <div
-        className="relative mt-3 h-[3px] overflow-hidden rounded-full bg-well"
+        className="mt-3"
         role="progressbar"
+        aria-label={`Building ${b.title}`}
         aria-valuemin={0}
         aria-valuemax={5}
         aria-valuenow={phase + 1}
         aria-valuetext={PHASES[phase]}
       >
-        <div
-          className="chat-progress absolute inset-y-0 left-0 rounded-full bg-ink"
-          style={{ width: `${((phase + 1) / PHASES.length) * 100}%` }}
-        />
+        <ProgressTrack percentage={((phase + 1) / PHASES.length) * 100} size="sm" />
       </div>
-      <ol className="mt-1.5 grid grid-cols-5 gap-1 font-mono text-[10.5px] uppercase tracking-wide">
+      <ol className="mt-2 grid grid-cols-5 gap-1 font-mono text-caption-2-medium uppercase" aria-hidden>
         {PHASES.map((p, i) => (
           <li
             key={p}
             className={cx(
               "truncate transition-colors duration-300",
-              i < phase ? "text-muted" : i === phase ? "text-ink" : "text-faint",
-              i === 4 && "text-right",
+              i < phase ? "text-text-secondary" : i === phase ? "text-text-primary" : "text-text-tertiary",
+              i === 4 && "text-end",
               i > 0 && i < 4 && "text-center",
             )}
           >
@@ -225,8 +270,8 @@ export function BuildCard({ item }: { item: ChatItem }) {
           </li>
         ))}
       </ol>
-      <div className="mt-2.5 flex items-center gap-3 text-[13px]">
-        <span className="min-w-0 flex-1 truncate text-muted" aria-live="polite">
+      <div className="mt-2.5 flex items-center gap-3 text-body-2-regular">
+        <span className="min-w-0 flex-1 truncate text-text-secondary" aria-live="polite">
           <SwapText text={b.step || "Working"} />
         </span>
         <OpenRun to={link} />
@@ -237,6 +282,11 @@ export function BuildCard({ item }: { item: ChatItem }) {
 
 // ---- ask_user ----
 
+/**
+ * A question the assistant asked with ask_user: a names form (one field per
+ * pasted key) or a row of choices. Disabled while a turn is busy; answered
+ * and expired questions fold into one line.
+ */
 export function AskCard({
   item,
   busy,
@@ -251,7 +301,6 @@ export function AskCard({
     Object.fromEntries((a?.rows ?? []).map((r) => [r.ref, r.suggestion])),
   );
   const [which, setWhich] = useState<string | null>(null);
-  const first = useRef<HTMLInputElement>(null);
   if (!a) return null;
   const waiting = a.status === "waiting";
   const run = async (key: string, body: ChatAnswer) => {
@@ -264,16 +313,16 @@ export function AskCard({
   };
   if (!waiting) {
     return (
-      <div className="chat-reveal flex items-center gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] text-muted shadow-card">
+      <div className={cx(CARD, "chat-reveal flex items-center gap-2.5 px-4 py-2.5 text-body-2-regular text-text-secondary")}>
         {a.status === "answered" ? (
-          <Check className="h-3.5 w-3.5 shrink-0 text-ink" aria-hidden="true" />
+          <RiCheckLine className="size-4 shrink-0 text-foreground-icon-primary" aria-hidden />
         ) : (
-          <Clock className="h-3.5 w-3.5 shrink-0 text-faint" aria-hidden="true" />
+          <RiTimeLine className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
         )}
         <span className="min-w-0 flex-1 truncate">
           {a.question}
-          <span className="text-faint"> · </span>
-          {a.status === "answered" ? <span className="text-ink">{a.answer}</span> : "Expired"}
+          <span className="text-text-tertiary"> · </span>
+          {a.status === "answered" ? <span className="text-text-primary">{a.answer}</span> : "Expired"}
         </span>
       </div>
     );
@@ -283,54 +332,49 @@ export function AskCard({
     void run("names", { ask_id: a.id, names });
   };
   return (
-    <div role="group" aria-label="Question" className="rounded-2xl border border-line bg-surface shadow-card">
-      <div className="px-4 pb-2 pt-3.5">
-        <div className="font-mono text-[11px] uppercase tracking-wide text-faint">Your call</div>
-        <div className="mt-1.5 text-[14px] leading-relaxed text-ink">{a.question}</div>
+    <div role="group" aria-label="Question" className={CARD}>
+      <div className="px-4 pt-3.5 pb-2">
+        <div className="text-caption-2-semibold text-text-tertiary uppercase">Your call</div>
+        <div className="mt-1.5 text-body-regular text-text-primary">{a.question}</div>
       </div>
       {a.kind === "names" ? (
         <form onSubmit={submit} className="px-4 pb-3.5">
-          <ul className="max-h-72 space-y-1.5 overflow-y-auto py-1">
-            {(a.rows ?? []).map((r, i) => (
+          <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto py-1">
+            {(a.rows ?? []).map((r) => (
               <li key={r.ref} className="flex items-center gap-2.5">
-                <KeyRound className="h-3.5 w-3.5 shrink-0 text-faint" aria-hidden="true" />
-                <span className="w-16 shrink-0 font-mono text-[12px] text-muted" title={`Key ${r.ref}`}>
+                <RiKey2Line className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
+                <span className="w-16 shrink-0 font-mono text-caption-1-regular text-text-secondary" title={`Key ${r.ref}`}>
                   {r.hint.replace(/^\.\.\./, "…")}
                 </span>
-                <label className="sr-only" htmlFor={`ask-${a.id}-${r.ref}`}>
-                  Name for the key ending {r.hint.slice(-4)}
-                </label>
-                <input
-                  id={`ask-${a.id}-${r.ref}`}
-                  ref={i === 0 ? first : undefined}
+                <Input
+                  size="small"
+                  className="min-w-0 flex-1"
+                  aria-label={`Name for the key ending ${r.hint.slice(-4)}`}
                   value={names[r.ref] ?? ""}
                   maxLength={64}
                   placeholder="Name"
-                  onChange={(e) => setNames({ ...names, [r.ref]: e.target.value })}
-                  className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-canvas px-2.5 text-[13.5px] text-ink transition-[border-color] duration-150 placeholder:text-faint focus:border-line-strong focus:outline-hidden"
+                  isDisabled={busy}
+                  onChange={(v) => setNames({ ...names, [r.ref]: v })}
                 />
               </li>
             ))}
           </ul>
-          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
             <Button
-              size="sm"
-              variant="ghost"
+              size="small"
+              variant="secondary"
               type="button"
-              className="press flex-1 sm:flex-none"
-              icon={<Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
-              loading={which === "auto"}
+              leadingIcon={which === "auto" ? ButtonSpinner : RiSparkling2Line}
               disabled={busy}
               onClick={() => void run("auto", { ask_id: a.id, auto: true })}
             >
               Pick names for me
             </Button>
             <Button
-              size="sm"
+              size="small"
               type="submit"
               variant="primary"
-              className="press flex-1 sm:flex-none"
-              loading={which === "names"}
+              leadingIcon={which === "names" ? ButtonSpinner : undefined}
               disabled={busy || !Object.values(names).some((n) => n.trim())}
             >
               Use these names
@@ -338,14 +382,13 @@ export function AskCard({
           </div>
         </form>
       ) : (
-        <div className="flex flex-wrap gap-2 px-4 pb-3.5 pt-1">
+        <div className="flex flex-wrap gap-2 px-4 pt-1 pb-3.5">
           {(a.choices ?? []).map((c) => (
             <Button
               key={c}
-              size="sm"
+              size="small"
               variant="secondary"
-              className="press"
-              loading={which === c}
+              leadingIcon={which === c ? ButtonSpinner : undefined}
               disabled={busy}
               onClick={() => void run(c, { ask_id: a.id, choice: c })}
             >
@@ -374,7 +417,10 @@ function KeysCard({ card, ts }: { card: ChatCard; ts: string }) {
     const started = Date.parse(ts);
     // Only a fresh card refreshes, every 4s for up to a minute after the keys were added.
     if (Number.isNaN(started) || Date.now() - started > FRESH_MS) {
-      api.listKeys(svc.id).then((r) => setLive(new Map(r.keys.filter((k) => ids.has(k.id)).map((k) => [k.id, k])))).catch(() => {});
+      api
+        .listKeys(svc.id)
+        .then((r) => setLive(new Map(r.keys.filter((k) => ids.has(k.id)).map((k) => [k.id, k]))))
+        .catch(() => {});
       return;
     }
     let stop = false;
@@ -404,11 +450,13 @@ function KeysCard({ card, ts }: { card: ChatCard; ts: string }) {
   const shown = (card.keys ?? []).slice(0, 8);
   const more = (card.key_total ?? shown.length) - shown.length;
   return (
-    <div className="rounded-2xl border border-line bg-surface shadow-card">
-      <div className="flex items-center gap-2 px-4 pb-2 pt-3">
-        <KeyRound className="h-4 w-4 shrink-0 text-brand" aria-hidden="true" />
-        <span className="min-w-0 flex-1 text-[13.5px] text-ink">
-          <span className="font-medium">
+    <div className={cx(CARD, "overflow-hidden")}>
+      <div className="flex items-center gap-2.5 px-4 pt-3 pb-2.5">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-status-purple-background text-status-purple-text">
+          <RiKey2Line className="size-4" aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1 text-body-2-regular text-text-primary">
+          <span className="text-body-2-medium">
             {card.key_total ?? 0} {card.key_total === 1 ? "key" : "keys"} added
           </span>
           {svc && (
@@ -417,42 +465,41 @@ function KeysCard({ card, ts }: { card: ChatCard; ts: string }) {
               to <EntityChip e={svc} />
             </>
           )}
-          {!!card.skipped && <span className="text-muted"> · {card.skipped} already there</span>}
+          {!!card.skipped && <span className="text-text-secondary">, {card.skipped} already there</span>}
         </span>
         {checking && (
-          <span className="inline-flex items-center gap-1 font-mono text-[11px] text-faint">
-            <CircleDashed className="chat-spin h-3 w-3" aria-hidden="true" />
+          <span role="status" className="inline-flex items-center gap-1.5 font-mono text-caption-1-regular text-text-tertiary">
+            <SpinnerGlyph size="xs" />
             checking
           </span>
         )}
       </div>
       {shown.length > 0 && (
-        <ul className="divide-y divide-line border-t border-line">
+        <ul className="divide-y divide-separator-border border-t border-separator-border">
           {shown.map((k) => {
             const lk = live.get(k.id);
             return (
-              <li key={k.id} className="flex items-center gap-3 px-4 py-2 text-[13px]">
+              <li key={k.id} className="flex items-center gap-3 px-4 py-2 text-body-2-regular">
                 <Link
                   to={`/keys?q=${encodeURIComponent(k.label)}`}
-                  className="min-w-0 flex-1 truncate font-medium text-ink underline-offset-4 hover:underline"
+                  className="min-w-0 flex-1 truncate rounded-sm text-body-2-medium text-text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
                 >
                   {k.label}
                 </Link>
-                <span className="shrink-0 font-mono text-[12px] text-muted">{k.hint.replace(/^\.\.\./, "…")}</span>
-                <span className="w-28 shrink-0 text-right">
+                <span className="shrink-0 font-mono text-caption-1-regular text-text-secondary">{k.hint.replace(/^\.\.\./, "…")}</span>
+                <span className="flex w-28 shrink-0 justify-end" aria-live="polite">
                   {lk ? (
                     <span key={`${lk.effective_status}-${lk.validity}`} className="chat-swap inline-flex">
                       {lk.validity === "invalid" ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2 py-0.5 font-mono text-[11px] text-red-700">
-                          <span className="h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
+                        <Chip variant="caption" color="rose" className="py-0.5 font-mono">
                           invalid
-                        </span>
+                        </Chip>
                       ) : (
                         <StatusPill k={lk} now={now} />
                       )}
                     </span>
                   ) : (
-                    <span className="font-mono text-[11px] text-faint">{k.status || "added"}</span>
+                    <span className="font-mono text-caption-1-regular text-text-tertiary">{k.status || "added"}</span>
                   )}
                 </span>
               </li>
@@ -461,9 +508,12 @@ function KeysCard({ card, ts }: { card: ChatCard; ts: string }) {
         </ul>
       )}
       {more > 0 && svc?.id && (
-        <div className="border-t border-line px-4 py-2 text-[12.5px] text-muted">
+        <div className="border-t border-separator-border px-4 py-2 text-body-2-regular text-text-secondary">
           and {more} more.{" "}
-          <Link to={`/services/${svc.id}`} className="font-medium text-ink underline-offset-4 hover:underline">
+          <Link
+            to={`/services/${svc.id}`}
+            className="rounded-sm text-body-2-medium text-text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+          >
             See all in {svc.name}
           </Link>
         </div>
@@ -482,15 +532,17 @@ function ServiceCard({ card }: { card: ChatCard }) {
   if (!svc) return null;
   const counts = full?.key_counts;
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-card">
+    <div className={cx(CARD, "flex items-center gap-3 px-4 py-3")}>
       <EntityLogo src={full?.logo_url} name={svc.name} size="md" />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13.5px] font-medium text-ink">{svc.name}</div>
-        <div className="truncate font-mono text-[11.5px] text-muted">
+        <div className="truncate text-body-medium text-text-primary">{svc.name}</div>
+        <div className="truncate font-mono text-caption-1-regular text-text-secondary">
           /proxy/{svc.slug}
           {counts && (
             <>
-              <span className="mx-1.5 text-faint" aria-hidden="true">·</span>
+              <span className="mx-1.5 text-text-tertiary" aria-hidden>
+                ·
+              </span>
               {counts.total} {counts.total === 1 ? "key" : "keys"}
               {counts.total > 0 && `, ${counts.available} available`}
             </>
@@ -507,24 +559,19 @@ export function ToolCards({ items }: { items: ChatItem[] }) {
   const cards = items.filter((it) => it.card && (it.card.type === "keys" || it.card.type === "service"));
   if (!cards.length) return null;
   return (
-    <div className="mt-2.5 space-y-2.5">
-      {cards.map((it) =>
-        it.card?.type === "keys" ? (
-          <div key={it.id} className="fade-up">
-            <KeysCard card={it.card} ts={it.ts} />
-          </div>
-        ) : (
-          <div key={it.id} className="fade-up">
-            <ServiceCard card={it.card as ChatCard} />
-          </div>
-        ),
-      )}
+    <div className="mt-2.5 flex flex-col gap-2.5">
+      {cards.map((it) => (
+        <div key={it.id} className="fade-up">
+          {it.card?.type === "keys" ? <KeysCard card={it.card} ts={it.ts} /> : <ServiceCard card={it.card as ChatCard} />}
+        </div>
+      ))}
     </div>
   );
 }
 
 // ---- suggestions ----
 
+/** Follow ups the assistant offered at the end of a turn. Picking one sends it. */
 export function Suggestions({
   items,
   disabled,
@@ -536,21 +583,21 @@ export function Suggestions({
 }) {
   if (!items.length) return null;
   return (
-    <div className="mt-3 flex flex-wrap gap-2 pl-9" role="group" aria-label="Suggested follow ups">
+    <div className={cx("mt-3 flex flex-wrap gap-2", "ps-9")} role="group" aria-label="Suggested follow ups">
       {items.map((s, i) => (
-        <button
+        <Button
           key={s}
-          type="button"
+          size="small"
+          variant="secondary"
+          trailingIcon={RiArrowRightLine}
           disabled={disabled}
           onClick={() => onPick(s)}
-          className="press fade-up tap inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-[13px] text-ink shadow-card transition-[border-color,background-color,transform] duration-150 ease-out hover:border-line-strong hover:bg-soft disabled:cursor-not-allowed disabled:opacity-50"
+          className="fade-up h-auto min-h-8 rounded-full px-3 whitespace-normal text-start"
           style={{ animationDelay: `${120 + i * 60}ms` }}
         >
           {s}
-          <ArrowRight className="h-3.5 w-3.5 text-faint" aria-hidden="true" />
-        </button>
+        </Button>
       ))}
     </div>
   );
 }
-

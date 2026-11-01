@@ -23,13 +23,13 @@ import type { DialogRenderProps, DialogTriggerProps, ModalOverlayProps } from "r
 import { RiErrorWarningLine } from "@remixicon/react";
 import { Button } from "@/components/base/buttons/button";
 import { CloseButton } from "@/components/base/buttons/close-button";
-import { SpinnerGlyph } from "@/components/base/spinner/spinner";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { useDirection } from "@/components/foundations/direction/direction";
 import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/scroll-fade";
 import { cx, sortCx } from "@/utils/cx";
 
 /**
- * Modal — a centred dialog over a dimmed page, built on React Aria's
+ * Modal: a centred dialog over a dimmed page, built on React Aria's
  * ModalOverlay / Modal / Dialog: focus is trapped inside and returns to the
  * trigger on close, the page behind stops scrolling, and Escape or a press on
  * the backdrop dismisses it.
@@ -84,9 +84,9 @@ const styles = sortCx({
     // scrollable, so focusing a field clipped by the body's scroller could
     // scroll the whole panel instead (see Settings Modal).
     "flex min-h-0 flex-col gap-4 overflow-clip py-6 outline-none",
-    // Settings Modal's surface: page white in light mode, and in dark mode a
-    // ground darker than the inputs and menus it holds, so they keep an edge.
-    "rounded-3xl border border-separator-border bg-background-full shadow-xs",
+    // Acnologia: the card surface. Its page ground is warm gray, so the
+    // BoardUI page token would melt into the gray input wells.
+    "rounded-3xl border border-separator-border bg-background-primary-default shadow-xs",
   ].join(" "),
   size: {
     sm: "max-w-[400px]",
@@ -297,7 +297,7 @@ export function ModalBody({ className, children }: ModalBodyProps) {
       >
         {children}
       </div>
-      <ScrollFade progress={fade.progress} surfaceClassName="from-background-full" />
+      <ScrollFade progress={fade.progress} surfaceClassName="from-background-primary-default" />
     </div>
   );
 }
@@ -348,10 +348,8 @@ export interface AlertDialogProps
   children?: ReactNode;
 }
 
-/** Spinner sized for Button's icon slot, in the button's own text colour. */
-function PendingGlyph({ className }: { className?: string }) {
-  return <SpinnerGlyph size="sm" className={cx(className, "text-current")} />;
-}
+/** Spinner sized for Button's icon slot; lives in spinner.tsx as ButtonSpinner. */
+const PendingGlyph = ButtonSpinner;
 
 export function AlertDialog({
   title,

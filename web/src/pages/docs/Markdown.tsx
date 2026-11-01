@@ -2,9 +2,10 @@ import { createElement, memo, useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Link2 } from "lucide-react";
-import { CodeBlock } from "../../components/CodeBlock";
-import type { Theme } from "../../stores/theme";
+import { RiLink } from "@remixicon/react";
+import { CodeBlock } from "@/components/CodeBlock";
+import type { Theme } from "@/stores/theme";
+import { cx } from "@/utils/cx";
 import type { DocHeading } from "./headings";
 import { Mermaid } from "./Mermaid";
 
@@ -23,14 +24,17 @@ function hastText(n: HastNode | undefined): string {
   return (n.children ?? []).map(hastText).join("");
 }
 
+/** Headings on BoardUI's composite type scale. */
 const HEADING_CLASS: Record<number, string> = {
-  1: "text-balance text-[30px] font-semibold leading-tight tracking-tight text-ink-strong sm:text-[34px]",
-  2: "mt-12 border-t border-line pt-8 text-[22px] font-semibold tracking-tight text-ink-strong",
-  3: "mt-8 text-[17px] font-semibold text-ink-strong",
-  4: "mt-6 text-[15px] font-semibold text-ink-strong",
-  5: "mt-6 text-sm font-semibold text-ink-strong",
-  6: "mt-6 text-sm font-semibold text-muted",
+  1: "text-title-1-semibold text-balance text-text-primary sm:text-display-4-semibold",
+  2: "mt-12 border-t border-separator-border pt-8 text-title-2-semibold text-text-primary",
+  3: "mt-8 text-headline-semibold text-text-primary",
+  4: "mt-6 text-body-semibold text-text-primary",
+  5: "mt-6 text-body-2-semibold text-text-primary",
+  6: "mt-6 text-body-2-semibold text-text-secondary",
 };
+
+const LINK = "rounded-sm text-text-primary underline decoration-chart-1 underline-offset-[3px] outline-none transition-[text-decoration-color] duration-150 hover:decoration-current focus-visible:ring-2 focus-visible:ring-border-focus-ring";
 
 /**
  * A doc's Markdown with GitHub flavor (tables, task lists, autolinks). Raw
@@ -45,15 +49,15 @@ export const Markdown = memo(function Markdown({ source, headings, theme }: { so
         const id = idByLine.get(line);
         return createElement(
           `h${depth}`,
-          { id, className: `group scroll-mt-28 ${HEADING_CLASS[depth]}` },
+          { id, className: cx("group scroll-mt-28", HEADING_CLASS[depth]) },
           children,
           id && depth > 1 ? (
             <a
               href={`#${id}`}
-              className="ml-2 inline-flex align-middle text-faint opacity-0 transition-opacity duration-150 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+              className="ms-2 inline-flex rounded-sm align-middle text-foreground-icon-tertiary opacity-0 outline-none transition-opacity duration-150 group-hover:opacity-100 hover:text-foreground-icon-primary focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-border-focus-ring"
               aria-label="Link to this section"
             >
-              <Link2 className="h-4 w-4" aria-hidden />
+              <RiLink className="size-4" aria-hidden />
             </a>
           ) : null,
         );
@@ -65,10 +69,9 @@ export const Markdown = memo(function Markdown({ source, headings, theme }: { so
       h4: heading(4),
       h5: heading(5),
       h6: heading(6),
-      p: ({ children }) => <p className="mt-4 text-pretty leading-[1.75]">{children}</p>,
+      p: ({ children }) => <p className="mt-4 text-pretty">{children}</p>,
       a: ({ href = "", children }) => {
-        const cls =
-          "font-medium text-brand-ink underline decoration-brand/40 underline-offset-[3px] transition-colors hover:decoration-brand";
+        const cls = LINK;
         // Rendered doc pages stay in the app; raw files and the API go to the server.
         if (/^\/docs(\/[a-z-]+)?(#.*)?$/.test(href)) {
           return (
@@ -90,43 +93,50 @@ export const Markdown = memo(function Markdown({ source, headings, theme }: { so
           </a>
         );
       },
-      ul: ({ children }) => <ul className="mt-4 list-disc space-y-1.5 pl-6 marker:text-faint">{children}</ul>,
-      ol: ({ children }) => <ol className="mt-4 list-decimal space-y-1.5 pl-6 marker:text-faint">{children}</ol>,
-      li: ({ children }) => <li className="pl-1 leading-[1.7] [&>p]:mt-2 [&>ul]:mt-2 [&>ol]:mt-2">{children}</li>,
+      ul: ({ children }) => <ul className="mt-4 flex list-disc flex-col gap-1.5 ps-6 marker:text-text-tertiary">{children}</ul>,
+      ol: ({ children }) => <ol className="mt-4 flex list-decimal flex-col gap-1.5 ps-6 marker:text-text-tertiary">{children}</ol>,
+      li: ({ children }) => <li className="ps-1 [&>ol]:mt-2 [&>p]:mt-2 [&>ul]:mt-2">{children}</li>,
+      // A note in the docs reads as BoardUI's info callout.
       blockquote: ({ children }) => (
-        <blockquote className="mt-5 border-l-2 border-brand/50 bg-soft py-1 pl-4 pr-3 text-muted [&>p]:mt-2">{children}</blockquote>
+        <blockquote className="mt-5 rounded-2xl bg-status-blue-background px-4 py-3 text-status-blue-text [&>p]:mt-2 [&>p:first-child]:mt-0 [&_a]:text-current [&_code]:bg-background-primary-default/60">
+          {children}
+        </blockquote>
       ),
-      hr: () => <hr className="my-10 border-line" />,
-      strong: ({ children }) => <strong className="font-semibold text-ink-strong">{children}</strong>,
+      hr: () => <hr className="my-10 border-separator-border" />,
+      strong: ({ children }) => <strong className="font-semibold text-text-primary">{children}</strong>,
       img: ({ src, alt }) => (
         <img
           src={typeof src === "string" ? src : undefined}
           alt={alt ?? ""}
           loading="lazy"
           decoding="async"
-          className="my-2 inline-block h-auto max-w-full rounded-lg border border-line bg-soft"
+          className="my-2 inline-block h-auto max-w-full rounded-xl border border-border-button-default bg-background-secondary-default"
         />
       ),
+      // GitHub tables on BoardUI's base table styles (.bui-table), in a card that scrolls sideways when wide.
       table: ({ children }) => (
-        <div className="mt-5 max-w-full overflow-x-auto rounded-xl border border-line bg-surface" tabIndex={0} role="region" aria-label="Table">
-          <table className="w-full border-collapse text-left text-[13.5px]">{children}</table>
+        <div
+          className="mt-5 max-w-full overflow-x-auto rounded-2xl border border-border-button-default bg-background-primary-default outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+          tabIndex={0}
+          role="region"
+          aria-label="Table, scrolls sideways when wider than the screen"
+        >
+          <table className="bui-table bui-table-sm [&_tr>*:first-child]:ps-3.5! [&_tr>*:last-child]:pe-3.5! [&_th]:border-t-0!">{children}</table>
         </div>
       ),
-      thead: ({ children }) => <thead className="border-b border-line bg-soft text-[12px] text-faint">{children}</thead>,
-      tbody: ({ children }) => <tbody className="divide-y divide-line">{children}</tbody>,
       th: ({ children, style }) => (
-        <th style={style} className="whitespace-nowrap px-3.5 py-2.5 font-medium">
+        <th style={style} scope="col">
           {children}
         </th>
       ),
       td: ({ children, style }) => (
-        <td style={style} className="min-w-[8rem] px-3.5 py-2.5 align-top leading-relaxed text-ink first:min-w-0">
+        <td style={style} className="min-w-[8rem] align-top! text-body-2-regular! first:min-w-0">
           {children}
         </td>
       ),
       // Only inline code reaches here: `pre` below renders block code itself.
       code: ({ children }) => (
-        <code className="rounded-[5px] border border-line bg-surface px-1.5 py-px font-mono text-[0.86em] text-ink-strong [overflow-wrap:anywhere]">{children}</code>
+        <code className="rounded-md bg-background-tertiary-default px-1.5 py-0.5 font-mono text-body-2-regular text-text-primary [overflow-wrap:anywhere]">{children}</code>
       ),
       pre: ({ node }) => {
         const codeEl = (node as HastNode | undefined)?.children?.find((c) => c.tagName === "code");
@@ -147,7 +157,7 @@ export const Markdown = memo(function Markdown({ source, headings, theme }: { so
   }, [headings, theme]);
 
   return (
-    <div className="min-w-0 text-[15px] text-ink [&>*:first-child]:mt-0">
+    <div className="min-w-0 text-body-regular text-text-primary sm:text-headline-regular [&>*:first-child]:mt-0 [&_li]:leading-relaxed [&_p]:leading-relaxed">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} skipHtml>
         {source}
       </ReactMarkdown>

@@ -1,8 +1,11 @@
 import { useEffect, useId, useState } from "react";
-import { ChevronRight } from "lucide-react";
-import type { Theme } from "../../stores/theme";
-import { CodeBlock } from "../../components/CodeBlock";
-import { CopyButton } from "../../components/CopyButton";
+import { RiArrowRightSLine, RiCheckLine, RiFileCopyLine } from "@remixicon/react";
+import type { Theme } from "@/stores/theme";
+import { toast } from "@/stores/toast";
+import { CodeBlock } from "@/components/CodeBlock";
+import { copyText } from "@/components/CopyButton";
+import { Button } from "@/components/base/buttons/button";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
 
 type MermaidApi = typeof import("mermaid").default;
 
@@ -42,7 +45,7 @@ function themeVariables(theme: Theme) {
   const ink = token("--color-text-primary");
   const muted = token("--color-text-secondary");
   const line = token("--color-border-button-hover");
-  const brandSoft = token("--color-brand-soft");
+  const brandSoft = token("--color-status-purple-background");
   return {
     darkMode: theme === "dark",
     background: surface,
@@ -140,7 +143,7 @@ export function Mermaid({ code, theme }: { code: string; theme: Theme }) {
   if (failed) {
     return (
       <div className="my-6">
-        <p className="mb-2 text-[13px] text-muted">This diagram could not be drawn. Here is its Mermaid source.</p>
+        <p className="mb-2 text-body-2-regular text-text-secondary">This diagram could not be drawn. Here is its Mermaid source.</p>
         <CodeBlock code={code} label="mermaid" />
       </div>
     );
@@ -148,13 +151,17 @@ export function Mermaid({ code, theme }: { code: string; theme: Theme }) {
 
   const kind = code.trim().split(/\s/)[0] ?? "diagram";
   return (
-    <figure className="my-6 min-w-0 overflow-hidden rounded-xl border border-line bg-surface">
-      <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
-        <span className="font-mono text-[11px] text-faint">diagram</span>
-        <CopyButton text={code} label="Copy source" />
+    <figure className="my-6 min-w-0 overflow-hidden rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs">
+      <div className="flex items-center justify-between border-b border-separator-border py-1.5 ps-4 pe-1.5">
+        <span className="font-mono text-caption-1-regular text-text-tertiary">diagram</span>
+        <CopySource code={code} />
       </div>
       {svg ? (
-        <div className="swap-in overflow-x-auto overscroll-x-contain px-4 py-5" tabIndex={0} aria-label="Diagram, scrolls sideways when wider than the screen">
+        <div
+          className="swap-in overflow-x-auto overscroll-x-contain px-4 py-5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-focus-ring"
+          tabIndex={0}
+          aria-label="Diagram, scrolls sideways when wider than the screen"
+        >
           <div
             role="img"
             aria-label={`Diagram (${kind}). Its source follows.`}
@@ -167,19 +174,43 @@ export function Mermaid({ code, theme }: { code: string; theme: Theme }) {
         </div>
       ) : (
         <div className="flex h-56 items-center justify-center" aria-busy="true">
-          <div className="skeleton h-40 w-4/5 rounded-lg" />
+          <Skeleton className="h-40 w-4/5" />
           <span className="sr-only">Drawing diagram</span>
         </div>
       )}
-      <details className="group border-t border-line">
-        <summary className="tap flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs text-muted transition-colors hover:text-ink focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink [&::-webkit-details-marker]:hidden">
-          <ChevronRight aria-hidden className="h-3.5 w-3.5 transition-transform duration-150 ease-out group-open:rotate-90" />
+      <details className="group border-t border-separator-border">
+        <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-caption-1-medium text-text-secondary outline-none transition-colors duration-150 hover:text-text-primary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-focus-ring [&::-webkit-details-marker]:hidden">
+          <RiArrowRightSLine
+            aria-hidden
+            className="size-4 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none rtl:-scale-x-100"
+          />
           Diagram source
         </summary>
-        <pre className="overflow-x-auto bg-code-bg px-4 py-3 font-mono text-[12.5px] leading-relaxed text-code-ink">
+        <pre className="overflow-x-auto bg-code-bg px-4 py-3 font-mono text-caption-1-regular text-code-ink">
           <code>{code}</code>
         </pre>
       </details>
     </figure>
+  );
+}
+
+/** Copies the diagram's Mermaid source, with a check for a moment after. */
+function CopySource({ code }: { code: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      className="bg-transparent text-text-secondary hover:bg-background-secondary-hover hover:text-text-primary"
+      leadingIcon={done ? RiCheckLine : RiFileCopyLine}
+      onClick={async () => {
+        if (await copyText(code)) {
+          setDone(true);
+          window.setTimeout(() => setDone(false), 1500);
+        } else toast.error("Could not copy. Select the source and copy it yourself.");
+      }}
+    >
+      <span aria-live="polite">{done ? "Copied" : "Copy source"}</span>
+    </Button>
   );
 }

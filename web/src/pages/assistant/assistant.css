@@ -1,59 +1,10 @@
 /*
- * Assistant page motion. Shared curves (--ease-out) and the fade-up, swap-in
- * keyframes live in index.css; these are the chat-only pieces.
+ * Assistant page motion. The shared curve (--ease-out) and the fade-up and
+ * fade-only keyframes live in index.css; BoardUI components bring their own.
+ * These are the chat only pieces, each with a reduced motion path below.
  */
 
-/* "Working" label: a soft highlight sweeps across the text while a reply is pending. */
-.chat-shimmer {
-  background-image: linear-gradient(
-    90deg,
-    var(--color-text-secondary) 0%,
-    var(--color-text-secondary) 40%,
-    var(--color-text-primary) 50%,
-    var(--color-text-secondary) 60%,
-    var(--color-text-secondary) 100%
-  );
-  background-size: 300% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: chat-shimmer 2s linear infinite;
-}
-@keyframes chat-shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: 0% 0;
-  }
-}
-
-/* The mark beside "Working" breathes, so a long tool run still reads as alive. */
-.chat-breathe {
-  animation: chat-breathe 1.6s ease-in-out infinite;
-}
-@keyframes chat-breathe {
-  0%,
-  100% {
-    opacity: 0.65;
-    transform: scale(0.92);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-@keyframes chat-breathe-fade {
-  0%,
-  100% {
-    opacity: 0.65;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* Tool details open with a short drop so the panel reads as coming from its row. */
+/* Tool details and the attachment list open with a short drop from their row. */
 @keyframes chat-reveal {
   from {
     opacity: 0;
@@ -64,46 +15,34 @@
   animation: chat-reveal 180ms var(--ease-out) both;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chat-shimmer {
-    animation: none;
-    background: none;
-    color: var(--color-text-secondary);
-  }
-  .chat-breathe {
-    animation: chat-breathe-fade 1.6s ease-in-out infinite;
-  }
-  .chat-reveal {
-    animation: fade-only 150ms ease-out both;
-  }
-}
-
-/* Newly arrived reply text fades in word by word; delays are set inline in reading order. */
-@keyframes chat-word {
+/* Step text and status pills crossfade when they change. */
+@keyframes chat-swap {
   from {
     opacity: 0;
+    transform: translateY(3px);
     filter: blur(2px);
   }
 }
-.chat-word {
-  animation: chat-word 320ms var(--ease-out) both;
+.chat-swap {
+  animation: chat-swap 220ms var(--ease-out) both;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chat-word {
-    animation: none;
-  }
-}
-
-/* Live status: a thin ring orbits the mark while a turn runs. */
+/* Live status: a thin accent ring orbits the dragon mark while a turn runs, and the mark breathes. */
 .chat-orbit::before {
   content: "";
   position: absolute;
   inset: -4px;
   border-radius: 10px;
   padding: 1.5px;
-  background: conic-gradient(from 0deg, transparent 0deg, color-mix(in srgb, var(--color-brand) 90%, transparent) 70deg, transparent 140deg);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--color-chart-1) 90%, transparent) 70deg,
+    transparent 140deg
+  );
+  -webkit-mask:
+    linear-gradient(black 0 0) content-box,
+    linear-gradient(black 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   animation: chat-orbit 1.6s linear infinite;
@@ -116,65 +55,48 @@
     transform: rotate(360deg);
   }
 }
-
-/* Step text and status pills crossfade when they change. */
-@keyframes chat-swap {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
+@keyframes chat-breathe {
+  0%,
+  100% {
+    opacity: 0.7;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
   }
 }
-.chat-swap {
-  animation: chat-swap 220ms var(--ease-out) both;
-}
 
-/* The build progress line glides between phases. */
-.chat-progress {
-  transition: width 600ms var(--ease-out);
-}
-
-.chat-spin {
-  animation: spin 1.2s linear infinite;
-}
-
-/* Buttons and chips press in a touch. */
-.press {
-  transition-property: transform, background-color, color, border-color, opacity;
-}
-.press:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-/* Drop overlay over the chat area. */
+/* Drop overlay over the chat area: the scrim fades, the panel settles from a small blur. */
 @keyframes chat-drop-in {
   from {
     opacity: 0;
+  }
+}
+@keyframes chat-drop-panel {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+    filter: blur(4px);
   }
 }
 .chat-drop {
   animation: chat-drop-in 140ms ease-out both;
 }
 .chat-drop-panel {
-  animation: chat-reveal 200ms var(--ease-out) both;
+  animation: chat-drop-panel 220ms var(--ease-out) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-reveal,
+  .chat-swap,
+  .chat-drop-panel {
+    animation: fade-only 150ms ease-out both;
+  }
   .chat-orbit::before {
     display: none;
   }
   .chat-orbit > * {
     animation: none;
-  }
-  .chat-swap,
-  .chat-drop,
-  .chat-drop-panel,
-  .chat-spin {
-    animation: none;
-  }
-  .chat-progress {
-    transition: none;
-  }
-  .press:active:not(:disabled) {
-    transform: none;
   }
 }

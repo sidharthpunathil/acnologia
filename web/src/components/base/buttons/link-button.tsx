@@ -9,7 +9,7 @@ import { cx, sortCx } from "@/utils/cx";
 import { directionalIconClass } from "@/utils/directional-icon";
 
 /**
- * Link button — an inline text action styled like a link, sized on the same
+ * Link button: an inline text action styled like a link, sized on the same
  * scale as `Button` but without the container: no fill, no border, just the
  * label (plus optional icons) with an underline on hover.
  *
@@ -19,7 +19,7 @@ import { directionalIconClass } from "@/utils/directional-icon";
  *           | small  (Body 1/Medium, 18px icons)
  *           | xs     (Caption 1/Semibold, 14px icons)
  *
- * Renders an `<a>` when `href` is passed, otherwise a `<button>` — the same
+ * Renders an `<a>` when `href` is passed, otherwise a `<button>`, the same
  * action can live in copy ("Learn more →") or trigger a handler. Icons are
  * rendered by the component itself via `leadingIcon` / `trailingIcon` (pass
  * the Remix Icon reference, e.g. `RiArrowRightLine`, not an element).
@@ -82,7 +82,7 @@ const styles = sortCx({
   },
 
   variant: {
-    // Hover keeps the resting color — the underline is the hover cue; only
+    // Hover keeps the resting color, the underline is the hover cue; only
     // the press darkens.
     primary: [
       "text-accent-600 active:text-accent-800",

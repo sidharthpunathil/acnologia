@@ -17,7 +17,7 @@ import { cx } from "@/utils/cx";
  *   - info icon is 16×16 in foreground/icon/quaternary
  *
  * Pass `isRequired` to show the asterisk. Pass `tooltip` to show the info
- * icon (currently a static glyph — when the Tooltip component lands it'll
+ * icon (currently a static glyph, when the Tooltip component lands it'll
  * wire up here).
  */
 

@@ -9,9 +9,9 @@ import { cx, sortCx } from "@/utils/cx";
  * Figma source: Board UI → "Toogles" (node 3856:3807).
  *
  * Two shapes × three sizes, plus off / on:
- *   shape   pill        (Figma "fully rounded") — track & thumb rounded-full
- *           rectangle   (Figma "rectangle")     — track radius/md-scale, thumb radius/xs-scale
- *   size    sm 28×16 · md 42×24 · lg 56×32   (track w×h; thumb = h − 2·pad)
+ *   shape   pill        (Figma "fully rounded"), track & thumb rounded-full
+ *           rectangle   (Figma "rectangle"): track radius/md-scale, thumb radius/xs-scale
+ *   size    sm 28×16 · md 42×24 · lg 56×32   (track w×h; thumb = h - 2·pad)
  *
  * Anatomy (all values 1:1 with Figma):
  *   track   off → bg background/tertiary/default (#ebebeb, no border)
@@ -20,7 +20,7 @@ import { cx, sortCx } from "@/utils/cx";
  *                 the shared `--shadow-checkbox-selected` token; md/sm scale
  *                 the ring (0.75px / 0.5px) and highlight (1.5px / 1px).
  *   thumb   theme-stable white gradient + contact shadow,
- *           slides by (w − thumb − 2·pad) between states.
+ *           slides by (w - thumb - 2·pad) between states.
  *   chip    small embossed inset in the thumb centre:
  *           off → white→neutral-100 in light mode; in dark mode it matches
  *                 the track so the mark reads like a hole through the thumb;
@@ -79,7 +79,7 @@ export interface SwitchVisualState {
 }
 
 /**
- * The track + thumb + chip visual. Pure presentation — the react-aria Switch
+ * The track + thumb + chip visual. Pure presentation, the react-aria Switch
  * (in `Switch` or `SwitchCard`) owns the input and passes its render state in.
  */
 export function SwitchTrack({
@@ -102,7 +102,7 @@ export function SwitchTrack({
         s.trackRadius[shape],
         state.isSelected
           ? cx("bg-linear-to-b from-accent-500 to-accent-600", s.onShadow)
-          : "bg-background-tertiary-default",
+          : "bg-switch-off-track",
         state.isDisabled && "opacity-50",
         state.isFocusVisible && "ring-2 ring-border-focus-ring ring-offset-2",
       )}
@@ -120,8 +120,8 @@ export function SwitchTrack({
           state.isSelected && s.travel,
         )}
       >
-        {/* Embossed inner chip. Gradient runs bottom→top (`to-t`) — equivalent
-            to the Figma layer's vertical flip — but WITHOUT a transform, so the
+        {/* Embossed inner chip. Gradient runs bottom→top (`to-t`), equivalent
+            to the Figma layer's vertical flip, but WITHOUT a transform, so the
             chip stays pixel-snapped/centred (no blurry 1px shift at sub-pixel
             sizes) and its drop shadow points down instead of up. */}
         <span

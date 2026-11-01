@@ -131,6 +131,27 @@
   --color-chart-ok: #3f3f3c;
   --color-code-bg: #1b1b1d;
   --color-code-ink: #ececec;
+  /* Accent roles, so pages never need dark: overrides. Utilities:
+   * text-accent-fg, bg-accent-fill, bg-accent-subtle, border-accent-line. */
+  --color-accent-fg: var(--color-accent-600);
+  --color-accent-fill: var(--color-accent-600);
+  --color-accent-subtle: var(--color-accent-50);
+  --color-accent-line: var(--color-accent-600);
+  /* BoardUI's purple status reads pink next to the violet: ride the accent ramp. */
+  --color-status-purple-background: var(--color-accent-100);
+  --color-status-purple-text: var(--color-accent-700);
+  /* Field hairline at rest and the off switch track: both need more than the
+   * well color to read on the warm page and on white cards. */
+  --color-input-idle-ring: var(--color-border-button-hover);
+  --color-switch-off-track: #d6d5cd;
+  /* Ghost buttons stay quiet and warm: no violet tint, the accent is kept
+   * for the one primary action on a screen. */
+  --color-button-ghost-background: transparent;
+  --color-button-ghost-hover: var(--color-background-tertiary-default);
+  --color-button-ghost-active: var(--color-border-button-hover);
+  --color-button-ghost-disabled: transparent;
+  --color-button-ghost-foreground: var(--color-text-primary);
+  --color-button-ghost-disabled-foreground: var(--color-text-tertiary);
 
   --scrim: rgba(24, 24, 26, 0.4);
   --logo-ring: rgba(20, 20, 15, 0.09);
@@ -179,6 +200,20 @@
   --color-chart-ok: #c9c7bf;
   --color-code-bg: #0f0e0d;
   --color-code-ink: #e6e4de;
+  --color-accent-fg: var(--color-accent-300);
+  --color-accent-fill: var(--color-accent-300);
+  --color-accent-subtle: color-mix(in srgb, var(--color-accent-800) 28%, var(--color-background-primary-default));
+  --color-accent-line: var(--color-accent-400);
+  --color-status-purple-background: color-mix(in srgb, var(--color-accent-900) 55%, transparent);
+  --color-status-purple-text: var(--color-accent-300);
+  --color-input-idle-ring: transparent;
+  --color-switch-off-track: #45433e;
+  --color-button-ghost-background: transparent;
+  --color-button-ghost-hover: var(--color-background-tertiary-default);
+  --color-button-ghost-active: var(--color-border-button-hover);
+  --color-button-ghost-disabled: transparent;
+  --color-button-ghost-foreground: var(--color-text-primary);
+  --color-button-ghost-disabled-foreground: var(--color-text-tertiary);
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 240, 0.06);
   --shadow-lift: 0 6px 18px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 240, 0.1);
@@ -214,6 +249,12 @@
   --color-chart-ok: var(--color-chart-ok);
   --color-code-bg: var(--color-code-bg);
   --color-code-ink: var(--color-code-ink);
+  --color-accent-fg: var(--color-accent-fg);
+  --color-accent-fill: var(--color-accent-fill);
+  --color-accent-subtle: var(--color-accent-subtle);
+  --color-accent-line: var(--color-accent-line);
+  --color-input-idle-ring: var(--color-input-idle-ring);
+  --color-switch-off-track: var(--color-switch-off-track);
 }
 
 /* ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ import { cx } from "@/utils/cx";
 import { useDismissOnOutsidePress, useTriggerToggle } from "@/utils/use-dismiss-on-outside-press";
 
 /**
- * Popover — free-form content anchored to a trigger: a share link, a short
+ * Popover: free-form content anchored to a trigger: a share link, a short
  * form, an explanation behind an info icon. Built on React Aria's
  * DialogTrigger, Popover, and Dialog, so it positions and flips itself,
  * Escape closes it, and focus returns to the trigger.

@@ -6,7 +6,7 @@ import './code.css'
 
 export interface CodeLine {
   text: string
-  /** add: a green line with a +. del: a red line with a −. */
+  /** add: a green line with a +. del: a red line with a -. */
   kind?: 'add' | 'del'
   /** false leaves this line's number blank (a wrapped continuation, a fold). */
   number?: boolean
@@ -35,7 +35,7 @@ function tokens(line: string): ReactNode[] {
 /**
  * Lines of code. `count` shows only the first n lines, the rest laid out but
  * hidden, so a block can stream in (a build log, a generated function) without
- * anything reflowing. Diff lines get a tint and a + or − in the gutter.
+ * anything reflowing. Diff lines get a tint and a + or - in the gutter.
  */
 export function Code({ lines, start = 1, numbers = true, count, highlight = true, className, style }: { lines: (CodeLine | string)[]; start?: number; numbers?: boolean; count?: number; highlight?: boolean; className?: string; style?: CSSProperties }) {
   let n = start
@@ -60,7 +60,7 @@ export function Code({ lines, start = 1, numbers = true, count, highlight = true
         return (
           <div key={i} className="ss-code__line" data-kind={line.kind} data-on={count === undefined || i < count || undefined}>
             {numbers && <span className="ss-code__num">{line.kind === 'del' || line.number === false ? '' : num}</span>}
-            <span className="ss-code__mark">{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ''}</span>
+            <span className="ss-code__mark">{line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ''}</span>
             <span className="ss-code__text">{highlight ? tokens(line.text) : line.text}</span>
           </div>
         )

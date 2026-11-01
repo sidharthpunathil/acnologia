@@ -27,11 +27,11 @@ const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffec
  *     unselected  transparent, Body 1/Regular, text/secondary
  *
  * Built on react-aria ToggleButtonGroup with single selection that can't be
- * emptied — arrow keys move focus, Space/Enter selects.
+ * emptied: arrow keys move focus, Space/Enter selects.
  */
 
 /**
- * `solid` (default) is the Figma design — tertiary track, white thumb behind
+ * `solid` (default) is the Figma design, tertiary track, white thumb behind
  * the selected segment. `plain` drops the track background and the thumb; the
  * selected segment reads only through its text weight/color.
  */

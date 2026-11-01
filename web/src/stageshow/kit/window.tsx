@@ -37,7 +37,7 @@ export interface WindowProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title
    * address centered in a pill with a lock, and the page as a white card inset in
    * the frame. Glass is for a browser: give it a `url`.
    * `terminal` is a dark terminal: one surface, no rule under the bar, the
-   * `title` dim and centered (`northwind — zsh`). Fill it with `Prompt` lines,
+   * `title` dim and centered (`northwind, zsh`). Fill it with `Prompt` lines,
    * plain output and a `Caret`.
    * `card` is one white card: pale dots, a wide pale address bar, no rule under
    * it, a long soft shadow (the checkout-page browser of a payments site).

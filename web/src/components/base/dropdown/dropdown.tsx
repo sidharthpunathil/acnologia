@@ -18,7 +18,7 @@ import { cx } from "@/utils/cx";
 import { useDismissOnOutsidePress, useTriggerToggle } from "@/utils/use-dismiss-on-outside-press";
 
 /**
- * Dropdown — the BoardUI popover-menu recipe as composable primitives, built
+ * Dropdown: the BoardUI popover-menu recipe as composable primitives, built
  * on React Aria's DialogTrigger/Popover. Unlike Select (which picks a value
  * into a trigger), Dropdown is a free-form menu surface: grouped rows of
  * actions, headers, footers, whatever the panel needs.
@@ -47,7 +47,7 @@ import { useDismissOnOutsidePress, useTriggerToggle } from "@/utils/use-dismiss-
  * </Dropdown>
  * ```
  *
- * State can be uncontrolled (omit isOpen/onOpenChange) — control it when the
+ * State can be uncontrolled (omit isOpen/onOpenChange), control it when the
  * trigger needs to react to the open state (e.g. rotating a chevron).
  */
 
@@ -72,7 +72,7 @@ export interface DropdownProps {
  * `overflow: hidden` on <html>, which collapses the page scroll position and
  * visibly yanks sticky layout (e.g. the docs sidebar) whenever a menu opens.
  * Non-modal skips the lock, but react-aria hard-couples outside-press
- * dismissal to modality — so open state lives here (bridging any controlled
+ * dismissal to modality: so open state lives here (bridging any controlled
  * props) and dismissal is restored via useDismissOnOutsidePress, the same
  * fix as Select and the date-picker family.
  */
@@ -120,7 +120,7 @@ export function DropdownTrigger({ className, ...props }: ComponentProps<typeof A
 export interface DropdownPopoverProps
   extends Pick<ComponentProps<typeof AriaPopover>, "placement" | "offset" | "crossOffset"> {
   "aria-label": string;
-  /** Extra classes on the panel — e.g. a width override (default w-[266px]). */
+  /** Extra classes on the panel, e.g. a width override (default w-[266px]). */
   className?: string;
   /** Classes on the inner dialog (the flex column), e.g. gap between groups. */
   dialogClassName?: string;
@@ -170,7 +170,7 @@ export interface DropdownGroupProps {
 
 export function DropdownGroup({ label, className, children }: DropdownGroupProps) {
   return (
-    // pt-1 is spacing for the group LABEL — a label-less group must not
+    // pt-1 is spacing for the group LABEL, a label-less group must not
     // carry it, or its first row floats 4px lower than the panel padding
     // implies (visible as extra space above the first item's hover pill).
     <div className={cx("flex w-full flex-col gap-1.5", label && "pt-1", className)}>
@@ -184,14 +184,14 @@ export interface DropdownItemProps {
   /** Highlights the row like the hover state (current selection). */
   selected?: boolean;
   onSelect?: () => void;
-  /** Row padding defaults to p-2 — override for denser rows (px-2 py-1.5). */
+  /** Row padding defaults to p-2, override for denser rows (px-2 py-1.5). */
   className?: string;
   children: ReactNode;
 }
 
 /**
- * A menu row. Content is free-form — icon + label, avatar + name, label +
- * trailing badge — laid out in a gap-2 flex row.
+ * A menu row. Content is free-form, icon + label, avatar + name, label +
+ * trailing badge: laid out in a gap-2 flex row.
  */
 export function DropdownItem({ selected, onSelect, className, children }: DropdownItemProps) {
   return (

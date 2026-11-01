@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../stores/auth";
-import { errorMessage } from "../lib/api";
-import { Button, Field, Input } from "../components/ui";
+import { useAuth } from "@/stores/auth";
+import { errorMessage } from "@/lib/api";
+import { AuthCard } from "@/components/application/auth/auth-card";
+import { Callout } from "@/components/acn/callout";
 import { AuthShell } from "./AuthShell";
 
 export function LoginPage() {
@@ -10,17 +11,14 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? "/";
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const submit = async (data: FormData) => {
     setErr(null);
     setBusy(true);
     try {
-      await login(email.trim(), password);
+      await login(String(data.get("email") ?? "").trim(), String(data.get("password") ?? ""));
       navigate(from === "/login" ? "/" : from, { replace: true });
     } catch (e) {
       setErr(errorMessage(e));
@@ -30,20 +28,16 @@ export function LoginPage() {
   };
 
   return (
-    <AuthShell title="Sign in" meta="Self-hosted API key pool">
-      <form onSubmit={submit} className="space-y-4">
-        <Field label="Email">
-          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
-        </Field>
-        <Field label="Password">
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
-        </Field>
-        {err && (<p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p>)}
-        <Button type="submit" variant="primary" loading={busy} className="w-full">
-          Sign in
-        </Button>
-        <p className="text-xs text-muted">No account yet? Ask your Acnologia superadmin to add you.</p>
-      </form>
+    <AuthShell meta="Self-hosted API key pool">
+      <AuthCard
+        mode="signin"
+        title="Sign in"
+        description="Use the account your superadmin made for you."
+        alert={err ? <Callout tone="error">{err}</Callout> : null}
+        isPending={busy}
+        onSubmit={(d) => void submit(d)}
+        formNote="No account yet? Ask your Acnologia superadmin to add you."
+      />
     </AuthShell>
   );
 }

@@ -1,14 +1,19 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useTitle } from "../hooks/useTitle";
-import { LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../stores/auth";
-import { toast } from "../stores/toast";
-import { errorMessage } from "../lib/api";
-import { MIN_PASSWORD } from "../lib/perms";
-import { dateTime } from "../lib/format";
-import { Badge, Button, Field, Input, PageHeader, Section } from "../components/ui";
-import { ApiTokens } from "../components/ApiTokens";
+import { RiLogoutBoxRLine } from "@remixicon/react";
+import { useTitle } from "@/hooks/useTitle";
+import { useAuth } from "@/stores/auth";
+import { toast } from "@/stores/toast";
+import { errorMessage } from "@/lib/api";
+import { MIN_PASSWORD } from "@/lib/perms";
+import { dateTime } from "@/lib/format";
+import { Button } from "@/components/base/buttons/button";
+import { Chip } from "@/components/base/badges/chip";
+import { Input } from "@/components/base/input/input";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { PageHeader } from "@/components/acn/page-header";
+import { Section } from "@/components/acn/section";
+import { ApiTokens } from "@/components/ApiTokens";
 
 export function AccountPage() {
   useTitle("Account");
@@ -59,18 +64,22 @@ export function AccountPage() {
   };
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-3xl">
       <PageHeader
         title="Account"
         meta={
-          <span className="wrap-anywhere inline-flex flex-wrap items-center gap-2">
-            {user.email} <Badge tone="dark">{user.role}</Badge>
+          <span className="inline-flex flex-wrap items-center gap-2 wrap-anywhere">
+            {user.email}
+            <Chip variant="caption" color="gray" className="font-mono">
+              {user.role}
+            </Chip>
             <span className="whitespace-nowrap">joined {dateTime(user.created_at)}</span>
           </span>
         }
         actions={
           <Button
-            icon={<LogOut className="h-4 w-4" />}
+            variant="secondary"
+            leadingIcon={RiLogoutBoxRLine}
             onClick={async () => {
               await logout();
               navigate("/login", { replace: true });
@@ -81,17 +90,26 @@ export function AccountPage() {
         }
       />
 
-      <div className="space-y-5">
-        <Section title="Profile">
+      <div className="flex flex-col gap-5">
+        <Section title="Profile" description="The name people see in the audit log and on keys you add.">
           <form onSubmit={saveName} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Name">
-              <Input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
-            </Field>
-            <Field label="Current password" hint="Confirms it is you.">
-              <Input type="password" value={nameCurrent} onChange={(e) => setNameCurrent(e.target.value)} required autoComplete="current-password" />
-            </Field>
+            <Input label="Name" value={name} onChange={setName} isRequired autoComplete="name" />
+            <Input
+              label="Current password"
+              hint="Confirms it is you."
+              type="password"
+              value={nameCurrent}
+              onChange={setNameCurrent}
+              isRequired
+              autoComplete="current-password"
+            />
             <div className="flex justify-end sm:col-span-2">
-              <Button type="submit" variant="primary" loading={busyName} disabled={name.trim() === user.name || !name.trim()}>
+              <Button
+                type="submit"
+                variant="primary"
+                leadingIcon={busyName ? ButtonSpinner : undefined}
+                disabled={busyName || name.trim() === user.name || !name.trim()}
+              >
                 Save name
               </Button>
             </div>
@@ -100,24 +118,33 @@ export function AccountPage() {
 
         <Section title="Password">
           <form onSubmit={savePassword} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Current password" className="sm:col-span-2">
-              <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required autoComplete="current-password" />
-            </Field>
-            <Field label="New password" hint={`At least ${MIN_PASSWORD} characters.`}>
-              <Input type="password" value={next} onChange={(e) => setNext(e.target.value)} required autoComplete="new-password" />
-            </Field>
-            <Field label="Confirm new password">
-              <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" />
-            </Field>
+            <Input
+              label="Current password"
+              type="password"
+              value={current}
+              onChange={setCurrent}
+              isRequired
+              autoComplete="current-password"
+              className="sm:col-span-2"
+            />
+            <Input
+              label="New password"
+              hint={`At least ${MIN_PASSWORD} characters.`}
+              type="password"
+              value={next}
+              onChange={setNext}
+              isRequired
+              autoComplete="new-password"
+            />
+            <Input label="Confirm new password" type="password" value={confirm} onChange={setConfirm} isRequired autoComplete="new-password" />
             <div className="flex justify-end sm:col-span-2">
-              <Button type="submit" variant="primary" loading={busyPw}>
+              <Button type="submit" variant="primary" disabled={busyPw} leadingIcon={busyPw ? ButtonSpinner : undefined}>
                 Change password
               </Button>
             </div>
           </form>
         </Section>
-      </div>
-      <div className="mt-5">
+
         <ApiTokens />
       </div>
     </div>

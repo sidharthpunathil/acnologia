@@ -1,8 +1,10 @@
 import { useCallback, useDeferredValue, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { AlertCircle, ChevronRight, FileText, FileUp, Loader2, Upload, X } from "lucide-react";
+import { RiArrowRightSLine, RiCloseLine, RiErrorWarningLine, RiFileTextLine, RiFileUploadLine, RiUploadCloud2Line } from "@remixicon/react";
 import { maskLine, maskSecret, MAX_IGNORED, MAX_KEYS, mergeParsed, parseKeys, type ParseResult } from "../lib/keyparse";
 import { num, plural } from "../lib/format";
-import { Button, cx } from "./ui";
+import { Button } from "@/components/base/buttons/button";
+import { SpinnerGlyph } from "@/components/base/spinner/spinner";
+import { cx } from "@/utils/cx";
 
 const MAX_FILE = 1024 * 1024;
 const ACCEPT = ".txt,.csv,.env,.json,text/plain,text/csv,application/json";
@@ -159,36 +161,36 @@ export function KeyPasteArea({
           autoCorrect="off"
           placeholder={placeholder}
           className={cx(
-            "field-input block min-h-[140px] resize-y rounded-xl border bg-surface px-3 py-2.5 font-mono text-[13px] leading-relaxed text-ink placeholder:text-faint focus:outline-hidden focus:ring-2 focus:ring-ink/20",
-            "border-line focus:border-ink/60 focus:ring-ink/20",
+            "block min-h-[140px] w-full resize-y rounded-2lg bg-background-tertiary-default px-3 py-2.5 font-mono text-body-2-regular text-text-primary placeholder:text-text-tertiary",
+            "ring-1 ring-inset ring-input-idle-ring outline-none transition-[box-shadow] duration-150 hover:ring-border-button-hover focus:ring-2 focus:ring-border-button-active",
           )}
         />
         {/* Drop overlay. Pointer events stay off so the drag keeps landing on the field below. */}
         <div
           aria-hidden="true"
           className={cx(
-            "pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-brand bg-surface text-center transition-opacity duration-150 ease-[var(--ease-out)] motion-reduce:transition-none",
+            "pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-2lg border-2 border-dashed border-accent-line bg-background-primary-default text-center transition-opacity duration-150 ease-[var(--ease-out)] motion-reduce:transition-none",
             active ? "opacity-100" : "opacity-0",
           )}
         >
           {drop.kind === "reading" ? (
-            <Loader2 className="h-5 w-5 animate-spin text-brand" />
+            <SpinnerGlyph size="md" />
           ) : (
-            <Upload className={cx("h-5 w-5 text-brand transition-transform duration-200 ease-[var(--ease-out)] motion-reduce:transition-none", active && "-translate-y-0.5")} />
+            <RiUploadCloud2Line aria-hidden className={cx("size-5 text-accent-fg transition-transform duration-200 ease-[var(--ease-out)] motion-reduce:transition-none", active && "-translate-y-0.5")} />
           )}
-          <span className="text-[13px] font-medium text-ink">
+          <span className="text-body-2-medium text-text-primary">
             {drop.kind === "reading" ? `Reading ${plural(drop.files, "file")}` : "Drop to read the keys inside"}
           </span>
-          <span className="font-mono text-[11px] text-muted">.txt .csv .env .json · up to 1 MB each</span>
+          <span className="font-mono text-caption-2-regular text-text-secondary">.txt .csv .env .json · up to 1 MB each</span>
         </div>
       </div>
 
       <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <p id={hintId} className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
-          <Upload className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <p id={hintId} className="flex min-w-0 items-center gap-1.5 text-caption-1-regular text-text-secondary">
+          <RiUploadCloud2Line className="size-4 shrink-0" aria-hidden />
           <span>Or drop .txt, .csv, .env or .json files, 1 MB each.</span>
         </p>
-        <Button size="sm" icon={<FileUp className="h-3.5 w-3.5" />} onClick={() => fileRef.current?.click()}>
+        <Button variant="secondary" size="small" leadingIcon={RiFileUploadLine} onClick={() => fileRef.current?.click()}>
           Choose files
         </Button>
         <input
@@ -207,8 +209,8 @@ export function KeyPasteArea({
       </div>
 
       {drop.kind === "error" && (
-        <p id={errId} role="alert" className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-red-700">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <p id={errId} role="alert" className="mt-2 flex items-start gap-1.5 text-caption-1-medium text-text-error-primary">
+          <RiErrorWarningLine className="mt-px size-4 shrink-0" aria-hidden />
           {drop.message}
         </p>
       )}
@@ -216,17 +218,17 @@ export function KeyPasteArea({
       {input.files.length > 0 && (
         <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Files added">
           {input.files.map((f) => (
-            <li key={f.id} className="flex max-w-full items-center gap-1 rounded-lg bg-well py-0.5 pl-2 pr-0.5 font-mono text-[11px] text-muted">
-              <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate text-ink">{f.name}</span>
+            <li key={f.id} className="flex max-w-full items-center gap-1 rounded-lg bg-background-tertiary-default py-0.5 ps-2 pe-0.5 font-mono text-caption-2-regular text-text-secondary">
+              <RiFileTextLine className="size-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate text-text-primary">{f.name}</span>
               <span className="shrink-0">· {plural(f.parsed.keys.length, "key")}</span>
               <button
                 type="button"
                 onClick={() => input.removeFile(f.id)}
                 aria-label={`Remove ${f.name}`}
-                className="tap ml-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-ink/[0.06] hover:text-ink"
+                className="ms-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-foreground-icon-secondary outline-none transition-colors hover:bg-background-tertiary-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
               >
-                <X className="h-3 w-3" />
+                <RiCloseLine className="size-3.5" aria-hidden />
               </button>
             </li>
           ))}
@@ -259,8 +261,8 @@ export function KeyPreview({
 
   return (
     <div className={cx("transition-opacity duration-150", stale && "opacity-60")}>
-      <p aria-live="polite" aria-atomic="true" className="font-mono text-[12px] text-muted">
-        <span className={n ? "font-medium text-ink" : ""}>{n ? `${num(n)} ${n === 1 ? "key" : "keys"} found` : "No keys found yet"}</span>
+      <p aria-live="polite" aria-atomic="true" className="font-mono text-caption-1-regular text-text-secondary">
+        <span className={n ? "text-caption-1-medium text-text-primary" : ""}>{n ? `${num(n)} ${n === 1 ? "key" : "keys"} found` : "No keys found yet"}</span>
         {parts.map((p) => (
           <span key={p}> · {p}</span>
         ))}
@@ -269,36 +271,36 @@ export function KeyPreview({
       {n === 0 && empty}
 
       {n > 0 && (
-        <ul className="mt-2 divide-y divide-line overflow-hidden rounded-xl border border-line bg-soft" aria-label="Keys found">
+        <ul className="mt-2 divide-y divide-separator-border overflow-hidden rounded-2xl border border-border-button-default bg-background-secondary-default" aria-label="Keys found">
           {parsed.keys.slice(0, show).map((k, i) => {
             const label = k.label || fallbackLabel?.(i);
             return (
-              <li key={k.secret} className="flex min-h-[34px] items-center gap-3 px-3 py-1.5 text-[13px]">
-                <span className="w-6 shrink-0 text-right font-mono text-[11px] tabular-nums text-faint">{i + 1}</span>
-                <span className={cx("min-w-0 flex-1 truncate", k.label ? "text-ink" : "text-faint")}>{label || "no label"}</span>
-                <span className="shrink-0 font-mono text-[12px] text-muted">{maskSecret(k.secret)}</span>
+              <li key={k.secret} className="flex min-h-[34px] items-center gap-3 px-3 py-1.5 text-body-2-regular">
+                <span className="w-6 shrink-0 text-end font-mono text-caption-2-regular tabular-nums text-text-tertiary">{i + 1}</span>
+                <span className={cx("min-w-0 flex-1 truncate", k.label ? "text-text-primary" : "text-text-tertiary")}>{label || "no label"}</span>
+                <span className="shrink-0 font-mono text-caption-1-regular text-text-secondary">{maskSecret(k.secret)}</span>
               </li>
             );
           })}
-          {rest > 0 && <li className="px-3 py-1.5 font-mono text-[11px] text-muted">and {num(rest)} more</li>}
+          {rest > 0 && <li className="px-3 py-1.5 font-mono text-caption-2-regular text-text-secondary">and {num(rest)} more</li>}
         </ul>
       )}
 
       {parsed.ignored.length > 0 && (
         <details className="group mt-2">
-          <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-md py-1 text-xs text-muted hover:text-ink [&::-webkit-details-marker]:hidden">
-            <ChevronRight className="h-3.5 w-3.5 transition-transform duration-150 ease-[var(--ease-out)] group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-md py-1 text-caption-1-regular text-text-secondary outline-none hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring [&::-webkit-details-marker]:hidden">
+            <RiArrowRightSLine className="size-4 transition-transform rtl:-scale-x-100 duration-150 ease-[var(--ease-out)] group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
             Show what was ignored
           </summary>
-          <ul className="mt-1 max-h-40 space-y-0.5 overflow-auto rounded-xl bg-well px-3 py-2 font-mono text-[11px] text-muted">
+          <ul className="mt-1 flex max-h-40 flex-col gap-0.5 overflow-auto rounded-2xl bg-background-tertiary-default px-3 py-2 font-mono text-caption-2-regular text-text-secondary">
             {parsed.ignored.slice(0, 200).map((l, i) => (
               <li key={i} className="truncate">
                 {maskLine(l)}
               </li>
             ))}
-            {parsed.ignored.length > 200 && <li className="text-faint">and {num(parsed.ignored.length - 200)} more</li>}
+            {parsed.ignored.length > 200 && <li className="text-text-tertiary">and {num(parsed.ignored.length - 200)} more</li>}
           </ul>
-          <p className="mt-1 text-[11px] leading-relaxed text-faint">Long values are shortened here. A key is 16 to 512 letters, digits or _-.:+/= and has a digit or is at least 24 long. A word right before a key becomes its label.</p>
+          <p className="mt-1 text-caption-2-regular text-text-tertiary">Long values are shortened here. A key is 16 to 512 letters, digits or _-.:+/= and has a digit or is at least 24 long. A word right before a key becomes its label.</p>
         </details>
       )}
     </div>

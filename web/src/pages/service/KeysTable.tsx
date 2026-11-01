@@ -1,15 +1,31 @@
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
-import { Activity, ChevronRight, Eye, EyeOff, Lock, Pencil, RotateCcw } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  RiArrowRightSLine,
+  RiDeleteBinLine,
+  RiEditLine,
+  RiEyeLine,
+  RiEyeOffLine,
+  RiLockLine,
+  RiMore2Line,
+  RiPulseLine,
+  RiRestartLine,
+} from "@remixicon/react";
 import type { App, Key } from "../../lib/types";
 import { num } from "../../lib/format";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
 import { ApiError, errorMessage } from "../../lib/api";
 import { StatusPill, isBusy } from "../../components/StatusPill";
-import { ConfirmButton } from "../../components/ConfirmButton";
-import { Badge, IconButton, Spinner, cx } from "../../components/ui";
 import { AccountLine, OnChange, QuotaMeter, TimeAgo, ValidityLine, quotaInfo } from "../../components/KeyBits";
+import { Chip } from "@/components/base/badges/chip";
+import { Dropdown, DropdownDivider, DropdownItem, DropdownPopover, DropdownTrigger } from "@/components/base/dropdown/dropdown";
+import { AlertDialog } from "@/components/base/modal/modal";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
+import { cx } from "@/utils/cx";
 import { withLiveStatus } from "./keyUtil";
+import { ConfirmButton } from "@/components/acn";
+import { ActionIcon, CARD } from "./parts";
 
 export interface KeyPerms {
   manage: boolean;
@@ -23,17 +39,17 @@ export function InUse({ k, serviceMax }: { k: Key; serviceMax: number }) {
   const n = k.in_flight ?? 0;
   if (n === 0 && limit <= 0) return null;
   const busy = limit > 0 && n >= limit;
+  const title = limit > 0 ? `${n} of ${limit} concurrent requests in use${k.max_concurrency !== null ? " (key override)" : ""}` : `${n} requests in flight`;
   return (
-    <span
-      title={limit > 0 ? `${n} of ${limit} concurrent requests in use${k.max_concurrency !== null ? " (key override)" : ""}` : `${n} requests in flight`}
-      className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[11px] tabular-nums",
-        busy ? "bg-violet-100 text-violet-800" : n > 0 ? "bg-violet-50 text-violet-700" : "text-faint",
-      )}
+    <Chip
+      variant="caption"
+      color={n > 0 ? "purple" : "soft"}
+      title={title}
+      className={cx("gap-1 rounded-full px-2 py-0.5 font-mono tabular-nums", n === 0 && "text-text-tertiary")}
     >
-      {busy && <span className="h-1.5 w-1.5 rounded-full bg-violet-500" aria-hidden="true" />}
+      {busy && <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />}
       {limit > 0 ? `${n}/${limit}` : n} in use
-    </span>
+    </Chip>
   );
 }
 
@@ -41,39 +57,37 @@ function KeyBadges({ k, apps }: { k: Key; apps: App[] }) {
   const allowed = k.app_ids.map((id) => apps.find((a) => a.id === id)?.name ?? `#${id}`);
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
-      {k.tier === "backup" && <Badge tone="blue">backup</Badge>}
+      {k.tier === "backup" && (
+        <Chip variant="caption" color="blue" className="rounded-full px-2 py-0 font-mono">
+          backup
+        </Chip>
+      )}
       {k.hidden && (
-        <Badge tone="dark" title="Hidden: only superadmins can see or count this key">
-          <EyeOff className="h-3 w-3" />
+        <Chip variant="caption" color="gray" title="Hidden: only superadmins can see or count this key" className="gap-1 rounded-full px-2 py-0 font-mono">
+          <RiEyeOffLine className="size-3" aria-hidden />
           hidden
-        </Badge>
+        </Chip>
       )}
       {k.restricted && (
-        <Badge tone="violet" title={allowed.length ? `Only these apps can use it: ${allowed.join(", ")}` : "Restricted, and no apps are allowed yet"}>
-          <Lock className="h-3 w-3" />
+        <Chip
+          variant="caption"
+          color="purple"
+          title={allowed.length ? `Only these apps can use it: ${allowed.join(", ")}` : "Restricted, and no apps are allowed yet"}
+          className="gap-1 rounded-full px-2 py-0 font-mono"
+        >
+          <RiLockLine className="size-3" aria-hidden />
           {allowed.length}
-        </Badge>
+          <span className="sr-only">{allowed.length === 1 ? "app allowed" : "apps allowed"}</span>
+        </Chip>
       )}
     </span>
   );
 }
 
-function RowActions({
-  k,
-  perms,
-  onEdit,
-  onReveal,
-}: {
-  k: Key;
-  perms: KeyPerms;
-  onEdit: (k: Key) => void;
-  onReveal: (k: Key) => void;
-}) {
+/** Check, reset and delete for one key, with the toasts they report through. */
+function useKeyActions(k: Key) {
   const { check, reset, remove } = useKeys();
   const [busy, setBusy] = useState<"check" | "reset" | null>(null);
-  const canTouch = perms.manage && (!k.hidden || perms.hidden);
-  if (!canTouch && !perms.reveal) return null;
-
   const run = async (kind: "check" | "reset") => {
     setBusy(kind);
     try {
@@ -93,46 +107,131 @@ function RowActions({
       setBusy(null);
     }
   };
+  const del = async () => {
+    try {
+      await remove(k);
+      toast.success(`Deleted ${k.label || k.hint}`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+  return { busy, run, del, needsReset: k.effective_status !== "active" || k.consecutive_fails > 0 };
+}
 
-  const needsReset = k.effective_status !== "active" || k.consecutive_fails > 0;
-
+/** Clicks and key presses inside the actions must not also open the row behind them. */
+function StopRow({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    // Clicks here should not also open the key drawer behind the row.
-    <div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+    <div
+      className={className}
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        // Enter and Space belong to the focused control; arrows still move through the grid.
+        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function RowActions({ k, perms, onEdit, onReveal }: { k: Key; perms: KeyPerms; onEdit: (k: Key) => void; onReveal: (k: Key) => void }) {
+  const { busy, run, del, needsReset } = useKeyActions(k);
+  const canTouch = perms.manage && (!k.hidden || perms.hidden);
+  if (!canTouch && !perms.reveal) return null;
+  const name = k.label || k.hint;
+  return (
+    <StopRow className="flex items-center justify-end gap-1">
       {canTouch && (
         <>
-          <IconButton label="Check this key now" onClick={() => run("check")} disabled={busy !== null}>
-            {busy === "check" ? <Spinner /> : <Activity className="h-4 w-4" />}
-          </IconButton>
-          <IconButton label="Reset: clear cooldown and errors" onClick={() => run("reset")} disabled={busy !== null || !needsReset}>
-            {busy === "reset" ? <Spinner /> : <RotateCcw className="h-4 w-4" />}
-          </IconButton>
-          <IconButton label="Edit key" onClick={() => onEdit(k)}>
-            <Pencil className="h-4 w-4" />
-          </IconButton>
+          <ActionIcon icon={RiPulseLine} label="Check this key now" busy={busy === "check"} disabled={busy !== null} onClick={() => void run("check")} />
+          <ActionIcon
+            icon={RiRestartLine}
+            label="Reset: clear cooldown and errors"
+            busy={busy === "reset"}
+            disabled={busy !== null || !needsReset}
+            onClick={() => void run("reset")}
+          />
+          <ActionIcon icon={RiEditLine} label="Edit key" onClick={() => onEdit(k)} />
         </>
       )}
-      {perms.reveal && (
-        <IconButton label="Reveal secret" onClick={() => onReveal(k)}>
-          <Eye className="h-4 w-4" />
-        </IconButton>
-      )}
-      {canTouch && (
-        <ConfirmButton
+      {perms.reveal && <ActionIcon icon={RiEyeLine} label="Reveal secret" onClick={() => onReveal(k)} />}
+      {canTouch && <ConfirmButton
           iconOnly
           label="Delete key"
           confirmLabel="Delete"
-          onConfirm={async () => {
-            try {
-              await remove(k);
-              toast.success(`Deleted ${k.label || k.hint}`);
-            } catch (e) {
-              toast.error(errorMessage(e));
-            }
-          }}
-        />
-      )}
-    </div>
+          description={`${name} leaves rotation right away. This cannot be undone.`}
+          onConfirm={del}
+          // Same outlined square as the icon actions beside it.
+          className="rounded-2lg border border-border-button-default bg-background-primary-default text-foreground-icon-primary shadow-xs hover:bg-background-primary-hover"
+        />}
+    </StopRow>
+  );
+}
+
+/** Phones: the same actions behind one menu button, so the card keeps its room. */
+function RowMenu({ k, perms, onEdit, onReveal }: { k: Key; perms: KeyPerms; onEdit: (k: Key) => void; onReveal: (k: Key) => void }) {
+  const { busy, run, del, needsReset } = useKeyActions(k);
+  const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const canTouch = perms.manage && (!k.hidden || perms.hidden);
+  if (!canTouch && !perms.reveal) return null;
+  const name = k.label || k.hint;
+  const pick = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+  const row = "gap-2.5 min-h-11";
+  return (
+    <StopRow>
+      <Dropdown isOpen={open} onOpenChange={setOpen}>
+        <DropdownTrigger
+          aria-label={`Actions for ${name}`}
+          className="inline-flex size-11 items-center justify-center rounded-2lg text-foreground-icon-secondary transition-colors duration-150 hover:bg-background-secondary-default"
+        >
+          {busy ? <ButtonSpinner className="size-4" /> : <RiMore2Line className="size-5" aria-hidden />}
+        </DropdownTrigger>
+        <DropdownPopover aria-label={`Actions for ${name}`} placement="bottom end" className="w-56">
+          {canTouch && (
+            <>
+              <DropdownItem className={row} onSelect={pick(() => void run("check"))}>
+                <RiPulseLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Check now
+              </DropdownItem>
+              {needsReset && (
+                <DropdownItem className={row} onSelect={pick(() => void run("reset"))}>
+                  <RiRestartLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Reset
+                </DropdownItem>
+              )}
+              <DropdownItem className={row} onSelect={pick(() => onEdit(k))}>
+                <RiEditLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Edit
+              </DropdownItem>
+            </>
+          )}
+          {perms.reveal && (
+            <DropdownItem className={row} onSelect={pick(() => onReveal(k))}>
+              <RiEyeLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Reveal secret
+            </DropdownItem>
+          )}
+          {canTouch && (
+            <>
+              <DropdownDivider />
+              <DropdownItem className={cx(row, "text-text-error-primary")} onSelect={pick(() => setConfirming(true))}>
+                <RiDeleteBinLine className="size-4" aria-hidden /> Delete
+              </DropdownItem>
+            </>
+          )}
+        </DropdownPopover>
+      </Dropdown>
+      <AlertDialog
+        isOpen={confirming}
+        onOpenChange={setConfirming}
+        title={`Delete ${name}?`}
+        description="It leaves rotation right away. This cannot be undone."
+        confirmLabel="Delete"
+        pendingLabel="Deleting"
+        onConfirm={del}
+      />
+    </StopRow>
   );
 }
 
@@ -158,15 +257,6 @@ export function KeyHealth({ k, now, serviceMax, clamp = true }: { k: Key; now: n
       <ValidityLine k={k} now={now} clamp={clamp} className="mt-1.5" />
     </div>
   );
-}
-
-/** Opens the drawer from a row with Enter or Space, like a button. */
-function rowKey(e: KeyboardEvent, fn: () => void) {
-  if (e.target !== e.currentTarget) return;
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    fn();
-  }
 }
 
 export function KeysTable({
@@ -195,49 +285,48 @@ export function KeysTable({
 }) {
   const rows = keys.map((k) => withLiveStatus(k, now));
   const hasActions = perms.manage || perms.reveal;
-  const open = (k: Key) => (e?: MouseEvent) => {
+  const open = (k: Key) => {
     // Let people select text in a row without opening the drawer.
-    if (e && window.getSelection()?.toString()) return;
+    if (window.getSelection()?.toString()) return;
     onOpen(k);
   };
   return (
     <>
-      {/* Large screens: a table. */}
-      <div className="hidden overflow-hidden rounded-card bg-surface shadow-card lg:block">
-        <table className="w-full table-fixed text-left text-[13px]">
-          <colgroup>
-            <col className="w-[27%]" />
-            <col className="w-[28%]" />
-            <col className="w-[18%]" />
-            <col />
-            {hasActions && <col className="w-[184px]" />}
-          </colgroup>
-          <thead>
-            <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
-              <th className="px-4 py-3 font-normal">Key</th>
-              <th className="px-3 py-3 font-normal">Health</th>
-              <th className="px-3 py-3 font-normal">Quota</th>
-              <th className="px-3 py-3 font-normal">Last used</th>
-              {hasActions && (
-                <th className="px-3 py-3">
-                  <span className="sr-only">Actions</span>
-                </th>
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {rows.map((k) => (
-              <tr
-                key={k.id}
-                tabIndex={0}
-                aria-label={`Open details for ${k.label || k.hint}`}
-                onClick={open(k)}
-                onKeyDown={(e) => rowKey(e, () => onOpen(k))}
-                className="group cursor-pointer align-top transition-colors duration-150 hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
-              >
-                <td className="px-4 py-3.5">
+      {/* Large screens: a table. Enter or a click on a row opens the key. */}
+      <div className={cx(CARD, "hidden overflow-hidden lg:block")}>
+        <Table
+          aria-label="Keys in this service"
+          size="sm"
+          containerClassName="-mt-px"
+          className="table-fixed"
+          onRowAction={(id) => {
+            const k = rows.find((x) => x.id === Number(id));
+            if (k) open(k);
+          }}
+        >
+          <TableHeader>
+            <TableColumn isRowHeader className="w-[27%] ps-5">
+              Key
+            </TableColumn>
+            <TableColumn className="w-[28%]">Health</TableColumn>
+            <TableColumn className="w-[18%]">Quota</TableColumn>
+            <TableColumn>Last used</TableColumn>
+            {hasActions ? (
+              <TableColumn className="w-[196px]">
+                <span className="sr-only">Actions</span>
+              </TableColumn>
+            ) : (
+              <TableColumn className="w-10">
+                <span className="sr-only">Open</span>
+              </TableColumn>
+            )}
+          </TableHeader>
+          <TableBody items={rows}>
+            {(k) => (
+              <TableRow id={k.id} textValue={k.label || k.hint} className="group cursor-pointer hover:bg-background-secondary-default">
+                <TableCell className="py-3 ps-5 align-top">
                   <div className="flex min-w-0 items-center gap-x-2">
-                    <span className="min-w-0 truncate font-medium text-ink" title={k.label || undefined}>
+                    <span className="min-w-0 truncate text-body-2-medium text-text-primary" title={k.label || undefined}>
                       {k.label || "Untitled"}
                     </span>
                     <span className="shrink-0">
@@ -245,60 +334,66 @@ export function KeysTable({
                     </span>
                   </div>
                   <AccountLine k={k} className="mt-0.5" />
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted">
+                  <div className="mt-0.5 truncate font-mono text-caption-1-regular text-text-secondary">
                     {k.hint}
                     {k.tier === "primary" && k.priority ? <span title={`Priority ${k.priority}`}>{` · p${k.priority}`}</span> : ""}
                     {k.weight && k.weight !== 1 ? <span title={`Weight ${k.weight}`}>{` · w${k.weight}`}</span> : ""}
                   </div>
-                </td>
-                <td className="px-3 py-3.5">
+                </TableCell>
+                <TableCell className="py-3 align-top">
                   <KeyHealth k={k} now={now} serviceMax={serviceMax} />
-                </td>
-                <td className="px-3 py-3.5">
+                </TableCell>
+                <TableCell className="py-3 align-top">
                   <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />
-                </td>
-                <td className="px-3 py-3.5 font-mono text-xs">
-                  <TimeAgo iso={k.last_used_at} now={now} className="block truncate text-ink" />
-                  <div className="mt-0.5 truncate text-[11px] tabular-nums text-muted">{num(k.usage_today)} today</div>
-                </td>
-                {hasActions && (
-                  <td className="px-2 py-2.5">
+                </TableCell>
+                <TableCell className="py-3 align-top font-mono">
+                  <TimeAgo iso={k.last_used_at} now={now} className="block truncate text-caption-1-regular text-text-primary" />
+                  <div className="mt-0.5 truncate text-caption-1-regular tabular-nums text-text-secondary">{num(k.usage_today)} today</div>
+                </TableCell>
+                <TableCell className="py-2.5 pe-3 align-top">
+                  {hasActions ? (
                     <RowActions k={k} perms={perms} onEdit={onEdit} onReveal={onReveal} />
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  ) : (
+                    <RiArrowRightSLine className="mt-1 size-4 text-foreground-icon-tertiary rtl:rotate-180" aria-hidden />
+                  )}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
 
-      {/* Phones and tablets: cards. */}
+      {/* Phones and tablets: cards, with the actions in a menu. */}
       <ul className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:hidden">
         {rows.map((k) => (
-          <li key={k.id} className="flex min-w-0 flex-col rounded-card bg-surface shadow-card">
-            <button type="button" onClick={open(k)} className="flex w-full min-w-0 flex-1 flex-col gap-3 p-4 text-left transition-transform duration-150 ease-out active:scale-[0.99]">
-              <div className="flex w-full items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="wrap-anywhere min-w-0 font-medium text-ink">{k.label || "Untitled"}</span>
-                    <KeyBadges k={k} apps={apps} />
-                  </div>
-                  <AccountLine k={k} wrap className="mt-0.5" />
-                  <div className="mt-0.5 font-mono text-[11px] text-muted">{k.hint}</div>
+          <li key={k.id} className={cx(CARD, "relative flex min-w-0 flex-col")}>
+            <button
+              type="button"
+              onClick={() => open(k)}
+              aria-label={`Open details for ${k.label || k.hint}`}
+              className="flex w-full min-w-0 flex-1 cursor-pointer flex-col gap-3 rounded-3xl p-4 pe-14 text-start outline-none transition-colors duration-150 ease hover:bg-background-primary-hover active:bg-background-primary-active focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="wrap-anywhere min-w-0 text-body-medium text-text-primary">{k.label || "Untitled"}</span>
+                  <KeyBadges k={k} apps={apps} />
                 </div>
-                <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-faint" aria-hidden="true" />
+                <AccountLine k={k} wrap className="mt-0.5" />
+                <div className="mt-0.5 font-mono text-caption-1-regular text-text-secondary">{k.hint}</div>
               </div>
               <KeyHealth k={k} now={now} serviceMax={serviceMax} />
               {quotaInfo(k, quotaUnit ?? k.quota_unit) && <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />}
-              <div className="font-mono text-[11px] text-muted">
+              <div className="font-mono text-caption-1-regular text-text-secondary">
                 used <TimeAgo iso={k.last_used_at} now={now} /> · {num(k.usage_today)} today
               </div>
             </button>
-            {hasActions && (
-              <div className="border-t border-line px-2 py-1">
-                <RowActions k={k} perms={perms} onEdit={onEdit} onReveal={onReveal} />
-              </div>
-            )}
+            <div className="absolute end-1.5 top-1.5">
+              {hasActions ? (
+                <RowMenu k={k} perms={perms} onEdit={onEdit} onReveal={onReveal} />
+              ) : (
+                <RiArrowRightSLine className="m-3.5 size-4 text-foreground-icon-tertiary rtl:rotate-180" aria-hidden />
+              )}
+            </div>
           </li>
         ))}
       </ul>

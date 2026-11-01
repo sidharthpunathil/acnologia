@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Plus, TriangleAlert } from "lucide-react";
-import { useAuth } from "../stores/auth";
-import { toast } from "../stores/toast";
-import { errorMessage } from "../lib/api";
-import { dateTime, relTime } from "../lib/format";
-import { ops, type AdminToken, type TokenScope } from "../lib/ops";
-import type { Role } from "../lib/types";
-import { useNow } from "../hooks/useNow";
+import { RiAddLine, RiKey2Line } from "@remixicon/react";
+import { useAuth } from "@/stores/auth";
+import { toast } from "@/stores/toast";
+import { errorMessage } from "@/lib/api";
+import { dateTime, relTime } from "@/lib/format";
+import { ops, type AdminToken, type TokenScope } from "@/lib/ops";
+import type { Role } from "@/lib/types";
+import { useNow } from "@/hooks/useNow";
+import { Button } from "@/components/base/buttons/button";
+import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Input } from "@/components/base/input/input";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
+import { Callout } from "@/components/acn/callout";
+import { ConfirmButton } from "@/components/acn/confirm-button";
+import { CopyButton, SecretBox } from "@/components/acn/copy-button";
+import { EmptyState } from "@/components/acn/empty-state";
+import { Section } from "@/components/acn/section";
+import { cx } from "@/utils/cx";
 import { Modal } from "./Modal";
-import { CopyButton, SecretBox } from "./CopyButton";
-import { ConfirmButton } from "./ConfirmButton";
-import { Badge, Button, Field, Input, Section, Select, Skeleton, cx } from "./ui";
 
 const SCOPES_FOR: Record<Role, TokenScope[]> = {
   member: ["read"],
@@ -24,7 +34,10 @@ const SCOPE_HELP: Record<TokenScope, string> = {
   admin: "Acts as a superadmin: also hidden keys, secret reveals, users and the audit log.",
 };
 
-const SCOPE_TONE: Record<TokenScope, "neutral" | "blue" | "violet"> = { read: "neutral", write: "blue", admin: "violet" };
+const SCOPE_COLOR: Record<TokenScope, ChipColor> = { read: "neutral", write: "blue", admin: "purple" };
+
+/** Table cells carry body type from the table styles; meta text sets its own. */
+const META = "font-mono text-caption-1-regular text-text-secondary";
 
 const EXPIRY: { days: number; label: string }[] = [
   { days: 0, label: "Never" },
@@ -39,7 +52,7 @@ function NewTokenModal({ result, onClose }: { result: { token: string; info: Adm
     <Modal
       open={!!result}
       onClose={onClose}
-      title={`${result?.info.name} created`}
+      title={`${result?.info.name ?? "Token"} created`}
       footer={
         <Button variant="primary" onClick={onClose}>
           I have saved it
@@ -47,20 +60,21 @@ function NewTokenModal({ result, onClose }: { result: { token: string; info: Adm
       }
     >
       {result && (
-        <div className="space-y-3">
-          <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>Copy this token now. Acnologia stores only a hash, so it cannot show the token again.</span>
-          </div>
+        <div className="flex flex-col gap-4">
+          <Callout tone="warning">Copy this token now. Acnologia stores only a hash, so it cannot show the token again.</Callout>
           <SecretBox value={result.token} />
           <div>
-            <div className="mb-1.5 text-[13px] font-medium text-ink">Use it with the CLI</div>
-            <div className="flex items-start gap-2 rounded-xl border border-line bg-canvas px-3 py-2.5">
-              <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-ink">{cmd}</code>
+            <div className="mb-1.5 text-body-medium text-text-primary">Use it with the CLI</div>
+            <div className="flex items-start gap-2 rounded-2lg bg-background-tertiary-default py-1.5 ps-3 pe-1.5">
+              <code dir="ltr" className="min-w-0 flex-1 break-all pt-1.5 font-mono text-caption-1-regular text-text-primary">
+                {cmd}
+              </code>
               <CopyButton text={cmd} />
             </div>
           </div>
-          <p className="wrap-anywhere font-mono text-[11px] text-muted">Or send it as Authorization: Bearer {result.info.token_prefix}...</p>
+          <p className="font-mono text-caption-1-regular wrap-anywhere text-text-secondary">
+            Or send it as Authorization: Bearer {result.info.token_prefix}...
+          </p>
         </div>
       )}
     </Modal>
@@ -132,100 +146,142 @@ export function ApiTokens() {
       description="For scripts and the cogito CLI. A token acts as you, limited to the scope you pick. Tokens cannot manage tokens or change your account."
     >
       <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-start">
-        <Field label="Name" error={nameErr}>
-          <Input
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (nameErr) setNameErr(null);
-            }}
-            placeholder="laptop cli"
-            autoComplete="off"
-          />
-        </Field>
-        <Field label="Scope">
-          <Select value={scope} onChange={(e) => setScope(e.target.value as TokenScope)} disabled={scopes.length < 2}>
-            {scopes.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Expires">
-          <Select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-            {EXPIRY.map((x) => (
-              <option key={x.days} value={x.days}>
-                {x.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <div className="sm:pt-[26px]">
-          <Button type="submit" variant="primary" loading={busy} icon={<Plus className="h-4 w-4" />} className="w-full sm:w-auto">
+        <Input
+          label="Name"
+          value={name}
+          onChange={(v) => {
+            setName(v);
+            if (nameErr) setNameErr(null);
+          }}
+          isInvalid={!!nameErr}
+          errorMessage={nameErr}
+          placeholder="laptop cli"
+          autoComplete="off"
+        />
+        <Select
+          label="Scope"
+          selectedKey={scope}
+          onSelectionChange={(k) => k != null && setScope(k as TokenScope)}
+          isDisabled={scopes.length < 2}
+          triggerClassName="sm:min-w-28"
+        >
+          {scopes.map((s) => (
+            <SelectItem key={s} id={s}>
+              {s}
+            </SelectItem>
+          ))}
+        </Select>
+        <Select
+          label="Expires"
+          selectedKey={String(days)}
+          onSelectionChange={(k) => k != null && setDays(Number(k))}
+          triggerClassName="sm:min-w-28"
+        >
+          {EXPIRY.map((x) => (
+            <SelectItem key={x.days} id={String(x.days)}>
+              {x.label}
+            </SelectItem>
+          ))}
+        </Select>
+        <div className="sm:pt-6">
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={busy}
+            leadingIcon={busy ? ButtonSpinner : RiAddLine}
+            className="w-full sm:w-auto"
+          >
             Create token
           </Button>
         </div>
       </form>
-      <p className="mt-1.5 text-xs text-muted">{SCOPE_HELP[scope]}</p>
+      <p className="mt-1.5 text-caption-1-medium text-text-secondary">{SCOPE_HELP[scope]}</p>
 
       <div className="mt-5">
         {!loaded ? (
-          <div className="space-y-2" role="status" aria-busy="true">
+          <div className="flex flex-col gap-2" role="status" aria-busy="true">
             <span className="sr-only">Loading</span>
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
+            <Skeleton className="h-12 rounded-xl" />
+            <Skeleton className="h-12 rounded-xl" />
           </div>
         ) : error && tokens.length === 0 ? (
-          <div className="text-[13px] text-red-700">Could not load tokens: {error}</div>
+          <Callout tone="error">Could not load tokens: {error}</Callout>
         ) : tokens.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-xl border border-dashed border-line px-3 py-3 text-xs text-muted">
-            <KeyRound className="h-4 w-4 shrink-0" />
-            No tokens yet.
-          </div>
+          <EmptyState compact icon={RiKey2Line} title="No tokens yet" body="Create one above for a script or the CLI." />
         ) : (
-          <ul className="divide-y divide-line rounded-xl border border-line">
-            {tokens.map((t) => {
-              const expired = !!t.expires_at && Date.parse(t.expires_at) <= now;
-              return (
-                <li key={t.id} className={cx("flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between", t.id === freshId && "fade-up")}>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="wrap-anywhere min-w-0 text-[13px] font-medium text-ink">{t.name}</span>
-                      <Badge tone={SCOPE_TONE[t.scope]}>{t.scope}</Badge>
-                      {expired && <Badge tone="red">expired</Badge>}
-                    </div>
-                    <div className="wrap-anywhere mt-0.5 font-mono text-xs text-muted">
-                      {t.token_prefix}... · <span title={dateTime(t.created_at)}>created {relTime(t.created_at, now)}</span> ·{" "}
-                      <span title={dateTime(t.last_used_at)}>used {relTime(t.last_used_at, now)}</span> ·{" "}
-                      {t.expires_at ? (
-                        <span title={dateTime(t.expires_at)}>
-                          {expired ? "expired" : "expires"} {relTime(t.expires_at, now)}
-                        </span>
-                      ) : (
-                        "never expires"
-                      )}
-                    </div>
-                  </div>
-                  <div className="shrink-0">
-                    <ConfirmButton
-                      label="Revoke"
-                      confirmLabel="Revoke"
-                      onConfirm={async () => {
-                        try {
-                          await ops.deleteToken(t.id);
-                          setTokens((list) => list.filter((x) => x.id !== t.id));
-                          toast.success(`Revoked ${t.name}`);
-                        } catch (e) {
-                          toast.error(errorMessage(e));
-                        }
-                      }}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="overflow-hidden rounded-2xl border border-border-button-default">
+            <Table aria-label="API tokens" size="sm" className="[&_th:first-child]:border-t-0 [&_th]:border-t-0">
+              <TableHeader>
+                <TableColumn isRowHeader>Token</TableColumn>
+                <TableColumn className="hidden md:table-cell">Created</TableColumn>
+                <TableColumn className="hidden md:table-cell">Last used</TableColumn>
+                <TableColumn className="hidden sm:table-cell">Expires</TableColumn>
+                <TableColumn className="w-0">
+                  <span className="sr-only">Actions</span>
+                </TableColumn>
+              </TableHeader>
+              <TableBody>
+                {tokens.map((t) => {
+                  const expired = !!t.expires_at && Date.parse(t.expires_at) <= now;
+                  return (
+                    <TableRow key={t.id} id={t.id} className={cx(t.id === freshId && "fade-up")}>
+                      <TableCell>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="min-w-0 wrap-anywhere text-body-2-medium text-text-primary">{t.name}</span>
+                          <Chip variant="caption" color={SCOPE_COLOR[t.scope]} className="font-mono">
+                            {t.scope}
+                          </Chip>
+                          {expired && (
+                            <Chip variant="caption" color="rose" className="font-mono">
+                              expired
+                            </Chip>
+                          )}
+                        </div>
+                        <div className="mt-0.5 font-mono text-caption-1-regular text-text-secondary">
+                          {t.token_prefix}...
+                          <span className="md:hidden">
+                            {" "}
+                            · used {relTime(t.last_used_at, now)}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden whitespace-nowrap md:table-cell">
+                        <span className={META} title={dateTime(t.created_at)}>{relTime(t.created_at, now)}</span>
+                      </TableCell>
+                      <TableCell className="hidden whitespace-nowrap md:table-cell">
+                        <span className={META} title={dateTime(t.last_used_at)}>{relTime(t.last_used_at, now)}</span>
+                      </TableCell>
+                      <TableCell className="hidden whitespace-nowrap sm:table-cell">
+                        {t.expires_at ? (
+                          <span className={META} title={dateTime(t.expires_at)}>
+                            {expired ? "expired" : "expires"} {relTime(t.expires_at, now)}
+                          </span>
+                        ) : (
+                          <span className={META}>never</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-end">
+                        <ConfirmButton
+                          label="Revoke"
+                          confirmLabel="Revoke"
+                          description={`Scripts using ${t.name} stop working at once.`}
+                          onConfirm={async () => {
+                            try {
+                              await ops.deleteToken(t.id);
+                              setTokens((list) => list.filter((x) => x.id !== t.id));
+                              toast.success(`Revoked ${t.name}`);
+                            } catch (e) {
+                              toast.error(errorMessage(e));
+                            }
+                          }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </div>
 

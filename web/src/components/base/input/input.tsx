@@ -28,13 +28,13 @@ import { cx, sortCx } from "@/utils/cx";
  *
  * Architecture (mirrors the Untitled UI / React Aria pattern):
  *
- *   InputBase   — the styled field shell. Renders <AriaGroup> + adornments
+ *   InputBase: the styled field shell. Renders <AriaGroup> + adornments
  *                 + <AriaInput>. State (hover / focus / disabled / invalid)
  *                 arrives as render-prop booleans from Aria.
- *   TextField   — wraps <AriaTextField> and a TextFieldContext so size /
+ *   TextField: wraps <AriaTextField> and a TextFieldContext so size /
  *                 classes can flow from the composer down into InputBase
  *                 without prop drilling.
- *   Input       — opinionated composition: TextField → Label → InputBase
+ *   Input: opinionated composition: TextField → Label → InputBase
  *                 → HintText, or React Aria's FieldError for `errorMessage`
  *                 while the field is invalid. The component most consumers use.
  *
@@ -44,9 +44,9 @@ import { cx, sortCx } from "@/utils/cx";
  *   - Form library / native validation integration
  *   - i18n, RTL, autofill edge cases handled
  *   - Render-prop state surfaces `isFocusWithin`, `isHovered`, `isDisabled`,
- *     `isInvalid`, `isRequired` — no CSS pseudo gymnastics
+ *     `isInvalid`, `isRequired`: no CSS pseudo gymnastics
  *
- * Visuals stay 1:1 with Figma — see `styles/theme.css` for the tokens.
+ * Visuals stay 1:1 with Figma, see `styles/theme.css` for the tokens.
  */
 
 export type InputSize = "medium" | "small";
@@ -67,7 +67,7 @@ export interface TextFieldContextValue {
 }
 
 /**
- * Shared by every field that wants Input's shell — `Textarea` reads the same
+ * Shared by every field that wants Input's shell, `Textarea` reads the same
  * size and class overrides out of it, so a composed form stays consistent.
  */
 export const TextFieldContext = createContext<TextFieldContextValue>({});
@@ -136,7 +136,8 @@ const inputStyles = sortCx({
     "relative flex w-full items-center",
     "rounded-2lg",
     "bg-background-tertiary-default text-foreground-icon-tertiary",
-    "ring-2 ring-inset ring-transparent",
+    // Acnologia: a hairline at rest so wells read on the warm page (token in acnologia.css).
+    "ring-1 ring-inset ring-input-idle-ring",
     "transition-[background-color,box-shadow,color] duration-[var(--input-transition-ms)] ease",
   ].join(" "),
 
@@ -190,7 +191,7 @@ export function inputFieldClassName(
     // Hover: idle, no focus, no disabled, no invalid
     isHovered && !isFocusWithin && !isDisabled && !isInvalid && "ring-border-button-hover",
     // Focus wins over hover
-    isFocusWithin && !isDisabled && !isInvalid && "ring-border-button-active",
+    isFocusWithin && !isDisabled && !isInvalid && "ring-2 ring-border-button-active",
     // Disabled
     isDisabled && "bg-input-disabled-background text-input-disabled-foreground",
     // Invalid

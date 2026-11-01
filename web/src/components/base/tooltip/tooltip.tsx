@@ -18,9 +18,9 @@ import { useDirection } from "@/components/foundations/direction/direction";
  *            md → px 12 py 8, Body 1/Medium   (14px)
  *   arrow    filled caret (background/primary/default); a distinct path per
  *            side (not one path rotated with CSS) faces the trigger via
- *            OverlayArrow's `placement` render prop — see `TOOLTIP_CARETS` below.
+ *            OverlayArrow's `placement` render prop, see `TOOLTIP_CARETS` below.
  *
- * Behaviour comes from react-aria's TooltipTrigger / Tooltip — hover + focus
+ * Behaviour comes from react-aria's TooltipTrigger / Tooltip, hover + focus
  * open, Escape closes, positioning + collision flipping, and the
  * `aria-describedby` wiring onto the trigger. We only dress the surface.
  *
@@ -46,17 +46,17 @@ const sizes = sortCx({
 /**
  * One hand-drawn caret per placement instead of a single path rotated with
  * CSS `transform`. Rotating a non-square (12×7) SVG changes its *visual*
- * footprint (7×12 at 90°) but not its *layout* box — `transform` never
- * affects layout — so `OverlayArrow` (which sizes/positions the arrow using
+ * footprint (7×12 at 90°) but not its *layout* box, `transform` never
+ * affects layout: so `OverlayArrow` (which sizes/positions the arrow using
  * its unrotated 12×7 box) leaves a real ~2.5px gap between the rotated
  * triangle and the tooltip body for `left`/`right`. Each entry below instead
  * has `width`/`height` matching its own true rendered footprint, so the
- * layout box is always exactly right — no transform, no gap.
+ * layout box is always exactly right, no transform, no gap.
  *
  * Each path is left open on the edge touching the tooltip body (no "Z", so
  * only the two other edges get a stroke), and `shadow` points further along
- * the direction the tip already points — past the tip, never back toward the
- * body — matching the one spot that already looked right by default.
+ * the direction the tip already points, past the tip, never back toward the
+ * body: matching the one spot that already looked right by default.
  */
 export const TOOLTIP_CARETS = sortCx({
   top: { width: 12, height: 7, path: "M0 0 L6 6 L12 0", shadow: "0 1.5px 1px" },

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { ShieldAlert } from "lucide-react";
+import { RiShieldKeyholeLine } from "@remixicon/react";
 import type { Key } from "../../lib/types";
 import { useKeys } from "../../stores/keys";
 import { errorMessage } from "../../lib/api";
-import { Modal } from "../../components/Modal";
-import { SecretBox } from "../../components/CopyButton";
-import { Button, Spinner } from "../../components/ui";
+import { Callout, SecretBox } from "@/components/acn";
+import { Button } from "@/components/base/buttons/button";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
+import { Spinner } from "@/components/base/spinner/spinner";
 
 export function RevealModal({ k, onClose }: { k: Key | null; onClose: () => void }) {
   const reveal = useKeys((s) => s.reveal);
@@ -26,24 +27,25 @@ export function RevealModal({ k, onClose }: { k: Key | null; onClose: () => void
   }, [k, reveal]);
 
   return (
-    <Modal
-      open={!!k}
-      onClose={onClose}
-      title={`Secret for ${k?.label || "key"}`}
-      description={<span className="font-mono">{k?.hint}</span>}
-      footer={
+    <Modal isOpen={!!k} onOpenChange={(o) => !o && onClose()} size="sm">
+      <ModalHeader title={`Secret for ${k?.label || "key"}`} description={<span className="font-mono">{k?.hint}</span>} icon={RiShieldKeyholeLine} />
+      <ModalBody className="space-y-3">
+        <Callout tone="warning">The audit log records this reveal. Treat the secret like a password.</Callout>
+        {err ? (
+          <Callout tone="error">{err}</Callout>
+        ) : secret === null ? (
+          <div className="flex justify-center py-4">
+            <Spinner size="md" aria-label="Loading secret" />
+          </div>
+        ) : (
+          <SecretBox value={secret} />
+        )}
+      </ModalBody>
+      <ModalFooter>
         <Button variant="primary" onClick={onClose}>
           Done
         </Button>
-      }
-    >
-      <div className="space-y-3">
-        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          The audit log records this reveal. Treat the secret like a password.
-        </div>
-        {err ? <p role="alert" className="text-sm text-red-700">{err}</p> : secret === null ? <div className="flex justify-center py-4"><Spinner /></div> : <SecretBox value={secret} />}
-      </div>
+      </ModalFooter>
     </Modal>
   );
 }

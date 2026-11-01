@@ -11,8 +11,8 @@ test("assistant conversation", async ({ page, run, snap }) => {
 test("account menu open", async ({ page, snap }, info) => {
   test.skip(info.project.name.startsWith("phone"), "phones use the More sheet");
   await page.goto("/");
-  // Named "Your account: Demo" in newer builds and "Demo" in older ones.
-  const trigger = page.getByRole("button", { name: /^(Your account: )?Demo$/ });
+  // The BoardUI shell names it "Account menu: Demo"; older builds used "Demo".
+  const trigger = page.getByRole("button", { name: /^(Account menu: )?Demo/ });
   await trigger.click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
   await snap("account-menu", { viewportOnly: true });
@@ -37,5 +37,10 @@ test("add keys modal with a 50 key paste", async ({ page, run, snap }) => {
   }).join("\n");
   await dialog.locator("textarea").first().fill(paste);
   await expect(dialog.getByRole("button", { name: /Add 50 keys/ })).toBeVisible();
+  // On phones the dialog is a bottom sheet: wait until it has finished sliding in.
+  await expect(page.locator("[data-entering]")).toHaveCount(0);
+  await expect
+    .poll(async () => JSON.stringify(await dialog.boundingBox()), { intervals: [150, 150, 150] })
+    .toBe(JSON.stringify(await dialog.boundingBox()));
   await snap("add-keys-50", { viewportOnly: true });
 });

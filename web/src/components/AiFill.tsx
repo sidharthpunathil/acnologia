@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Sparkles, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { RiCloseLine, RiSparkling2Line } from "@remixicon/react";
 import { ApiError, api, errorMessage } from "../lib/api";
 import type { AssistForm } from "../lib/types";
 import { useAi } from "../stores/ai";
 import { toast } from "../stores/toast";
-import { Button, cx } from "./ui";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { cx } from "@/utils/cx";
 
 export interface AiFillState {
   form: AssistForm;
@@ -78,19 +81,16 @@ export function useAiFill(form: AssistForm, current: () => object, apply: (field
 export function AiFillButton({ ai, className }: { ai: AiFillState; className?: string }) {
   if (!ai.enabled) return null;
   return (
-    <button
-      type="button"
+    <Button
+      variant="secondary"
+      size="small"
+      leadingIcon={RiSparkling2Line}
       onClick={() => ai.setOpen(!ai.open)}
       aria-expanded={ai.open}
-      className={cx(
-        "tap inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium transition-colors",
-        ai.open ? "border-brand/30 bg-brand-soft text-brand-ink" : "border-line bg-surface text-muted hover:border-brand/30 hover:text-brand-ink",
-        className,
-      )}
+      className={cx(ai.open && "border-accent-line bg-accent-subtle text-accent-fg hover:bg-accent-subtle", className)}
     >
-      <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
       Fill with AI
-    </button>
+    </Button>
   );
 }
 
@@ -109,48 +109,55 @@ export function AiFillPanel({ ai }: { ai: AiFillState }) {
   }, [ai.open]);
 
   if (!ai.enabled) return null;
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    void ai.run(text);
-  };
   return (
     <>
       {ai.open && (
-        <div className="fade-up mb-4 rounded-xl border border-brand/20 bg-brand-soft/60 p-3">
-          <label htmlFor={`ai-fill-${ai.form}`} className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-ink">
-            <Sparkles className="h-3.5 w-3.5 text-brand" aria-hidden="true" />
-            Describe it in a sentence
-          </label>
+        <div className="fade-up mb-4 rounded-2xl border border-accent-line/30 bg-accent-subtle p-3">
           {/* Not a nested <form>: the panel often sits inside the form it fills. */}
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <Input
               ref={inputRef}
-              id={`ai-fill-${ai.form}`}
+              label={
+                <span className="inline-flex items-center gap-1.5">
+                  <RiSparkling2Line className="size-4 text-accent-fg" aria-hidden />
+                  Describe it in a sentence
+                </span>
+              }
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={setText}
               onKeyDown={(e) => {
-                if (e.key === "Enter") submit(e as unknown as FormEvent);
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void ai.run(text);
+                }
               }}
               placeholder={`For example: ${PLACEHOLDER[ai.form]}`}
               enterKeyHint="go"
-              className="field-input h-10 w-full min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-hidden focus:ring-2 focus:ring-ink/20"
+              className="min-w-0 flex-1"
+              fieldClassName="bg-background-primary-default"
             />
             <div className="flex gap-2">
-              <Button variant="primary" loading={ai.busy} disabled={!text.trim()} onClick={() => void ai.run(text)} icon={<Sparkles className="h-4 w-4" />}>
+              <Button
+                variant="primary"
+                disabled={ai.busy || !text.trim()}
+                leadingIcon={ai.busy ? ButtonSpinner : RiSparkling2Line}
+                onClick={() => void ai.run(text)}
+              >
                 Fill
               </Button>
-              <Button variant="ghost" onClick={() => ai.setOpen(false)} aria-label="Close AI fill">
-                <X className="h-4 w-4" />
-              </Button>
+              <Button variant="ghost" iconOnly leadingIcon={RiCloseLine} onClick={() => ai.setOpen(false)} aria-label="Close AI fill" />
             </div>
           </div>
-          <p className="mt-1.5 text-xs text-muted">AI fills the fields for you to review. Nothing is saved until you save.</p>
+          <p className="mt-1.5 text-caption-1-regular text-text-secondary">AI fills the fields for you to review. Nothing is saved until you save.</p>
         </div>
       )}
       {ai.notes && (
-        <p className="mb-4 flex items-start gap-1.5 rounded-xl bg-soft px-3 py-2 text-xs leading-relaxed text-muted" aria-live="polite">
-          <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-brand" aria-hidden="true" />
+        <p
+          className="mb-4 flex items-start gap-1.5 rounded-2xl bg-background-secondary-default px-3 py-2 text-caption-1-regular text-text-secondary"
+          aria-live="polite"
+        >
+          <RiSparkling2Line className="mt-0.5 size-3.5 shrink-0 text-accent-fg" aria-hidden />
           {ai.notes}
         </p>
       )}

@@ -33,7 +33,7 @@ export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
   icon: IconComponent;
   size?: IconButtonSize;
-  /** Accessible name — required since there is no visible label. */
+  /** Accessible name: required since there is no visible label. */
   "aria-label": string;
   ref?: Ref<HTMLButtonElement>;
 }
@@ -42,7 +42,7 @@ export interface IconLinkButtonProps
   extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "children"> {
   icon: IconComponent;
   size?: IconButtonSize;
-  /** Accessible name — required since there is no visible label. */
+  /** Accessible name: required since there is no visible label. */
   "aria-label": string;
   ref?: Ref<HTMLAnchorElement>;
 }

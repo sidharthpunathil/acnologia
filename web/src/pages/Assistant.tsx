@@ -7,19 +7,28 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowDown,
-  FileUp,
-  MessagesSquare,
-  SquarePen,
-  TriangleAlert,
-} from "lucide-react";
-import { useTitle } from "../hooks/useTitle";
-import { ApiError, errorMessage } from "../lib/api";
-import type { ChatItem, ChatThread } from "../lib/types";
-import { useAssistant } from "../stores/assistant";
-import { toast } from "../stores/toast";
-import { Modal } from "../components/Modal";
-import { Button, Callout, IconButton, Skeleton, cx } from "../components/ui";
+  RiAlertLine,
+  RiArrowDownLine,
+  RiChatHistoryLine,
+  RiEditBoxLine,
+  RiFileUploadLine,
+} from "@remixicon/react";
+import { useTitle } from "@/hooks/useTitle";
+import { ApiError, errorMessage } from "@/lib/api";
+import type { ChatItem, ChatThread } from "@/lib/types";
+import { useAssistant } from "@/stores/assistant";
+import { toast } from "@/stores/toast";
+import { Callout } from "@/components/acn/callout";
+import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/base/buttons/icon-button";
+import { Drawer, DrawerBody, DrawerHeader } from "@/components/base/drawer/drawer";
+import { Kbd } from "@/components/base/kbd/kbd";
+import { Modal, ModalBody, ModalHeader } from "@/components/base/modal/modal";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
+import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/scroll-fade";
+import { cx } from "@/utils/cx";
+import { QUIET_BUTTON } from "@/components/application/agent-chat/agent-chat-message";
 import {
   AssistantText,
   ConfirmCard,
@@ -33,7 +42,6 @@ import {
   Composer,
   EmptyState,
   LiveStatus,
-  NewChatButton,
   Shortcuts,
   ThreadList,
   mergeAttachments,
@@ -101,6 +109,19 @@ async function readDropped(files: File[]): Promise<{ text: string; names: string
 
 const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
 
+/** Phones get the Chats list as a bottom sheet; wider screens a centred dialog. */
+const SHEET_QUERY = "(max-width: 639px)";
+function useSheet() {
+  const [sheet, setSheet] = useState(() => typeof window !== "undefined" && window.matchMedia(SHEET_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(SHEET_QUERY);
+    const on = () => setSheet(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return sheet;
+}
+
 export function AssistantPage() {
   const param = useParams().threadId;
   const routeId = param && /^\d+$/.test(param) ? Number(param) : null;
@@ -129,6 +150,8 @@ export function AssistantPage() {
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const [sheet, setSheet] = useState(false);
+  const asSheet = useSheet();
+  const fade = useScrollFade();
   const entities = useEntities(items);
   const box = useRef<HTMLTextAreaElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -217,7 +240,8 @@ export function AssistantPage() {
       behavior: smooth && !reducedMotion() ? "smooth" : "auto",
     });
   };
-  const onScroll = () => {
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    fade.onScroll(e);
     const el = scroller.current;
     if (!el) return;
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -422,13 +446,10 @@ export function AssistantPage() {
     }, 0);
   };
 
-  const list = (
-    <ThreadList
-      threads={threads}
-      currentId={currentId}
-      onPick={pick}
-      onDelete={onDelete}
-    />
+  const list = loaded ? (
+    <ThreadList threads={threads} currentId={currentId} working={working} onPick={pick} onDelete={onDelete} />
+  ) : (
+    <ListSkeleton />
   );
   const rows = toRows(items);
 
@@ -508,7 +529,7 @@ export function AssistantPage() {
     else if (it.kind === "error")
       body = (
         <div className={GUTTER}>
-          <ErrorItem text={it.text} />
+          <ErrorItem text={it.text} onRetry={!rows[i + 1] && !working && lastUser ? retry : undefined} />
         </div>
       );
     if (!body) return null;
@@ -518,6 +539,8 @@ export function AssistantPage() {
       </div>
     );
   };
+
+  const mod = typeof navigator !== "undefined" && isMac() ? "\u2318" : "Ctrl";
 
   return (
     <div
@@ -537,15 +560,15 @@ export function AssistantPage() {
       >
         {dragging && (
           <div
-            className="chat-drop pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-canvas/80 p-4 backdrop-blur-[2px]"
+            className="chat-drop pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background-full/80 p-4 backdrop-blur-[2px]"
             aria-hidden="true"
           >
-            <div className="chat-drop-panel flex w-full max-w-sm flex-col items-center rounded-3xl border-2 border-dashed border-line-strong bg-surface px-6 py-8 text-center shadow-lift">
-              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-soft text-brand">
-                <FileUp className="h-5 w-5" />
+            <div className="chat-drop-panel flex w-full max-w-sm flex-col items-center rounded-3xl border-2 border-dashed border-border-button-hover bg-background-primary-default px-6 py-8 text-center shadow-xs">
+              <span className="flex size-11 items-center justify-center rounded-xl border border-border-button-default bg-background-primary-default text-status-purple-text shadow-xs">
+                <RiFileUploadLine className="size-5" aria-hidden />
               </span>
-              <div className="mt-3 text-[15px] font-semibold text-ink">Drop a file of keys</div>
-              <div className="mt-1 text-[13px] leading-relaxed text-muted">
+              <div className="mt-3 text-headline-semibold text-text-primary">Drop a file of keys</div>
+              <div className="mt-1 text-body-2-regular text-text-secondary">
                 .txt, .csv, .env or .json, up to 1 MB. Claude sees only placeholders.
               </div>
             </div>
@@ -553,26 +576,47 @@ export function AssistantPage() {
         )}
         {/* History and New chat stay out of the way: a quiet bar above the centred chat. */}
         <div className="mx-auto flex h-12 w-full max-w-[728px] shrink-0 items-center gap-2 px-3 sm:px-6">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="press -ml-2"
-            icon={<MessagesSquare className="h-4 w-4" aria-hidden="true" />}
-            onClick={() => setSheet(true)}
-            aria-haspopup="dialog"
-          >
-            Chats
-          </Button>
+          <TooltipTrigger delay={500}>
+            <Button
+              size="small"
+              variant="ghost"
+              leadingIcon={RiChatHistoryLine}
+              className={cx("-ms-1", QUIET_BUTTON)}
+              onClick={() => setSheet(true)}
+              aria-haspopup="dialog"
+            >
+              Chats
+            </Button>
+            <Tooltip placement="bottom">
+              <span className="inline-flex items-center gap-1.5">
+                Open chats <Kbd>{mod}</Kbd>
+                <Kbd>K</Kbd>
+              </span>
+            </Tooltip>
+          </TooltipTrigger>
           <h1
             id="chat-title"
-            className="min-w-0 flex-1 truncate text-center text-[13px] font-medium text-muted"
+            className="min-w-0 flex-1 truncate text-center text-body-2-medium text-text-secondary"
           >
             <span className="sr-only">Assistant{title ? ": " : ""}</span>
             {title}
           </h1>
-          <IconButton label="New chat" onClick={newChat} className="-mr-2">
-            <SquarePen className="h-[18px] w-[18px]" aria-hidden="true" />
-          </IconButton>
+          <TooltipTrigger delay={500}>
+            <IconButton
+              icon={RiEditBoxLine}
+              size="small"
+              aria-label="New chat"
+              onClick={newChat}
+              className="-me-1 border-transparent bg-transparent shadow-none"
+            />
+            <Tooltip placement="bottom">
+              <span className="inline-flex items-center gap-1.5">
+                New chat <Kbd>{mod}</Kbd>
+                <Kbd>Shift</Kbd>
+                <Kbd>O</Kbd>
+              </span>
+            </Tooltip>
+          </TooltipTrigger>
         </div>
 
         <div className="relative min-h-0 flex-1">
@@ -581,34 +625,31 @@ export function AssistantPage() {
             onScroll={onScroll}
             className="h-full overflow-y-auto overscroll-contain"
           >
-            <div className="mx-auto flex min-h-full w-full max-w-[728px] flex-col px-4 pb-6 pt-4 sm:px-6">
+            <div className="mx-auto flex min-h-full w-full max-w-[728px] flex-col px-4 pt-4 pb-6 sm:px-6">
               {error && (
-                <Callout tone="red" className="mb-4">
-                  {error}{" "}
-                  <button
-                    type="button"
-                    className="font-medium underline underline-offset-2"
-                    onClick={() => fetch().catch(() => {})}
-                  >
-                    Try again
-                  </button>
+                <Callout
+                  tone="error"
+                  className="mb-4"
+                  action={
+                    <Button size="xs" variant="ghost" className={QUIET_BUTTON} onClick={() => fetch().catch(() => {})}>
+                      Try again
+                    </Button>
+                  }
+                >
+                  {error}
                 </Callout>
               )}
               {!loaded || loadingThread ? (
-                <div
-                  className="space-y-6"
-                  aria-busy="true"
-                  aria-label="Loading chat"
-                >
-                  <Skeleton className="ml-auto h-10 w-1/2 rounded-2xl" />
-                  <div className="flex gap-2.5">
-                    <Skeleton className="h-6 w-6 rounded-md" />
-                    <div className="flex-1 space-y-2">
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-4 w-1/2" />
+                <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading chat">
+                  <Skeleton className="ms-auto h-10 w-1/2 rounded-2xl" />
+                  <div className="flex gap-3">
+                    <Skeleton className="size-6 rounded-md" />
+                    <div className="flex flex-1 flex-col gap-2">
+                      <Skeleton shape="text" className="h-4 w-3/4" />
+                      <Skeleton shape="text" className="h-4 w-1/2" />
                     </div>
                   </div>
-                  <Skeleton className="ml-auto h-10 w-1/3 rounded-2xl" />
+                  <Skeleton className="ms-auto h-10 w-1/3 rounded-2xl" />
                 </div>
               ) : items.length === 0 && !working ? (
                 <EmptyState off={off} onPick={fillExample} />
@@ -629,30 +670,25 @@ export function AssistantPage() {
               )}
             </div>
           </div>
+          <ScrollFade progress={fade.progress} surfaceClassName="from-background-full" />
           {!atBottom && items.length > 0 && (
-            <button
-              type="button"
+            <IconButton
+              icon={RiArrowDownLine}
+              aria-label="Jump to latest message"
+              title="Jump to latest"
               onClick={() => {
                 stick.current = true;
                 toBottom(true);
               }}
-              className="swap-in icon-btn absolute bottom-3 left-1/2 inline-flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full bg-surface text-ink shadow-lift transition-colors hover:bg-soft"
-              aria-label="Jump to latest message"
-              title="Jump to latest"
-            >
-              <ArrowDown className="h-4 w-4" aria-hidden="true" />
-            </button>
+              className="swap-in absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm"
+            />
           )}
         </div>
 
         <div className="shrink-0 pb-2">
           <div className="mx-auto w-full max-w-[728px] px-3 sm:px-6">
             {off && (
-              <Callout
-                tone="amber"
-                icon={<TriangleAlert className="h-4 w-4" aria-hidden="true" />}
-                className="mb-2"
-              >
+              <Callout tone="warning" icon={RiAlertLine} className="mb-2">
                 The assistant is off. {ai?.reason}
               </Callout>
             )}
@@ -672,24 +708,45 @@ export function AssistantPage() {
         </div>
       </section>
 
-      <Modal open={sheet} onClose={() => setSheet(false)} title="Chats">
-        <NewChatButton onClick={newChat} className="mb-3" />
-        <div className="-mx-2">{loaded ? list : <ListSkeleton />}</div>
-        <div className="mt-4">
-          <Shortcuts />
-        </div>
-      </Modal>
+      {asSheet ? (
+        <Drawer placement="bottom" isOpen={sheet} onOpenChange={setSheet}>
+          <DrawerHeader title="Chats" />
+          <DrawerBody className="pb-2">
+            <ChatsBody onNew={newChat}>{list}</ChatsBody>
+          </DrawerBody>
+        </Drawer>
+      ) : (
+        <Modal isOpen={sheet} onOpenChange={setSheet} size="md" overlayClassName="items-start pt-[12vh]" className="max-h-[70vh]">
+          <ModalHeader title="Chats" />
+          <ModalBody className="pb-1">
+            <ChatsBody onNew={newChat}>{list}</ChatsBody>
+          </ModalBody>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/** The Chats dialog: New chat, the list, then the shortcuts on keyboard screens. */
+function ChatsBody({ onNew, children }: { onNew: () => void; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <Button variant="secondary" leadingIcon={RiEditBoxLine} onClick={onNew} className="w-full justify-start">
+        New chat
+      </Button>
+      <div className="-mx-2">{children}</div>
+      <Shortcuts />
     </div>
   );
 }
 
 function ListSkeleton() {
   return (
-    <div className="space-y-3 px-3 pt-1" aria-hidden="true">
+    <div className="flex flex-col gap-3 px-3 pt-1" aria-hidden="true">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i}>
-          <Skeleton className="h-3.5 w-4/5" />
-          <Skeleton className="mt-1.5 h-2.5 w-12" />
+        <div key={i} className="flex flex-col gap-1.5">
+          <Skeleton shape="text" className="h-3.5 w-4/5" />
+          <Skeleton shape="text" className="h-2.5 w-12" />
         </div>
       ))}
     </div>

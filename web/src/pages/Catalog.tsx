@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
+import { Link } from "react-aria-components";
+import { RiAddLine, RiLayoutGridLine, RiSparkling2Line } from "@remixicon/react";
 import { useTitle } from "../hooks/useTitle";
-import { Link } from "react-router-dom";
-import { Layers, Plus, Search, Sparkles } from "lucide-react";
 import { useServices } from "../stores/services";
 import { useProviders } from "../stores/providers";
 import { useAuth } from "../stores/auth";
@@ -10,10 +11,15 @@ import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
 import { STRATEGY_LABEL, compact, plural } from "../lib/format";
 import type { Service } from "../lib/types";
-import { Tabs } from "../components/Tabs";
 import { ServiceLogo } from "../components/EntityLogo";
-import { Button, Callout, Empty, PageSkeleton, cx } from "../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { SearchField } from "@/components/base/search-field/search-field";
+import { Skeleton } from "@/components/base/skeleton/skeleton";
+import { Tab, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
+import { cx } from "@/utils/cx";
 import { AddServiceModal } from "./AddServiceModal";
+import { Callout, EmptyState, PageHeader } from "@/components/acn";
+import { CARD } from "./service/parts";
 
 const ALL = "__all";
 
@@ -38,15 +44,15 @@ export function serviceMeta(s: Service): string {
   return [...metaParts(s).map((p) => p.text), STRATEGY_LABEL[s.strategy] ?? s.strategy].join(" · ");
 }
 
-const TONE = { red: "text-red-700", amber: "text-amber-700", violet: "text-violet-700" } as const;
+const TONE = { red: "text-text-error-primary", amber: "text-status-yellow-text", violet: "text-status-purple-text" } as const;
 
 /** Green when a key is free, red when every key is broken, amber while keys only rest, gray with no keys. */
 function healthDot(s: Service): { cls: string; label: string } {
   const c = s.key_counts;
-  if (c.total === 0) return { cls: "bg-line-strong", label: "No keys yet" };
-  if (c.available > 0) return { cls: "bg-emerald-500", label: "Keys available" };
-  if (c.cooling || c.exhausted || c.busy) return { cls: "bg-amber-500", label: "Keys resting, none free right now" };
-  return { cls: "bg-red-500", label: "No working keys" };
+  if (c.total === 0) return { cls: "bg-border-button-hover", label: "No keys yet" };
+  if (c.available > 0) return { cls: "bg-notification-success-foreground", label: "Keys available" };
+  if (c.cooling || c.exhausted || c.busy) return { cls: "bg-chart-8-active", label: "Keys resting, none free right now" };
+  return { cls: "bg-notification-error-foreground", label: "No working keys" };
 }
 
 function categoryOf(s: Service): string {
@@ -58,7 +64,7 @@ function FreeTierLine({ provider }: { provider: string }) {
   const freeTier = useProviders((st) => st.providers.find((p) => p.slug === provider)?.spec?.quota?.free_tier);
   if (!freeTier) return null;
   return (
-    <div className="mt-0.5 truncate text-[11px] text-faint" title={freeTier}>
+    <div className="mt-1 truncate text-caption-1-regular text-text-tertiary" title={freeTier}>
       Free tier: {freeTier}
     </div>
   );
@@ -71,25 +77,38 @@ function ServiceCard({ s }: { s: Service }) {
   const idle = s.key_counts.total === 0;
   return (
     <Link
-      to={`/services/${s.id}`}
-      className={cx(
-        "group flex min-h-[72px] items-center gap-3.5 rounded-card px-4 py-4 transition-[box-shadow,transform,background-color] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift",
-        idle ? "bg-surface/55 shadow-none ring-1 ring-inset ring-line hover:bg-surface" : "bg-surface shadow-card",
-      )}
+      href={`/services/${s.id}`}
+      className={({ isFocusVisible }) =>
+        cx(
+          "group flex min-h-[76px] items-center gap-3.5 rounded-3xl border px-4 py-4 outline-none",
+          "transition-[background-color,border-color] duration-150 ease",
+          idle
+            ? "border-border-button-default bg-background-secondary-default hover:bg-background-primary-default"
+            : "border-border-button-default bg-background-primary-default hover:border-border-button-hover hover:bg-background-primary-hover",
+          "data-[pressed]:bg-background-primary-active",
+          isFocusVisible && "ring-2 ring-border-focus-ring",
+        )
+      }
     >
-      <span className={cx("shrink-0", idle && "grayscale opacity-50 transition-[filter,opacity] duration-200 ease-out group-hover:grayscale-0 group-hover:opacity-100 group-focus-visible:grayscale-0 group-focus-visible:opacity-100")}>
+      <span
+        className={cx(
+          "shrink-0",
+          idle &&
+            "opacity-50 grayscale transition-[filter,opacity] duration-200 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-data-[focus-visible]:opacity-100 group-data-[focus-visible]:grayscale-0",
+        )}
+      >
         <ServiceLogo service={s} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className={cx("min-w-0 truncate text-[15px] font-medium", idle ? "text-muted" : "text-ink")}>{s.name}</span>
-          <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", dot.cls)} title={dot.label} aria-hidden="true" />
+          <span className={cx("min-w-0 truncate text-body-medium", idle ? "text-text-secondary" : "text-text-primary")}>{s.name}</span>
+          <span className={cx("size-1.5 shrink-0 rounded-full", dot.cls)} title={dot.label} aria-hidden="true" />
           <span className="sr-only">{dot.label}</span>
         </div>
-        <div className="mt-1 line-clamp-2 font-mono text-xs text-muted" title={serviceMeta(s)}>
+        <div className="mt-1 line-clamp-2 font-mono text-caption-1-regular text-text-secondary" title={serviceMeta(s)}>
           {parts.map((p, i) => (
             <span key={p.text}>
-              {i > 0 && <span className="text-faint"> · </span>}
+              {i > 0 && <span className="text-text-tertiary"> · </span>}
               <span className={cx("whitespace-nowrap", p.tone && TONE[p.tone])}>{p.text}</span>
             </span>
           ))}
@@ -97,6 +116,27 @@ function ServiceCard({ s }: { s: Service }) {
         <FreeTierLine provider={s.provider} />
       </div>
     </Link>
+  );
+}
+
+function CatalogSkeleton() {
+  return (
+    <div role="status" aria-label="Loading services">
+      <Skeleton shape="text" className="h-8 w-80 max-w-full" />
+      <Skeleton shape="text" className="mt-3 h-3.5 w-56" />
+      <Skeleton className="mt-8 h-12 w-full max-w-[760px] rounded-full" />
+      <div className="mt-12 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className={cx(CARD, "flex items-center gap-3.5 px-4 py-4")}>
+            <Skeleton className="size-10" />
+            <div className="flex-1">
+              <Skeleton shape="text" className="h-4 w-28" />
+              <Skeleton shape="text" className="mt-2 h-3 w-40" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -142,103 +182,122 @@ export function CatalogPage() {
   const activeTab = tabs.some((t) => t.id === tab) ? tab : ALL;
   const shown = activeTab === ALL ? groups : groups.filter(([c]) => c === activeTab);
 
-  if (!loaded) return <PageSkeleton />;
+  if (!loaded) return <CatalogSkeleton />;
 
   return (
     <div>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[32px]">
-            {compact(totalKeys)} {totalKeys === 1 ? "key" : "keys"} across {plural(services.length, "service")}
-          </h1>
-          <p className="mt-2 font-mono text-xs text-muted">
-            {available} available now · {compact(req24)} requests in 24h
-          </p>
-        </div>
-        {can.manage(role) && (
-          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
-            Add service
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={`${compact(totalKeys)} ${totalKeys === 1 ? "key" : "keys"} across ${plural(services.length, "service")}`}
+        meta={`${available} available now · ${compact(req24)} requests in 24h`}
+        actions={
+          can.manage(role) && (
+            <Button variant="primary" leadingIcon={RiAddLine} onClick={() => setAdding(true)}>
+              Add service
+            </Button>
+          )
+        }
+        className="mb-0"
+      />
       {error && services.length === 0 && (
-        <Callout tone="red" className="mt-6">
-          Could not load services: {error}.{" "}
-          <button type="button" className="font-medium underline underline-offset-2" onClick={() => fetch().catch(() => undefined)}>
-            Try again
-          </button>
+        <Callout
+          tone="error"
+          className="mt-6"
+          action={
+            <Button variant="secondary" size="small" onClick={() => fetch().catch(() => undefined)}>
+              Try again
+            </Button>
+          }
+        >
+          Could not load services: {error}.
         </Callout>
       )}
 
-      <div className="relative mt-8 max-w-[760px]">
-        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search by name, slug or category"
-          enterKeyHint="search"
-          aria-label="Search services"
-          type="search"
-          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-hidden focus:ring-2 focus:ring-ink/20"
-        />
-      </div>
+      <SearchField
+        value={q}
+        onChange={setQ}
+        placeholder="Search by name, slug or category"
+        aria-label="Search services"
+        enterKeyHint="search"
+        className="mt-8 max-w-[760px]"
+        fieldClassName="h-12 bg-background-primary-default border border-border-button-default"
+      />
 
       {services.length === 0 ? (
-        <div className="mt-12">
-          <Empty
-            icon={<Layers className="h-5 w-5" />}
-            title="No services yet"
-            body={
-              can.manage(role)
-                ? "Pick a provider, then paste in a key from each account you own. Provider not listed? Build it with AI in a minute."
-                : "No services yet. Ask an admin to add one with its keys."
-            }
-            action={
-              can.manage(role) ? (
-                <>
-                  <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
-                    Add your first service
-                  </Button>
-                  <Link
-                    to="/providers/ai"
-                    className="tap inline-flex h-10 items-center gap-2 rounded-full bg-surface px-4 text-sm font-medium text-ink shadow-card hover:bg-soft"
-                  >
-                    <Sparkles className="h-4 w-4 text-brand" /> Build a provider with AI
-                  </Link>
-                </>
-              ) : undefined
-            }
-          />
-        </div>
+        <EmptyState
+          className="mt-12"
+          as="h2"
+          icon={RiLayoutGridLine}
+          title="No services yet"
+          body={
+            can.manage(role)
+              ? "Pick a provider, then paste in a key from each account you own. Provider not listed? Build it with AI in a minute."
+              : "No services yet. Ask an admin to add one with its keys."
+          }
+          action={
+            can.manage(role) ? (
+              <>
+                <Button variant="primary" leadingIcon={RiAddLine} onClick={() => setAdding(true)}>
+                  Add your first service
+                </Button>
+                <RouterLink
+                  to="/providers/ai"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-2lg border border-border-button-default bg-background-primary-default px-3 text-body-medium text-text-primary shadow-xs outline-none transition-colors duration-150 hover:bg-background-primary-hover focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+                >
+                  <RiSparkling2Line className="size-5 text-accent-fg" aria-hidden /> Build a provider with AI
+                </RouterLink>
+              </>
+            ) : undefined
+          }
+        />
       ) : (
-        <>
-          <Tabs className="mt-10" items={tabs} value={activeTab} onChange={setTab} />
-          {shown.length === 0 ? (
-            <div className="mt-10">
-              <Empty title={`Nothing matches "${q}"`} body="Try another name, or clear the search." action={<Button onClick={() => setQ("")}>Clear search</Button>} />
-            </div>
-          ) : (
-            shown.map(([cat, list]) => {
-              const keys = list.reduce((n, s) => n + s.key_counts.total, 0);
-              return (
-                <section key={cat} className="mt-10">
-                  <div className="flex items-baseline gap-3">
-                    <h2 className="text-[19px] font-semibold tracking-tight text-ink">{cat}</h2>
-                    <span className="font-mono text-xs text-faint">{list.length}</span>
-                  </div>
-                  <p className="mt-1.5 text-[13px] text-muted">
-                    {plural(keys, "key")} pooled across {plural(list.length, "service")}
-                  </p>
-                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {list.map((s) => (
-                      <ServiceCard key={s.id} s={s} />
-                    ))}
-                  </div>
-                </section>
-              );
-            })
-          )}
-        </>
+        <Tabs selectedKey={activeTab} onSelectionChange={(k) => setTab(String(k))} className="mt-10 gap-0">
+          <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+            <TabList aria-label="Categories" className="min-w-max">
+              {tabs.map((t) => (
+                <Tab key={t.id} id={t.id} count={t.count}>
+                  {t.label}
+                </Tab>
+              ))}
+            </TabList>
+          </div>
+          <TabPanel id={activeTab} className="focus-visible:ring-offset-4">
+            {shown.length === 0 ? (
+              <EmptyState
+                className="mt-10"
+                as="h2"
+                title={`Nothing matches "${q}"`}
+                body="Try another name, or clear the search."
+                action={
+                  <Button variant="secondary" onClick={() => setQ("")}>
+                    Clear search
+                  </Button>
+                }
+              />
+            ) : (
+              shown.map(([cat, list]) => {
+                const keys = list.reduce((n, s) => n + s.key_counts.total, 0);
+                return (
+                  <section key={cat} className="mt-10" aria-labelledby={`cat-${cat}`}>
+                    <div className="flex items-baseline gap-2.5">
+                      <h2 id={`cat-${cat}`} className="text-headline-semibold text-text-primary">
+                        {cat}
+                      </h2>
+                      <span className="font-mono text-caption-1-regular text-text-tertiary">{list.length}</span>
+                    </div>
+                    <p className="mt-1 text-body-2-regular text-text-secondary">
+                      {plural(keys, "key")} pooled across {plural(list.length, "service")}
+                    </p>
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {list.map((s) => (
+                        <ServiceCard key={s.id} s={s} />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })
+            )}
+          </TabPanel>
+        </Tabs>
       )}
 
       <AddServiceModal open={adding} onClose={() => setAdding(false)} />

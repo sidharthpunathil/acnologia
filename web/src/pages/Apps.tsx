@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
+import { RiAddLine, RiApps2Line, RiPencilLine, RiPlugLine, RiRefreshLine } from "@remixicon/react";
+import { Focusable } from "react-aria-components";
 import { useTitle } from "../hooks/useTitle";
-import { Boxes, Pencil, Plug, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useApps } from "../stores/apps";
 import { enabledCount, useMcp } from "../stores/mcp";
 import { AppMcpPanel } from "./AppMcpPanel";
@@ -18,7 +19,36 @@ import { MultiSelect } from "../components/MultiSelect";
 import { SecretBox } from "../components/CopyButton";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { AiFillButton, AiFillPanel, useAiFill } from "../components/AiFill";
-import { Badge, Button, Empty, Field, IconButton, Input, PageHeader, PageSkeleton, Select, Textarea, Toggle, cx } from "../components/ui";
+import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/base/buttons/icon-button";
+import { Input } from "@/components/base/input/input";
+import { Label } from "@/components/base/input/label";
+import { HintText } from "@/components/base/input/hint-text";
+import { Textarea } from "@/components/base/textarea/textarea";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { Switch } from "@/components/base/switch/switch";
+import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
+import { cx } from "@/utils/cx";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Callout, EmptyState, PageHeader, PageSkeleton } from "@/components/acn";
+
+type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
+
+/** Icon only action with a hover and focus tooltip naming it. */
+function TipButton({ icon, label, onClick, disabled }: { icon: IconComponent; label: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <TooltipTrigger delay={300}>
+      <Focusable>
+        {/* aria-disabled rather than disabled, so focus stays put and returns here after a dialog it opened. */}
+        <IconButton icon={icon} size="small" aria-label={label} onClick={disabled ? undefined : onClick} aria-disabled={disabled || undefined} />
+      </Focusable>
+      <Tooltip>{label}</Tooltip>
+    </TooltipTrigger>
+  );
+}
+
+const MODE_COLOR: Record<AppMode, ChipColor> = { proxy: "purple", lease: "blue", both: "neutral" };
 
 const MODE_HELP: Record<AppMode, string> = {
   proxy: "Calls go through /proxy. The app never sees a raw key.",
@@ -192,77 +222,101 @@ function AppFormModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form="app-form" loading={busy}>
+          <Button variant="primary" type="submit" form="app-form" disabled={busy} leadingIcon={busy ? ButtonSpinner : undefined}>
             {initial ? "Save" : "Create app"}
           </Button>
         </>
       }
     >
-      <form id="app-form" onSubmit={submit} className="space-y-4" noValidate>
+      <form id="app-form" onSubmit={submit} className="flex flex-col gap-5" noValidate>
         <AiFillPanel ai={ai} />
-        <Field label="Name" required error={nameErr} className={ai.flash("name")}>
-          <Input
-            value={form.name}
-            onChange={(e) => {
-              setForm({ ...form, name: e.target.value });
-              if (nameErr) setNameErr(null);
-            }}
-            placeholder="marketing site"
-            autoComplete="off"
-          />
-        </Field>
-        <Field label="Description" className={ai.flash("description")}>
-          <Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-        </Field>
-        <Field label="Mode" hint={MODE_HELP[form.mode]} className={ai.flash("mode")}>
-          <Select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as AppMode })}>
-            <option value="proxy">proxy</option>
-            <option value="lease">lease</option>
-            <option value="both">both</option>
+        <Input
+          label="Name"
+          isRequired
+          isInvalid={!!nameErr}
+          errorMessage={nameErr}
+          className={ai.flash("name")}
+          value={form.name}
+          onChange={(v) => {
+            setForm({ ...form, name: v });
+            if (nameErr) setNameErr(null);
+          }}
+          placeholder="marketing site"
+          autoComplete="off"
+        />
+        <Textarea
+          label="Description"
+          className={ai.flash("description")}
+          rows={2}
+          autoResize
+          value={form.description}
+          onChange={(v) => setForm({ ...form, description: v })}
+        />
+        <div className={cx("flex flex-col gap-1", ai.flash("mode"))}>
+          <Select
+            label="Mode"
+            selectedKey={form.mode}
+            onSelectionChange={(k) => k != null && setForm({ ...form, mode: k as AppMode })}
+            className="w-full"
+            aria-describedby="app-mode-hint"
+          >
+            <SelectItem id="proxy">proxy</SelectItem>
+            <SelectItem id="lease">lease</SelectItem>
+            <SelectItem id="both">both</SelectItem>
           </Select>
-        </Field>
-        <div className={ai.flash("allowed_services")}>
-          <div className="mb-1.5 text-[13px] font-medium text-ink">Allowed services</div>
-          <MultiSelect
-            options={services.map((s) => ({ value: s.slug, label: s.name, meta: s.slug }))}
-            value={form.allowed_services}
-            onChange={(v) => setForm({ ...form, allowed_services: v })}
-            empty="No services yet. Add one from the catalog first."
-          />
-          <div className="mt-1 text-xs text-muted">
-            {form.allowed_services.length ? `Limited to ${plural(form.allowed_services.length, "service")}.` : "Pick none to allow every service."}
-          </div>
+          <HintText id="app-mode-hint">{MODE_HELP[form.mode]}</HintText>
         </div>
-        <fieldset className="space-y-2">
-          <legend className="mb-1.5 text-[13px] font-medium text-ink">Limits</legend>
-          <p className="text-xs leading-relaxed text-muted">Leave a field empty for no limit. Calls over a limit are refused until it resets.</p>
+        <div className={cx("flex flex-col gap-1.5", ai.flash("allowed_services"))}>
+          <Label id="app-services-label">Allowed services</Label>
+          <div role="group" aria-labelledby="app-services-label">
+            <MultiSelect
+              options={services.map((s) => ({ value: s.slug, label: s.name, meta: s.slug }))}
+              value={form.allowed_services}
+              onChange={(v) => setForm({ ...form, allowed_services: v })}
+              empty="No services yet. Add one from the catalog first."
+            />
+          </div>
+          <HintText>
+            {form.allowed_services.length ? `Limited to ${plural(form.allowed_services.length, "service")}.` : "Pick none to allow every service."}
+          </HintText>
+        </div>
+        <fieldset className="flex flex-col gap-3">
+          <legend className="mb-1 text-body-medium text-text-primary">Limits</legend>
+          <p className="text-caption-1-regular text-text-secondary">Leave a field empty for no limit. Calls over a limit are refused until it resets.</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {LIMIT_KEYS.map((k) => {
               const money = k.endsWith("_budget");
               return (
-                <Field key={k} label={money ? `${LIMIT_LABEL[k]} (USD)` : LIMIT_LABEL[k]}>
-                  <Input
-                    type="number"
-                    inputMode={money ? "decimal" : "numeric"}
-                    min={0}
-                    step={money ? "any" : 1}
-                    value={limits[k]}
-                    onChange={(e) => setLimits({ ...limits, [k]: e.target.value })}
-                    placeholder="no limit"
-                    className={money ? "font-mono" : undefined}
-                  />
-                </Field>
+                <Input
+                  key={k}
+                  label={money ? `${LIMIT_LABEL[k]} (USD)` : LIMIT_LABEL[k]}
+                  inputMode={money ? "decimal" : "numeric"}
+                  value={limits[k]}
+                  onChange={(v) => setLimits({ ...limits, [k]: v })}
+                  placeholder="no limit"
+                  inputClassName="font-mono tabular-nums"
+                />
               );
             })}
           </div>
         </fieldset>
         {isSuper && (
-          <Toggle
-            checked={!!form.lease_hidden}
-            onChange={(v) => setForm({ ...form, lease_hidden: v })}
-            label="Lease hidden keys"
-            description="Lets this app use hidden keys. Leases and some upstream responses reveal the plain key, so turn this on only for apps you trust. Rotating the token as an admin turns it off."
-          />
+          <div className="flex items-start justify-between gap-4 rounded-2xl bg-background-secondary-default p-4">
+            <div className="min-w-0">
+              <div id="lease-hidden-label" className="text-body-medium text-text-primary">
+                Lease hidden keys
+              </div>
+              <p id="lease-hidden-hint" className="mt-0.5 text-caption-1-regular text-text-secondary">
+                Lets this app use hidden keys. Leases and some upstream responses reveal the plain key, so turn this on only for apps you trust. Rotating the token as an admin turns it off.
+              </p>
+            </div>
+            <Switch
+              isSelected={!!form.lease_hidden}
+              onChange={(v) => setForm({ ...form, lease_hidden: v })}
+              aria-labelledby="lease-hidden-label"
+              aria-describedby="lease-hidden-hint"
+            />
+          </div>
         )}
       </form>
     </Modal>
@@ -282,16 +336,13 @@ function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null;
       }
     >
       {result && (
-        <div className="space-y-3">
-          <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              Copy this token now. Acnologia stores only a hash, so it cannot show the token again.
-              {rotated && " The old token has stopped working."}
-            </span>
-          </div>
+        <div className="flex flex-col gap-3">
+          <Callout tone="warning">
+            Copy this token now. Acnologia stores only a hash, so it cannot show the token again.
+            {rotated && " The old token has stopped working."}
+          </Callout>
           <SecretBox value={result.token} />
-          <p className="wrap-anywhere font-mono text-[11px] text-muted">Send it as Authorization: Bearer {result.app.token_prefix}...</p>
+          <div className="font-mono text-caption-1-regular text-text-secondary wrap-anywhere text-text-tertiary">Send it as Authorization: Bearer {result.app.token_prefix}...</div>
         </div>
       )}
     </Modal>
@@ -318,15 +369,15 @@ function AppUsageLine({ app, now }: { app: App; now: number }) {
   const hitKey = hit?.limit as LimitKey | undefined;
   const hitLabel = hitKey && LIMIT_LABEL[hitKey] ? LIMIT_LABEL[hitKey] : "Usage";
   return (
-    <div className="mt-1.5 flex flex-col gap-1.5">
+    <div className="mt-2 flex flex-col gap-1.5">
       {hit && (
         <div>
-          <Badge tone="red" title={dateTime(hit.reset_at)}>
+          <Chip variant="caption" color="rose" title={dateTime(hit.reset_at)}>
             {hitLabel} limit reached, resets {relTime(hit.reset_at, now)}
-          </Badge>
+          </Chip>
         </div>
       )}
-      <div className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs text-muted">
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-caption-1-regular text-text-secondary tabular-nums">
         <span>
           today {compact(u.today_requests)}
           {of(l?.daily_requests, compact)} req, {usd(u.today_cost)}
@@ -398,6 +449,10 @@ export function AppsPage() {
   if (!loaded) return <PageSkeleton variant="list" />;
 
   const active = apps.filter((a) => a.active).length;
+  const openCreate = () => {
+    setEditing(null);
+    setFormOpen(true);
+  };
 
   return (
     <div>
@@ -406,14 +461,7 @@ export function AppsPage() {
         meta={`${plural(apps.length, "app")} · ${active} active`}
         actions={
           manage && (
-            <Button
-              variant="primary"
-              icon={<Plus className="h-4 w-4" />}
-              onClick={() => {
-                setEditing(null);
-                setFormOpen(true);
-              }}
-            >
+            <Button variant="primary" leadingIcon={RiAddLine} onClick={openCreate}>
               Create app
             </Button>
           )
@@ -421,10 +469,10 @@ export function AppsPage() {
       />
 
       {error && apps.length === 0 ? (
-        <Empty title="Apps are not available" body={error} />
+        <EmptyState title="Apps are not available" body={error} />
       ) : sorted.length === 0 ? (
-        <Empty
-          icon={<Boxes className="h-5 w-5" />}
+        <EmptyState
+          icon={RiApps2Line}
           title="No apps yet"
           body={
             manage
@@ -433,53 +481,65 @@ export function AppsPage() {
           }
           action={
             manage ? (
-              <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setFormOpen(true)}>
+              <Button variant="primary" leadingIcon={RiAddLine} onClick={openCreate}>
                 Create your first app
               </Button>
             ) : undefined
           }
         />
       ) : (
-        <ul className="space-y-2.5">
+        <ul className="flex flex-col gap-3">
           {sorted.map((a) => (
-            <li key={a.id} className="rounded-card bg-surface p-4 shadow-card sm:px-5">
+            <li key={a.id} className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:px-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={cx("wrap-anywhere min-w-0 text-[15px] font-medium", a.active ? "text-ink" : "text-muted")}>{a.name}</span>
-                    <Badge tone={a.mode === "lease" ? "blue" : a.mode === "proxy" ? "violet" : "neutral"}>{a.mode}</Badge>
-                    {!a.active && <Badge>paused</Badge>}
+                    <span className={cx("wrap-anywhere min-w-0 text-headline-medium", a.active ? "text-text-primary" : "text-text-secondary")}>{a.name}</span>
+                    <Chip variant="caption" color={MODE_COLOR[a.mode]} className="font-mono">
+                      {a.mode}
+                    </Chip>
+                    {!a.active && (
+                      <Chip variant="caption" color="neutral">
+                        paused
+                      </Chip>
+                    )}
                   </div>
-                  {a.description && <div className="wrap-anywhere mt-0.5 text-[13px] text-muted">{a.description}</div>}
-                  <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
+                  {a.description && <div className="wrap-anywhere mt-0.5 text-body-2-regular text-text-secondary">{a.description}</div>}
+                  <div className="font-mono text-caption-1-regular text-text-secondary wrap-anywhere mt-1.5">
                     {a.token_prefix}... · {a.allowed_services?.length ? a.allowed_services.map((s) => nameBySlug[s] ?? s).join(", ") : "all services"} ·{" "}
                     <span title={dateTime(a.last_used_at)}>used {relTime(a.last_used_at, now)}</span>
                     <McpSummary app={a} />
                   </div>
                   <AppUsageLine app={a} now={now} />
                 </div>
-                <div className="-mx-1 flex shrink-0 flex-wrap items-center gap-1 border-t border-line pt-2 sm:mx-0 sm:border-0 sm:pt-0">
-                  <Button size="sm" variant="ghost" icon={<Plug className="h-3.5 w-3.5" />} onClick={() => setMcpApp(a)} aria-label={`MCP settings for ${a.name}`} className="mr-1">
+                <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-separator-border pt-3 sm:border-0 sm:pt-0">
+                  <Button size="small" variant="ghost" leadingIcon={RiPlugLine} onClick={() => setMcpApp(a)} aria-label={`MCP settings for ${a.name}`}>
                     MCP
                   </Button>
                   {/* Kept together so a narrow row wraps as a group, not one icon at a time. */}
-                  <div className="flex items-center gap-1">
-                    <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} caption={a.active ? "Active" : "Paused"} ariaLabel={a.active ? `${a.name} is active` : `${a.name} is paused`} />
+                  <div className="flex items-center gap-1.5">
+                    <Switch
+                      size="sm"
+                      isSelected={a.active}
+                      onChange={(v) => void toggleActive(a, v)}
+                      isDisabled={!manage}
+                      aria-label={a.active ? `${a.name} is active` : `${a.name} is paused`}
+                      className="min-h-8 pe-1"
+                    >
+                      <span className="text-body-2-regular text-text-secondary">{a.active ? "Active" : "Paused"}</span>
+                    </Switch>
                     {manage && (
                       <>
-                        <span className="mx-1 h-5 w-px bg-line" />
-                        <IconButton label="Rotate token" onClick={() => void doRotate(a)} disabled={busyId === a.id}>
-                          <RefreshCw className="h-4 w-4" />
-                        </IconButton>
-                        <IconButton
+                        <span aria-hidden className="mx-1 h-5 w-px bg-separator-border" />
+                        <TipButton icon={RiRefreshLine} label="Rotate token" onClick={() => void doRotate(a)} disabled={busyId === a.id} />
+                        <TipButton
+                          icon={RiPencilLine}
                           label="Edit app"
                           onClick={() => {
                             setEditing(a);
                             setFormOpen(true);
                           }}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </IconButton>
+                        />
                         <ConfirmButton
                           iconOnly
                           label="Delete app"

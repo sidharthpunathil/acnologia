@@ -1,21 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Eraser, Pencil, RotateCcw, TriangleAlert } from "lucide-react";
+import { RiDeleteBinLine, RiEraserLine, RiPencilLine, RiRestartLine } from "@remixicon/react";
 import { useAuth } from "../../stores/auth";
 import { can } from "../../lib/perms";
 import type { Service, ServiceInput, Strategy } from "../../lib/types";
 import { useServices } from "../../stores/services";
 import { toast } from "../../stores/toast";
 import { errorMessage } from "../../lib/api";
-import { STRATEGY_HELP, countdown, plural, relTime } from "../../lib/format";
+import { STRATEGY_HELP, STRATEGY_LABEL, countdown, plural, relTime } from "../../lib/format";
 import { ops, usd, type BreakerReport, type EgressProxy } from "../../lib/ops";
-import { Modal } from "../../components/Modal";
-import { ConcurrencyFields, ServiceForm, StrategySelect, validateService, type ServiceErrors } from "../../components/ServiceForm";
-import { ConfirmButton } from "../../components/ConfirmButton";
+import { STRATEGIES, ServiceForm, validateService, type ServiceErrors } from "../../components/ServiceForm";
 import { LogoEditor } from "../../components/LogoEditor";
 import { AiFillButton, AiFillPanel, useAiFill } from "../../components/AiFill";
 import { useProviders } from "../../stores/providers";
-import { Badge, Button, Callout, Card, Field, Input, Select } from "../../components/ui";
+import { Callout, Section } from "@/components/acn";
+import { Chip, type ChipColor } from "@/components/base/badges/chip";
+import { Button } from "@/components/base/buttons/button";
+import { AlertDialog, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
+import { NumberField } from "@/components/base/number-field/number-field";
+import { Select, SelectItem } from "@/components/base/select/select";
+import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { applyServiceFields } from "../AddServiceModal";
 
 function inputOf(s: Service): ServiceInput {
@@ -40,9 +44,57 @@ function inputOf(s: Service): ServiceInput {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:gap-4">
-      <dt className="font-mono text-[11px] uppercase tracking-wide text-faint sm:w-36 sm:shrink-0 sm:pt-0.5">{label}</dt>
-      <dd className="wrap-anywhere min-w-0 text-[13px] text-ink">{value || "-"}</dd>
+    <div className="flex flex-col gap-0.5 border-b border-separator-border py-2.5 last:border-b-0 sm:flex-row sm:gap-4">
+      <dt className="font-mono text-caption-2-semibold uppercase text-text-tertiary sm:w-36 sm:shrink-0 sm:pt-0.5">{label}</dt>
+      <dd className="wrap-anywhere min-w-0 text-body-2-regular text-text-primary">{value || "-"}</dd>
+    </div>
+  );
+}
+
+/** Save and Discard for a settings card, shown to managers only. */
+function SaveRow({ dirty, saving, onDiscard, onSave, label }: { dirty: boolean; saving: boolean; onDiscard: () => void; onSave: () => void; label: string }) {
+  return (
+    <div className="mt-5 flex justify-end gap-2">
+      {dirty && (
+        <Button variant="ghost" onClick={onDiscard} disabled={saving}>
+          Discard
+        </Button>
+      )}
+      <Button variant="primary" disabled={!dirty || saving} leadingIcon={saving ? ButtonSpinner : undefined} onClick={onSave}>
+        {label}
+      </Button>
+    </div>
+  );
+}
+
+/** A Select of default or custom, with the custom number beside it. */
+function OverrideField({
+  label,
+  hint,
+  mode,
+  defaultLabel,
+  disabled,
+  onMode,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  mode: Mode;
+  defaultLabel: string;
+  disabled: boolean;
+  onMode: (m: Mode) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex items-end gap-2">
+        <Select label={label} selectedKey={mode} isDisabled={disabled} onSelectionChange={(k) => onMode(k as Mode)} className="min-w-0 flex-1">
+          <SelectItem id="default">{defaultLabel}</SelectItem>
+          <SelectItem id="custom">Custom</SelectItem>
+        </Select>
+        {mode === "custom" && children}
+      </div>
+      {hint && <p className="text-caption-1-regular text-text-secondary">{hint}</p>}
     </div>
   );
 }
@@ -129,99 +181,84 @@ function TrafficCard({ service, canManage, isSuper }: { service: Service; canMan
     }
   };
 
+  const egressItems = [
+    { id: "0", label: "Direct (no proxy)" },
+    ...(proxies ?? []).map((p) => ({ id: String(p.id), label: p.region ? `${p.name} (${p.region})` : p.name })),
+  ];
+  if (egress > 0 && !proxies?.some((p) => p.id === egress)) egressItems.push({ id: String(egress), label: `Proxy #${egress}` });
+
   return (
-    <Card className="p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-[15px] font-semibold text-ink">Traffic</h3>
-          <p className="mt-0.5 text-[13px] text-muted">Which proxy requests leave through, how long responses are cached, and what each request costs.</p>
-        </div>
-        {canManage && (
-          <Button size="sm" icon={<Eraser className="h-3.5 w-3.5" />} loading={purging} onClick={purge}>
+    <Section
+      title="Traffic"
+      description="Which proxy requests leave through, how long responses are cached, and what each request costs."
+      actions={
+        canManage && (
+          <Button variant="secondary" size="small" leadingIcon={purging ? ButtonSpinner : RiEraserLine} disabled={purging} onClick={purge}>
             Purge cache
           </Button>
-        )}
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Field
-          label="Egress proxy"
-          hint={
-            canManage && !isSuper
-              ? "Changing it pauses hidden keys until a superadmin saves the service again."
-              : "Keys can pick their own proxy too."
-          }
-        >
-          <Select value={egress} disabled={!canManage} onChange={(e) => setEgress(Number(e.target.value))}>
-            <option value={0}>Direct (no proxy)</option>
-            {(proxies ?? []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.region ? `${p.name} (${p.region})` : p.name}
-              </option>
+        )
+      }
+    >
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <Select label="Egress proxy" selectedKey={String(egress)} isDisabled={!canManage} onSelectionChange={(k) => setEgress(Number(k))} className="w-full">
+            {egressItems.map((o) => (
+              <SelectItem key={o.id} id={o.id}>
+                {o.label}
+              </SelectItem>
             ))}
-            {egress > 0 && !proxies?.some((p) => p.id === egress) && <option value={egress}>{`Proxy #${egress}`}</option>}
           </Select>
-        </Field>
-        <Field label="Response cache" hint={ttlMode === "custom" ? "Seconds to reuse an identical successful response. 0 turns it off." : undefined}>
-          <div className="flex gap-2">
-            <Select value={ttlMode} disabled={!canManage} onChange={(e) => setTtlMode(e.target.value as Mode)} className="min-w-0 flex-1">
-              <option value="default">{ttlDefault}</option>
-              <option value="custom">Custom</option>
-            </Select>
-            {ttlMode === "custom" && (
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                aria-label="Cache TTL in seconds"
-                value={ttl}
-                disabled={!canManage}
-                onChange={(e) => setTtl(e.target.value)}
-                placeholder="sec"
-                className="!w-24 shrink-0"
-              />
-            )}
-          </div>
-        </Field>
-        <Field label="Cost per request" hint={costMode === "custom" ? "USD, used for spend totals and app budgets." : undefined}>
-          <div className="flex gap-2">
-            <Select value={costMode} disabled={!canManage} onChange={(e) => setCostMode(e.target.value as Mode)} className="min-w-0 flex-1">
-              <option value="default">{costDefault}</option>
-              <option value="custom">Custom</option>
-            </Select>
-            {costMode === "custom" && (
-              <Input
-                type="number"
-                inputMode="decimal"
-                min={0}
-                step="any"
-                aria-label="Cost per request in USD"
-                value={cost}
-                disabled={!canManage}
-                onChange={(e) => setCost(e.target.value)}
-                placeholder="0.002"
-                className="!w-24 shrink-0 font-mono"
-              />
-            )}
-          </div>
-        </Field>
-      </div>
-      {canManage && (
-        <div className="mt-4 flex justify-end gap-2">
-          {dirty && (
-            <Button variant="ghost" onClick={reset}>
-              Discard
-            </Button>
-          )}
-          <Button variant="primary" disabled={!dirty} loading={saving} onClick={save}>
-            Save traffic
-          </Button>
+          <p className="text-caption-1-regular text-text-secondary">
+            {canManage && !isSuper ? "Changing it pauses hidden keys until a superadmin saves the service again." : "Keys can pick their own proxy too."}
+          </p>
         </div>
-      )}
-    </Card>
+        <OverrideField
+          label="Response cache"
+          hint={ttlMode === "custom" ? "Seconds to reuse an identical successful response. 0 turns it off." : undefined}
+          mode={ttlMode}
+          defaultLabel={ttlDefault}
+          disabled={!canManage}
+          onMode={setTtlMode}
+        >
+          <NumberField
+            aria-label="Cache TTL in seconds"
+            minValue={0}
+            hideSteppers
+            value={ttl.trim() === "" ? NaN : Number(ttl)}
+            isDisabled={!canManage}
+            onChange={(n) => setTtl(Number.isNaN(n) ? "" : String(n))}
+            placeholder="sec"
+            className="w-24 shrink-0"
+          />
+        </OverrideField>
+        <OverrideField
+          label="Cost per request"
+          hint={costMode === "custom" ? "USD, used for spend totals and app budgets." : undefined}
+          mode={costMode}
+          defaultLabel={costDefault}
+          disabled={!canManage}
+          onMode={setCostMode}
+        >
+          <NumberField
+            aria-label="Cost per request in USD"
+            minValue={0}
+            hideSteppers
+            formatOptions={{ maximumFractionDigits: 6 }}
+            value={cost.trim() === "" ? NaN : Number(cost)}
+            isDisabled={!canManage}
+            onChange={(n) => setCost(Number.isNaN(n) ? "" : String(n))}
+            placeholder="0.002"
+            className="w-28 shrink-0"
+            fieldClassName="font-mono"
+          />
+        </OverrideField>
+      </div>
+      {canManage && <SaveRow dirty={dirty} saving={saving} onDiscard={reset} onSave={save} label="Save traffic" />}
+    </Section>
   );
 }
 
-const BREAKER_TONE = { closed: "green", open: "red", half_open: "amber" } as const;
+const BREAKER_TONE: Record<"closed" | "open" | "half_open", ChipColor> = { closed: "lime", open: "rose", half_open: "yellow" };
 const BREAKER_LABEL = { closed: "closed", open: "open", half_open: "half open" } as const;
 
 /** Circuit breaker state, polled while the settings tab is open. */
@@ -280,30 +317,37 @@ function BreakerCard({ service, canManage }: { service: Service; canManage: bool
       : `Opens after ${plural(report.threshold, "error")} in ${report.window_sec}s, then pauses ${report.reset_sec}s before trying again.`;
 
   return (
-    <Card className="p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-[15px] font-semibold text-ink">Circuit breaker</h3>
-            {st && <Badge tone={BREAKER_TONE[st.state]}>{BREAKER_LABEL[st.state]}</Badge>}
-          </div>
-          <p className="mt-0.5 text-[13px] text-muted">{settings}</p>
-        </div>
-        {canManage && st && st.state !== "closed" && (
-          <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} loading={resetting} onClick={resetBreaker}>
+    <Section
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          Circuit breaker
+          {st && (
+            <Chip variant="caption" color={BREAKER_TONE[st.state]} className="rounded-full px-2 py-0.5 font-mono">
+              {BREAKER_LABEL[st.state]}
+            </Chip>
+          )}
+        </span>
+      }
+      description={settings}
+      actions={
+        canManage &&
+        st &&
+        st.state !== "closed" && (
+          <Button variant="secondary" size="small" leadingIcon={resetting ? ButtonSpinner : RiRestartLine} disabled={resetting} onClick={resetBreaker}>
             Reset
           </Button>
-        )}
-      </div>
+        )
+      }
+    >
       {st && (
-        <dl className="mt-3 divide-y divide-line">
+        <dl>
           <Row label="Recent failures" value={String(st.failures)} />
           {st.opened_at && <Row label="Opened" value={relTime(st.opened_at, now)} />}
           {st.state === "open" && <Row label="Retry in" value={left || "any moment"} />}
           {st.reason && <Row label="Reason" value={st.reason} />}
         </dl>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -326,6 +370,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<ServiceInput | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     setStrategy(service.strategy);
@@ -378,75 +423,82 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
     }
   };
 
+  const discardRotation = () => {
+    setStrategy(service.strategy);
+    setCooldown(service.cooldown_sec);
+    setAttempts(service.max_attempts);
+    setMaxConc(service.max_concurrency ?? 0);
+    setQueueSec(service.queue_timeout_sec ?? 0);
+  };
+  const intOr0 = (n: number) => (Number.isNaN(n) ? 0 : Math.max(0, Math.round(n)));
+
   return (
     <div className="space-y-5">
       {isSuper && !service.target_trusted && (
-        <Callout tone="amber" icon={<TriangleAlert className="h-4 w-4" />}>
-          <div className="font-medium">Hidden keys are paused for this service</div>
-          <div className="mt-0.5">
-            Someone other than a superadmin set its base URL or auth, so Acnologia will not send hidden keys to it. Open Edit, check the
-            base URL, then save to confirm it.
-          </div>
+        <Callout tone="warning" title="Hidden keys are paused for this service">
+          Someone other than a superadmin set its base URL or auth, so Acnologia will not send hidden keys to it. Open Edit, check the base URL, then save to confirm it.
         </Callout>
       )}
-      <Card className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-[15px] font-semibold text-ink">Rotation and concurrency</h3>
-            <p className="mt-0.5 text-[13px] text-muted">How Acnologia picks the next key, how long a rate limited key rests, and how many requests one key can serve at once.</p>
+      <Section
+        title="Rotation and concurrency"
+        description="How Acnologia picks the next key, how long a rate limited key rests, and how many requests one key can serve at once."
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="flex min-w-0 flex-col gap-1">
+            <Select label="Strategy" selectedKey={strategy} isDisabled={!canManage} onSelectionChange={(k) => setStrategy(k as Strategy)} className="w-full">
+              {STRATEGIES.map((st) => (
+                <SelectItem key={st} id={st}>
+                  {STRATEGY_LABEL[st]}
+                </SelectItem>
+              ))}
+            </Select>
+            <p className="text-caption-1-regular text-text-secondary">{STRATEGY_HELP[strategy]}</p>
           </div>
-        </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Strategy" hint={STRATEGY_HELP[strategy]}>
-            <StrategySelect value={strategy} onChange={setStrategy} disabled={!canManage} />
-          </Field>
-          <Field label="Cooldown (seconds)" hint="Doubles with each failure in a row, up to 1 hour.">
-            <Input type="number" min={0} value={cooldown} disabled={!canManage} onChange={(e) => setCooldown(Number(e.target.value))} />
-          </Field>
-          <Field label="Max attempts" hint="How many keys the proxy tries before giving up.">
-            <Input type="number" min={1} max={20} value={attempts} disabled={!canManage} onChange={(e) => setAttempts(Number(e.target.value))} />
-          </Field>
-        </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <ConcurrencyFields
-            maxConcurrency={maxConc}
-            queueSec={queueSec}
-            disabled={!canManage}
-            onChange={(p) => {
-              if (p.max_concurrency !== undefined) setMaxConc(p.max_concurrency);
-              if (p.queue_timeout_sec !== undefined) setQueueSec(p.queue_timeout_sec);
-            }}
+          <NumberField
+            label="Cooldown (seconds)"
+            hint="Doubles with each failure in a row, up to 1 hour."
+            minValue={0}
+            value={cooldown}
+            isDisabled={!canManage}
+            onChange={(n) => setCooldown(intOr0(n))}
+          />
+          <NumberField
+            label="Max attempts"
+            hint="How many keys the proxy tries before giving up."
+            minValue={1}
+            maxValue={20}
+            value={attempts}
+            isDisabled={!canManage}
+            onChange={(n) => setAttempts(Number.isNaN(n) ? 1 : n)}
           />
         </div>
-        {canManage && (
-          <div className="mt-4 flex justify-end gap-2">
-            {dirty && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setStrategy(service.strategy);
-                  setCooldown(service.cooldown_sec);
-                  setAttempts(service.max_attempts);
-                  setMaxConc(service.max_concurrency ?? 0);
-                  setQueueSec(service.queue_timeout_sec ?? 0);
-                }}
-              >
-                Discard
-              </Button>
-            )}
-            <Button variant="primary" disabled={!dirty} loading={saving} onClick={saveStrategy}>
-              Save rotation
-            </Button>
-          </div>
-        )}
-      </Card>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <NumberField
+            label="Max concurrent requests per key"
+            hint="0 means no limit. A key at its limit is skipped until one of its requests finishes."
+            minValue={0}
+            maxValue={1000}
+            value={maxConc}
+            isDisabled={!canManage}
+            onChange={(n) => setMaxConc(intOr0(n))}
+          />
+          <NumberField
+            label="Queue wait (sec)"
+            hint="How long a caller waits for a free key when every key is busy. 0 fails right away with all_keys_busy."
+            minValue={0}
+            maxValue={300}
+            value={queueSec}
+            isDisabled={!canManage}
+            onChange={(n) => setQueueSec(intOr0(n))}
+          />
+        </div>
+        {canManage && <SaveRow dirty={dirty} saving={saving} onDiscard={discardRotation} onSave={saveStrategy} label="Save rotation" />}
+      </Section>
 
       <TrafficCard service={service} canManage={canManage} isSuper={isSuper} />
       <BreakerCard service={service} canManage={canManage} />
 
-      <Card className="p-5">
-        <h3 className="text-[15px] font-semibold text-ink">Logo</h3>
-        <p className="mb-4 mt-0.5 text-[13px] text-muted">Shows in the catalog and on this page.</p>
+      <Section title="Logo" description="Shows in the catalog and on this page.">
         <LogoEditor
           src={service.logo_url ?? provider?.logo_url}
           name={service.name}
@@ -458,15 +510,16 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
           onRemove={() => removeLogo(service.id)}
           inheritedNote={provider ? `Without its own logo, the service uses the provider logo.` : undefined}
         />
-      </Card>
+      </Section>
 
-      <Card className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <h3 className="text-[15px] font-semibold text-ink">Details</h3>
-          {canManage && (
+      <Section
+        title="Details"
+        actions={
+          canManage && (
             <Button
-              size="sm"
-              icon={<Pencil className="h-3.5 w-3.5" />}
+              variant="secondary"
+              size="small"
+              leadingIcon={RiPencilLine}
               onClick={() => {
                 setEditErrors({});
                 setEditing(inputOf(service));
@@ -474,9 +527,10 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
             >
               Edit
             </Button>
-          )}
-        </div>
-        <dl className="mt-2 divide-y divide-line">
+          )
+        }
+      >
+        <dl className="-mt-2">
           <Row label="Slug" value={service.slug} />
           <Row label="Provider" value={provider ? `${provider.name} (${service.provider})` : service.provider} />
           <Row label="Base URL" value={service.base_url} />
@@ -485,62 +539,71 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
           <Row label="Description" value={service.description} />
           <Row label="Concurrency" value={service.max_concurrency ? `${service.max_concurrency} per key, waits up to ${service.queue_timeout_sec}s for a free key` : "No limit"} />
         </dl>
-      </Card>
+      </Section>
 
       {canManage && (
-        <Card className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="text-[15px] font-semibold text-ink">Delete service</h3>
-            <p className="mt-0.5 text-[13px] text-muted">Removes the service and all its keys. Apps that call {service.slug} start failing right away.</p>
-          </div>
-          <ConfirmButton
-            label="Delete service"
-            confirmLabel="Delete forever"
-            onConfirm={async () => {
-              try {
-                await remove(service.id);
-                toast.success(`${service.name} deleted`);
-                navigate("/");
-              } catch (e) {
-                toast.error(errorMessage(e));
-              }
-            }}
-          />
-        </Card>
+        <Section
+          tone="danger"
+          title="Delete service"
+          description={`Removes the service and all its keys. Apps that call ${service.slug} start failing right away.`}
+          actions={
+            <Button variant="danger" leadingIcon={RiDeleteBinLine} onClick={() => setDeleting(true)}>
+              Delete service
+            </Button>
+          }
+        />
       )}
 
-      <Modal
-        open={!!editing}
-        onClose={() => setEditing(null)}
-        wide
-        title={`Edit ${service.name}`}
-        headerAction={<AiFillButton ai={ai} />}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setEditing(null)}>
-              Cancel
-            </Button>
-            <Button variant="primary" loading={savingEdit} onClick={saveEdit}>
-              Save
-            </Button>
-          </>
-        }
-      >
-        {editing && (
-          <>
-            <AiFillPanel ai={ai} />
-            <ServiceForm
-              value={editing}
-              errors={editErrors}
-              flash={ai.flash}
-              onChange={(v) => {
-                setEditing(v);
-                if (Object.keys(editErrors).length) setEditErrors(validateService(v));
-              }}
-              slugLocked
-            />
-          </>
-        )}
+      <AlertDialog
+        isOpen={deleting}
+        onOpenChange={setDeleting}
+        title={`Delete ${service.name}?`}
+        description={`This removes the service and all its keys. Apps that call ${service.slug} start failing right away. This cannot be undone.`}
+        confirmLabel="Delete forever"
+        pendingLabel="Deleting"
+        onConfirm={async () => {
+          try {
+            await remove(service.id);
+            toast.success(`${service.name} deleted`);
+            navigate("/");
+          } catch (e) {
+            toast.error(errorMessage(e));
+            throw e;
+          }
+        }}
+      />
+
+      <Modal isOpen={!!editing} onOpenChange={(o) => !o && !savingEdit && setEditing(null)} size="lg">
+        <ModalHeader title={`Edit ${service.name}`}>
+          <div className="mt-3">
+            <AiFillButton ai={ai} />
+          </div>
+        </ModalHeader>
+        <ModalBody>
+          {editing && (
+            <>
+              <AiFillPanel ai={ai} />
+              <ServiceForm
+                value={editing}
+                errors={editErrors}
+                flash={ai.flash}
+                onChange={(v) => {
+                  setEditing(v);
+                  if (Object.keys(editErrors).length) setEditErrors(validateService(v));
+                }}
+                slugLocked
+              />
+            </>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setEditing(null)} disabled={savingEdit}>
+            Cancel
+          </Button>
+          <Button variant="primary" leadingIcon={savingEdit ? ButtonSpinner : undefined} disabled={savingEdit} onClick={saveEdit}>
+            {savingEdit ? "Saving" : "Save"}
+          </Button>
+        </ModalFooter>
       </Modal>
     </div>
   );
