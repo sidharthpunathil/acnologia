@@ -26,6 +26,10 @@ import { useAuth } from "../stores/auth";
 import { Brand } from "../components/Layout";
 import { CodeBlock } from "../components/CodeBlock";
 import { cx } from "../components/ui";
+import { useTheme } from "../stores/theme";
+import { HeroDemo } from "../demos/HeroDemo";
+import { AlertsDemo } from "../demos/AlertsDemo";
+import { RecoveryDemo } from "../demos/RecoveryDemo";
 
 const SECTIONS = [
   { id: "how", label: "How it works" },
@@ -60,7 +64,7 @@ interface Feature {
   body: ReactNode;
 }
 
-const FEATURE_GROUPS: Array<{ title: string; intro: string; items: Feature[] }> = [
+const FEATURE_GROUPS: Array<{ title: string; intro: string; items: Feature[]; demo?: boolean }> = [
   {
     title: "Keep requests flowing",
     intro: "What happens between your app and the provider.",
@@ -95,6 +99,7 @@ const FEATURE_GROUPS: Array<{ title: string; intro: string; items: Feature[] }> 
   },
   {
     title: "Know what happened",
+    demo: true,
     intro: "Find out about a dead key from Acnologia before your users notice.",
     items: [
       { icon: Bell, title: "Webhooks", body: "Slack, Discord, Telegram or signed JSON when a key goes bad, quota drops under 10%, a pool runs dry, a provider goes down or an app hits its limit." },
@@ -162,6 +167,16 @@ function Heading({ id, eyebrow, title, children }: { id: string; eyebrow: string
   );
 }
 
+function FeatureCard({ f }: { f: Feature }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface p-5 shadow-card">
+      <f.icon className="h-4 w-4 text-muted" aria-hidden />
+      <h4 className="mt-3 font-medium text-ink-strong">{f.title}</h4>
+      <p className="mt-1.5 text-sm leading-relaxed text-muted">{f.body}</p>
+    </div>
+  );
+}
+
 function Code({ children }: { children: ReactNode }) {
   return <code className="rounded bg-well px-1.5 py-0.5 font-mono text-[12.5px] text-ink">{children}</code>;
 }
@@ -169,6 +184,7 @@ function Code({ children }: { children: ReactNode }) {
 export function DocsPage() {
   useTitle("Docs");
   const signedIn = useAuth((s) => s.status === "authenticated");
+  const theme = useTheme((s) => s.theme);
 
   return (
     <div className="min-h-dvh bg-canvas text-ink">
@@ -197,9 +213,10 @@ export function DocsPage() {
 
       <main className="mx-auto max-w-6xl px-4 pb-24 sm:px-6">
         {/* Hero */}
-        <section className="pb-16 pt-14 sm:pt-20">
+        <section className="grid items-center gap-x-12 gap-y-10 pb-16 pt-14 sm:pt-20 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+          <div className="min-w-0">
           <p className="font-mono text-xs text-faint">Self-hosted API key pool</p>
-          <h1 className="mt-4 max-w-3xl text-balance text-[34px] font-semibold leading-[1.08] tracking-tight text-ink-strong sm:text-5xl">
+          <h1 className="mt-4 max-w-3xl text-balance text-[34px] font-semibold leading-[1.08] tracking-tight text-ink-strong sm:text-5xl lg:text-[44px]">
             One endpoint in front of all your API keys
           </h1>
           <p className="mt-5 max-w-2xl text-pretty text-[17px] leading-relaxed text-muted">
@@ -222,12 +239,13 @@ export function DocsPage() {
               Read the API reference
             </a>
           </div>
-          <div className="mt-12 max-w-2xl">
-            <CodeBlock label="your app, before and after" code={PROXY_EXAMPLE} />
-            <p className="mt-3 text-[13px] text-faint">
-              Same path and query you would send to the provider, minus <Code>api_key</Code>. Acnologia adds the key.
-            </p>
           </div>
+          <figure className="min-w-0">
+            <HeroDemo theme={theme} />
+            <figcaption className="sr-only">
+              A request through Acnologia: the first key answers 429 and starts cooling down, the next key answers 200.
+            </figcaption>
+          </figure>
         </section>
 
         {/* How it works */}
@@ -281,7 +299,14 @@ export function DocsPage() {
             Every provider error is sorted into one of these by the provider's rules. A key that hit an hourly cap is
             back in an hour. A provider outage is never blamed on your keys.
           </Heading>
-          <div className="mt-10 overflow-hidden rounded-xl border border-line bg-surface shadow-card">
+          <figure className="mt-10 min-w-0">
+            <RecoveryDemo theme={theme} />
+            <figcaption className="sr-only">
+              One key starts cooling down and another runs out of quota while traffic keeps flowing on the rest; both come
+              back on their own and the pool is whole again.
+            </figcaption>
+          </figure>
+          <div className="mt-8 overflow-hidden rounded-xl border border-line bg-surface shadow-card">
             <table className="w-full text-left text-sm">
               <thead className="hidden border-b border-line bg-soft text-[12px] text-faint sm:table-header-group">
                 <tr>
@@ -313,15 +338,29 @@ export function DocsPage() {
                   <h3 className="text-lg font-semibold text-ink-strong">{g.title}</h3>
                   <p className="text-sm text-faint">{g.intro}</p>
                 </div>
-                <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {g.items.map((f) => (
-                    <div key={f.title} className="rounded-xl border border-line bg-surface p-5 shadow-card">
-                      <f.icon className="h-4 w-4 text-muted" aria-hidden />
-                      <h4 className="mt-3 font-medium text-ink-strong">{f.title}</h4>
-                      <p className="mt-1.5 text-sm leading-relaxed text-muted">{f.body}</p>
+                {g.demo ? (
+                  // The alerts group pairs its cards with the demo of an alert landing.
+                  <div className="mt-5 grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                      {g.items.map((f) => (
+                        <FeatureCard key={f.title} f={f} />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                    <figure className="min-w-0 lg:sticky lg:top-20">
+                      <AlertsDemo theme={theme} />
+                      <figcaption className="sr-only">
+                        A key runs out of quota and the alert lands in a Slack channel a moment later, then a second alert when it
+                        works again.
+                      </figcaption>
+                    </figure>
+                  </div>
+                ) : (
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {g.items.map((f) => (
+                      <FeatureCard key={f.title} f={f} />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

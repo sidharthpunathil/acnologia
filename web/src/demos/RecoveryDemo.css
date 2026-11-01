@@ -1,0 +1,284 @@
+/* Geist and Geist Mono are loaded by index.html. */
+
+/* Acnologia's dashboard tokens (web/tailwind.config.js), light and dark.
+   The stage is the dashboard's own canvas, framed like the docs page's
+   cards: a hairline and a 12px corner. */
+.acr {
+  & .ss-stage {
+    --ss-font: 'Geist', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --ss-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+    --ss-canvas: #eeede9;
+    --ss-surface: #ffffff;
+    --ss-well: #ecebe5;
+    --ss-line: #e6e5df;
+    --ss-text-strong: #18181a;
+    --ss-text: #6b6b66;
+    --ss-text-faint: #75756f;
+    --ss-accent: #6a4bc4;
+    --acr-card-shadow: 0 1px 2px rgba(20, 20, 15, 0.04), 0 0 0 1px rgba(20, 20, 15, 0.035);
+    --acr-green-bg: #ecfdf5;
+    --acr-green-ink: #047857;
+    --acr-green-dot: #10b981;
+    --acr-amber-bg: #fffbeb;
+    --acr-amber-ink: #b45309;
+    --acr-amber-dot: #f59e0b;
+    --acr-orange-bg: #fff7ed;
+    --acr-orange-ink: #c2410c;
+    --acr-orange-dot: #f97316;
+    --acr-red-dot: #ef4444;
+    --acr-travel: cubic-bezier(0.45, 0, 0.1, 1);
+    --acr-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+    overflow: hidden;
+    box-sizing: border-box;
+    border: 1px solid var(--ss-line);
+    border-radius: 12px;
+    background: var(--ss-canvas);
+    color: var(--ss-text-strong);
+    font-family: var(--ss-font);
+    font-feature-settings: 'ss01', 'cv11';
+    -webkit-font-smoothing: antialiased;
+  }
+
+  & .ss-stage[data-theme='dark'] {
+    --ss-canvas: #151412;
+    --ss-surface: #1e1d1a;
+    --ss-well: #2c2a27;
+    --ss-line: #2f2d29;
+    --ss-text-strong: #ecebe6;
+    --ss-text: #aaa89f;
+    --ss-text-faint: #96948c;
+    --ss-accent: #b39cff;
+    --acr-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 240, 0.06);
+    /* The dashboard's dark hue scale: tints mixed into the surface, inks lifted */
+    --acr-green-bg: rgb(28 49 39);
+    --acr-green-ink: #6ee7b7;
+    --acr-amber-bg: rgb(58 46 24);
+    --acr-amber-ink: #fcd34d;
+    --acr-orange-bg: rgb(58 40 25);
+    --acr-orange-ink: #fdba74;
+  }
+
+  & .acr-page {
+    position: absolute;
+    inset: 24px 24px auto;
+    display: grid;
+    gap: 12px;
+  }
+
+  /* The stat tiles: the dashboard's Stat, mono label over a mono count */
+  & .acr-tiles {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  & .acr-tile {
+    min-width: 0;
+    padding: 10px 16px 9px;
+    border-radius: 14px;
+    background: var(--ss-surface);
+    box-shadow: var(--acr-card-shadow);
+  }
+
+  & .acr-tile-label {
+    overflow: hidden;
+    color: var(--ss-text-faint);
+    font: 11px/16px var(--ss-mono);
+    letter-spacing: 0.025em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  & .acr-tile-value {
+    margin-top: 2px;
+    color: var(--ss-text-strong);
+    font: 20px/26px var(--ss-mono);
+    font-variant-numeric: tabular-nums;
+    transition: color 0.2s ease;
+  }
+
+  & .acr-tile[data-tone='green'] .acr-tile-value { color: var(--acr-green-ink); }
+  & .acr-tile[data-tone='amber'] .acr-tile-value { color: var(--acr-amber-ink); }
+
+  /* The key list: one card, running off the bottom */
+  & .acr-card {
+    overflow: hidden;
+    border-radius: 14px;
+    background: var(--ss-surface);
+    box-shadow: var(--acr-card-shadow);
+  }
+
+  & .acr-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 190px 250px 110px;
+    align-items: center;
+    gap: 24px;
+    height: 46px;
+    padding: 0 20px;
+    border-top: 1px solid var(--ss-line);
+  }
+
+  & .acr-head {
+    height: 34px;
+    border-top: 0;
+    color: var(--ss-text-faint);
+    font: 11px/14px var(--ss-mono);
+    letter-spacing: 0.025em;
+    text-transform: uppercase;
+  }
+
+  & .acr-row--more { height: 46px; }
+
+  & .acr-key {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  & .acr-label {
+    color: var(--ss-text-strong);
+    font-size: 13.5px;
+    font-weight: 500;
+    line-height: 18px;
+  }
+
+  & .acr-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--ss-text);
+    font: 11px/14px var(--ss-mono);
+    white-space: nowrap;
+  }
+
+  & .acr-today { display: inline-flex; align-items: baseline; gap: 6px; }
+
+  /* The status pill: the dashboard's StatusPill. One pill changes tone; its
+     word crossfades and the countdown opens beside it. */
+  & .acr-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--acr-green-bg);
+    color: var(--acr-green-ink);
+    font: 11px/14px var(--ss-mono);
+    white-space: nowrap;
+    will-change: transform;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  & .acr-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--acr-green-dot);
+    transition: background-color 0.2s ease;
+  }
+
+  & .acr-pill[data-status='cooling'] { background: var(--acr-amber-bg); color: var(--acr-amber-ink); }
+  & .acr-pill[data-status='cooling'] .acr-dot { background: var(--acr-amber-dot); }
+  & .acr-pill[data-status='exhausted'] { background: var(--acr-orange-bg); color: var(--acr-orange-ink); }
+  & .acr-pill[data-status='exhausted'] .acr-dot { background: var(--acr-orange-dot); }
+
+  & .acr-cd {
+    display: grid;
+    grid-template-columns: 0fr;
+    opacity: 0;
+    transition: grid-template-columns 0.45s var(--acr-travel), opacity 0.2s ease;
+  }
+
+  & .acr-cd[data-open] {
+    grid-template-columns: 1fr;
+    opacity: 1;
+    transition: grid-template-columns 0.45s var(--acr-travel), opacity 0.3s ease 0.15s;
+  }
+
+  & .acr-cd-in {
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  & .acr-cd-in .ss-count { padding-left: 6px; }
+
+  /* Quota: the dashboard's QuotaMeter, remaining right-aligned in a fixed
+     slot so the rest of the line never moves */
+  & .acr-quota { min-width: 0; }
+
+  & .acr-qtext {
+    display: flex;
+    align-items: baseline;
+    color: var(--ss-text-strong);
+    font: 12px/16px var(--ss-mono);
+    gap: 0.6ch;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  & .acr-qrem {
+    display: inline-block;
+    min-width: 5ch;
+    text-align: right;
+  }
+
+  & .acr-bar {
+    overflow: hidden;
+    width: 100%;
+    max-width: 160px;
+    height: 6px;
+    margin-top: 4px;
+    border-radius: 999px;
+    background: var(--ss-well);
+  }
+
+  & .acr-bar > i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--acr-green-dot);
+    transition: width 0.8s var(--acr-travel), background-color 0.2s ease;
+  }
+
+  & .acr-quota[data-tone='low'] .acr-bar > i { background: var(--acr-amber-dot); }
+  /* Empty turns red only once the bar has drained, so it never flashes red
+     at full width */
+  & .acr-quota[data-tone='out'] .acr-bar > i {
+    background: var(--acr-red-dot);
+    transition: width 0.8s var(--acr-travel), background-color 0.2s ease 0.6s;
+  }
+
+  & .acr-used { color: var(--ss-text); }
+
+  /* Compact: three tiles, and each key a two-line row as the phone list
+     draws it, status and quota stacked on the right */
+  & .ss-stage[data-layout='compact'] {
+    & .acr-page { inset: 16px 16px auto; gap: 10px; }
+    & .acr-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    & .acr-tile { padding: 9px 12px 8px; border-radius: 12px; }
+    & .acr-tile-label { font-size: 10px; letter-spacing: 0.01em; }
+    & .acr-tile-value { margin-top: 2px; font-size: 18px; line-height: 24px; }
+    & .acr-card { border-radius: 12px; }
+    & .acr-row { padding: 0 14px; }
+    & .acr-row--compact {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      height: 58px;
+    }
+    & .acr-side {
+      display: grid;
+      justify-items: end;
+      gap: 5px;
+    }
+    & .acr-quota {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    & .acr-qtext { font-size: 11px; line-height: 14px; color: var(--ss-text); }
+    & .acr-bar { width: 40px; margin-top: 0; }
+  }
+}

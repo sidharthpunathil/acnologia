@@ -1,8 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-const backend = "http://localhost:8080";
-const proxied = ["/api", "/proxy", "/mcp", "/healthz", "/llms.txt"];
+// COGITO_BACKEND points the dev server at another instance, for example a review copy.
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
+const backend = env.COGITO_BACKEND || "http://localhost:8080";
+const proxied = ["/api", "/proxy", "/mcp", "/healthz", "/llms.txt", "/llms-full.txt"];
 
 export default defineConfig({
   plugins: [react()],
