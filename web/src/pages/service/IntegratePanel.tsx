@@ -1,20 +1,43 @@
 import { useState } from "react";
+import { moreSnippets, type MoreLang } from "./snippets-more";
 import { Link } from "react-router-dom";
 import type { ProviderSpec, Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
 import { CodeBlock } from "@/components/acn";
 import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
+import { Select, SelectItem } from "@/components/base/select/select";
 import { cx } from "@/utils/cx";
 
 type Mode = "proxy" | "lease";
-type Lang = "curl" | "python" | "typescript" | "go";
+type Lang = "curl" | "python" | "typescript" | "go" | MoreLang;
 
 const LANGS: { id: Lang; label: string }[] = [
   { id: "curl", label: "curl" },
   { id: "python", label: "Python" },
   { id: "typescript", label: "TypeScript" },
   { id: "go", label: "Go" },
+  { id: "rust", label: "Rust" },
+  { id: "java", label: "Java" },
+  { id: "csharp", label: "C#" },
+  { id: "cpp", label: "C++" },
+  { id: "swift", label: "Swift" },
+  { id: "kotlin", label: "Kotlin" },
+  { id: "php", label: "PHP" },
+  { id: "ruby", label: "Ruby" },
+  { id: "dart", label: "Dart" },
 ];
+
+/** The language picked last, so every service opens in it. */
+const LANG_KEY = "acn.integrate.lang";
+function savedLang(): Lang {
+  try {
+    const v = localStorage.getItem(LANG_KEY);
+    if (v && LANGS.some((l) => l.id === v)) return v as Lang;
+  } catch {
+    // Storage can be blocked; curl is a fine default.
+  }
+  return "curl";
+}
 
 const TOKEN = "cog_...";
 
@@ -107,8 +130,20 @@ function snippets(s: Service, host: string, spec?: ProviderSpec): Record<Mode, R
 
   const leaseBody = `{"service": ${lit(slug)}, "ttl_sec": 300}`;
 
+  const more = moreSnippets({
+    host,
+    slug,
+    proxyUrl,
+    pathQ: `${ex.path}${q}`,
+    authType: s.auth_type,
+    authName: a.name,
+    queryKey: a.queryKey,
+    sep: q ? "&" : "?",
+  });
+
   return {
     proxy: {
+      ...more.proxy,
       curl: `curl ${sh(proxyUrl)} \\
   -H "Authorization: Bearer ${TOKEN}"
 
@@ -151,6 +186,7 @@ func main() {
 }`,
     },
     lease: {
+      ...more.lease,
       curl: `# 1. Lease a key
 curl -X POST "${host}/api/v1/lease" \\
   -H "Authorization: Bearer ${TOKEN}" \\
@@ -226,7 +262,15 @@ func main() {
 
 export function IntegratePanel({ service }: { service: Service }) {
   const [mode, setMode] = useState<Mode>("proxy");
-  const [lang, setLang] = useState<Lang>("curl");
+  const [lang, setLangState] = useState<Lang>(savedLang);
+  const setLang = (l: Lang) => {
+    setLangState(l);
+    try {
+      localStorage.setItem(LANG_KEY, l);
+    } catch {
+      // Not remembered this time; nothing else depends on it.
+    }
+  };
   const host = window.location.origin;
   const spec = useProviders((st) => st.providers.find((p) => p.slug === service.provider)?.spec);
   const code = snippets(service, host, spec)[mode][lang];
@@ -267,21 +311,19 @@ export function IntegratePanel({ service }: { service: Service }) {
           <SegmentedControlItem id="proxy">Proxy</SegmentedControlItem>
           <SegmentedControlItem id="lease">Lease</SegmentedControlItem>
         </SegmentedControl>
-        <SegmentedControl
+        {/* Thirteen languages: a select reads better than a segmented row that wraps. */}
+        <Select
           aria-label="Language"
-          selectedKeys={[lang]}
-          onSelectionChange={(keys) => {
-            const next = [...keys][0];
-            if (next) setLang(next as Lang);
-          }}
-          className="w-full sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none"
+          selectedKey={lang}
+          onSelectionChange={(k) => k && setLang(k as Lang)}
+          className="w-full sm:w-48"
         >
           {LANGS.map((l) => (
-            <SegmentedControlItem key={l.id} id={l.id}>
+            <SelectItem key={l.id} id={l.id} textValue={l.label}>
               {l.label}
-            </SegmentedControlItem>
+            </SelectItem>
           ))}
-        </SegmentedControl>
+        </Select>
       </div>
 
       <CodeBlock code={code} label={`${mode} · ${LANGS.find((l) => l.id === lang)?.label}`} />
