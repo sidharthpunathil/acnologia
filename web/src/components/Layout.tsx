@@ -7,12 +7,9 @@ import { cx } from "./ui";
 
 export function Logo() {
   return (
-    <Link to="/" className="flex items-center gap-2.5">
-      <span className="relative block h-7 w-7 rounded-[7px] bg-ink">
-        <span className="absolute left-[7px] top-[7px] h-[7px] w-[7px] bg-white" />
-        <span className="absolute left-[14px] top-[14px] h-[7px] w-[7px] bg-white" />
-      </span>
-      <span className="font-mono text-[15px] font-medium tracking-tight text-ink">cogito</span>
+    <Link to="/" className="flex items-center" aria-label="Cogito home">
+      {/* 64px tall source, shown at 28px for sharp rendering on retina screens */}
+      <img src="/logo.png" alt="Cogito" width={52} height={28} className="h-7 w-auto select-none" draggable={false} />
     </Link>
   );
 }

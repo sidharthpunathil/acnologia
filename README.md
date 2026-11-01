@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/logo.png" alt="Cogito" width="320"></p>
+
 # Cogito
 
 A self-hosted API key pool. Register many accounts with a provider (SerpAPI,
