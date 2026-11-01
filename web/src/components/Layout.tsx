@@ -5,6 +5,7 @@ import {
   Bell,
   Blocks,
   BookOpen,
+  ChartColumn,
   Boxes,
   ChevronDown,
   GitBranch,
@@ -15,7 +16,7 @@ import {
   MoreHorizontal,
   Settings,
   ShieldCheck,
-  Sparkles,
+  MessageCircle,
   UserRound,
   Users,
   type LucideIcon,
@@ -57,8 +58,20 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   end?: boolean;
-  /** Secondary pages live in the account menu on desktop instead of the top bar. */
-  secondary?: boolean;
+  /** Pages with a group live in the account menu (desktop) and the More sheet (phone). */
+  group?: NavGroup;
+}
+
+type NavGroup = "Workspace" | "Manage" | "Admin" | "Help";
+const GROUPS: NavGroup[] = ["Workspace", "Manage", "Admin", "Help"];
+
+/** Groups the menu items, in GROUPS order, skipping empty groups. */
+function grouped(items: NavItem[]): Array<[NavGroup, NavItem[]]> {
+  return GROUPS.map((g) => [g, items.filter((i) => i.group === g)] as [NavGroup, NavItem[]]).filter(([, l]) => l.length > 0);
+}
+
+function isActivePath(pathname: string, to: string) {
+  return to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(to + "/");
 }
 
 function useSignOut() {
@@ -73,6 +86,8 @@ function useSignOut() {
 /** Desktop account menu: who you are, theme, account and sign out. */
 function AccountMenu({ items = [] }: { items?: NavItem[] }) {
   const user = useAuth((s) => s.user);
+  const here = useLocation().pathname;
+  const insideMenu = items.some((l) => isActivePath(here, l.to));
   const signOut = useSignOut();
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -110,30 +125,45 @@ function AccountMenu({ items = [] }: { items?: NavItem[] }) {
         className="tap inline-flex h-9 max-w-[200px] items-center gap-1.5 rounded-full bg-ink pl-4 pr-3 text-[13px] font-medium text-on-ink transition-[background-color,transform] duration-150 ease-out hover:bg-ink-strong active:scale-[0.98]"
       >
         <span className="truncate">{user?.name || "Account"}</span>
+        {/* A page from this menu is open: hint where it went. */}
+        {insideMenu && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" aria-hidden="true" />}
         <ChevronDown className={cx("h-3.5 w-3.5 shrink-0 transition-transform duration-150", open && "rotate-180")} aria-hidden="true" />
       </button>
       {open && (
-        <div className="pop-in absolute right-0 top-11 z-50 w-72 rounded-2xl bg-surface p-2 shadow-pop">
+        <div className="pop-in absolute right-0 top-11 z-50 max-h-[calc(100dvh-5rem)] w-[300px] overflow-y-auto overscroll-contain rounded-2xl bg-surface p-2 shadow-pop">
           <div className="px-3 pb-3 pt-2">
             <div className="truncate text-[14px] font-medium text-ink">{user?.name}</div>
             <div className="truncate font-mono text-xs text-muted">
               {user?.email} · {user?.role}
             </div>
           </div>
+          <nav aria-label="Menu">
+            {grouped(items).map(([group, list]) => (
+              <div key={group} className="border-t border-line py-1">
+                <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{group}</div>
+                {list.map((l) => {
+                  const active = isActivePath(here, l.to);
+                  return (
+                    <Link
+                      key={l.to}
+                      to={l.to}
+                      aria-current={active ? "page" : undefined}
+                      className={cx(
+                        "tap flex h-9 items-center gap-2.5 rounded-lg px-3 text-[14px] transition-colors duration-100",
+                        active ? "bg-ink/[0.06] font-medium text-ink" : "text-ink hover:bg-soft",
+                      )}
+                    >
+                      <l.icon className={cx("h-4 w-4", active ? "text-ink" : "text-muted")} aria-hidden="true" /> {l.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            ))}
+          </nav>
           <div className="border-t border-line px-3 py-3">
             <div className="mb-2 text-xs font-medium text-muted">Theme</div>
             <ThemePicker size="sm" className="w-full" />
           </div>
-          {items.length > 0 && (
-            <div className="border-t border-line py-1">
-              <div className="px-3 pb-1 pt-2 text-xs font-medium text-muted">Manage</div>
-              {items.map((l) => (
-                <Link key={l.to} to={l.to} className="tap flex h-10 items-center gap-2.5 rounded-lg px-3 text-[14px] text-ink hover:bg-soft">
-                  <l.icon className="h-4 w-4 text-muted" aria-hidden="true" /> {l.label}
-                </Link>
-              ))}
-            </div>
-          )}
           <div className="border-t border-line pt-1">
             <Link to="/account" className="tap flex h-10 items-center gap-2.5 rounded-lg px-3 text-[14px] text-ink hover:bg-soft">
               <UserRound className="h-4 w-4 text-muted" aria-hidden="true" /> Your account
@@ -154,23 +184,29 @@ function MoreSheet({ open, onClose, items }: { open: boolean; onClose: () => voi
   const signOut = useSignOut();
   return (
     <Modal open={open} onClose={onClose} title="More" description={user ? `${user.name || user.email} · ${user.role}` : undefined}>
-      <nav aria-label="More">
-        <ul className="-mx-2">
-          {items.map((l) => (
-            <li key={l.to}>
-              <NavLink
-                to={l.to}
-                onClick={onClose}
-                className={({ isActive }) =>
-                  cx("flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] transition-colors duration-100 active:bg-ink/[0.06]", isActive ? "bg-ink/[0.06] font-medium text-ink" : "text-ink")
-                }
-              >
-                <l.icon className="h-[18px] w-[18px] text-muted" aria-hidden="true" />
-                {l.label}
-              </NavLink>
-            </li>
-          ))}
-        </ul>
+      <nav aria-label="More" className="space-y-3">
+        {grouped(items).map(([group, list]) => (
+          <div key={group}>
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{group}</div>
+            <ul className="-mx-2">
+              {list.map((l) => (
+                <li key={l.to}>
+                  <NavLink
+                    to={l.to}
+                    end={l.end}
+                    onClick={onClose}
+                    className={({ isActive }) =>
+                      cx("flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] transition-colors duration-100 active:bg-ink/[0.06]", isActive ? "bg-ink/[0.06] font-medium text-ink" : "text-ink")
+                    }
+                  >
+                    <l.icon className="h-[18px] w-[18px] text-muted" aria-hidden="true" />
+                    {l.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </nav>
       <div className="mt-4 border-t border-line pt-4">
         <div className="mb-2 text-xs font-medium text-muted">Theme</div>
@@ -199,28 +235,30 @@ export function Layout() {
   const first = useRef(true);
 
   const all: Array<NavItem & { show: boolean }> = [
+    // The top bar (and the phone tab bar) keeps the three pages used every day.
     { to: "/", label: "Catalog", icon: LayoutGrid, show: true, end: true },
-    { to: "/assistant", label: "Assistant", icon: Sparkles, show: true },
     { to: "/keys", label: "Keys", icon: KeyRound, show: true },
-    { to: "/providers", label: "Providers", icon: Blocks, show: true },
-    { to: "/apps", label: "Apps", icon: Boxes, show: true },
-    { to: "/activity", label: "Activity", icon: Activity, show: true },
-    { to: "/settings", label: "Settings", icon: Settings, show: true },
-    { to: "/groups", label: "Service groups", icon: GitBranch, show: true, secondary: true },
-    { to: "/webhooks", label: "Webhooks", icon: Bell, show: true, secondary: true },
-    { to: "/egress", label: "Egress proxies", icon: Globe, show: true, secondary: true },
-    { to: "/users", label: "Users", icon: Users, show: can.users(role) },
-    { to: "/audit", label: "Audit", icon: ShieldCheck, show: can.audit(role) },
-    { to: "/docs", label: "Docs", icon: BookOpen, show: true, secondary: true },
+    { to: "/assistant", label: "Assistant", icon: MessageCircle, show: true },
+    // Everything else lives in the account menu, grouped.
+    { to: "/providers", label: "Providers", icon: Blocks, show: true, group: "Workspace" },
+    { to: "/apps", label: "Apps", icon: Boxes, show: true, group: "Workspace" },
+    { to: "/activity", label: "Activity", icon: Activity, show: true, group: "Workspace" },
+    { to: "/usage", label: "Usage", icon: ChartColumn, show: true, group: "Workspace" },
+    { to: "/groups", label: "Service groups", icon: GitBranch, show: true, group: "Manage" },
+    { to: "/webhooks", label: "Webhooks", icon: Bell, show: true, group: "Manage" },
+    { to: "/egress", label: "Egress proxies", icon: Globe, show: true, group: "Manage" },
+    { to: "/settings", label: "Settings", icon: Settings, show: true, group: "Admin" },
+    { to: "/users", label: "Users", icon: Users, show: can.users(role), group: "Admin" },
+    { to: "/audit", label: "Audit", icon: ShieldCheck, show: can.audit(role), group: "Admin" },
+    { to: "/docs", label: "Docs", icon: BookOpen, show: true, group: "Help" },
   ];
   const links = all.filter((l) => l.show);
-  const primary = links.filter((l) => !l.secondary);
-  const secondary = links.filter((l) => l.secondary);
-  // Four destinations people use most sit in the tab bar; the rest live under More.
-  const TAB_PATHS = ["/", "/keys", "/providers", "/activity"];
-  const tabs = links.filter((l) => TAB_PATHS.includes(l.to));
-  const overflow: NavItem[] = [...links.filter((l) => !TAB_PATHS.includes(l.to)), { to: "/account", label: "Your account", icon: UserRound }];
-  const moreActive = overflow.some((l) => location.pathname.startsWith(l.to));
+  const primary = links.filter((l) => !l.group);
+  const secondary = links.filter((l) => l.group);
+  // Phones: the same three in the tab bar, the rest under More with the same groups.
+  const tabs = primary;
+  const overflow: NavItem[] = [...secondary, { to: "/account", label: "Your account", icon: UserRound, group: "Help" }];
+  const moreActive = overflow.some((l) => isActivePath(location.pathname, l.to));
 
   // While a text field has focus the keyboard is up: hide the tab bar so it does not
   // cover the field (CSS keys off data-typing, on touch screens only).

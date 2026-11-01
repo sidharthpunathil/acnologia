@@ -10,7 +10,6 @@ import { useAi } from "../stores/ai";
 import { toast } from "../stores/toast";
 import { useTitle } from "../hooks/useTitle";
 import { Badge, Button, Callout, Field, PageHeader, Section, Skeleton, Textarea } from "../components/ui";
-import { ThemePicker } from "../components/ThemePicker";
 import { ClaudeLogo } from "../components/ClaudeLogo";
 
 const RULES_PLACEHOLDER = `One rule per line. For example:
@@ -66,9 +65,8 @@ export function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Settings" meta="Appearance, AI rules and guardrails" />
+      <PageHeader title="Settings" meta="AI rules and guardrails" />
 
-      <Section className="mb-5" title="Appearance" description="Saved in this browser. System follows your device setting." actions={<ThemePicker />} />
 
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Section

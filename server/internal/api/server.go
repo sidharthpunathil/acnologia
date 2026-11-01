@@ -95,6 +95,7 @@ func (s *Server) Router() http.Handler {
 	})
 	r.Get("/llms.txt", s.serveLLMs)
 	r.Get("/llms-full.txt", s.serveLLMsFull)
+	s.mountDocs(r)
 
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(jsonOnly)
@@ -119,6 +120,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/services/{id}/breaker", s.serviceBreaker)
 		r.Get("/cache", s.cacheStats)
 		r.Get("/overview", s.overview)
+		r.Get("/usage", s.usageReport)
 		r.Get("/providers", s.listProviders)
 		r.Get("/services", s.listServices)
 		r.Get("/services/{id}", s.getService)

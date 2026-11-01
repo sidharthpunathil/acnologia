@@ -1,0 +1,96 @@
+/*
+ * Assistant page motion. Shared curves (--ease-out) and the fade-up, swap-in
+ * keyframes live in index.css; these are the chat-only pieces.
+ */
+
+/* "Working" label: a soft highlight sweeps across the text while a reply is pending. */
+.chat-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgb(var(--muted)) 0%,
+    rgb(var(--muted)) 40%,
+    rgb(var(--ink)) 50%,
+    rgb(var(--muted)) 60%,
+    rgb(var(--muted)) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: chat-shimmer 2s linear infinite;
+}
+@keyframes chat-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+/* The mark beside "Working" breathes, so a long tool run still reads as alive. */
+.chat-breathe {
+  animation: chat-breathe 1.6s ease-in-out infinite;
+}
+@keyframes chat-breathe {
+  0%,
+  100% {
+    opacity: 0.65;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes chat-breathe-fade {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Tool details open with a short drop so the panel reads as coming from its row. */
+@keyframes chat-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.chat-reveal {
+  animation: chat-reveal 180ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shimmer {
+    animation: none;
+    background: none;
+    color: rgb(var(--muted));
+  }
+  .chat-breathe {
+    animation: chat-breathe-fade 1.6s ease-in-out infinite;
+  }
+  .chat-reveal {
+    animation: fade-only 150ms ease-out both;
+  }
+}
+
+/* Newly arrived reply text fades in word by word; delays are set inline in reading order. */
+@keyframes chat-word {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+}
+.chat-word {
+  animation: chat-word 320ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-word {
+    animation: none;
+  }
+}
