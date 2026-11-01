@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bot, CheckCircle2, FlaskConical, KeyRound, Lock, RefreshCcw, ShieldCheck, Terminal } from "lucide-react";
+import { CheckCircle2, FlaskConical, KeyRound, Lock, RefreshCcw, ShieldCheck, Terminal } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
 import { dateTime, relTime, sentence } from "../lib/format";
@@ -11,6 +11,7 @@ import { toast } from "../stores/toast";
 import { useTitle } from "../hooks/useTitle";
 import { Badge, Button, Callout, Field, PageHeader, Section, Skeleton, Textarea } from "../components/ui";
 import { ThemePicker } from "../components/ThemePicker";
+import { ClaudeLogo } from "../components/ClaudeLogo";
 
 const RULES_PLACEHOLDER = `One rule per line. For example:
 Always set max_concurrency for voice providers.
@@ -116,8 +117,8 @@ export function SettingsPage() {
               <Skeleton className="h-10 rounded-xl" />
             ) : status?.enabled ? (
               <div className="flex items-start gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-emerald-50 text-emerald-700">
-                  <Bot className="h-4 w-4" />
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#D97757]/10">
+                  <ClaudeLogo className="h-[18px] w-[18px]" />
                 </span>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
