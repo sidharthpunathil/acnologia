@@ -1,19 +1,22 @@
 import type { ReactNode } from "react";
-import { Logo } from "../components/Layout";
+import { BRAND_TITLE, TAGLINE, useTitle } from "../hooks/useTitle";
 
 export function AuthShell({ title, meta, children }: { title: string; meta: string; children: ReactNode }) {
+  useTitle(null);
   return (
-    <div className="min-h-screen bg-canvas">
-      <header className="border-b border-line">
-        <div className="mx-auto flex h-14 max-w-[1240px] items-center px-4 sm:px-6">
-          <Logo />
+    <div className="flex min-h-dvh flex-col bg-canvas">
+      <main className="mx-auto w-full max-w-[420px] flex-1 px-4 pb-16 pt-16 sm:pt-24">
+        <div className="text-center">
+          <img src="/logo.png" alt="Cogito" width={120} height={64} className="mx-auto h-12 w-auto select-none" draggable={false} />
+          <p className="mt-4 font-mono text-[15px] tracking-tight text-ink">{TAGLINE}</p>
+          <p className="mt-1 font-mono text-xs text-muted">{meta}</p>
         </div>
-      </header>
-      <main className="mx-auto max-w-[420px] px-4 pt-16 sm:pt-24">
-        <h1 className="font-mono text-[26px] tracking-tight text-ink">{title}</h1>
-        <p className="mt-2 font-mono text-xs text-muted">{meta}</p>
-        <div className="mt-8 rounded-card bg-white p-5 shadow-card sm:p-6">{children}</div>
+        <div className="mt-10 rounded-card bg-white p-5 shadow-card sm:p-6">
+          <h1 className="mb-5 text-[17px] font-semibold text-ink">{title}</h1>
+          {children}
+        </div>
       </main>
+      <footer className="pb-6 text-center font-mono text-[11px] text-faint">{BRAND_TITLE}</footer>
     </div>
   );
 }

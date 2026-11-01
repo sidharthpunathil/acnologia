@@ -1,18 +1,20 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
-import type { ProviderTemplate, Service, ServiceInput } from "../lib/types";
+import type { LogoUpload, Service, ServiceInput } from "../lib/types";
+import { bumpLogos } from "./providers";
 
 interface ServicesStore {
   services: Service[];
   loaded: boolean;
   loading: boolean;
-  providers: ProviderTemplate[];
+  error: string | null;
   fetch: () => Promise<void>;
   fetchOne: (id: number) => Promise<Service>;
-  fetchProviders: () => Promise<ProviderTemplate[]>;
   create: (input: ServiceInput) => Promise<Service>;
   update: (id: number, patch: Partial<ServiceInput>) => Promise<Service>;
   remove: (id: number) => Promise<void>;
+  setLogo: (id: number, logo: LogoUpload) => Promise<void>;
+  removeLogo: (id: number) => Promise<void>;
 }
 
 function upsert(list: Service[], s: Service): Service[] {
@@ -27,13 +29,16 @@ export const useServices = create<ServicesStore>((set, get) => ({
   services: [],
   loaded: false,
   loading: false,
-  providers: [],
+  error: null,
 
   fetch: async () => {
     set({ loading: true });
     try {
       const res = await api.listServices();
-      set({ services: res.services ?? [], loaded: true });
+      set({ services: res.services ?? [], loaded: true, error: null });
+    } catch (e) {
+      set({ loaded: true, error: e instanceof Error ? e.message : "Failed to load services" });
+      throw e;
     } finally {
       set({ loading: false });
     }
@@ -43,13 +48,6 @@ export const useServices = create<ServicesStore>((set, get) => ({
     const s = await api.getService(id);
     set({ services: upsert(get().services, s) });
     return s;
-  },
-
-  fetchProviders: async () => {
-    if (get().providers.length) return get().providers;
-    const res = await api.listProviders();
-    set({ providers: res.providers ?? [] });
-    return res.providers ?? [];
   },
 
   create: async (input) => {
@@ -67,5 +65,17 @@ export const useServices = create<ServicesStore>((set, get) => ({
   remove: async (id) => {
     await api.deleteService(id);
     set({ services: get().services.filter((s) => s.id !== id) });
+  },
+
+  setLogo: async (id, logo) => {
+    await api.setServiceLogo(id, logo);
+    bumpLogos();
+    await get().fetchOne(id);
+  },
+
+  removeLogo: async (id) => {
+    await api.deleteServiceLogo(id);
+    bumpLogos();
+    await get().fetchOne(id);
   },
 }));

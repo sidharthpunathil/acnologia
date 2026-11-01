@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTitle } from "../hooks/useTitle";
 import { Link } from "react-router-dom";
-import { Layers, Plus, Search } from "lucide-react";
+import { Layers, Plus, Search, Sparkles } from "lucide-react";
 import { useServices } from "../stores/services";
+import { useProviders } from "../stores/providers";
 import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
@@ -9,8 +11,8 @@ import { can } from "../lib/perms";
 import { STRATEGY_LABEL, compact, plural } from "../lib/format";
 import type { Service } from "../lib/types";
 import { Tabs } from "../components/Tabs";
-import { ServiceIcon } from "../components/ServiceIcon";
-import { Button, Empty, PageLoading } from "../components/ui";
+import { ServiceLogo } from "../components/EntityLogo";
+import { Button, Callout, Empty, PageSkeleton } from "../components/ui";
 import { AddServiceModal } from "./AddServiceModal";
 
 const ALL = "__all";
@@ -22,6 +24,7 @@ export function serviceMeta(s: Service): string {
   if (c.cooling) parts.push(`${c.cooling} cooling`);
   if (c.exhausted) parts.push(`${c.exhausted} exhausted`);
   if (c.invalid) parts.push(`${c.invalid} invalid`);
+  if (c.busy) parts.push(`${c.busy} busy`);
   parts.push(STRATEGY_LABEL[s.strategy] ?? s.strategy);
   return parts.join(" · ");
 }
@@ -32,28 +35,34 @@ function categoryOf(s: Service): string {
 
 function ServiceCard({ s }: { s: Service }) {
   const healthy = s.key_counts.available > 0;
+  const meta = serviceMeta(s);
   return (
     <Link
       to={`/services/${s.id}`}
-      className="group flex items-center gap-3.5 rounded-card bg-white px-4 py-4 shadow-card transition-shadow hover:shadow-[0_2px_10px_rgba(20,20,15,0.06),0_0_0_1px_rgba(20,20,15,0.06)]"
+      className="group flex min-h-[72px] items-center gap-3.5 rounded-card bg-white px-4 py-4 shadow-card transition-[box-shadow,transform] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-[0_4px_14px_rgba(20,20,15,0.07),0_0_0_1px_rgba(20,20,15,0.06)]"
     >
-      <ServiceIcon icon={s.icon} provider={s.provider} name={s.name} />
+      <ServiceLogo service={s} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[15px] font-medium text-ink">{s.name}</span>
           <span
             className={healthy ? "h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" : "h-1.5 w-1.5 shrink-0 rounded-full bg-[#d6d5ce]"}
-            title={healthy ? "Keys available" : "No key available"}
+            aria-hidden="true"
           />
+          <span className="sr-only">{healthy ? "Keys available" : "No key available"}</span>
         </div>
-        <div className="mt-1 truncate font-mono text-xs text-muted">{serviceMeta(s)}</div>
+        <div className="mt-1 truncate font-mono text-xs text-muted" title={meta}>
+          {meta}
+        </div>
       </div>
     </Link>
   );
 }
 
 export function CatalogPage() {
-  const { services, loaded, fetch } = useServices();
+  useTitle("Catalog");
+  const { services, loaded, error, fetch } = useServices();
+  const ensureProviders = useProviders((s) => s.ensure);
   const role = useAuth((s) => s.user?.role);
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<string>(ALL);
@@ -61,7 +70,9 @@ export function CatalogPage() {
 
   useEffect(() => {
     fetch().catch((e) => toast.error(errorMessage(e)));
-  }, [fetch]);
+    // Provider colors and logos back the service tiles.
+    ensureProviders().catch(() => undefined);
+  }, [fetch, ensureProviders]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -90,7 +101,7 @@ export function CatalogPage() {
   const activeTab = tabs.some((t) => t.id === tab) ? tab : ALL;
   const shown = activeTab === ALL ? groups : groups.filter(([c]) => c === activeTab);
 
-  if (!loaded) return <PageLoading />;
+  if (!loaded) return <PageSkeleton />;
 
   return (
     <div>
@@ -109,6 +120,14 @@ export function CatalogPage() {
           </Button>
         )}
       </div>
+      {error && services.length === 0 && (
+        <Callout tone="red" className="mt-6">
+          Could not load services: {error}.{" "}
+          <button type="button" className="font-medium underline underline-offset-2" onClick={() => fetch().catch(() => undefined)}>
+            Try again
+          </button>
+        </Callout>
+      )}
 
       <div className="relative mt-8 max-w-[760px]">
         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
@@ -116,7 +135,9 @@ export function CatalogPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search services by name, slug or category"
-          className="h-[52px] w-full rounded-card bg-white pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/10"
+          aria-label="Search services"
+          type="search"
+          className="field-input h-[52px] w-full rounded-card bg-white pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/10"
         />
       </div>
 
@@ -127,14 +148,22 @@ export function CatalogPage() {
             title="No services yet"
             body={
               can.manage(role)
-                ? "Add a service such as SerpAPI or ElevenLabs, then paste in the API keys for each account you own."
+                ? "Pick a provider such as SerpAPI or ElevenLabs, then paste in the API keys for each account you own. Missing one? Build it with AI."
                 : "An admin has not added any services yet. Ask one to add a service and its keys."
             }
             action={
               can.manage(role) ? (
-                <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
-                  Add your first service
-                </Button>
+                <>
+                  <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
+                    Add your first service
+                  </Button>
+                  <Link
+                    to="/providers/ai"
+                    className="tap inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-medium text-ink shadow-card hover:bg-soft"
+                  >
+                    <Sparkles className="h-4 w-4 text-brand" /> Build a provider with AI
+                  </Link>
+                </>
               ) : undefined
             }
           />

@@ -32,7 +32,7 @@ export function SetupPage() {
   };
 
   return (
-    <AuthShell title="Set up Cogito" meta="first run · create the superadmin account">
+    <AuthShell title="Set up Cogito" meta="A self-hosted API key pool · first run">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
@@ -46,7 +46,7 @@ export function SetupPage() {
         <Field label="Confirm password">
           <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" />
         </Field>
-        {err && <p className="text-sm text-red-600">{err}</p>}
+        {err && (<p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p>)}
         <Button type="submit" variant="primary" loading={busy} className="w-full">
           Create superadmin
         </Button>

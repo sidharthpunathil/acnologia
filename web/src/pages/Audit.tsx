@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTitle } from "../hooks/useTitle";
 import { RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useUsers } from "../stores/users";
 import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
 import { dateTime, plural, relTime } from "../lib/format";
 import { useNow } from "../hooks/useNow";
-import { Badge, Button, Empty, Input, PageHeader, PageLoading } from "../components/ui";
+import { Badge, Button, Empty, Input, PageHeader, PageSkeleton } from "../components/ui";
 
 export function AuditPage() {
+  useTitle("Audit");
   const { audit, auditLoaded, fetchAudit } = useUsers();
   const now = useNow(30000);
   const [q, setQ] = useState("");
@@ -35,7 +37,7 @@ export function AuditPage() {
     return audit.filter((a) => [a.user_email, a.action, a.target, a.detail].some((f) => f?.toLowerCase().includes(n)));
   }, [audit, q]);
 
-  if (!auditLoaded) return <PageLoading />;
+  if (!auditLoaded) return <PageSkeleton variant="list" />;
 
   return (
     <div>

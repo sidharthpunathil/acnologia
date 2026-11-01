@@ -10,7 +10,7 @@
     @apply bg-canvas font-sans text-ink antialiased;
     font-feature-settings: "ss01", "cv11";
   }
-  :where(a, button, [role="tab"], [role="switch"], summary):focus-visible {
+  :where(a, button, [role="tab"], [role="switch"], summary, [tabindex]):focus-visible {
     outline: 2px solid #18181a;
     outline-offset: 2px;
     border-radius: 8px;
@@ -34,42 +34,148 @@
   }
 }
 
-@keyframes toast-in {
+/* Toasts use transitions, not keyframes, so a stack stays interruptible. */
+.toast {
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+.toast[data-leaving] {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+  transition-duration: 140ms;
+}
+
+/* Touch screens get 44px hit areas on buttons, icon buttons, fields and tabs. */
+@media (pointer: coarse) {
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .tap {
+    min-height: 44px;
+  }
+  .field-input {
+    min-height: 44px;
+    font-size: 16px; /* stops iOS zooming into focused inputs */
+  }
+  .switch-hit {
+    padding: 12px 4px;
+    margin: -12px -4px;
+  }
+}
+
+html {
+  touch-action: manipulation;
+}
+
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+@keyframes fade-up {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
-.toast-in {
-  animation: toast-in 160ms ease-out;
+.fade-up {
+  animation: fade-up 200ms var(--ease-out) both;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.modal-in {
+  animation: modal-in 220ms var(--ease-out) both;
+}
+@keyframes modal-out {
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+.modal-out {
+  animation: modal-out 150ms ease-out both;
+}
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.scrim-in {
+  animation: scrim-in 180ms ease-out both;
+}
+.scrim-out {
+  animation: scrim-in 150ms ease-out reverse both;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #ecebe5 0%, #f4f3ee 50%, #ecebe5 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Reduced motion means fewer and gentler animations, not none: keep fades
+   and spinners (they explain state), drop movement and scaling. */
+@keyframes fade-only {
+  from {
+    opacity: 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .toast-in {
+  html {
+    scroll-behavior: auto;
+  }
+  .fade-up,
+  .modal-in {
+    animation-name: fade-only;
+  }
+  .toast,
+  .toast[data-leaving] {
+    transform: none;
+    @starting-style {
+      transform: none;
+    }
+  }
+  .modal-out {
+    animation-name: scrim-in;
+    animation-direction: reverse;
+  }
+  .skeleton {
     animation: none;
   }
-}
-
-/* Touch screens get 44px hit areas on icon buttons. */
-@media (pointer: coarse) {
-  .icon-btn {
-    min-width: 44px;
-    min-height: 44px;
-  }
-}
-
-/* Respect reduced motion everywhere, not only on toasts. */
-@media (prefers-reduced-motion: reduce) {
   *,
   ::before,
   ::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+    transition-property: color, background-color, border-color, opacity, box-shadow, fill, stroke !important;
   }
 }
 
@@ -86,4 +192,24 @@
 }
 .skip-link:focus {
   top: 12px;
+}
+
+/* Briefly highlights fields that "Fill with AI" just changed. */
+@keyframes ai-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(232, 0, 0, 0);
+    background-color: rgba(253, 236, 236, 0);
+  }
+  20% {
+    box-shadow: 0 0 0 3px rgba(232, 0, 0, 0.14);
+    background-color: rgba(253, 236, 236, 0.9);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 0, 0, 0);
+    background-color: rgba(253, 236, 236, 0);
+  }
+}
+.ai-flash {
+  border-radius: 12px;
+  animation: ai-flash 2.2s ease-out both;
 }

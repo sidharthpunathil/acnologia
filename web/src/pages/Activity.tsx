@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTitle } from "../hooks/useTitle";
 import { Activity as ActivityIcon, Pause, Play } from "lucide-react";
 import { useEvents } from "../stores/events";
 import { useServices } from "../stores/services";
@@ -7,11 +8,12 @@ import { errorMessage } from "../lib/api";
 import { EVENT_KINDS, type EventKind } from "../lib/types";
 import { useNow } from "../hooks/useNow";
 import { EventsList } from "../components/EventsList";
-import { Button, Empty, PageHeader, PageLoading, Select, Spinner } from "../components/ui";
+import { Button, Empty, PageHeader, PageSkeleton, Select, Spinner } from "../components/ui";
 
 const REFRESH_MS = 10000;
 
 export function ActivityPage() {
+  useTitle("Activity");
   const { feed, feedLoaded, fetchFeed } = useEvents();
   const { services, loaded: servicesLoaded, fetch: fetchServices } = useServices();
   const [serviceId, setServiceId] = useState<string>("");
@@ -88,7 +90,7 @@ export function ActivityPage() {
       </div>
 
       {!feedLoaded ? (
-        <PageLoading />
+        <PageSkeleton variant="list" bare />
       ) : shown.length === 0 ? (
         <Empty
           icon={<ActivityIcon className="h-5 w-5" />}

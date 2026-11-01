@@ -6,6 +6,7 @@ export interface Toast {
   id: number;
   kind: ToastKind;
   message: string;
+  leaving?: boolean;
 }
 
 interface ToastState {
@@ -23,7 +24,13 @@ export const useToasts = create<ToastState>((set, get) => ({
     set({ toasts: [...get().toasts.slice(-3), { id, kind, message }] });
     window.setTimeout(() => get().dismiss(id), kind === "error" ? 6000 : 3500);
   },
-  dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
+  // Mark as leaving first so the exit transition can play, then remove.
+  dismiss: (id) => {
+    const t = get().toasts.find((x) => x.id === id);
+    if (!t || t.leaving) return;
+    set({ toasts: get().toasts.map((x) => (x.id === id ? { ...x, leaving: true } : x)) });
+    window.setTimeout(() => set({ toasts: get().toasts.filter((x) => x.id !== id) }), 150);
+  },
 }));
 
 export const toast = {

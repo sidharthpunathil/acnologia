@@ -37,6 +37,26 @@ function QuotaBar({ k }: { k: Key }) {
   );
 }
 
+/** "1/2 in use" next to the status. Busy styling when the key is at its limit. */
+export function InUse({ k, serviceMax }: { k: Key; serviceMax: number }) {
+  const limit = k.max_concurrency ?? serviceMax;
+  const n = k.in_flight ?? 0;
+  if (n === 0 && limit <= 0) return null;
+  const busy = limit > 0 && n >= limit;
+  return (
+    <span
+      title={limit > 0 ? `${n} of ${limit} concurrent requests in use${k.max_concurrency !== null ? " (key override)" : ""}` : `${n} requests in flight`}
+      className={cx(
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[11px] tabular-nums",
+        busy ? "bg-violet-100 text-violet-800" : n > 0 ? "bg-violet-50 text-violet-700" : "text-faint",
+      )}
+    >
+      {busy && <span className="h-1.5 w-1.5 rounded-full bg-violet-600" aria-hidden="true" />}
+      {limit > 0 ? `${n}/${limit}` : n} {busy ? "busy" : "in use"}
+    </span>
+  );
+}
+
 function KeyBadges({ k, apps }: { k: Key; apps: App[] }) {
   const allowed = k.app_ids.map((id) => apps.find((a) => a.id === id)?.name ?? `#${id}`);
   return (
@@ -137,6 +157,7 @@ export function KeysTable({
   apps,
   now,
   perms,
+  serviceMax = 0,
   onEdit,
   onReveal,
 }: {
@@ -144,6 +165,7 @@ export function KeysTable({
   apps: App[];
   now: number;
   perms: KeyPerms;
+  serviceMax?: number;
   onEdit: (k: Key) => void;
   onReveal: (k: Key) => void;
 }) {
@@ -179,7 +201,10 @@ export function KeysTable({
                   </div>
                 </td>
                 <td className="px-3 py-3">
-                  <StatusPill k={k} now={now} />
+                  <div className="flex flex-col items-start gap-1">
+                    <StatusPill k={k} now={now} />
+                    <InUse k={k} serviceMax={serviceMax} />
+                  </div>
                 </td>
                 <td className="px-3 py-3">
                   <QuotaBar k={k} />
@@ -217,7 +242,10 @@ export function KeysTable({
                 </div>
                 <div className="mt-0.5 font-mono text-[11px] text-muted">{k.hint}</div>
               </div>
-              <StatusPill k={k} now={now} />
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <StatusPill k={k} now={now} />
+                <InUse k={k} serviceMax={serviceMax} />
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
               <QuotaBar k={k} />

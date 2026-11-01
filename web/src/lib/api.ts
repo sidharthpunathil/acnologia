@@ -14,18 +14,35 @@ import type {
   Service,
   ServiceInput,
   User,
+  AgentRun,
+  AgentRunInput,
+  AgentStep,
+  AiStatus,
+  AiRules,
+  AssistForm,
+  AssistResult,
+  LiveReport,
+  LogoUpload,
+  Provider,
+  ProviderDetail,
+  ProviderInput,
+  ProviderSaveResult,
+  ValidateResult,
 } from "./types";
 
 export class ApiError extends Error {
   status: number;
   code: string;
   retryAfterSec?: number;
+  /** The parsed error body, for endpoints that return extra detail (errors, report). */
+  data: unknown;
 
-  constructor(status: number, code: string, message: string, retryAfterSec?: number) {
+  constructor(status: number, code: string, message: string, retryAfterSec?: number, data?: unknown) {
     super(message);
     this.status = status;
     this.code = code;
     this.retryAfterSec = retryAfterSec;
+    this.data = data ?? null;
   }
 }
 
@@ -37,7 +54,7 @@ export function setUnauthorizedHandler(fn: UnauthorizedHandler) {
   onUnauthorized = fn;
 }
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = {
@@ -72,16 +89,23 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     const payload = (data ?? {}) as {
-      error?: { code?: string; message?: string };
+      error?: { code?: string; message?: string } | string;
+      errors?: string[];
       retry_after_sec?: number;
     };
-    const code = payload.error?.code ?? `http_${res.status}`;
-    const message = payload.error?.message ?? (res.statusText || `Request failed (${res.status})`);
+    // The error is usually {code, message}; accept a plain string too.
+    const errObj = typeof payload.error === "string" ? { message: payload.error } : payload.error;
+    const code = (errObj as { code?: string } | undefined)?.code ?? `http_${res.status}`;
+    const message =
+      errObj?.message ||
+      (payload.errors && payload.errors.length ? payload.errors[0] : "") ||
+      res.statusText ||
+      `Request failed (${res.status})`;
     // Auth endpoints answer 401 for bad credentials; that is not a session expiry.
     if (res.status === 401 && !path.startsWith("/api/auth/")) {
       onUnauthorized?.();
     }
-    throw new ApiError(res.status, code, message, payload.retry_after_sec);
+    throw new ApiError(res.status, code, message, payload.retry_after_sec, data);
   }
 
   return data as T;
@@ -118,7 +142,40 @@ export const api = {
   updateService: (id: number, body: Partial<ServiceInput>) =>
     request<Service>("PATCH", `/api/admin/services/${id}`, body),
   deleteService: (id: number) => request<unknown>("DELETE", `/api/admin/services/${id}`),
-  listProviders: () => request<{ providers: ProviderTemplate[] }>("GET", "/api/admin/providers"),
+  setServiceLogo: (id: number, body: LogoUpload) => request<unknown>("PUT", `/api/admin/services/${id}/logo`, body),
+  deleteServiceLogo: (id: number) => request<unknown>("DELETE", `/api/admin/services/${id}/logo`),
+
+  // Providers
+  listProviders: () =>
+    request<{ providers: Array<Provider | ProviderTemplate>; strategies?: string[] }>("GET", "/api/admin/providers"),
+  getProvider: (slug: string) => request<ProviderDetail>("GET", `/api/admin/providers/${encodeURIComponent(slug)}`),
+  createProvider: (body: ProviderInput) => request<ProviderSaveResult>("POST", "/api/admin/providers", body),
+  updateProvider: (slug: string, body: ProviderInput & { note?: string }) =>
+    request<ProviderSaveResult>("PUT", `/api/admin/providers/${encodeURIComponent(slug)}`, body),
+  deleteProvider: (slug: string) => request<unknown>("DELETE", `/api/admin/providers/${encodeURIComponent(slug)}`),
+  validateProvider: (body: ProviderInput) => request<ValidateResult>("POST", "/api/admin/providers/validate", body),
+  liveCheck: (slug: string, secret: string) =>
+    request<LiveReport>("POST", `/api/admin/providers/${encodeURIComponent(slug)}/live-check`, { secret }),
+  rollbackProvider: (slug: string, version: number) =>
+    request<Provider>("POST", `/api/admin/providers/${encodeURIComponent(slug)}/rollback`, { version }),
+  setProviderLogo: (slug: string, body: LogoUpload) =>
+    request<unknown>("PUT", `/api/admin/providers/${encodeURIComponent(slug)}/logo`, body),
+  deleteProviderLogo: (slug: string) => request<unknown>("DELETE", `/api/admin/providers/${encodeURIComponent(slug)}/logo`),
+  fetchProviderLogo: (slug: string, url?: string) =>
+    request<unknown>("POST", `/api/admin/providers/${encodeURIComponent(slug)}/logo/fetch`, url ? { url } : {}),
+
+  // AI builder
+  aiStatus: () => request<AiStatus>("GET", "/api/admin/ai/status"),
+  listRuns: () => request<{ runs: AgentRun[] }>("GET", "/api/admin/ai/runs"),
+  createRun: (body: AgentRunInput) => request<AgentRun>("POST", "/api/admin/ai/runs", body),
+  getRun: (id: number, after = 0) =>
+    request<{ run: AgentRun; steps: AgentStep[] }>("GET", `/api/admin/ai/runs/${id}${qs({ after })}`),
+  cancelRun: (id: number) => request<unknown>("POST", `/api/admin/ai/runs/${id}/cancel`),
+  aiAssist: (form: AssistForm, instruction: string, current: object) =>
+    request<AssistResult>("POST", "/api/admin/ai/assist", { form, instruction, current }),
+  getAiRules: () => request<AiRules>("GET", "/api/admin/ai/rules"),
+  putAiRules: (rules: string) => request<AiRules>("PUT", "/api/admin/ai/rules", { rules }),
+  publishRun: (id: number) => request<AgentRun | unknown>("POST", `/api/admin/ai/runs/${id}/publish`),
 
   // Keys
   listKeys: (serviceId: number) => request<{ keys: Key[] }>("GET", `/api/admin/services/${serviceId}/keys`),

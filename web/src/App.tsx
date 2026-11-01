@@ -15,6 +15,11 @@ import { UsersPage } from "./pages/Users";
 import { AuditPage } from "./pages/Audit";
 import { AccountPage } from "./pages/Account";
 import { NotFoundPage } from "./pages/NotFound";
+import { ProvidersPage } from "./pages/providers/ProvidersPage";
+import { ProviderEditorPage } from "./pages/providers/ProviderEditor";
+import { AiBuilderPage } from "./pages/providers/AiBuilderPage";
+import { AiRunPage } from "./pages/providers/AiRunPage";
+import { SettingsPage } from "./pages/Settings";
 
 function RequireRole({ ok, children }: { ok: boolean; children: ReactNode }) {
   return ok ? <>{children}</> : <Navigate to="/" replace />;
@@ -37,7 +42,8 @@ export function App() {
     );
   } else if (status === "error") {
     body = (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-canvas px-6 text-center">
+      <div role="alert" className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-canvas px-6 text-center">
+        <img src="/logo.png" alt="Cogito" className="h-8 w-auto" />
         <div className="font-mono text-lg">Cannot reach Cogito</div>
         <p className="max-w-sm text-sm text-muted">{error}. Check that the server is running, then try again.</p>
         <Button variant="primary" onClick={() => void load()}>
@@ -65,6 +71,19 @@ export function App() {
         <Route element={<Layout />}>
           <Route index element={<CatalogPage />} />
           <Route path="services/:id" element={<ServicePage />} />
+          <Route path="providers" element={<ProvidersPage />} />
+          <Route path="providers/ai" element={<AiBuilderPage />} />
+          <Route path="providers/ai/:runId" element={<AiRunPage />} />
+          <Route
+            path="providers/new"
+            element={
+              <RequireRole ok={can.manage(role)}>
+                <ProviderEditorPage />
+              </RequireRole>
+            }
+          />
+          <Route path="providers/:slug" element={<ProviderEditorPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="apps" element={<AppsPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route

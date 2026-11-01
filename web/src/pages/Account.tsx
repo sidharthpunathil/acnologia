@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useTitle } from "../hooks/useTitle";
 import { LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../stores/auth";
@@ -9,6 +10,7 @@ import { dateTime } from "../lib/format";
 import { Badge, Button, Card, Field, Input, PageHeader } from "../components/ui";
 
 export function AccountPage() {
+  useTitle("Account");
   const { user, updateMe, logout } = useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState(user?.name ?? "");

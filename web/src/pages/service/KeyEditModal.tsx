@@ -19,6 +19,8 @@ interface Draft {
   notes: string;
   quota_limit: string;
   secret: string;
+  /** Empty string means use the service default. */
+  max_concurrency: string;
 }
 
 function draftOf(k: Key): Draft {
@@ -34,6 +36,7 @@ function draftOf(k: Key): Draft {
     notes: k.notes,
     quota_limit: k.quota_limit === null ? "" : String(k.quota_limit),
     secret: "",
+    max_concurrency: k.max_concurrency === null || k.max_concurrency === undefined ? "" : String(k.max_concurrency),
   };
 }
 
@@ -43,11 +46,13 @@ export function KeyEditModal({
   k,
   apps,
   canHidden,
+  serviceMax = 0,
   onClose,
 }: {
   k: Key | null;
   apps: App[];
   canHidden: boolean;
+  serviceMax?: number;
   onClose: () => void;
 }) {
   const update = useKeys((s) => s.update);
@@ -84,6 +89,12 @@ export function KeyEditModal({
     }
     if (ql !== k.quota_limit) patch.quota_limit = ql;
     if (d.secret.trim()) patch.secret = d.secret.trim();
+    const mc = d.max_concurrency.trim() === "" ? null : Number(d.max_concurrency);
+    if (mc !== null && (!Number.isInteger(mc) || mc < 0 || mc > 1000)) {
+      toast.error("Concurrency override must be a whole number from 0 to 1000, or empty.");
+      return;
+    }
+    if (mc !== (k.max_concurrency ?? null)) patch.max_concurrency = mc === null ? -1 : mc;
 
     if (Object.keys(patch).length === 0) {
       onClose();
@@ -150,6 +161,21 @@ export function KeyEditModal({
           </Field>
           <Field label="Priority" hint="Lower numbers go first with fill first.">
             <Input type="number" value={d.priority} onChange={(e) => set("priority", Number(e.target.value))} />
+          </Field>
+          <Field
+            label="Max concurrent requests"
+            className="sm:col-span-2"
+            hint={`Empty uses the service default (${serviceMax > 0 ? serviceMax : "unlimited"}). 0 means unlimited for this key.`}
+          >
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={1000}
+              value={d.max_concurrency}
+              onChange={(e) => set("max_concurrency", e.target.value)}
+              placeholder={`service default (${serviceMax > 0 ? serviceMax : "unlimited"})`}
+            />
           </Field>
         </div>
 

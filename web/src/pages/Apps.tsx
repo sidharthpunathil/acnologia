@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useTitle } from "../hooks/useTitle";
 import { Boxes, Pencil, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useApps } from "../stores/apps";
 import { useServices } from "../stores/services";
@@ -13,7 +14,8 @@ import { Modal } from "../components/Modal";
 import { MultiSelect } from "../components/MultiSelect";
 import { SecretBox } from "../components/CopyButton";
 import { ConfirmButton } from "../components/ConfirmButton";
-import { Badge, Button, Empty, Field, IconButton, Input, PageHeader, PageLoading, Select, Textarea, Toggle } from "../components/ui";
+import { AiFillButton, AiFillPanel, useAiFill } from "../components/AiFill";
+import { Badge, Button, Empty, Field, IconButton, Input, PageHeader, PageSkeleton, Select, Textarea, Toggle } from "../components/ui";
 
 const MODE_HELP: Record<AppMode, string> = {
   proxy: "Calls go through /proxy. The app never sees a raw key.",
@@ -38,20 +40,40 @@ function AppFormModal({
   const services = useServices((s) => s.services);
   const [form, setForm] = useState<AppInput>(blank);
   const [busy, setBusy] = useState(false);
+  const [nameErr, setNameErr] = useState<string | null>(null);
+  const ai = useAiFill(
+    "app",
+    () => form,
+    (fields) =>
+      setForm((f) => {
+        const next = { ...f };
+        if (typeof fields.name === "string") next.name = fields.name;
+        if (typeof fields.description === "string") next.description = fields.description;
+        if (fields.mode === "proxy" || fields.mode === "lease" || fields.mode === "both") next.mode = fields.mode;
+        if (Array.isArray(fields.allowed_services)) {
+          const known = new Set(services.map((s) => s.slug));
+          next.allowed_services = fields.allowed_services.map(String).filter((x) => known.has(x));
+        }
+        return next;
+      }),
+  );
 
   useEffect(() => {
     if (!open) return;
+    setNameErr(null);
+    ai.setOpen(false);
     setForm(
       initial
         ? { name: initial.name, description: initial.description, mode: initial.mode, allowed_services: initial.allowed_services ?? [] }
         : blank,
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initial]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) {
-      toast.error("Give the app a name.");
+      setNameErr("Give the app a name, such as marketing site.");
       return;
     }
     setBusy(true);
@@ -78,6 +100,7 @@ function AppFormModal({
       onClose={onClose}
       title={initial ? `Edit ${initial.name}` : "Create app"}
       description={initial ? undefined : "An app is a consumer such as a website or an agent. It gets its own token."}
+      headerAction={<AiFillButton ai={ai} />}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -89,21 +112,30 @@ function AppFormModal({
         </>
       }
     >
-      <form id="app-form" onSubmit={submit} className="space-y-4">
-        <Field label="Name">
-          <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="marketing site" required />
+      <form id="app-form" onSubmit={submit} className="space-y-4" noValidate>
+        <AiFillPanel ai={ai} />
+        <Field label="Name" required error={nameErr} className={ai.flash("name")}>
+          <Input
+            value={form.name}
+            onChange={(e) => {
+              setForm({ ...form, name: e.target.value });
+              if (nameErr) setNameErr(null);
+            }}
+            placeholder="marketing site"
+            autoComplete="off"
+          />
         </Field>
-        <Field label="Description">
+        <Field label="Description" className={ai.flash("description")}>
           <Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </Field>
-        <Field label="Mode" hint={MODE_HELP[form.mode]}>
+        <Field label="Mode" hint={MODE_HELP[form.mode]} className={ai.flash("mode")}>
           <Select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as AppMode })}>
             <option value="proxy">proxy</option>
             <option value="lease">lease</option>
             <option value="both">both</option>
           </Select>
         </Field>
-        <div>
+        <div className={ai.flash("allowed_services")}>
           <div className="mb-1.5 text-[13px] font-medium text-ink">Allowed services</div>
           <MultiSelect
             options={services.map((s) => ({ value: s.slug, label: s.name, meta: s.slug }))}
@@ -150,6 +182,7 @@ function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null;
 }
 
 export function AppsPage() {
+  useTitle("Apps");
   const { apps, loaded, error, fetch, update, remove, rotate } = useApps();
   const { services, loaded: servicesLoaded, fetch: fetchServices } = useServices();
   const role = useAuth((s) => s.user?.role);
@@ -189,7 +222,7 @@ export function AppsPage() {
     }
   };
 
-  if (!loaded) return <PageLoading />;
+  if (!loaded) return <PageSkeleton variant="list" />;
 
   const active = apps.filter((a) => a.active).length;
 

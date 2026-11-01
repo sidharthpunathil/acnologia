@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useTitle } from "../hooks/useTitle";
 import { Plus, Users as UsersIcon } from "lucide-react";
 import { useUsers } from "../stores/users";
 import { useAuth } from "../stores/auth";
@@ -10,7 +11,7 @@ import type { Role, User } from "../lib/types";
 import { useNow } from "../hooks/useNow";
 import { Modal } from "../components/Modal";
 import { ConfirmButton } from "../components/ConfirmButton";
-import { Badge, Button, Empty, Field, Input, PageHeader, PageLoading, Select } from "../components/ui";
+import { Badge, Button, Empty, Field, Input, PageHeader, PageSkeleton, Select } from "../components/ui";
 
 const ROLE_HELP: Record<Role, string> = {
   member: "Read only: catalog, keys metadata and activity.",
@@ -85,6 +86,7 @@ function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void
 }
 
 export function UsersPage() {
+  useTitle("Users");
   const { users, loaded, fetch, update, remove } = useUsers();
   const me = useAuth((s) => s.user);
   const now = useNow(30000);
@@ -103,7 +105,7 @@ export function UsersPage() {
     }
   };
 
-  if (!loaded) return <PageLoading />;
+  if (!loaded) return <PageSkeleton variant="list" />;
 
   const sorted = [...users].sort((a, b) => a.email.localeCompare(b.email));
 

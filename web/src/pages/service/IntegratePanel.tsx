@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import type { Service } from "../../lib/types";
+import type { ProviderSpec, Service } from "../../lib/types";
+import { useProviders } from "../../stores/providers";
 import { CodeBlock } from "../../components/CodeBlock";
 import { Card, cx } from "../../components/ui";
 
@@ -17,7 +18,10 @@ const LANGS: { id: Lang; label: string }[] = [
 const TOKEN = "cog_...";
 
 /** A representative upstream call per provider so the snippets are runnable. */
-function example(s: Service): { path: string; params: [string, string][] } {
+function example(s: Service, spec?: ProviderSpec): { path: string; params: [string, string][] } {
+  // Prefer the provider's own first GET example so new providers get runnable snippets too.
+  const ex = spec?.examples?.find((e) => e.method === "GET") ?? null;
+  if (ex) return { path: ex.path || "/", params: Object.entries(ex.query ?? {}) };
   if (s.provider === "serpapi") return { path: "/search.json", params: [["q", "coffee"]] };
   if (s.provider === "elevenlabs") return { path: "/v1/voices", params: [] };
   return { path: "/", params: [] };
@@ -45,8 +49,8 @@ function authFor(s: Service) {
   };
 }
 
-function snippets(s: Service, host: string): Record<Mode, Record<Lang, string>> {
-  const ex = example(s);
+function snippets(s: Service, host: string, spec?: ProviderSpec): Record<Mode, Record<Lang, string>> {
+  const ex = example(s, spec);
   const slug = s.slug;
   const a = authFor(s);
   const q = qsOf(ex.params);
@@ -214,7 +218,8 @@ export function IntegratePanel({ service }: { service: Service }) {
   const [mode, setMode] = useState<Mode>("proxy");
   const [lang, setLang] = useState<Lang>("curl");
   const host = window.location.origin;
-  const code = snippets(service, host)[mode][lang];
+  const spec = useProviders((st) => st.providers.find((p) => p.slug === service.provider)?.spec);
+  const code = snippets(service, host, spec)[mode][lang];
 
   return (
     <div className="space-y-5">

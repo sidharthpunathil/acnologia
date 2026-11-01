@@ -7,13 +7,32 @@ import { toast } from "../../stores/toast";
 import { errorMessage } from "../../lib/api";
 import { STRATEGY_HELP } from "../../lib/format";
 import { Modal } from "../../components/Modal";
-import { ServiceForm, StrategySelect } from "../../components/ServiceForm";
+import { ConcurrencyFields, ServiceForm, StrategySelect, validateService, type ServiceErrors } from "../../components/ServiceForm";
 import { ConfirmButton } from "../../components/ConfirmButton";
+import { LogoEditor } from "../../components/LogoEditor";
+import { AiFillButton, AiFillPanel, useAiFill } from "../../components/AiFill";
+import { useProviders } from "../../stores/providers";
 import { Button, Card, Field, Input } from "../../components/ui";
+import { applyServiceFields } from "../AddServiceModal";
 
 function inputOf(s: Service): ServiceInput {
   const { slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon } = s;
-  return { slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon };
+  return {
+    slug,
+    name,
+    provider,
+    category,
+    description,
+    base_url,
+    auth_type,
+    auth_name,
+    strategy,
+    cooldown_sec,
+    max_attempts,
+    icon,
+    max_concurrency: s.max_concurrency ?? 0,
+    queue_timeout_sec: s.queue_timeout_sec ?? 0,
+  };
 }
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -26,11 +45,20 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 export function ServiceSettings({ service, canManage }: { service: Service; canManage: boolean }) {
-  const { update, remove } = useServices();
+  const { update, remove, setLogo, removeLogo } = useServices();
+  const provider = useProviders((s) => s.providers.find((p) => p.slug === service.provider));
   const navigate = useNavigate();
   const [strategy, setStrategy] = useState<Strategy>(service.strategy);
   const [cooldown, setCooldown] = useState(service.cooldown_sec);
   const [attempts, setAttempts] = useState(service.max_attempts);
+  const [maxConc, setMaxConc] = useState(service.max_concurrency ?? 0);
+  const [queueSec, setQueueSec] = useState(service.queue_timeout_sec ?? 0);
+  const [editErrors, setEditErrors] = useState<ServiceErrors>({});
+  const ai = useAiFill(
+    "service",
+    () => editing ?? inputOf(service),
+    (fields) => setEditing((f) => applyServiceFields(f ?? inputOf(service), fields)),
+  );
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<ServiceInput | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -39,14 +67,27 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
     setStrategy(service.strategy);
     setCooldown(service.cooldown_sec);
     setAttempts(service.max_attempts);
+    setMaxConc(service.max_concurrency ?? 0);
+    setQueueSec(service.queue_timeout_sec ?? 0);
   }, [service]);
 
-  const dirty = strategy !== service.strategy || cooldown !== service.cooldown_sec || attempts !== service.max_attempts;
+  const dirty =
+    strategy !== service.strategy ||
+    cooldown !== service.cooldown_sec ||
+    attempts !== service.max_attempts ||
+    maxConc !== (service.max_concurrency ?? 0) ||
+    queueSec !== (service.queue_timeout_sec ?? 0);
 
   const saveStrategy = async () => {
     setSaving(true);
     try {
-      await update(service.id, { strategy, cooldown_sec: cooldown, max_attempts: attempts });
+      await update(service.id, {
+        strategy,
+        cooldown_sec: cooldown,
+        max_attempts: attempts,
+        max_concurrency: maxConc,
+        queue_timeout_sec: queueSec,
+      });
       toast.success("Rotation settings saved");
     } catch (e) {
       toast.error(errorMessage(e));
@@ -57,6 +98,9 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
 
   const saveEdit = async () => {
     if (!editing) return;
+    const errs = validateService(editing);
+    setEditErrors(errs);
+    if (Object.keys(errs).length) return;
     setSavingEdit(true);
     try {
       const { slug: _slug, ...rest } = editing;
@@ -75,8 +119,8 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
       <Card className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-[15px] font-semibold text-ink">Rotation</h3>
-            <p className="mt-0.5 text-[13px] text-muted">How Cogito chooses the next key and how long a rate limited key rests.</p>
+            <h3 className="text-[15px] font-semibold text-ink">Rotation and concurrency</h3>
+            <p className="mt-0.5 text-[13px] text-muted">How Cogito picks the next key, how long a rate limited key rests, and how many requests a key may serve at once.</p>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -90,6 +134,17 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
             <Input type="number" min={1} max={20} value={attempts} disabled={!canManage} onChange={(e) => setAttempts(Number(e.target.value))} />
           </Field>
         </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <ConcurrencyFields
+            maxConcurrency={maxConc}
+            queueSec={queueSec}
+            disabled={!canManage}
+            onChange={(p) => {
+              if (p.max_concurrency !== undefined) setMaxConc(p.max_concurrency);
+              if (p.queue_timeout_sec !== undefined) setQueueSec(p.queue_timeout_sec);
+            }}
+          />
+        </div>
         {canManage && (
           <div className="mt-4 flex justify-end gap-2">
             {dirty && (
@@ -99,6 +154,8 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
                   setStrategy(service.strategy);
                   setCooldown(service.cooldown_sec);
                   setAttempts(service.max_attempts);
+                  setMaxConc(service.max_concurrency ?? 0);
+                  setQueueSec(service.queue_timeout_sec ?? 0);
                 }}
               >
                 Discard
@@ -112,21 +169,45 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
       </Card>
 
       <Card className="p-5">
+        <h3 className="text-[15px] font-semibold text-ink">Logo</h3>
+        <p className="mb-4 mt-0.5 text-[13px] text-muted">Shown in the catalog and on this page.</p>
+        <LogoEditor
+          src={service.logo_url ?? provider?.logo_url}
+          name={service.name}
+          color={provider?.color}
+          // Own logos are served from /api/logos/services/{id}; anything else is inherited.
+          hasOwn={!!service.logo_url && service.logo_url.includes("/logos/services/")}
+          disabled={!canManage}
+          onUpload={(logo) => setLogo(service.id, logo)}
+          onRemove={() => removeLogo(service.id)}
+          inheritedNote={provider ? `Without its own logo the service uses ${provider.name}'s.` : undefined}
+        />
+      </Card>
+
+      <Card className="p-5">
         <div className="flex items-start justify-between gap-4">
           <h3 className="text-[15px] font-semibold text-ink">Details</h3>
           {canManage && (
-            <Button size="sm" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditing(inputOf(service))}>
+            <Button
+              size="sm"
+              icon={<Pencil className="h-3.5 w-3.5" />}
+              onClick={() => {
+                setEditErrors({});
+                setEditing(inputOf(service));
+              }}
+            >
               Edit
             </Button>
           )}
         </div>
         <dl className="mt-2 divide-y divide-line">
           <Row label="Slug" value={service.slug} />
-          <Row label="Provider" value={service.provider} />
+          <Row label="Provider" value={provider ? `${provider.name} (${service.provider})` : service.provider} />
           <Row label="Base URL" value={service.base_url} />
           <Row label="Auth" value={`${service.auth_type}${service.auth_name ? ` · ${service.auth_name}` : ""}`} />
           <Row label="Category" value={service.category} />
           <Row label="Description" value={service.description} />
+          <Row label="Concurrency" value={service.max_concurrency ? `${service.max_concurrency} per key, queue ${service.queue_timeout_sec}s` : "unlimited"} />
         </dl>
       </Card>
 
@@ -157,6 +238,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         onClose={() => setEditing(null)}
         wide
         title={`Edit ${service.name}`}
+        headerAction={<AiFillButton ai={ai} />}
         footer={
           <>
             <Button variant="ghost" onClick={() => setEditing(null)}>
@@ -168,7 +250,21 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
           </>
         }
       >
-        {editing && <ServiceForm value={editing} onChange={setEditing} slugLocked />}
+        {editing && (
+          <>
+            <AiFillPanel ai={ai} />
+            <ServiceForm
+              value={editing}
+              errors={editErrors}
+              flash={ai.flash}
+              onChange={(v) => {
+                setEditing(v);
+                if (Object.keys(editErrors).length) setEditErrors(validateService(v));
+              }}
+              slugLocked
+            />
+          </>
+        )}
       </Modal>
     </div>
   );
