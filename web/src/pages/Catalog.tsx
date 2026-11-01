@@ -148,7 +148,7 @@ export function CatalogPage() {
             title="No services yet"
             body={
               can.manage(role)
-                ? "Pick a provider such as SerpAPI or ElevenLabs, then paste in the API keys for each account you own. Missing one? Build it with AI."
+                ? "Pick a provider, then paste in the API keys for each account you own. Missing one? Build it with AI."
                 : "An admin has not added any services yet. Ask one to add a service and its keys."
             }
             action={

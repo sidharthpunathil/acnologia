@@ -96,7 +96,7 @@ export function AiFillButton({ ai, className }: { ai: AiFillState; className?: s
 
 const PLACEHOLDER: Record<AssistForm, string> = {
   app: "my Next.js marketing site that only does search",
-  service: "SerpAPI pool for our scraper, gentle on rate limits",
+  service: "search pool for our scraper, gentle on rate limits",
   provider: "Resend, the transactional email API",
 };
 

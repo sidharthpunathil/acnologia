@@ -17,13 +17,11 @@ const LANGS: { id: Lang; label: string }[] = [
 
 const TOKEN = "cog_...";
 
-/** A representative upstream call per provider so the snippets are runnable. */
-function example(s: Service, spec?: ProviderSpec): { path: string; params: [string, string][] } {
+/** A representative upstream call, taken from the provider spec, so snippets are runnable. */
+function example(_s: Service, spec?: ProviderSpec): { path: string; params: [string, string][] } {
   // Prefer the provider's own first GET example so new providers get runnable snippets too.
   const ex = spec?.examples?.find((e) => e.method === "GET") ?? null;
   if (ex) return { path: ex.path || "/", params: Object.entries(ex.query ?? {}) };
-  if (s.provider === "serpapi") return { path: "/search.json", params: [["q", "coffee"]] };
-  if (s.provider === "elevenlabs") return { path: "/v1/voices", params: [] };
   return { path: "/", params: [] };
 }
 
