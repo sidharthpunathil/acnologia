@@ -60,7 +60,7 @@ export function setUnauthorizedHandler(fn: UnauthorizedHandler) {
 
 type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
-async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = {
     method,
     credentials: "include",

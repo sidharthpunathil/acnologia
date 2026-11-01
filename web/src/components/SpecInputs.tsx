@@ -48,6 +48,38 @@ export function StatusListInput({ value, onChange, ...rest }: { value: number[] 
   );
 }
 
+/**
+ * A number input where empty means "not set". Keeps the raw text while typing
+ * (so "-" or "0." survive) and emits undefined instead of an empty string.
+ */
+export function OptionalNumberInput({
+  value,
+  onChange,
+  ...rest
+}: { value: number | undefined | null; onChange: (v: number | undefined) => void } & InputProps) {
+  const show = (v: number | undefined | null) => (v === undefined || v === null ? "" : String(v));
+  const [text, setText] = useState(show(value));
+  useEffect(() => {
+    const parsed = text.trim() === "" ? undefined : Number(text);
+    if (parsed !== (value ?? undefined)) setText(show(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <Input
+      {...rest}
+      type="number"
+      inputMode="decimal"
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        const t = e.target.value.trim();
+        if (t === "") onChange(undefined);
+        else if (Number.isFinite(Number(t))) onChange(Number(t));
+      }}
+    />
+  );
+}
+
 /** Editable string map, used for query params and fixture headers. */
 export function KeyValueEditor({
   value,

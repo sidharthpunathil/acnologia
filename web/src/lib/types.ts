@@ -18,6 +18,8 @@ export interface KeyCounts {
   cooling: number;
   exhausted: number;
   invalid: number;
+  /** Keys whose account the provider suspended. */
+  banned?: number;
   disabled: number;
   backup: number;
   /** Keys currently at their concurrency limit. */
@@ -54,6 +56,12 @@ export interface Service {
   in_flight: number;
   /** False after a non-superadmin changed where keys are sent; hidden keys pause until a superadmin saves. */
   target_trusted: boolean;
+  /** Egress proxy for this service's traffic; null connects directly. */
+  egress_id?: number | null;
+  /** Response cache TTL override; null uses the provider default. */
+  cache_ttl_sec?: number | null;
+  /** USD per request override; null uses the provider default. */
+  cost_per_request?: number | null;
 }
 
 export type ServiceInput = Pick<
@@ -71,9 +79,9 @@ export type ServiceInput = Pick<
   | "max_attempts"
   | "icon"
 > &
-  Partial<Pick<Service, "max_concurrency" | "queue_timeout_sec">>;
+  Partial<Pick<Service, "max_concurrency" | "queue_timeout_sec" | "egress_id" | "cache_ttl_sec" | "cost_per_request">>;
 
-export type KeyStatus = "active" | "disabled" | "exhausted" | "invalid";
+export type KeyStatus = "active" | "disabled" | "exhausted" | "invalid" | "banned";
 export type EffectiveStatus = KeyStatus | "cooling";
 export type Tier = "primary" | "backup";
 
@@ -112,6 +120,8 @@ export interface Key {
   validity_reason: string;
   /** From the provider spec, such as "searches". May be empty. */
   quota_unit: string;
+  /** Egress proxy for this key; null falls back to the service's. */
+  egress_id?: number | null;
 }
 
 export type Validity = "valid" | "invalid" | "unknown";
@@ -174,6 +184,8 @@ export interface NewKeyInput {
 }
 
 export type KeyPatch = Partial<{
+  /** Egress proxy id; 0 falls back to the service's proxy. */
+  egress_id: number;
   label: string;
   secret: string;
   tier: Tier;
@@ -203,6 +215,13 @@ export interface App {
   last_used_at: string | null;
   /** Lets the app lease hidden keys. Only a superadmin can turn it on. */
   lease_hidden: boolean;
+  /** Request and budget caps; null fields mean no limit. */
+  limits?: {
+    daily_requests: number | null;
+    monthly_requests: number | null;
+    daily_budget: number | null;
+    monthly_budget: number | null;
+  };
 }
 
 export type AppInput = Pick<App, "name" | "description" | "mode" | "allowed_services"> & { lease_hidden?: boolean };
@@ -220,7 +239,12 @@ export type EventKind =
   | "quota_exhausted"
   | "invalid"
   | "error"
-  | "health";
+  | "health"
+  | "busy"
+  | "banned"
+  | "cache_hit"
+  | "service_down"
+  | "service_up";
 
 export const EVENT_KINDS: EventKind[] = [
   "lease",
@@ -231,6 +255,11 @@ export const EVENT_KINDS: EventKind[] = [
   "invalid",
   "error",
   "health",
+  "busy",
+  "banned",
+  "cache_hit",
+  "service_down",
+  "service_up",
 ];
 
 export interface CogitoEvent {
@@ -283,6 +312,7 @@ export interface Overview {
     cooling: number;
     exhausted: number;
     invalid: number;
+    banned?: number;
     disabled: number;
     backup: number;
     busy?: number;
@@ -290,13 +320,15 @@ export interface Overview {
   in_flight?: number;
   requests_24h: number;
   rate_limits_24h: number;
+  cache_hits_24h?: number;
+  spend_24h?: number;
   recent_events: CogitoEvent[];
 }
 
 // Providers as data. Mirrors docs/superpowers/specs/2026-11-01-providers-as-data-and-ai-builder.md
 
-export type Outcome = "ok" | "rate_limited" | "quota_exhausted" | "invalid" | "error";
-export const OUTCOMES: Outcome[] = ["ok", "rate_limited", "quota_exhausted", "invalid", "error"];
+export type Outcome = "ok" | "rate_limited" | "busy" | "quota_exhausted" | "invalid" | "banned" | "error";
+export const OUTCOMES: Outcome[] = ["ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error"];
 export type RetrySource = "header" | "fixed" | "next_hour" | "body_json" | "none";
 
 export interface SpecMatch {
@@ -328,6 +360,15 @@ export interface QuotaPaths {
   reset_at?: string;
   reset_format?: string;
   window?: QuotaWindow;
+}
+
+/** Response headers that carry quota; index picks an entry of a comma list. */
+export interface QuotaHeaders {
+  limit?: string;
+  remaining?: string;
+  reset?: string;
+  reset_format?: "" | "seconds" | "unix" | "unix_ms" | "iso8601" | "http_date";
+  index?: number;
 }
 
 export interface SpecHealth {
@@ -365,8 +406,18 @@ export interface ProviderSpec {
     max_attempts: number;
     max_concurrency: number;
     queue_timeout_sec: number;
+    cache_ttl_sec?: number;
+    breaker_threshold?: number;
+    breaker_window_sec?: number;
+    breaker_reset_sec?: number;
   };
-  quota?: { unit: string; counts_per_request: boolean };
+  quota?: {
+    unit: string;
+    counts_per_request: boolean;
+    headers?: QuotaHeaders;
+    cost_per_request?: number;
+    free_tier?: string;
+  };
   rules: SpecRule[];
   use_standard_rules: boolean;
   health: SpecHealth | null;

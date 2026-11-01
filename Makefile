@@ -9,6 +9,7 @@ web:
 
 llms:
 	cp docs/llms.txt server/internal/llmstxt/llms.txt
+	cp docs/llms-full.txt server/internal/llmstxt/llms-full.txt
 
 build: web llms
 	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../bin/cogito ./cmd/cogito

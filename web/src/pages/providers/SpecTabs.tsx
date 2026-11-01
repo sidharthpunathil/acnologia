@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, ChevronDown, Copy, FlaskConical, ListOrdered, Plus, Trash2, XCircle } from "lucide-react";
-import type { AuthType, Outcome, ProviderSpec, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecRule, Strategy, TestReport } from "../../lib/types";
+import type { AuthType, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecRule, Strategy, TestReport } from "../../lib/types";
 import { OUTCOMES } from "../../lib/types";
 import { STRATEGY_HELP } from "../../lib/format";
 import { ConcurrencyFields, StrategySelect } from "../../components/ServiceForm";
-import { JsonTextarea, KeyValueEditor, ListInput, MatchEditor } from "../../components/SpecInputs";
+import { JsonTextarea, KeyValueEditor, ListInput, MatchEditor, OptionalNumberInput } from "../../components/SpecInputs";
 import { Badge, Button, Empty, Field, IconButton, Input, Section, Select, Textarea, Toggle, cx } from "../../components/ui";
 
 export interface SpecTabProps {
@@ -16,16 +16,20 @@ export interface SpecTabProps {
 const OUTCOME_LABEL: Record<Outcome, string> = {
   ok: "ok (the key is fine)",
   rate_limited: "rate limited (cool down)",
+  busy: "busy (at its concurrency cap, steps aside about a second, no backoff)",
   quota_exhausted: "quota exhausted (park until reset)",
   invalid: "invalid (disable key)",
+  banned: "banned (account suspended, out of rotation until an operator resets it)",
   error: "error (provider problem, key keeps working)",
 };
 
 const OUTCOME_TONE: Record<string, "green" | "amber" | "red" | "neutral"> = {
   ok: "green",
   rate_limited: "amber",
+  busy: "amber",
   quota_exhausted: "amber",
   invalid: "red",
+  banned: "red",
   error: "neutral",
 };
 
@@ -84,6 +88,13 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
   const d = spec.defaults;
   const setD = (p: Partial<ProviderSpec["defaults"]>) => set({ defaults: { ...d, ...p } });
   const quota = spec.quota ?? { unit: "", counts_per_request: false };
+  const qh: QuotaHeaders = quota.headers ?? {};
+  // Empty header fields are cleared to undefined so they never reach the server as "".
+  const setQH = (p: Partial<QuotaHeaders>) => {
+    const next: QuotaHeaders = { ...qh, ...p };
+    for (const k of Object.keys(next) as Array<keyof QuotaHeaders>) if (next[k] === "" || next[k] === undefined) delete next[k];
+    set({ quota: { ...quota, headers: Object.keys(next).length ? next : undefined } });
+  };
   return (
     <div className="space-y-5">
       <Section title="Upstream" description="Where requests go and where the key goes on each request.">
@@ -142,6 +153,26 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
             onChange={(p) => setD(p)}
           />
         </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="Response cache (sec)" hint="How long identical successful responses are reused. Empty or 0 turns caching off.">
+            <OptionalNumberInput min={0} value={d.cache_ttl_sec} disabled={readOnly} onChange={(v) => setD({ cache_ttl_sec: v })} placeholder="off" />
+          </Field>
+        </div>
+        <fieldset className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <legend className="mb-1 font-mono text-[11px] uppercase tracking-wide text-faint">Circuit breaker</legend>
+          <p className="text-xs leading-relaxed text-muted sm:col-span-3">
+            Pauses the whole service after too many provider errors in a row. Leave empty or 0 for the defaults: 10 errors in 60s pause it for 30s. A threshold of -1 turns the breaker off.
+          </p>
+          <Field label="Error threshold">
+            <OptionalNumberInput min={-1} value={d.breaker_threshold} disabled={readOnly} onChange={(v) => setD({ breaker_threshold: v })} placeholder="10" />
+          </Field>
+          <Field label="Window (sec)">
+            <OptionalNumberInput min={0} value={d.breaker_window_sec} disabled={readOnly} onChange={(v) => setD({ breaker_window_sec: v })} placeholder="60" />
+          </Field>
+          <Field label="Pause (sec)">
+            <OptionalNumberInput min={0} value={d.breaker_reset_sec} disabled={readOnly} onChange={(v) => setD({ breaker_reset_sec: v })} placeholder="30" />
+          </Field>
+        </fieldset>
       </Section>
 
       <Section title="Quota" description="How Cogito counts usage between health checks.">
@@ -158,7 +189,52 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
               onChange={(v) => set({ quota: { ...quota, counts_per_request: v } })}
             />
           </div>
+          <Field label="Cost per request (USD)" hint="Used for spend totals and app budgets. Empty means free or unknown.">
+            <OptionalNumberInput
+              min={0}
+              step="any"
+              value={quota.cost_per_request}
+              disabled={readOnly}
+              onChange={(v) => set({ quota: { ...quota, cost_per_request: v } })}
+              placeholder="0.002"
+              className="font-mono"
+            />
+          </Field>
+          <Field label="Free tier" hint="Short note shown in the catalog.">
+            <Input
+              value={quota.free_tier ?? ""}
+              disabled={readOnly}
+              onChange={(e) => set({ quota: { ...quota, free_tier: e.target.value || undefined } })}
+              placeholder="1,000 searches a month"
+            />
+          </Field>
         </div>
+        <fieldset className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <legend className="mb-1 font-mono text-[11px] uppercase tracking-wide text-faint">Quota from response headers (optional)</legend>
+          <p className="text-xs leading-relaxed text-muted sm:col-span-3">Header names Cogito reads on every response to keep the remaining quota fresh.</p>
+          <Field label="Limit header">
+            <Input value={qh.limit ?? ""} disabled={readOnly} onChange={(e) => setQH({ limit: e.target.value })} placeholder="X-RateLimit-Limit" className="font-mono" spellCheck={false} />
+          </Field>
+          <Field label="Remaining header">
+            <Input value={qh.remaining ?? ""} disabled={readOnly} onChange={(e) => setQH({ remaining: e.target.value })} placeholder="X-RateLimit-Remaining" className="font-mono" spellCheck={false} />
+          </Field>
+          <Field label="Reset header">
+            <Input value={qh.reset ?? ""} disabled={readOnly} onChange={(e) => setQH({ reset: e.target.value })} placeholder="X-RateLimit-Reset" className="font-mono" spellCheck={false} />
+          </Field>
+          <Field label="Reset format">
+            <Select value={qh.reset_format ?? ""} disabled={readOnly} onChange={(e) => setQH({ reset_format: e.target.value as QuotaHeaders["reset_format"] })}>
+              <option value="">not set</option>
+              <option value="seconds">seconds from now</option>
+              <option value="unix">unix seconds</option>
+              <option value="unix_ms">unix milliseconds</option>
+              <option value="iso8601">ISO 8601</option>
+              <option value="http_date">HTTP date</option>
+            </Select>
+          </Field>
+          <Field label="Index" hint="Pick entry N of a comma list such as 1, 2000; use the longest window." className="sm:col-span-2">
+            <OptionalNumberInput min={0} step={1} value={qh.index} disabled={readOnly} onChange={(v) => setQH({ index: v })} placeholder="0" />
+          </Field>
+        </fieldset>
       </Section>
     </div>
   );

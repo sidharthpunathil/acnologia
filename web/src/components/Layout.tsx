@@ -2,9 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
+  Bell,
   Blocks,
+  BookOpen,
   Boxes,
   ChevronDown,
+  GitBranch,
+  Globe,
   KeyRound,
   LayoutGrid,
   LogOut,
@@ -40,6 +44,8 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   end?: boolean;
+  /** Secondary pages live in the account menu on desktop instead of the top bar. */
+  secondary?: boolean;
 }
 
 function useSignOut() {
@@ -52,7 +58,7 @@ function useSignOut() {
 }
 
 /** Desktop account menu: who you are, theme, account and sign out. */
-function AccountMenu() {
+function AccountMenu({ items = [] }: { items?: NavItem[] }) {
   const user = useAuth((s) => s.user);
   const signOut = useSignOut();
   const [open, setOpen] = useState(false);
@@ -105,6 +111,16 @@ function AccountMenu() {
             <div className="mb-2 text-xs font-medium text-muted">Theme</div>
             <ThemePicker size="sm" className="w-full" />
           </div>
+          {items.length > 0 && (
+            <div className="border-t border-line py-1">
+              <div className="px-3 pb-1 pt-2 text-xs font-medium text-muted">Manage</div>
+              {items.map((l) => (
+                <Link key={l.to} to={l.to} className="tap flex h-10 items-center gap-2.5 rounded-lg px-3 text-[14px] text-ink hover:bg-soft">
+                  <l.icon className="h-4 w-4 text-muted" aria-hidden="true" /> {l.label}
+                </Link>
+              ))}
+            </div>
+          )}
           <div className="border-t border-line pt-1">
             <Link to="/account" className="tap flex h-10 items-center gap-2.5 rounded-lg px-3 text-[14px] text-ink hover:bg-soft">
               <UserRound className="h-4 w-4 text-muted" aria-hidden="true" /> Your account
@@ -176,10 +192,16 @@ export function Layout() {
     { to: "/apps", label: "Apps", icon: Boxes, show: true },
     { to: "/activity", label: "Activity", icon: Activity, show: true },
     { to: "/settings", label: "Settings", icon: Settings, show: true },
+    { to: "/groups", label: "Service groups", icon: GitBranch, show: true, secondary: true },
+    { to: "/webhooks", label: "Webhooks", icon: Bell, show: true, secondary: true },
+    { to: "/egress", label: "Egress proxies", icon: Globe, show: true, secondary: true },
     { to: "/users", label: "Users", icon: Users, show: can.users(role) },
     { to: "/audit", label: "Audit", icon: ShieldCheck, show: can.audit(role) },
+    { to: "/docs", label: "Docs", icon: BookOpen, show: true, secondary: true },
   ];
   const links = all.filter((l) => l.show);
+  const primary = links.filter((l) => !l.secondary);
+  const secondary = links.filter((l) => l.secondary);
   // Four destinations people use most sit in the tab bar; the rest live under More.
   const TAB_PATHS = ["/", "/keys", "/providers", "/activity"];
   const tabs = links.filter((l) => TAB_PATHS.includes(l.to));
@@ -238,12 +260,12 @@ export function Layout() {
         <div className="mx-auto flex h-14 max-w-[1240px] items-center justify-between gap-4 px-4 sm:px-6">
           <Logo />
           <nav aria-label="Main" className="hidden items-center gap-1 lg:flex">
-            {links.map((l) => (
+            {primary.map((l) => (
               <NavLink key={l.to} to={l.to} end={l.end} className={linkCls}>
                 {l.label}
               </NavLink>
             ))}
-            <AccountMenu />
+            <AccountMenu items={secondary} />
           </nav>
           <Link
             to="/account"

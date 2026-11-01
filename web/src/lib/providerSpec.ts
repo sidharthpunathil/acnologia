@@ -1,4 +1,4 @@
-import type { Provider, ProviderInput, ProviderSpec, ProviderTemplate, Strategy, AuthType } from "./types";
+import type { Provider, ProviderInput, ProviderSpec, ProviderTemplate, QuotaHeaders, Strategy, AuthType } from "./types";
 
 export const DEFAULT_COLOR = "#6b6b66";
 
@@ -30,16 +30,55 @@ export function blankProviderInput(): ProviderInput {
   };
 }
 
+/** A finite number, or undefined for empty strings, null and junk, so JSON drops the field. */
+function optNum(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function optStr(v: unknown): string | undefined {
+  return typeof v === "string" && v.trim() !== "" ? v : undefined;
+}
+
+/** Drops empty header names, an empty reset format and a missing index; undefined when nothing is left. */
+export function pruneQuotaHeaders(h: QuotaHeaders | undefined): QuotaHeaders | undefined {
+  if (!h) return undefined;
+  const out: QuotaHeaders = {
+    limit: optStr(h.limit),
+    remaining: optStr(h.remaining),
+    reset: optStr(h.reset),
+    reset_format: (optStr(h.reset_format) as QuotaHeaders["reset_format"]) ?? undefined,
+    index: optNum(h.index),
+  };
+  for (const k of Object.keys(out) as Array<keyof QuotaHeaders>) if (out[k] === undefined) delete out[k];
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Fill in anything a stored or AI written spec left out, so editors never hit undefined. */
 export function normalizeSpec(s: Partial<ProviderSpec> | null | undefined): ProviderSpec {
   const b = blankSpec();
   const src = s ?? {};
+  const defaults = { ...b.defaults, ...(src.defaults ?? {}) };
+  for (const k of ["cache_ttl_sec", "breaker_threshold", "breaker_window_sec", "breaker_reset_sec"] as const) {
+    const n = optNum(defaults[k]);
+    if (n === undefined) delete defaults[k];
+    else defaults[k] = n;
+  }
+  const quota = { ...b.quota!, ...(src.quota ?? {}) };
+  const headers = pruneQuotaHeaders(quota.headers);
+  if (headers) quota.headers = headers;
+  else delete quota.headers;
+  const cost = optNum(quota.cost_per_request);
+  if (cost === undefined) delete quota.cost_per_request;
+  else quota.cost_per_request = cost;
+  if (!optStr(quota.free_tier)) delete quota.free_tier;
   return {
     ...b,
     ...src,
     auth: { ...b.auth, ...(src.auth ?? {}) },
-    defaults: { ...b.defaults, ...(src.defaults ?? {}) },
-    quota: { ...b.quota!, ...(src.quota ?? {}) },
+    defaults,
+    quota,
     rules: src.rules ?? [],
     examples: src.examples ?? [],
     tests: src.tests ?? [],

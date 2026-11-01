@@ -1,20 +1,21 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Pencil, TriangleAlert } from "lucide-react";
+import { Eraser, Pencil, RotateCcw, TriangleAlert } from "lucide-react";
 import { useAuth } from "../../stores/auth";
 import { can } from "../../lib/perms";
 import type { Service, ServiceInput, Strategy } from "../../lib/types";
 import { useServices } from "../../stores/services";
 import { toast } from "../../stores/toast";
 import { errorMessage } from "../../lib/api";
-import { STRATEGY_HELP } from "../../lib/format";
+import { STRATEGY_HELP, countdown, plural, relTime } from "../../lib/format";
+import { ops, usd, type BreakerReport, type EgressProxy } from "../../lib/ops";
 import { Modal } from "../../components/Modal";
 import { ConcurrencyFields, ServiceForm, StrategySelect, validateService, type ServiceErrors } from "../../components/ServiceForm";
 import { ConfirmButton } from "../../components/ConfirmButton";
 import { LogoEditor } from "../../components/LogoEditor";
 import { AiFillButton, AiFillPanel, useAiFill } from "../../components/AiFill";
 import { useProviders } from "../../stores/providers";
-import { Button, Callout, Card, Field, Input } from "../../components/ui";
+import { Badge, Button, Callout, Card, Field, Input, Select } from "../../components/ui";
 import { applyServiceFields } from "../AddServiceModal";
 
 function inputOf(s: Service): ServiceInput {
@@ -43,6 +44,266 @@ function Row({ label, value }: { label: string; value: string }) {
       <dt className="font-mono text-[11px] uppercase tracking-wide text-faint sm:w-36 sm:shrink-0 sm:pt-0.5">{label}</dt>
       <dd className="wrap-anywhere min-w-0 text-[13px] text-ink">{value || "-"}</dd>
     </div>
+  );
+}
+
+type Mode = "default" | "custom";
+
+/** Proxy, response cache and cost overrides. Each override is null on the service when it follows the provider. */
+function TrafficCard({ service, canManage, isSuper }: { service: Service; canManage: boolean; isSuper: boolean }) {
+  const { update } = useServices();
+  const provider = useProviders((s) => s.providers.find((p) => p.slug === service.provider));
+  const specTtl = provider?.spec?.defaults?.cache_ttl_sec;
+  const specCost = provider?.spec?.quota?.cost_per_request;
+  const ttlDefault = specTtl === undefined ? "Provider default" : specTtl > 0 ? `Provider default, ${specTtl}s` : "Provider default, off";
+  const costDefault = specCost === undefined ? "Provider default" : `Provider default, ${usd(specCost, 4)}`;
+
+  const [proxies, setProxies] = useState<EgressProxy[] | null>(null);
+  const [egress, setEgress] = useState(service.egress_id ?? 0);
+  const [ttlMode, setTtlMode] = useState<Mode>(service.cache_ttl_sec == null ? "default" : "custom");
+  const [ttl, setTtl] = useState(service.cache_ttl_sec == null ? "" : String(service.cache_ttl_sec));
+  const [costMode, setCostMode] = useState<Mode>(service.cost_per_request == null ? "default" : "custom");
+  const [cost, setCost] = useState(service.cost_per_request == null ? "" : String(service.cost_per_request));
+  const [saving, setSaving] = useState(false);
+  const [purging, setPurging] = useState(false);
+
+  const reset = useCallback(() => {
+    setEgress(service.egress_id ?? 0);
+    setTtlMode(service.cache_ttl_sec == null ? "default" : "custom");
+    setTtl(service.cache_ttl_sec == null ? "" : String(service.cache_ttl_sec));
+    setCostMode(service.cost_per_request == null ? "default" : "custom");
+    setCost(service.cost_per_request == null ? "" : String(service.cost_per_request));
+  }, [service.egress_id, service.cache_ttl_sec, service.cost_per_request]);
+  useEffect(reset, [reset]);
+
+  useEffect(() => {
+    let live = true;
+    ops
+      .listEgress()
+      .then((r) => live && setProxies(r.proxies))
+      .catch(() => live && setProxies([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const ttlValue = ttlMode === "default" ? null : ttl.trim() === "" ? NaN : Number(ttl);
+  const costValue = costMode === "default" ? null : cost.trim() === "" ? NaN : Number(cost);
+  const dirty =
+    egress !== (service.egress_id ?? 0) || ttlValue !== (service.cache_ttl_sec ?? null) || costValue !== (service.cost_per_request ?? null);
+
+  const save = async () => {
+    if (ttlValue !== null && (!Number.isInteger(ttlValue) || ttlValue < 0)) {
+      toast.error("Cache TTL must be a whole number of seconds, 0 or more.");
+      return;
+    }
+    if (costValue !== null && (!Number.isFinite(costValue) || costValue < 0)) {
+      toast.error("Cost per request must be 0 or more.");
+      return;
+    }
+    const patch: Partial<ServiceInput> = {};
+    if (egress !== (service.egress_id ?? 0)) patch.egress_id = egress;
+    // -1 tells the server to drop the override and follow the provider again.
+    if (ttlValue !== (service.cache_ttl_sec ?? null)) patch.cache_ttl_sec = ttlValue ?? -1;
+    if (costValue !== (service.cost_per_request ?? null)) patch.cost_per_request = costValue ?? -1;
+    setSaving(true);
+    try {
+      await update(service.id, patch);
+      toast.success("Traffic settings saved");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const purge = async () => {
+    setPurging(true);
+    try {
+      const r = await ops.purgeCache(service.id);
+      toast.success(`Purged ${plural(r.purged, "cached response")}`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPurging(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-[15px] font-semibold text-ink">Traffic</h3>
+          <p className="mt-0.5 text-[13px] text-muted">Which proxy requests leave through, how long responses are cached, and what each request costs.</p>
+        </div>
+        {canManage && (
+          <Button size="sm" icon={<Eraser className="h-3.5 w-3.5" />} loading={purging} onClick={purge}>
+            Purge cache
+          </Button>
+        )}
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Field
+          label="Egress proxy"
+          hint={
+            canManage && !isSuper
+              ? "Changing it pauses hidden keys until a superadmin saves the service again."
+              : "Keys can pick their own proxy too."
+          }
+        >
+          <Select value={egress} disabled={!canManage} onChange={(e) => setEgress(Number(e.target.value))}>
+            <option value={0}>Direct (no proxy)</option>
+            {(proxies ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.region ? `${p.name} (${p.region})` : p.name}
+              </option>
+            ))}
+            {egress > 0 && !proxies?.some((p) => p.id === egress) && <option value={egress}>{`Proxy #${egress}`}</option>}
+          </Select>
+        </Field>
+        <Field label="Response cache" hint={ttlMode === "custom" ? "Seconds to reuse an identical successful response. 0 turns it off." : undefined}>
+          <div className="flex gap-2">
+            <Select value={ttlMode} disabled={!canManage} onChange={(e) => setTtlMode(e.target.value as Mode)} className="min-w-0 flex-1">
+              <option value="default">{ttlDefault}</option>
+              <option value="custom">Custom</option>
+            </Select>
+            {ttlMode === "custom" && (
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                aria-label="Cache TTL in seconds"
+                value={ttl}
+                disabled={!canManage}
+                onChange={(e) => setTtl(e.target.value)}
+                placeholder="sec"
+                className="w-24 shrink-0"
+              />
+            )}
+          </div>
+        </Field>
+        <Field label="Cost per request" hint={costMode === "custom" ? "USD, used for spend totals and app budgets." : undefined}>
+          <div className="flex gap-2">
+            <Select value={costMode} disabled={!canManage} onChange={(e) => setCostMode(e.target.value as Mode)} className="min-w-0 flex-1">
+              <option value="default">{costDefault}</option>
+              <option value="custom">Custom</option>
+            </Select>
+            {costMode === "custom" && (
+              <Input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="any"
+                aria-label="Cost per request in USD"
+                value={cost}
+                disabled={!canManage}
+                onChange={(e) => setCost(e.target.value)}
+                placeholder="0.002"
+                className="w-24 shrink-0 font-mono"
+              />
+            )}
+          </div>
+        </Field>
+      </div>
+      {canManage && (
+        <div className="mt-4 flex justify-end gap-2">
+          {dirty && (
+            <Button variant="ghost" onClick={reset}>
+              Discard
+            </Button>
+          )}
+          <Button variant="primary" disabled={!dirty} loading={saving} onClick={save}>
+            Save traffic
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const BREAKER_TONE = { closed: "green", open: "red", half_open: "amber" } as const;
+const BREAKER_LABEL = { closed: "closed", open: "open", half_open: "half open" } as const;
+
+/** Circuit breaker state, polled while the settings tab is open. */
+function BreakerCard({ service, canManage }: { service: Service; canManage: boolean }) {
+  const [report, setReport] = useState<BreakerReport | null>(null);
+  const [retryAt, setRetryAt] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const [resetting, setResetting] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const apply = useCallback((r: BreakerReport) => {
+    setReport(r);
+    setFailed(false);
+    setRetryAt(r.status.retry_after_sec > 0 ? new Date(Date.now() + r.status.retry_after_sec * 1000).toISOString() : null);
+  }, []);
+
+  const load = useCallback(() => {
+    ops
+      .breaker(service.id)
+      .then(apply)
+      .catch(() => setFailed(true));
+  }, [service.id, apply]);
+
+  useEffect(() => {
+    load();
+    const t = window.setInterval(load, 15000);
+    return () => window.clearInterval(t);
+  }, [load]);
+
+  useEffect(() => {
+    if (!retryAt) return;
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [retryAt]);
+
+  const resetBreaker = async () => {
+    setResetting(true);
+    try {
+      apply(await ops.resetBreaker(service.id));
+      toast.success("Circuit breaker closed");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  // Older servers have no breaker endpoint; hide the card rather than show an error.
+  if (failed && !report) return null;
+  const st = report?.status;
+  const left = countdown(retryAt, now);
+  const settings = !report
+    ? "Pauses the service when the provider keeps failing."
+    : report.threshold < 0
+      ? "Off for this service."
+      : `Opens after ${plural(report.threshold, "error")} in ${report.window_sec}s, then pauses ${report.reset_sec}s before trying again.`;
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-[15px] font-semibold text-ink">Circuit breaker</h3>
+            {st && <Badge tone={BREAKER_TONE[st.state]}>{BREAKER_LABEL[st.state]}</Badge>}
+          </div>
+          <p className="mt-0.5 text-[13px] text-muted">{settings}</p>
+        </div>
+        {canManage && st && st.state !== "closed" && (
+          <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} loading={resetting} onClick={resetBreaker}>
+            Reset
+          </Button>
+        )}
+      </div>
+      {st && (
+        <dl className="mt-3 divide-y divide-line">
+          <Row label="Recent failures" value={String(st.failures)} />
+          {st.opened_at && <Row label="Opened" value={relTime(st.opened_at, now)} />}
+          {st.state === "open" && <Row label="Retry in" value={left || "any moment"} />}
+          {st.reason && <Row label="Reason" value={st.reason} />}
+        </dl>
+      )}
+    </Card>
   );
 }
 
@@ -179,6 +440,9 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
           </div>
         )}
       </Card>
+
+      <TrafficCard service={service} canManage={canManage} isSuper={isSuper} />
+      <BreakerCard service={service} canManage={canManage} />
 
       <Card className="p-5">
         <h3 className="text-[15px] font-semibold text-ink">Logo</h3>

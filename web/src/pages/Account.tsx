@@ -8,6 +8,7 @@ import { errorMessage } from "../lib/api";
 import { MIN_PASSWORD } from "../lib/perms";
 import { dateTime } from "../lib/format";
 import { Badge, Button, Card, Field, Input, PageHeader } from "../components/ui";
+import { ApiTokens } from "../components/ApiTokens";
 
 export function AccountPage() {
   useTitle("Account");
@@ -116,6 +117,9 @@ export function AccountPage() {
             </div>
           </form>
         </Card>
+      </div>
+      <div className="mt-5">
+        <ApiTokens />
       </div>
     </div>
   );

@@ -1,0 +1,468 @@
+# Cogito: full reference
+
+> Cogito is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
+
+Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code": "string", "message": "string"}}` with a matching HTTP status.
+
+## Authentication
+
+Every consumer and MCP call carries an app token (`cog_...`) created on the dashboard Apps page. The token is shown once.
+
+```
+Authorization: Bearer cog_xxx
+X-Cogito-Token: cog_xxx               (alternative)
+?cogito_token=cog_xxx                  (proxy only, for URL-only tools)
+```
+
+Cogito strips all three before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong or inactive gets 401; a service or mode the app may not use gets 403.
+
+## Public endpoints
+
+```
+GET /healthz   -> 200 {"ok": true, "version": "1.0.0"}
+GET /llms.txt  -> this summary
+```
+
+## GET /api/v1/services
+
+Lists the services the token may use.
+
+```http
+GET /api/v1/services
+Authorization: Bearer cog_xxx
+```
+
+```json
+{
+  "services": [
+    {
+      "slug": "serpapi",
+      "name": "SerpAPI",
+      "provider": "serpapi",
+      "category": "search",
+      "available": true,
+      "base_url": "https://serpapi.com",
+      "auth": {"type": "query", "name": "api_key"}
+    },
+    {
+      "slug": "elevenlabs",
+      "name": "ElevenLabs",
+      "provider": "elevenlabs",
+      "category": "voice",
+      "available": false,
+      "base_url": "https://api.elevenlabs.io",
+      "auth": {"type": "header", "name": "xi-api-key"}
+    }
+  ]
+}
+```
+
+`available: false` means no key can be handed out right now (all cooling down, exhausted, invalid, or busy at their concurrency limit).
+
+`auth.type` says where the provider expects the key:
+
+| type | placement |
+|---|---|
+| `query` | query parameter `auth.name`, for example `?api_key=SECRET` |
+| `header` | header `auth.name`, for example `xi-api-key: SECRET` |
+| `bearer` | header `auth.name` (normally `Authorization`) set to `Bearer SECRET` |
+
+## POST /api/v1/lease
+
+Borrow a key. Only for apps in mode `lease` or `both`.
+
+```http
+POST /api/v1/lease
+Authorization: Bearer cog_xxx
+Content-Type: application/json
+
+{"service": "serpapi", "exclude_key_ids": [12], "ttl_sec": 300, "wait_sec": 10}
+```
+
+`exclude_key_ids` (optional) skips keys you already tried. `ttl_sec` (optional) is how long the lease stays open; when omitted the server uses 120 seconds on services with a concurrency limit and 300 seconds otherwise. `wait_sec` (optional, 0 to 60, default 0) is how long the server may wait for a free slot when every usable key is at its concurrency limit; keep your HTTP client timeout longer than this. See [Concurrency limits](#concurrency-limits).
+
+200:
+
+```json
+{
+  "lease_id": "lse_7f3a9c",
+  "key_id": 14,
+  "service": "serpapi",
+  "secret": "4b1e...a9F2",
+  "auth": {"type": "query", "name": "api_key"},
+  "base_url": "https://serpapi.com",
+  "expires_at": "2026-11-01T12:05:00Z"
+}
+```
+
+`auth.type` is `query` (parameter `auth.name`), `header` (header `auth.name`) or `bearer` (header `auth.name`, default `Authorization`, value `Bearer <secret>`). When `auth.prefix` is present, send `prefix + secret` instead (for example `Token <secret>`).
+
+503 when nothing is available:
+
+```json
+{"error": {"code": "no_key_available", "message": "all keys for serpapi are cooling down"}, "retry_after_sec": 37}
+```
+
+503 when usable keys exist but every one is at its concurrency limit (and `wait_sec`, if any, ran out):
+
+```json
+{"error": {"code": "all_keys_busy", "message": "every usable key is at its concurrency limit, retry shortly"}, "retry_after_sec": 1}
+```
+
+For `no_key_available`, `retry_after_sec` is the time until the earliest cooldown ends, when known. For `all_keys_busy` it is usually 1: a slot frees as soon as another caller reports. Both also set a `Retry-After` header. Selection prefers `primary` keys and only uses `backup` keys when no primary key is free; within a tier the service strategy (`round_robin`, `fill_first`, `least_used`, `most_quota`, `random`) decides.
+
+## POST /api/v1/leases/{lease_id}/report
+
+Tell Cogito how the key did. Always report, including on success. On a service with a concurrency limit, reporting is also what releases the lease's slot on the key; an unreported lease blocks that slot until it expires.
+
+```http
+POST /api/v1/leases/lse_7f3a9c/report
+Authorization: Bearer cog_xxx
+Content-Type: application/json
+
+{"outcome": "rate_limited", "status_code": 429, "retry_after_sec": 60, "message": "hourly limit", "rotate": true}
+```
+
+Only `outcome` is required.
+
+```json
+{"ok": true, "next": {"lease_id": "lse_81bd02", "key_id": 15, "service": "serpapi", "secret": "...", "auth": {"type": "query", "name": "api_key"}, "base_url": "https://serpapi.com", "expires_at": "2026-11-01T12:06:00Z"}}
+```
+
+With `rotate: true` the response carries a new lease on a different key in `next`, or `null` when none is available. With `rotate: false`, `next` is `null`.
+
+Rules: report within 10 minutes after `expires_at` (later reports get 410), only once per lease (a second report gets 409), and only while the app may still use the service (403 otherwise). `retry_after_sec` is capped at 86400. Do not put the secret in `message`; Cogito removes it anyway because messages are shown on the dashboard.
+
+### Outcomes
+
+| outcome | when to send it | effect on the key |
+|---|---|---|
+| `ok` | provider call succeeded | resets consecutive failures |
+| `rate_limited` | provider returned a rate limit (usually 429) | cooldown for `retry_after_sec`, else `cooldown_sec * 2^(fails-1)` capped at 1h |
+| `quota_exhausted` | monthly or daily quota used up | status `exhausted` until quota reset (or 24h), then reactivated automatically |
+| `invalid` | key rejected (revoked, wrong) | status `invalid`, removed from rotation |
+| `error` | provider outage, network error, bad request | not penalized |
+
+### Provider error mapping
+
+| provider | response | outcome |
+|---|---|---|
+| SerpAPI | 429 with "run out of searches" | `quota_exhausted` |
+| SerpAPI | other 429 | `rate_limited` (hourly limit, retry 3600s) |
+| SerpAPI | 401 or "Invalid API key" | `invalid` |
+| ElevenLabs | 429 `too_many_concurrent_requests` | `rate_limited` (retry 5s) |
+| ElevenLabs | 429 `system_busy` | `error` |
+| ElevenLabs | 401 `quota_exceeded` | `quota_exhausted` |
+| ElevenLabs | 401 `invalid_api_key` | `invalid` |
+| generic | 429 (honors `Retry-After`) / 402 / 401 or 403 | `rate_limited` / `quota_exhausted` / `invalid` |
+
+The proxy applies this mapping itself.
+
+## ANY /proxy/{service}/{path}
+
+Call Cogito instead of the provider. Cogito forwards to `base_url/{path}` with the same method, query string, headers and body, injects a key where `auth.type` says, and on a rate limit retries with the next key (up to the service `max_attempts`). Only for apps in mode `proxy` or `both`.
+
+Response: the provider's status, headers and body, plus:
+
+```
+X-Cogito-Key-Id: 14      which key served the request
+X-Cogito-Attempts: 2     how many keys were tried
+```
+
+Allowed methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS (others get 405). A path containing a literal `?` or `#`, or a `.` or `..` segment, gets 400 `bad_path`; percent encoded characters such as `%2F` are forwarded as sent. Provider redirects are returned to you rather than followed, with the key removed from response headers. Responses carry `Content-Security-Policy: sandbox`, so they cannot run script on the Cogito origin.
+
+If no key is available the proxy answers 503 `no_key_available` with `retry_after_sec`, like the lease endpoint. On a service with a concurrency limit, a request that finds every key busy waits in a queue for up to the service `queue_timeout_sec` (ElevenLabs default 30s); if no slot frees up in time the proxy answers 503 `all_keys_busy`. The proxy never sends more than a key's limit in parallel, so you do not need your own throttling.
+
+### SerpAPI
+
+```bash
+curl -s "http://localhost:8080/proxy/serpapi/search.json?engine=google&q=best+espresso+grinder" \
+  -H "Authorization: Bearer cog_xxx"
+```
+
+Equivalent to `https://serpapi.com/search.json?engine=google&q=...&api_key=SECRET`. For URL-only tools:
+
+```
+http://localhost:8080/proxy/serpapi/search.json?engine=google&q=coffee&cogito_token=cog_xxx
+```
+
+### ElevenLabs
+
+```bash
+curl -s -X POST "http://localhost:8080/proxy/elevenlabs/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM" \
+  -H "Authorization: Bearer cog_xxx" \
+  -H "Content-Type: application/json" \
+  -H "Accept: audio/mpeg" \
+  -d '{"text": "Hello from Cogito.", "model_id": "eleven_multilingual_v2"}' \
+  -o hello.mp3
+```
+
+Equivalent to calling `https://api.elevenlabs.io/v1/text-to-speech/{voice_id}` with `xi-api-key: SECRET`.
+
+## Concurrency limits
+
+Some providers cap simultaneous requests per key (ElevenLabs returns 429 `too_many_concurrent_requests`). Cogito enforces a per key limit so that never happens:
+
+- Each service has `max_concurrency` (0 means unlimited); a key can override it. ElevenLabs defaults to 2 per key.
+- Each service has `queue_timeout_sec`, how long proxied requests wait for a slot. ElevenLabs defaults to 30s.
+- A lease on a limited service is exclusive: it holds one slot on its key from issue until it is reported or `expires_at` passes. Default TTL is 120s on limited services (300s otherwise), so pass a `ttl_sec` close to how long you need the key.
+- Lease callers choose between failing fast (`wait_sec` omitted or 0, 503 `all_keys_busy` at once) and waiting (`wait_sec` up to 60).
+- `all_keys_busy` is not a key problem: do not report anything for it and do not exclude keys. Retry after `retry_after_sec` or lease again with `wait_sec`.
+
+Report every lease, on every path (success, provider error, exception, timeout). The SDK `with_key` helpers do this for you; with a manual lease, report in a `finally` block.
+
+## Lease mode flow
+
+1. `POST /api/v1/lease {"service": "serpapi"}` (add `"wait_sec": n` to wait for a busy key instead of getting 503 `all_keys_busy`).
+2. Call `base_url` yourself with `secret` placed per `auth`.
+3. On success: report `{"outcome": "ok"}`.
+4. On rate limit / quota / invalid key: report that outcome with `"rotate": true`, then retry with `next`. If `next` is null, lease again with `exclude_key_ids` set to the keys already tried; a 503 means wait `retry_after_sec`.
+5. On any other failure: report `{"outcome": "error", "message": "..."}`.
+6. Never skip the report: on limited services the lease holds a concurrency slot until reported or expired.
+
+Never log or persist `secret`.
+
+## MCP
+
+`POST /mcp` is a Model Context Protocol endpoint (streamable HTTP transport, JSON responses, no SSE needed). Authenticate with the same app token header. Use `initialize`, then `tools/list` for the authoritative input schemas, then `tools/call`.
+
+```json
+{
+  "mcpServers": {
+    "cogito": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": {"Authorization": "Bearer cog_xxx"}
+    }
+  }
+}
+```
+
+| tool | purpose | typical arguments |
+|---|---|---|
+| `list_services` | services the token may use, with availability | none |
+| `get_key` | lease a key (lease mode apps only); always follow with `report_key` | `service`, optional `exclude_key_ids`, `ttl_sec`, `wait_sec` (0 to 60, wait for a busy key) |
+| `report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome`, optional `status_code`, `retry_after_sec`, `message`, `rotate` |
+| `pool_status` | how many keys are available or cooling per service | optional `service` |
+| `proxy_request` | make a provider call through the proxy without seeing a key | `service`, `method`, `path`, optional `query`, `headers`, `body` |
+
+Example call:
+
+```json
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+ "params": {"name": "proxy_request",
+            "arguments": {"service": "serpapi", "method": "GET", "path": "/search.json",
+                          "query": {"engine": "google", "q": "coffee"}}}}
+```
+
+Prefer `proxy_request` over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
+
+## SDKs
+
+All SDKs share the same shape: `services`, `lease` (returns a lease with `report` and `apply`), `with_key` (calls your function, reports, and rotates when you raise a rate limit, quota or invalid key error), and `proxy(service)` returning raw responses. On the last allowed attempt `with_key` reports without rotating and re-raises.
+
+Concurrency support is the same everywhere: `lease` and `with_key` take a wait option that is sent as `wait_sec`, a 503 `all_keys_busy` raises a busy error that is a subtype of (or, in Go, the same type as) the no key error so existing handlers keep working, and `with_key` reports every lease it takes, whatever the callback does, so slots are released at once.
+
+| SDK | wait option | busy error |
+|---|---|---|
+| Python | `lease(..., wait_sec=20)`, `with_key(..., wait_sec=20)` | `AllKeysBusy` (subclass of `NoKeyAvailable`), `.busy` |
+| TypeScript | `lease(s, { waitSec: 20 })`, `withKey(s, fn, { waitSec: 20 })` | `AllKeysBusyError` (extends `NoKeyAvailableError`), `.busy` |
+| Go | `LeaseOptions{Wait: 20 * time.Second}`, `WithWait(20 * time.Second)` | `*ErrNoKeyAvailable` with `Busy: true`, matches `cogito.AllKeysBusy` |
+| PHP | `lease($s, waitSec: 20)`, `withKey($s, $fn, waitSec: 20)` | `Cogito\Exception\AllKeysBusy` (extends `NoKeyAvailable`), `->busy` |
+| Ruby | `lease(s, wait_sec: 20)`, `with_key(s, wait_sec: 20)` | `Cogito::AllKeysBusy` (subclass of `NoKeyAvailable`), `busy?` |
+
+### Python
+
+```bash
+pip install cogito-keys
+```
+
+```python
+import httpx
+from cogito import Cogito, RateLimited
+
+cog = Cogito("http://localhost:8080", "cog_xxx")
+
+r = cog.proxy("serpapi").get("/search.json", params={"engine": "google", "q": "coffee"})
+
+def search(lease):
+    resp = httpx.get(lease.url("/search.json"), params=lease.apply({"q": "coffee"}))
+    if resp.status_code == 429:
+        raise RateLimited(retry_after=3600)
+    return resp.json()
+
+data = cog.with_key("serpapi", search)
+```
+
+Also `AsyncCogito`. Exceptions: `CogitoError`, `NoKeyAvailable`, `AllKeysBusy`, `RateLimited`, `QuotaExhausted`, `InvalidKey`.
+
+### TypeScript and JavaScript
+
+```bash
+npm install @cogito/keys
+```
+
+```ts
+import { Cogito, RateLimitedError } from "@cogito/keys"; // or: const { Cogito } = require("@cogito/keys")
+
+const cog = new Cogito({ baseUrl: "http://localhost:8080", token: "cog_xxx" });
+
+const res = await cog.proxy("elevenlabs").post("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM", {
+  text: "Hello", model_id: "eleven_multilingual_v2",
+});
+
+const data = await cog.withKey("serpapi", async (lease) => {
+  const { query } = lease.apply({ query: { engine: "google", q: "coffee" } });
+  const r = await fetch(`${lease.baseUrl}/search.json?${new URLSearchParams(query as Record<string, string>)}`);
+  if (r.status === 429) throw new RateLimitedError(3600);
+  return r.json();
+});
+```
+
+Errors: `CogitoError`, `NoKeyAvailableError`, `AllKeysBusyError`, `RateLimitedError`, `QuotaExhaustedError`, `InvalidKeyError`.
+
+### Go
+
+```bash
+go get github.com/cogito-keys/cogito-go
+```
+
+```go
+c := cogito.New("http://localhost:8080", "cog_xxx")
+resp, err := c.Proxy("serpapi").Get(ctx, "/search.json", url.Values{"q": {"coffee"}})
+
+err = c.WithKey(ctx, "serpapi", func(l *cogito.Lease) error {
+	req, _ := http.NewRequestWithContext(ctx, "GET", l.URL("/search.json", url.Values{"q": {"coffee"}}), nil)
+	l.Apply(req)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == 429 {
+		return &cogito.ErrRateLimited{RetryAfter: time.Hour}
+	}
+	return nil
+})
+```
+
+Errors match sentinels with `errors.Is`: `cogito.RateLimited`, `cogito.QuotaExhausted`, `cogito.InvalidKey`, `cogito.NoKeyAvailable`, `cogito.AllKeysBusy`.
+
+### PHP
+
+```bash
+composer require cogito/keys
+```
+
+```php
+$cog = new Cogito\Cogito('http://localhost:8080', 'cog_xxx');
+$res = $cog->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
+$data = $cog->withKey('serpapi', function (Cogito\Lease $lease) { /* throw Cogito\Exception\RateLimited::after(3600) on 429 */ });
+```
+
+### Ruby
+
+```bash
+gem install cogito-keys
+```
+
+```ruby
+cog = Cogito::Client.new("http://localhost:8080", "cog_xxx")
+res = cog.proxy("serpapi").get("/search.json", "q" => "coffee")
+data = cog.with_key("serpapi") { |lease| ... } # raise Cogito::RateLimited.new(retry_after: 3600) on 429
+```
+
+
+## Resilience
+
+### Circuit breaker
+
+Every service has a circuit breaker. Provider errors (5xx, timeouts, refused connections) count toward it; rate limits, bad keys and client errors do not. After `breaker_threshold` errors within `breaker_window_sec` (defaults: 10 in 60s) the breaker opens and the proxy answers at once:
+
+```http
+HTTP/1.1 503 Service Unavailable
+Retry-After: 30
+
+{"error": {"code": "service_unavailable", "message": "SerpAPI keeps failing, so Cogito paused traffic to it"}, "retry_after_sec": 30}
+```
+
+After `breaker_reset_sec` (default 30s) one probe request goes through. Success closes the breaker; another provider error opens it again. Keys are never penalized for a provider outage. Set `breaker_threshold` to `-1` in a provider spec to turn it off.
+
+### Busy and banned keys
+
+- `busy` (for example ElevenLabs `too_many_concurrent_requests`): the key is healthy but at its concurrency cap. Cogito rotates to the next key immediately and parks this one for about a second, without raising its failure count.
+- `banned` (for example ElevenLabs `detected_unusual_activity`): the provider suspended the account. The key leaves rotation with status `banned`. Health checks skip it; an operator reset (`POST /api/admin/keys/{id}/reset`) brings it back.
+
+### Quota from response headers
+
+Providers that report quota on every response (Brave Search sends `X-RateLimit-Remaining: 1, 1999`) declare it in the spec:
+
+```json
+"quota": {"unit": "queries", "headers": {"limit": "X-RateLimit-Limit", "remaining": "X-RateLimit-Remaining", "reset": "X-RateLimit-Reset", "reset_format": "seconds", "index": 1}}
+```
+
+Each proxied response then updates the key's quota. When the provider reports 0 left, the key is parked until the reset it announced.
+
+## Response cache and idempotency
+
+A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Cogito-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Cogito never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `COGITO_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
+
+`Idempotency-Key` works on any method. The first response (below 500) is stored per app for 10 minutes and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice.
+
+## Service groups
+
+A group puts several services behind one slug, for example two SerpAPI accounts owned by different teams, or one API in two regions:
+
+```http
+GET /proxy/search/search.json?q=coffee
+Authorization: Bearer cog_...
+```
+
+Cogito tries the first member. It moves to the next when the member has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Cogito-Service` names the member that answered. An app allowed to use the group may use its members through it.
+
+## App limits and spend
+
+Each app can have `daily_requests`, `monthly_requests`, `daily_budget` and `monthly_budget` (USD, UTC days and months). Cost per request comes from the provider spec (`quota.cost_per_request`) or a service override. Cache hits are free and do not count as requests. A lease counts as one request when it is issued. Over a limit, proxy and lease calls answer:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 4210
+
+{"error": {"code": "app_limit_reached", "message": "this app reached its daily requests limit"}, "limit": "daily_requests", "reset_at": "2026-11-02T00:00:00Z", "retry_after_sec": 4210}
+```
+
+## Egress proxies
+
+Operators can route a service's or a single key's traffic through an HTTP, HTTPS or SOCKS5 proxy (`socks5h://` resolves DNS at the proxy). A key's proxy wins over its service's. Proxy URLs are encrypted at rest and shown without credentials. Health checks use the same route.
+
+## Webhooks
+
+Webhooks receive pool events: `key.invalid`, `key.banned`, `key.exhausted`, `key.recovered`, `quota.low` (under 10% left), `pool.empty`, `service.down`, `service.up`, `app.limit`. Formats: `json`, `slack`, `discord`, `telegram` (use `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>`). Repeats of the same event about the same key, service or app are sent at most once per 10 minutes. Hidden keys never produce events. By default webhook URLs may not point at private addresses; set `COGITO_WEBHOOK_ALLOW_PRIVATE=true` for an internal receiver.
+
+JSON deliveries carry:
+
+```http
+X-Cogito-Event: key.exhausted
+X-Cogito-Timestamp: 1793577600
+X-Cogito-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>" with the signing secret>
+
+{"type": "key.exhausted", "ts": "2026-11-01T22:00:00Z", "message": "SerpAPI key \"acct-3\" is out of quota", "service_id": 1, "service": "serpapi", "key_id": 3, "key": "acct-3"}
+```
+
+The signing secret (`whsec_...`) is shown once when the webhook is created. Reject deliveries whose timestamp is more than a few minutes old.
+
+## Admin API tokens and cogito ctl
+
+Create tokens in the dashboard (Settings, API tokens) or with `POST /api/admin/tokens {"name": "ci", "scope": "write", "expires_in_days": 90}`. Scopes: `read` (member), `write` (admin), `admin` (superadmin), capped at the creator's role. Tokens cannot manage tokens or change the account. Send them as `Authorization: Bearer cogadm_...` to any `/api/admin/` endpoint.
+
+```sh
+cogito ctl login https://cogito.example --token cogadm_... --name prod
+cogito ctl status
+cogito ctl keys add serpapi < keys.txt      # one per line: secret, or label,secret
+cogito ctl keys check serpapi
+cogito ctl events --service serpapi --kind rate_limited
+cogito ctl breaker serpapi --reset
+cogito ctl usage 3
+```
+
+The CLI stores servers in `~/.config/cogito/ctl.json` (mode 0600). `COGITO_URL` and `COGITO_TOKEN` override it for one command.

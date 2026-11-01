@@ -24,6 +24,7 @@ import (
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
 	"github.com/cogito-keys/cogito/internal/egress"
+	"github.com/cogito-keys/cogito/internal/llmstxt"
 	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/pool"
 	"github.com/cogito-keys/cogito/internal/respcache"
@@ -86,6 +87,7 @@ func (s *Server) Router() http.Handler {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": s.Cfg.Version})
 	})
 	r.Get("/llms.txt", s.serveLLMs)
+	r.Get("/llms-full.txt", s.serveLLMsFull)
 
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(jsonOnly)
@@ -292,9 +294,17 @@ func jsonOnly(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) serveLLMsFull(w http.ResponseWriter, r *http.Request) {
+	s.writeLLMs(w, r, llmstxt.Full)
+}
+
 func (s *Server) serveLLMs(w http.ResponseWriter, r *http.Request) {
+	s.writeLLMs(w, r, s.LLMsTxt)
+}
+
+func (s *Server) writeLLMs(w http.ResponseWriter, r *http.Request, text []byte) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	body := string(s.LLMsTxt)
+	body := string(text)
 	base := s.Cfg.PublicURL
 	if base == "" {
 		scheme := "http"

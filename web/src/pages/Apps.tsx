@@ -7,8 +7,9 @@ import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
-import { dateTime, plural, relTime } from "../lib/format";
+import { compact, dateTime, plural, relTime } from "../lib/format";
 import type { App, AppInput, AppMode, AppWithToken } from "../lib/types";
+import { ops, usd, type AppLimits, type AppUsageReport } from "../lib/ops";
 import { useNow } from "../hooks/useNow";
 import { Modal } from "../components/Modal";
 import { MultiSelect } from "../components/MultiSelect";
@@ -24,6 +25,45 @@ const MODE_HELP: Record<AppMode, string> = {
 };
 
 const blank: AppInput = { name: "", description: "", mode: "proxy", allowed_services: [] };
+
+const LIMIT_KEYS = ["daily_requests", "monthly_requests", "daily_budget", "monthly_budget"] as const;
+type LimitKey = (typeof LIMIT_KEYS)[number];
+/** Raw text per limit; empty means no limit. */
+type LimitDraft = Record<LimitKey, string>;
+
+const LIMIT_LABEL: Record<LimitKey, string> = {
+  daily_requests: "Daily requests",
+  monthly_requests: "Monthly requests",
+  daily_budget: "Daily budget",
+  monthly_budget: "Monthly budget",
+};
+
+const NO_LIMITS: AppLimits = { daily_requests: null, monthly_requests: null, daily_budget: null, monthly_budget: null };
+const blankLimits: LimitDraft = { daily_requests: "", monthly_requests: "", daily_budget: "", monthly_budget: "" };
+
+function limitDraftOf(l: AppLimits | null | undefined): LimitDraft {
+  const out = { ...blankLimits };
+  for (const k of LIMIT_KEYS) out[k] = l?.[k] === null || l?.[k] === undefined ? "" : String(l[k]);
+  return out;
+}
+
+/** Parses the draft; returns an error message when a value is not a valid number. */
+function parseLimits(d: LimitDraft): AppLimits | string {
+  const out: AppLimits = { ...NO_LIMITS };
+  for (const k of LIMIT_KEYS) {
+    const t = d[k].trim();
+    if (t === "") continue;
+    const n = Number(t);
+    const whole = k.endsWith("_requests");
+    if (!Number.isFinite(n) || n < 0 || (whole && !Number.isInteger(n))) {
+      return `${LIMIT_LABEL[k]} must be ${whole ? "a whole number" : "an amount"}, 0 or more, or empty for no limit.`;
+    }
+    out[k] = n;
+  }
+  return out;
+}
+
+const sameLimits = (a: AppLimits, b: AppLimits) => LIMIT_KEYS.every((k) => a[k] === b[k]);
 
 function AppFormModal({
   open,
@@ -42,6 +82,9 @@ function AppFormModal({
   const [form, setForm] = useState<AppInput>(blank);
   const [busy, setBusy] = useState(false);
   const [nameErr, setNameErr] = useState<string | null>(null);
+  const [limits, setLimits] = useState<LimitDraft>(blankLimits);
+  // What the server holds now; null until known, so an unknown value is never overwritten by accident.
+  const [savedLimits, setSavedLimits] = useState<AppLimits | null>(null);
   const ai = useAiFill(
     "app",
     () => form,
@@ -74,6 +117,29 @@ function AppFormModal({
           }
         : blank,
     );
+    if (!initial) {
+      setLimits(blankLimits);
+      setSavedLimits(NO_LIMITS);
+    } else if (initial.limits) {
+      setLimits(limitDraftOf(initial.limits));
+      setSavedLimits(initial.limits);
+    } else {
+      // The list may not carry limits; read them from the usage report instead.
+      setLimits(blankLimits);
+      setSavedLimits(null);
+      let live = true;
+      ops
+        .appUsage(initial.id, 1)
+        .then((r) => {
+          if (!live) return;
+          setLimits(limitDraftOf(r.limits));
+          setSavedLimits(r.limits ?? NO_LIMITS);
+        })
+        .catch(() => undefined);
+      return () => {
+        live = false;
+      };
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initial]);
 
@@ -83,11 +149,19 @@ function AppFormModal({
       setNameErr("Give the app a name, such as marketing site.");
       return;
     }
+    const parsed = parseLimits(limits);
+    if (typeof parsed === "string") {
+      toast.error(parsed);
+      return;
+    }
     setBusy(true);
     try {
       // Only a superadmin may send lease_hidden; the server refuses it from anyone else.
       const { lease_hidden, ...rest } = form;
-      const payload: AppInput = isSuper ? { ...rest, lease_hidden: !!lease_hidden } : rest;
+      const base: AppInput = isSuper ? { ...rest, lease_hidden: !!lease_hidden } : rest;
+      // Limits replace all four at once, so send them only when they changed from a known value.
+      const changed = savedLimits ? !sameLimits(parsed, savedLimits) : LIMIT_KEYS.some((k) => parsed[k] !== null);
+      const payload = (changed ? { ...base, limits: parsed } : base) as AppInput;
       if (initial) {
         await update(initial.id, { ...payload, name: form.name.trim() });
         toast.success(`Saved ${form.name}`);
@@ -157,6 +231,29 @@ function AppFormModal({
             {form.allowed_services.length ? `Limited to ${plural(form.allowed_services.length, "service")}.` : "Pick none to allow every service."}
           </div>
         </div>
+        <fieldset className="space-y-2">
+          <legend className="mb-1.5 text-[13px] font-medium text-ink">Limits</legend>
+          <p className="text-xs leading-relaxed text-muted">Leave a field empty for no limit. Calls over a limit are refused until it resets.</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {LIMIT_KEYS.map((k) => {
+              const money = k.endsWith("_budget");
+              return (
+                <Field key={k} label={money ? `${LIMIT_LABEL[k]} (USD)` : LIMIT_LABEL[k]}>
+                  <Input
+                    type="number"
+                    inputMode={money ? "decimal" : "numeric"}
+                    min={0}
+                    step={money ? "any" : 1}
+                    value={limits[k]}
+                    onChange={(e) => setLimits({ ...limits, [k]: e.target.value })}
+                    placeholder="no limit"
+                    className={money ? "font-mono" : undefined}
+                  />
+                </Field>
+              );
+            })}
+          </div>
+        </fieldset>
         {isSuper && (
           <Toggle
             checked={!!form.lease_hidden}
@@ -196,6 +293,50 @@ function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null;
         </div>
       )}
     </Modal>
+  );
+}
+
+/** Today's and this month's requests and spend for one app, loaded when its row renders. */
+function AppUsageLine({ app, now }: { app: App; now: number }) {
+  const [r, setR] = useState<AppUsageReport | null>(null);
+  useEffect(() => {
+    let live = true;
+    ops
+      .appUsage(app.id, 1)
+      .then((x) => live && setR(x))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+    // Refetch when the app object is replaced, such as after an edit.
+  }, [app]);
+  if (!r) return null;
+  const { usage: u, limits: l, limit_hit: hit } = r;
+  const of = (n: number | null | undefined, fmt: (v: number) => string) => (n === null || n === undefined ? "" : ` of ${fmt(n)}`);
+  const hitKey = hit?.limit as LimitKey | undefined;
+  const hitLabel = hitKey && LIMIT_LABEL[hitKey] ? LIMIT_LABEL[hitKey] : "Usage";
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5">
+      {hit && (
+        <div>
+          <Badge tone="red" title={dateTime(hit.reset_at)}>
+            {hitLabel} limit reached, resets {relTime(hit.reset_at, now)}
+          </Badge>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs text-muted">
+        <span>
+          today {compact(u.today_requests)}
+          {of(l?.daily_requests, compact)} req, {usd(u.today_cost)}
+          {of(l?.daily_budget, (v) => usd(v))}
+        </span>
+        <span>
+          month {compact(u.month_requests)}
+          {of(l?.monthly_requests, compact)} req, {usd(u.month_cost)}
+          {of(l?.monthly_budget, (v) => usd(v))}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -300,6 +441,7 @@ export function AppsPage() {
                     {a.token_prefix}... · {a.allowed_services?.length ? a.allowed_services.map((s) => nameBySlug[s] ?? s).join(", ") : "all services"} ·{" "}
                     <span title={dateTime(a.last_used_at)}>used {relTime(a.last_used_at, now)}</span>
                   </div>
+                  <AppUsageLine app={a} now={now} />
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1">
                   <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} ariaLabel={a.active ? `${a.name} is active` : `${a.name} is paused`} />

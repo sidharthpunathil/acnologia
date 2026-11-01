@@ -21,6 +21,10 @@ import { ProviderEditorPage } from "./pages/providers/ProviderEditor";
 import { AiBuilderPage } from "./pages/providers/AiBuilderPage";
 import { AiRunPage } from "./pages/providers/AiRunPage";
 import { SettingsPage } from "./pages/Settings";
+import { DocsPage } from "./pages/Docs";
+import { WebhooksPage } from "./pages/Webhooks";
+import { EgressPage } from "./pages/Egress";
+import { GroupsPage } from "./pages/Groups";
 
 function RequireRole({ ok, children }: { ok: boolean; children: ReactNode }) {
   return ok ? <>{children}</> : <Navigate to="/" replace />;
@@ -58,6 +62,7 @@ export function App() {
     body = (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/docs" element={<DocsPage />} />
         <Route
           path="*"
           element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />}
@@ -69,6 +74,7 @@ export function App() {
     body = (
       <Routes>
         <Route path="/login" element={<Navigate to="/" replace />} />
+        <Route path="/docs" element={<DocsPage />} />
         <Route element={<Layout />}>
           <Route index element={<CatalogPage />} />
           <Route path="keys" element={<KeysPage />} />
@@ -87,6 +93,9 @@ export function App() {
           <Route path="providers/:slug" element={<ProviderEditorPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="apps" element={<AppsPage />} />
+          <Route path="groups" element={<GroupsPage />} />
+          <Route path="webhooks" element={<WebhooksPage />} />
+          <Route path="egress" element={<EgressPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route
             path="users"

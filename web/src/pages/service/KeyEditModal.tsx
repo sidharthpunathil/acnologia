@@ -6,6 +6,39 @@ import { errorMessage } from "../../lib/api";
 import { Modal } from "../../components/Modal";
 import { MultiSelect } from "../../components/MultiSelect";
 import { Button, Field, Input, Select, Textarea, Toggle } from "../../components/ui";
+import { ops, type EgressProxy } from "../../lib/ops";
+
+/** Egress proxy picker for one key. 0 follows the service's proxy. Loads the proxy list itself. */
+function KeyEgressField({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
+  const [proxies, setProxies] = useState<EgressProxy[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    ops
+      .listEgress()
+      .then((r) => live && setProxies(r.proxies))
+      .catch(() => live && setProxies([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return (
+    <Field
+      label="Egress proxy"
+      className="sm:col-span-2"
+      hint={disabled ? "Only a superadmin can change the proxy of a hidden key." : "Send this key's traffic through a specific proxy, for example one per account region."}
+    >
+      <Select value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))}>
+        <option value={0}>Use the service's proxy</option>
+        {(proxies ?? []).map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.region ? `${p.name} (${p.region})` : p.name}
+          </option>
+        ))}
+        {value > 0 && !proxies?.some((p) => p.id === value) && <option value={value}>{`Proxy #${value}`}</option>}
+      </Select>
+    </Field>
+  );
+}
 
 interface Draft {
   label: string;
@@ -58,11 +91,14 @@ export function KeyEditModal({
   const update = useKeys((s) => s.update);
   const [d, setD] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
+  // Kept outside Draft so this field stays independent of the other key fields.
+  const [egressId, setEgressId] = useState(0);
 
   // Reset only when a different key is opened, so background refreshes do not wipe edits.
   const keyId = k?.id ?? null;
   useEffect(() => {
     setD(k ? draftOf(k) : null);
+    setEgressId(k?.egress_id ?? 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyId]);
 
@@ -95,6 +131,8 @@ export function KeyEditModal({
       return;
     }
     if (mc !== (k.max_concurrency ?? null)) patch.max_concurrency = mc === null ? -1 : mc;
+    const egressLocked = k.hidden && !canHidden;
+    if (!egressLocked && egressId !== (k.egress_id ?? 0)) patch.egress_id = egressId;
 
     if (Object.keys(patch).length === 0) {
       onClose();
@@ -113,7 +151,7 @@ export function KeyEditModal({
   };
 
   const statusOptions: KeyStatus[] = ["active", "disabled"];
-  if (k.status === "exhausted" || k.status === "invalid") statusOptions.push(k.status);
+  if (k.status === "exhausted" || k.status === "invalid" || k.status === "banned") statusOptions.push(k.status);
 
   return (
     <Modal
@@ -138,7 +176,16 @@ export function KeyEditModal({
           <Field label="Label">
             <Input value={d.label} onChange={(e) => set("label", e.target.value)} />
           </Field>
-          <Field label="Status" hint={k.status === "exhausted" || k.status === "invalid" ? `Now ${k.status === "exhausted" ? "out of quota" : "invalid"}. Pick enabled to put it back in rotation.` : undefined}>
+          <Field
+            label="Status"
+            hint={
+              k.status === "banned"
+                ? "The provider suspended this account. Pick enabled only after the account is restored."
+                : k.status === "exhausted" || k.status === "invalid"
+                  ? `Now ${k.status === "exhausted" ? "out of quota" : "invalid"}. Pick enabled to put it back in rotation.`
+                  : undefined
+            }
+          >
             <Select value={d.status} onChange={(e) => set("status", e.target.value as KeyStatus)}>
               {statusOptions.map((s) => (
                 <option key={s} value={s}>
@@ -177,6 +224,7 @@ export function KeyEditModal({
               placeholder={`Service default (${serviceMax > 0 ? serviceMax : "no limit"})`}
             />
           </Field>
+          <KeyEgressField value={egressId} onChange={setEgressId} disabled={k.hidden && !canHidden} />
         </div>
 
         <div className="space-y-4 rounded-xl border border-line p-4">

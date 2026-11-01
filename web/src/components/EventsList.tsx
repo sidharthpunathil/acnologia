@@ -12,10 +12,15 @@ const kindTone: Record<EventKind, "neutral" | "green" | "amber" | "red" | "blue"
   invalid: "red",
   error: "red",
   health: "neutral",
+  busy: "amber",
+  banned: "red",
+  cache_hit: "green",
+  service_down: "red",
+  service_up: "green",
 };
 
 export function KindBadge({ kind }: { kind: EventKind }) {
-  return <Badge tone={kindTone[kind] ?? "neutral"}>{kind.replace("_", " ")}</Badge>;
+  return <Badge tone={kindTone[kind] ?? "neutral"}>{kind.replace(/_/g, " ")}</Badge>;
 }
 
 export function EventsList({

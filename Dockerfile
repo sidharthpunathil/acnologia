@@ -14,6 +14,7 @@ RUN go mod download
 COPY server/ ./
 COPY --from=web /src/server/internal/webui/dist ./internal/webui/dist
 COPY docs/llms.txt ./internal/llmstxt/llms.txt
+COPY docs/llms-full.txt ./internal/llmstxt/llms-full.txt
 ARG VERSION=docker
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /cogito ./cmd/cogito \
     && mkdir -p /data-empty

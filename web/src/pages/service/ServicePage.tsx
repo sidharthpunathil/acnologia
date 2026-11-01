@@ -100,10 +100,16 @@ export function ServicePage() {
     // The server counts busy keys inside available; the Available tile shows only free ones.
     if (!keysLoaded) {
       const kc = service.key_counts;
-      return { ...kc, busy: kc.busy ?? 0, available: Math.max(0, kc.available - (kc.busy ?? 0)), inUse: service.in_flight ?? 0 };
+      return {
+        ...kc,
+        busy: kc.busy ?? 0,
+        banned: kc.banned ?? 0,
+        available: Math.max(0, kc.available - (kc.busy ?? 0)),
+        inUse: service.in_flight ?? 0,
+      };
     }
     const max = service.max_concurrency ?? 0;
-    const c = { total: keys.length, available: 0, busy: 0, cooling: 0, exhausted: 0, invalid: 0, disabled: 0, backup: 0, inUse: 0 };
+    const c = { total: keys.length, available: 0, busy: 0, cooling: 0, exhausted: 0, invalid: 0, banned: 0, disabled: 0, backup: 0, inUse: 0 };
     for (const k of keys) {
       c.inUse += k.in_flight ?? 0;
       const s = liveStatus(k, now);
@@ -212,7 +218,13 @@ export function ServicePage() {
         <Stat label="Busy" value={num(counts.busy)} tone={counts.busy ? "violet" : undefined} sub="at their limit" />
         <Stat label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "amber" : undefined} />
         <Stat label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "amber" : undefined} />
-        <Stat label="Invalid" value={num(counts.invalid)} tone={counts.invalid ? "red" : undefined} />
+        {/* Banned keys count as invalid here; the sub line splits them out. */}
+        <Stat
+          label="Invalid"
+          value={num(counts.invalid + counts.banned)}
+          tone={counts.invalid + counts.banned ? "red" : undefined}
+          sub={counts.banned ? `${counts.banned} banned` : undefined}
+        />
         <Stat
           label="In use"
           value={num(counts.inUse)}

@@ -35,6 +35,17 @@ function categoryOf(s: Service): string {
   return s.category?.trim() || "Other";
 }
 
+/** The provider's free tier note, such as "1,000 searches a month", when its spec has one. */
+function FreeTierLine({ provider }: { provider: string }) {
+  const freeTier = useProviders((st) => st.providers.find((p) => p.slug === provider)?.spec?.quota?.free_tier);
+  if (!freeTier) return null;
+  return (
+    <div className="mt-0.5 truncate text-[11px] text-faint" title={freeTier}>
+      Free tier: {freeTier}
+    </div>
+  );
+}
+
 function ServiceCard({ s }: { s: Service }) {
   const healthy = s.key_counts.available > 0;
   const meta = serviceMeta(s);
@@ -56,6 +67,7 @@ function ServiceCard({ s }: { s: Service }) {
         <div className="mt-1 line-clamp-2 font-mono text-xs text-muted" title={meta}>
           {meta}
         </div>
+        <FreeTierLine provider={s.provider} />
       </div>
     </Link>
   );
