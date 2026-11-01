@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -108,7 +109,7 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 		return out, false, false
 
 	case "validate_spec", "live_check", "submit_provider":
-		d, err := a.decodeDraft(s, in.Provider)
+		d, err := a.decodeDraft(ctx, s, in.Provider)
 		if err != nil {
 			return err.Error(), true, false
 		}
@@ -118,10 +119,17 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 			a.logf(ctx, id, "tool", fmt.Sprintf("Validated draft: %d problem(s), %d/%d tests pass", len(errs), rep.Passed, rep.Passed+rep.Failed), checkText(errs, rep))
 			return checkText(errs, rep), false, false
 		case "live_check":
+			if s.liveChecks >= MaxLiveChecks {
+				return fmt.Sprintf("live_check is limited to %d calls per run. Submit the provider instead.", MaxLiveChecks), true, false
+			}
 			spec, err := providers.DecodeSpec(d.Spec)
 			if err != nil {
 				return err.Error(), true, false
 			}
+			if msg := a.pinKeyHost(ctx, s, spec.BaseURL); msg != "" {
+				return msg, true, false
+			}
+			s.liveChecks++
 			lr := catalog.LiveCheck(ctx, spec, s.testKey)
 			s.live = &lr
 			b, _ := json.MarshalIndent(lr, "", "  ")
@@ -139,13 +147,17 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 		}
 		if len(problems) == 0 && s.testKey != "" {
 			spec, _ := providers.DecodeSpec(d.Spec)
-			lr := catalog.LiveCheck(ctx, spec, s.testKey)
-			s.live = &lr
-			if !lr.Health.OK {
-				problems = append(problems, "live health check failed: "+lr.Health.Detail)
-			}
-			if lr.Example.Ran && !lr.Example.OK {
-				problems = append(problems, fmt.Sprintf("live example returned %d (%s): %s", lr.Example.Status, lr.Example.Outcome, truncate(lr.Example.Detail, 400)))
+			if msg := a.pinKeyHost(ctx, s, spec.BaseURL); msg != "" {
+				problems = append(problems, msg)
+			} else {
+				lr := catalog.LiveCheck(ctx, spec, s.testKey)
+				s.live = &lr
+				if !lr.Health.OK {
+					problems = append(problems, "live health check failed: "+lr.Health.Detail)
+				}
+				if lr.Example.Ran && !lr.Example.OK {
+					problems = append(problems, fmt.Sprintf("live example returned %d (%s): %s", lr.Example.Status, lr.Example.Outcome, truncate(lr.Example.Detail, 400)))
+				}
 			}
 		}
 		s.report = rep
@@ -166,7 +178,7 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 	return "unknown tool " + name, true, false
 }
 
-func (a *Agent) decodeDraft(s *runState, raw json.RawMessage) (*draft, error) {
+func (a *Agent) decodeDraft(ctx context.Context, s *runState, raw json.RawMessage) (*draft, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("provider is required")
 	}
@@ -174,10 +186,13 @@ func (a *Agent) decodeDraft(s *runState, raw json.RawMessage) (*draft, error) {
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return nil, fmt.Errorf("provider is not valid JSON: %v", err)
 	}
+	// Normalize exactly as catalog.Check does, so " serpapi" cannot slip past
+	// the existing-slug check and then overwrite serpapi on publish.
+	d.Slug = strings.TrimSpace(strings.ToLower(d.Slug))
 	if s.fixedSlug != "" {
 		d.Slug = s.fixedSlug // updates keep the slug: services reference it
 	} else if d.Slug != "" {
-		if p, err := a.Store.GetProvider(context.Background(), strings.ToLower(d.Slug)); err == nil && p.Slug != "" {
+		if p, err := a.Store.GetProvider(ctx, d.Slug); err == nil && p.Slug != "" {
 			return nil, fmt.Errorf("slug %q is taken by an existing provider (%s); pick another slug", d.Slug, p.Name)
 		}
 	}
@@ -212,6 +227,10 @@ func okWord(ok bool) string {
 	return "failed"
 }
 
+var ghNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+func ghName(s string) bool { return s != "." && s != ".." && ghNameRe.MatchString(s) }
+
 // githubRead lists a directory or reads a file through the GitHub API.
 func (a *Agent) githubRead(ctx context.Context, repo, path, ref string) (string, error) {
 	repo = strings.TrimSpace(repo)
@@ -219,10 +238,20 @@ func (a *Agent) githubRead(ctx context.Context, repo, path, ref string) (string,
 	repo = strings.TrimPrefix(repo, "github.com/")
 	repo = strings.TrimSuffix(strings.TrimSuffix(repo, "/"), ".git")
 	parts := strings.Split(repo, "/")
-	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) < 2 || !ghName(parts[0]) || !ghName(parts[1]) {
 		return "", fmt.Errorf("repo must look like owner/name")
 	}
-	u := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]), strings.TrimPrefix(path, "/"))
+	segs := []string{}
+	for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
+		if seg == "" {
+			continue
+		}
+		if seg == "." || seg == ".." || strings.ContainsAny(seg, "?#\\") {
+			return "", fmt.Errorf("path must be a plain file or directory path inside the repo")
+		}
+		segs = append(segs, url.PathEscape(seg))
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]), strings.Join(segs, "/"))
 	if ref != "" {
 		u += "?ref=" + url.QueryEscape(ref)
 	}

@@ -24,19 +24,36 @@ import (
 // Version is the SDK version.
 const Version = "0.1.0"
 
+// DefaultTimeout bounds API calls when New is given no WithHTTPClient. It is
+// longer than MaxWait so a lease that waits for a free slot can still succeed.
+const DefaultTimeout = 75 * time.Second
+
 // Client talks to a Cogito server using an app token (cog_...).
 type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
 	userAgent  string
+	// defaultHTTP is true when httpClient was created by New, so proxy calls
+	// can drop its timeout (streamed bodies may outlive it).
+	defaultHTTP bool
 }
+
+// String redacts the app token so a logged Client does not leak it.
+func (c Client) String() string {
+	return fmt.Sprintf("cogito.Client{baseURL:%q, token:\"[redacted]\"}", c.baseURL)
+}
+
+// GoString redacts the app token for %#v.
+func (c Client) GoString() string { return c.String() }
 
 // Option configures a Client.
 type Option func(*Client)
 
 // WithHTTPClient sets the underlying HTTP client.
-func WithHTTPClient(hc *http.Client) Option { return func(c *Client) { c.httpClient = hc } }
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) { c.httpClient = hc; c.defaultHTTP = false }
+}
 
 // WithUserAgent overrides the User-Agent header.
 func WithUserAgent(ua string) Option { return func(c *Client) { c.userAgent = ua } }
@@ -44,10 +61,11 @@ func WithUserAgent(ua string) Option { return func(c *Client) { c.userAgent = ua
 // New creates a client. baseURL is the Cogito server, e.g. http://localhost:8080.
 func New(baseURL, token string, opts ...Option) *Client {
 	c := &Client{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		token:      token,
-		httpClient: http.DefaultClient,
-		userAgent:  "cogito-go/" + Version,
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		token:       token,
+		httpClient:  &http.Client{Timeout: DefaultTimeout},
+		userAgent:   "cogito-go/" + Version,
+		defaultHTTP: true,
 	}
 	for _, o := range opts {
 		o(c)
@@ -85,6 +103,15 @@ type Lease struct {
 
 	client *Client
 }
+
+// String redacts the secret so a logged Lease does not leak the key.
+func (l Lease) String() string {
+	return fmt.Sprintf("cogito.Lease{LeaseID:%q, KeyID:%d, Service:%q, Secret:\"[redacted]\", Auth:%+v, BaseURL:%q, ExpiresAt:%s}",
+		l.LeaseID, l.KeyID, l.Service, l.Auth, l.BaseURL, l.ExpiresAt.Format(time.RFC3339))
+}
+
+// GoString redacts the secret for %#v.
+func (l Lease) GoString() string { return l.String() }
 
 type leaseWire struct {
 	LeaseID   string `json:"lease_id"`

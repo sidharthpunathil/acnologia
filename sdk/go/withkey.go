@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -90,7 +92,7 @@ func (c *Client) WithKey(ctx context.Context, service string, fn func(*Lease) er
 			_, rerr := reportDetached(ctx, lease, Report{Outcome: OutcomeOK})
 			return rerr
 		}
-		report, rotate := classify(ferr)
+		report, rotate := classify(ferr, lease.Secret)
 		if !rotate {
 			_, _ = reportDetached(ctx, lease, report)
 			return ferr
@@ -134,7 +136,7 @@ func callReporting(ctx context.Context, lease *Lease, fn func(*Lease) error) err
 		if r != nil {
 			msg = fmt.Sprint("panic: ", r)
 		}
-		_, _ = reportDetached(ctx, lease, Report{Outcome: OutcomeError, Message: msg})
+		_, _ = reportDetached(ctx, lease, Report{Outcome: OutcomeError, Message: scrubMessage(msg, lease.Secret)})
 		if r != nil {
 			panic(r)
 		}
@@ -144,18 +146,35 @@ func callReporting(ctx context.Context, lease *Lease, fn func(*Lease) error) err
 	return err
 }
 
-func classify(err error) (Report, bool) {
+// maxReportMessage caps the message sent with a report built from an error.
+const maxReportMessage = 500
+
+// scrubMessage removes the lease secret (raw and query escaped) from msg and
+// truncates it. Errors from query auth services often carry the full request
+// URL, key included, and the report must not copy it to the server.
+func scrubMessage(msg, secret string) string {
+	if secret != "" {
+		msg = strings.ReplaceAll(msg, secret, "[key]")
+		msg = strings.ReplaceAll(msg, url.QueryEscape(secret), "[key]")
+	}
+	if len(msg) > maxReportMessage {
+		msg = strings.ToValidUTF8(msg[:maxReportMessage], "")
+	}
+	return msg
+}
+
+func classify(err error, secret string) (Report, bool) {
 	var rl *ErrRateLimited
 	var qe *ErrQuotaExhausted
 	var ik *ErrInvalidKey
 	switch {
 	case errors.As(err, &rl):
-		return Report{Outcome: OutcomeRateLimited, StatusCode: rl.StatusCode, RetryAfter: rl.RetryAfter, Message: rl.Message, Rotate: true}, true
+		return Report{Outcome: OutcomeRateLimited, StatusCode: rl.StatusCode, RetryAfter: rl.RetryAfter, Message: scrubMessage(rl.Message, secret), Rotate: true}, true
 	case errors.As(err, &qe):
-		return Report{Outcome: OutcomeQuotaExhausted, StatusCode: qe.StatusCode, Message: qe.Message, Rotate: true}, true
+		return Report{Outcome: OutcomeQuotaExhausted, StatusCode: qe.StatusCode, Message: scrubMessage(qe.Message, secret), Rotate: true}, true
 	case errors.As(err, &ik):
-		return Report{Outcome: OutcomeInvalid, StatusCode: ik.StatusCode, Message: ik.Message, Rotate: true}, true
+		return Report{Outcome: OutcomeInvalid, StatusCode: ik.StatusCode, Message: scrubMessage(ik.Message, secret), Rotate: true}, true
 	default:
-		return Report{Outcome: OutcomeError, Message: err.Error()}, false
+		return Report{Outcome: OutcomeError, Message: scrubMessage(err.Error(), secret)}, false
 	}
 }

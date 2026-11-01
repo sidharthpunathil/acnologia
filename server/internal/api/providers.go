@@ -321,6 +321,7 @@ func (s *Server) deleteProviderLogo(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "provider.logo_delete", slug, "")
 	p, err := s.Store.GetProvider(r.Context(), slug)
 	if err != nil {
 		writeStoreErr(w, err)
@@ -367,6 +368,7 @@ func (s *Server) fetchProviderLogo(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "provider.logo_fetch", slug, mime)
 	p, _ = s.Store.GetProvider(r.Context(), slug)
 	writeJSON(w, 200, toDTO(p))
 }
@@ -397,5 +399,6 @@ func (s *Server) deleteServiceLogo(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "service.logo_delete", sv.Slug, "")
 	s.getService(w, r)
 }

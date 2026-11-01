@@ -61,6 +61,11 @@ func run() error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return err
 	}
+	// MkdirAll keeps the mode of an existing dir; the data dir holds the
+	// database and possibly master.key, so keep it private.
+	if err := os.Chmod(cfg.DataDir, 0o700); err != nil {
+		slog.Warn("could not restrict data dir permissions", "path", cfg.DataDir, "err", err)
+	}
 	key, err := crypto.LoadOrCreateKey(cfg.MasterKey, cfg.DataDir)
 	if err != nil {
 		return err
@@ -74,6 +79,9 @@ func run() error {
 		return err
 	}
 	defer st.Close()
+	if err := checkMasterKey(st, box); err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -114,6 +122,32 @@ func run() error {
 	slog.Info("cogito listening", "addr", cfg.Addr, "data", cfg.DataDir, "version", version)
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	return nil
+}
+
+// checkMasterKey refuses to start with a master key that differs from the
+// one the database was written with. Starting anyway would make every stored
+// secret unreadable and mix two keys in one table.
+func checkMasterKey(st *store.Store, box *crypto.Box) error {
+	ctx := context.Background()
+	want := box.CheckValue()
+	got := st.GetMeta(ctx, "master_key_check")
+	if got == "" {
+		n, err := st.CountKeys(ctx)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			// A database from before the check existed: verify one secret decrypts.
+			if err := st.VerifyAnySecret(ctx, box.Decrypt); err != nil {
+				return fmt.Errorf("the master key cannot decrypt stored keys; set COGITO_MASTER_KEY to the key this database was created with: %w", err)
+			}
+		}
+		return st.SetMeta(ctx, "master_key_check", want)
+	}
+	if got != want {
+		return errors.New("the master key does not match this database; set COGITO_MASTER_KEY (or restore master.key) to the key it was created with")
 	}
 	return nil
 }

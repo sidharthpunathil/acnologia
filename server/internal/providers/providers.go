@@ -46,19 +46,33 @@ type CheckResult struct {
 	Message        string
 }
 
+// MaxRetryAfter caps any wait an upstream asks for. A larger value is
+// almost certainly an error, and an uncapped one could park a key for years.
+const MaxRetryAfter = 24 * time.Hour
+
+// ClampSeconds turns a seconds value into a duration in [0, MaxRetryAfter]
+// without overflowing.
+func ClampSeconds(f float64) time.Duration {
+	if !(f > 0) { // also catches NaN
+		return 0
+	}
+	if f >= MaxRetryAfter.Seconds() {
+		return MaxRetryAfter
+	}
+	return time.Duration(f * float64(time.Second))
+}
+
 // ParseRetryAfter reads a Retry-After header in seconds or HTTP date form.
 func ParseRetryAfter(h http.Header) time.Duration {
 	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
 		return 0
 	}
-	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-		return time.Duration(n) * time.Second
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return ClampSeconds(float64(n))
 	}
 	if t, err := http.ParseTime(v); err == nil {
-		if d := time.Until(t); d > 0 {
-			return d
-		}
+		return min(max(time.Until(t), 0), MaxRetryAfter)
 	}
 	return 0
 }

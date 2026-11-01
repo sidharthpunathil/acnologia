@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync"
@@ -488,4 +489,87 @@ func mustDo(t *testing.T, p *Proxy, req *http.Request) *http.Response {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+func TestScrubMessage(t *testing.T) {
+	secret := "a+b/c=d"
+	msg := `Get "https://x.test/s?api_key=` + url.QueryEscape(secret) + `": timeout; raw ` + secret
+	got := scrubMessage(msg, secret)
+	if strings.Contains(got, secret) || strings.Contains(got, url.QueryEscape(secret)) {
+		t.Fatalf("secret leaked: %q", got)
+	}
+	if got != `Get "https://x.test/s?api_key=[key]": timeout; raw [key]` {
+		t.Fatalf("got %q", got)
+	}
+	if long := scrubMessage(strings.Repeat("x", 600), secret); len(long) != maxReportMessage {
+		t.Fatalf("len %d", len(long))
+	}
+}
+
+func TestWithKeyReportScrubsSecret(t *testing.T) {
+	c, f := setup(t, 1, 2)
+	err := c.WithKey(context.Background(), "serpapi", func(l *Lease) error {
+		return fmt.Errorf(`Get "https://serpapi.com/search.json?api_key=%s": dial tcp: refused`, l.Secret)
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	_ = c.WithKey(context.Background(), "serpapi", func(l *Lease) error {
+		return &ErrRateLimited{Message: "429 for key " + l.Secret}
+	}, WithMaxAttempts(1))
+	if len(f.reports) != 2 {
+		t.Fatalf("reports %+v", f.reports)
+	}
+	for i, want := range []string{
+		`Get "https://serpapi.com/search.json?api_key=[key]": dial tcp: refused`,
+		"429 for key [key]",
+	} {
+		if f.reports[i]["message"] != want {
+			t.Fatalf("report %d: %+v", i, f.reports[i])
+		}
+	}
+}
+
+func TestProxyDoesNotFollowRedirects(t *testing.T) {
+	var leaked bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { leaked = true }))
+	t.Cleanup(other.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/steal", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	hc := &http.Client{}
+	for _, c := range []*Client{New(srv.URL, "cog_test"), New(srv.URL, "cog_test", WithHTTPClient(hc))} {
+		resp, err := c.Proxy("serpapi").Get(context.Background(), "/search.json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusFound || leaked {
+			t.Fatalf("status %d leaked %v", resp.StatusCode, leaked)
+		}
+	}
+	if hc.CheckRedirect != nil {
+		t.Fatal("caller's http.Client was mutated")
+	}
+}
+
+func TestDefaultTimeout(t *testing.T) {
+	if c := New("http://x", "cog_test"); c.httpClient == http.DefaultClient || c.httpClient.Timeout != DefaultTimeout {
+		t.Fatalf("default client %+v", c.httpClient)
+	}
+}
+
+func TestStringRedactsSecrets(t *testing.T) {
+	c := New("http://x", "cog_supersecret")
+	l := &Lease{LeaseID: "l1", Secret: "sk_supersecret", client: c}
+	for _, s := range []string{
+		fmt.Sprint(c), fmt.Sprintf("%+v", c), fmt.Sprintf("%#v", c), fmt.Sprintf("%v", *c),
+		fmt.Sprint(l), fmt.Sprintf("%+v", l), fmt.Sprintf("%#v", l), fmt.Sprintf("%v", *l), fmt.Sprintf("%#v", *l),
+	} {
+		if strings.Contains(s, "supersecret") {
+			t.Fatalf("leaked: %s", s)
+		}
+	}
 }

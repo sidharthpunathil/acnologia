@@ -87,13 +87,17 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
   automatically when the quota resets.
 - **Key flags**:
   - `hidden`: only superadmins see the key or count it, and admins cannot
-    infer it from events.
+    infer it from events. Hidden keys are used (leased or proxied) only by
+    apps a superadmin marked `lease_hidden`, and are never sent to a service whose base URL or
+    auth was last changed by someone other than a superadmin.
   - `backup` tier: used only when every primary key is unavailable.
   - `restricted`: only allow-listed apps can use it.
   - `disabled`: kept, but never handed out.
 - **Roles**:
   - `member`: read only.
-  - `admin`: manages services, keys and apps.
+  - `admin`: manages services, keys and apps. Admins can create lease apps,
+    so treat non-hidden keys as readable by admins; use `hidden` for keys
+    they must never see.
   - `superadmin`: everything above, plus hidden keys, revealing secrets,
     users and the audit log.
 - **Apps**: each consumer gets its own token (shown once, stored as a hash),
@@ -171,7 +175,13 @@ stored API keys cannot be decrypted. If `COGITO_MASTER_KEY` is unset, one is
 generated into `/data/master.key` on first boot.
 
 Put it behind TLS (Caddy, Traefik, Cloudflare Tunnel) and set
-`COGITO_SECURE_COOKIES=true`. All settings are in [.env.example](.env.example).
+`COGITO_SECURE_COOKIES=true`. Behind a reverse proxy also set
+`COGITO_TRUST_PROXY_HEADERS=true`, or every client shares one login rate
+limit. All settings are in [.env.example](.env.example).
+
+Upgrading: existing apps can no longer lease or proxy hidden keys until a
+superadmin turns on **Lease hidden keys** for them, because a lease or an
+echoing upstream reveals the plain key.
 
 ## MCP
 

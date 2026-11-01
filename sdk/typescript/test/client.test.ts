@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { scrubMessage } from "../src/client.js";
 import {
   AllKeysBusyError,
   Cogito,
@@ -16,6 +17,7 @@ interface Call {
   headers: Record<string, string>;
   body: unknown;
   rawBody: unknown;
+  init: RequestInit;
 }
 
 type Handler = (call: Call) => Response | Promise<Response>;
@@ -55,7 +57,7 @@ function mock(handler: Handler) {
         body = init.body;
       }
     }
-    const call = { url: input, method: init.method ?? "GET", headers, body, rawBody: init.body };
+    const call = { url: input, method: init.method ?? "GET", headers, body, rawBody: init.body, init };
     calls.push(call);
     return handler(call);
   };
@@ -482,5 +484,57 @@ describe("fetch resolution", () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe("secret hygiene", () => {
+  it("scrubs the raw and URL encoded secret from report messages and truncates", async () => {
+    expect(scrubMessage("q?k=a%2Bb%2Fc%3Dd and a+b/c=d", "a+b/c=d")).toBe("q?k=[key] and [key]");
+    expect(scrubMessage("x".repeat(600), "s")).toHaveLength(500);
+
+    const { client, calls } = mock((c) =>
+      c.url.endsWith("/report") ? json({ ok: true, next: null }) : json(leaseJSON(1)),
+    );
+    await client
+      .withKey("serpapi", (lease) => {
+        throw new Error(`fetch failed for https://serpapi.com/search.json?api_key=${lease.secret}`);
+      })
+      .catch(() => undefined);
+    await client
+      .withKey(
+        "serpapi",
+        (lease) => {
+          throw new RateLimitedError(null, { message: `429 for ${lease.secret}` });
+        },
+        { maxAttempts: 1 },
+      )
+      .catch(() => undefined);
+    const reports = calls.filter((c) => c.url.endsWith("/report")).map((c) => (c.body as any).message);
+    expect(reports[0]).toBe("fetch failed for https://serpapi.com/search.json?api_key=[key]");
+    expect(reports[1]).toBe("429 for [key]");
+  });
+
+  it("proxy requests never follow redirects", async () => {
+    const { client, calls } = mock(() => new Response(null, { status: 302, headers: { Location: "http://evil.test" } }));
+    const res = await client.proxy("serpapi").get("x", undefined, { redirect: "follow" });
+    expect(res.status).toBe(302);
+    expect(calls[0].init.redirect).toBe("manual");
+  });
+
+  it("API calls carry a timeout signal, proxy calls do not", async () => {
+    const { client, calls } = mock(() => json({ services: [] }));
+    await client.services();
+    await client.proxy("s").get("x");
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+    expect(calls[1].init.signal).toBeUndefined();
+  });
+
+  it("inspect redacts the lease secret and the client token", async () => {
+    const { client } = mock(() => json(leaseJSON(1)));
+    const lease = await client.lease("serpapi");
+    // Node's util.inspect (console.log) calls this symbol; no @types/node here to import it.
+    const view = (o: object) => JSON.stringify((o as any)[Symbol.for("nodejs.util.inspect.custom")]());
+    expect(view(lease)).not.toContain("secret-1");
+    expect(view(client)).not.toContain("cog_test");
   });
 });

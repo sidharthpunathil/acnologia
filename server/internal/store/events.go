@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"time"
+	"unicode/utf8"
 )
 
 type NewEvent struct {
@@ -24,9 +25,7 @@ func nz(v int64) any {
 }
 
 func (s *Store) AddEvent(ctx context.Context, e NewEvent) {
-	if len(e.Detail) > 500 {
-		e.Detail = e.Detail[:500]
-	}
+	e.Detail = truncate(e.Detail, 500)
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,status_code,latency_ms,detail) VALUES(?,?,?,?,?,?,?,?)`,
 		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), e.StatusCode, e.LatencyMS, e.Detail)
 }
@@ -88,11 +87,16 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error)
 	return out, rows.Err()
 }
 
-func (s *Store) CountEvents(ctx context.Context, since time.Time, kinds ...string) (int, error) {
-	q := `SELECT COUNT(*) FROM events WHERE ts>=?`
+// CountEvents counts events since a time. Events of hidden keys are counted
+// only when includeHidden is set.
+func (s *Store) CountEvents(ctx context.Context, since time.Time, includeHidden bool, kinds ...string) (int, error) {
+	q := `SELECT COUNT(*) FROM events e WHERE e.ts>=?`
+	if !includeHidden {
+		q += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+	}
 	args := []any{since.Unix()}
 	if len(kinds) > 0 {
-		q += ` AND kind IN (` + placeholders(len(kinds)) + `)`
+		q += ` AND e.kind IN (` + placeholders(len(kinds)) + `)`
 		for _, k := range kinds {
 			args = append(args, k)
 		}
@@ -161,4 +165,15 @@ func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]Day
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// truncate cuts s to at most n bytes without splitting a UTF-8 character.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

@@ -145,13 +145,13 @@ func (p *Pool) RestoreLeases(ctx context.Context) error {
 }
 
 // PickWait is Pick that waits up to wait for a slot when every usable key is busy.
-func (p *Pool) PickWait(ctx context.Context, svc *store.Service, appID int64, exclude map[int64]bool, wait time.Duration) (*Picked, error) {
+func (p *Pool) PickWait(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, wait time.Duration) (*Picked, error) {
 	deadline := time.Now().Add(wait)
 	for {
 		// Grab the wake channel before trying, so a release between the
 		// attempt and the wait is not missed.
 		ch := p.slots.waitCh(svc.ID)
-		pk, err := p.Pick(ctx, svc, appID, exclude)
+		pk, err := p.Pick(ctx, svc, appID, allowHidden, exclude)
 		nk, isNoKey := err.(*NoKeyError)
 		if err == nil || !isNoKey || !nk.Busy {
 			return pk, err

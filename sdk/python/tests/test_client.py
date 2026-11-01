@@ -464,3 +464,38 @@ async def test_async_client(server: FakeServer) -> None:
         server.keys = []
         with pytest.raises(NoKeyAvailable):
             await cog.lease("serpapi")
+
+
+def test_with_key_report_scrubs_secret(cog: Cogito, server: FakeServer) -> None:
+    def call(lease: Lease) -> None:
+        raise RuntimeError(f"GET https://serpapi.com/search.json?api_key={lease.secret} failed")
+
+    with pytest.raises(RuntimeError):
+        cog.with_key("serpapi", call)
+    assert server.reports[-1]["message"] == "RuntimeError: GET https://serpapi.com/search.json?api_key=[key] failed"
+
+    def limited(lease: Lease) -> None:
+        raise RateLimited(message=f"429 for {lease.secret}")
+
+    with pytest.raises(RateLimited):
+        cog.with_key("serpapi", limited, max_attempts=1)
+    assert server.reports[-1]["message"] == "429 for [key]"
+
+
+def test_scrub_message_encoded_and_truncated() -> None:
+    from cogito._models import scrub_message
+
+    secret = "a+b/c=d"
+    assert scrub_message("url ?k=a%2Bb%2Fc%3Dd and a+b/c=d", secret) == "url ?k=[key] and [key]"
+    assert len(scrub_message("x" * 600, secret) or "") == 500
+
+
+def test_proxy_does_not_follow_redirects() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "evil.test":
+            raise AssertionError("redirect was followed")
+        return httpx.Response(302, headers={"Location": "http://evil.test/steal"})
+
+    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(handler))
+    resp = cog.proxy("serpapi").get("/search.json")
+    assert resp.status_code == 302

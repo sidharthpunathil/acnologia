@@ -4,6 +4,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -17,9 +18,17 @@ type Worker struct {
 	Pool           *pool.Pool
 	HealthInterval time.Duration
 	Retention      time.Duration
+
+	lastPrune time.Time
 }
 
+// Run does housekeeping every 30 seconds. Health checks run in their own
+// loop: they make one upstream call per key and can take minutes, which must
+// not delay freeing expired lease slots or reviving exhausted keys.
 func (w *Worker) Run(ctx context.Context) {
+	if w.HealthInterval > 0 {
+		go w.runHealth(ctx)
+	}
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	w.tick(ctx)
@@ -29,6 +38,20 @@ func (w *Worker) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			w.tick(ctx)
+		}
+	}
+}
+
+func (w *Worker) runHealth(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	w.healthChecks(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			w.healthChecks(ctx)
 		}
 	}
 }
@@ -46,13 +69,12 @@ func (w *Worker) tick(ctx context.Context) {
 	if n, err := w.Store.ReactivateExhausted(ctx); err == nil && n > 0 {
 		slog.Info("reactivated exhausted keys", "count", n)
 	}
-	if time.Now().Minute()%10 == 0 && time.Now().Second() < 30 {
+	if time.Since(w.lastPrune) >= 10*time.Minute {
 		if err := w.Store.Prune(ctx, w.Retention); err != nil {
 			slog.Warn("prune failed", "err", err)
+		} else {
+			w.lastPrune = time.Now()
 		}
-	}
-	if w.HealthInterval > 0 {
-		w.healthChecks(ctx)
 	}
 }
 
@@ -73,7 +95,11 @@ func (w *Worker) healthChecks(ctx context.Context) {
 			continue
 		}
 		for _, k := range keys {
-			if k.Status == store.StatusDisabled {
+			if k.Status == store.StatusDisabled || (k.Hidden && !sv.TargetTrusted) {
+				continue
+			}
+			// A check is one more request; do not push a capped key over its limit.
+			if lim := k.ConcurrencyLimit(sv); lim > 0 && w.Pool.InFlight()[k.ID] >= lim {
 				continue
 			}
 			interval := w.HealthInterval
@@ -84,7 +110,7 @@ func (w *Worker) healthChecks(ctx context.Context) {
 				continue
 			}
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			if err := w.Pool.Check(cctx, sv, k); err != nil {
+			if err := w.Pool.Check(cctx, sv, k); err != nil && !errors.Is(err, pool.ErrNoHealthCheck) {
 				slog.Warn("health check failed", "service", sv.Slug, "key", k.ID, "err", err)
 			}
 			cancel()

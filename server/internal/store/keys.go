@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -142,9 +143,20 @@ func (s *Store) CreateKey(ctx context.Context, nk NewKey) (*Key, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO keys(service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		nk.ServiceID, nk.Label, nk.SecretEnc, nk.SecretFP, nk.Hint, nk.Tier, b2i(nk.Hidden), b2i(nk.Restricted),
+	// Never reuse a deleted key's id: events, leases and in-memory slots are
+	// keyed by it, and a reused id would inherit another key's history.
+	var hw sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(COALESCE((SELECT CAST(v AS INTEGER) FROM meta WHERE k='keys_seq'),0), COALESCE((SELECT MAX(id) FROM keys),0),
+		COALESCE((SELECT MAX(key_id) FROM events),0), COALESCE((SELECT MAX(key_id) FROM leases),0))`).Scan(&hw); err != nil {
+		return nil, err
+	}
+	newID := hw.Int64 + 1
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(k,v) VALUES('keys_seq',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprint(newID)); err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO keys(id,service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		newID, nk.ServiceID, nk.Label, nk.SecretEnc, nk.SecretFP, nk.Hint, nk.Tier, b2i(nk.Hidden), b2i(nk.Restricted),
 		nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now(), fromInt(nk.MaxConc))
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -258,9 +270,58 @@ func (s *Store) UpdateKey(ctx context.Context, id int64, p KeyPatch) error {
 	return tx.Commit()
 }
 
+// DeleteKey removes a key. Events of a hidden key are deleted with it so they
+// do not become visible to admins once the hidden flag is gone.
 func (s *Store) DeleteKey(ctx context.Context, id int64) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM keys WHERE id=?`, id)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE key_id=? AND EXISTS (SELECT 1 FROM keys WHERE id=? AND hidden=1)`, id, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM keys WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CountKeys returns the number of stored keys.
+func (s *Store) CountKeys(ctx context.Context) (int, error) {
+	var n int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM keys`).Scan(&n)
+	return n, err
+}
+
+// VerifyAnySecret checks that one stored secret decrypts with the current key.
+func (s *Store) VerifyAnySecret(ctx context.Context, decrypt func([]byte) (string, error)) error {
+	var blob []byte
+	if err := s.DB.QueryRowContext(ctx, `SELECT secret_enc FROM keys ORDER BY id LIMIT 1`).Scan(&blob); err != nil {
+		return err
+	}
+	_, err := decrypt(blob)
 	return err
+}
+
+// AppsExist reports whether every id names an existing app.
+func (s *Store) AppsExist(ctx context.Context, ids []int64) (bool, error) {
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		seen[id] = true
+	}
+	if len(seen) == 0 {
+		return true, nil
+	}
+	args := make([]any, 0, len(seen))
+	for id := range seen {
+		args = append(args, id)
+	}
+	var n int
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM apps WHERE id IN (`+placeholders(len(args))+`)`, args...).Scan(&n); err != nil {
+		return false, err
+	}
+	return n == len(seen), nil
 }
 
 // MarkUsed records a hand-out of the key.

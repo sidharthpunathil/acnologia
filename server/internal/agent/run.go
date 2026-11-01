@@ -33,6 +33,10 @@ type runState struct {
 	summary   string
 	usage     store.AgentUsage
 	fixedSlug string
+	// liveChecks counts live_check tool calls, which spend the operator's key.
+	liveChecks int
+	// pinNoted is set once the "nothing to pin to" note has been logged.
+	pinNoted bool
 }
 
 const (
@@ -170,8 +174,10 @@ func (a *Agent) loop(ctx context.Context, s *runState) error {
 		case anthropic.BetaStopReasonRefusal:
 			return fmt.Errorf("Claude declined this request (%s)", resp.StopDetails.Category)
 		case anthropic.BetaStopReasonMaxTokens:
-			messages = append(messages, anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(
-				"Your last message hit the output limit. Continue, and keep tool inputs compact.")))
+			// Every tool_use needs its tool_result in the next message, or the API rejects it.
+			blocks := append(results, anthropic.NewBetaTextBlock(
+				"Your last message hit the output limit. Continue, and keep tool inputs compact."))
+			messages = append(messages, anthropic.NewBetaUserMessage(blocks...))
 		default:
 			if len(results) > 0 {
 				messages = append(messages, anthropic.NewBetaUserMessage(results...))
@@ -211,7 +217,7 @@ func (a *Agent) finish(ctx context.Context, s *runState) {
 	if !s.run.Input.AutoPublish {
 		st := "needs_review"
 		_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Finished: true})
-		a.pendingLogos.Store(id, pendingLogo{logo, mime})
+		a.storePendingLogo(id, pendingLogo{logo, mime})
 		a.logf(ctx, id, "done", "Ready for review", "All checks passed. Review the draft and publish it.")
 		return
 	}
@@ -253,6 +259,14 @@ func (a *Agent) findLogo(ctx context.Context, id int64, d *draft) ([]byte, strin
 
 func (a *Agent) publish(ctx context.Context, run *store.AgentRun, d *draft, by string, logo []byte, mime string, createService bool) error {
 	id := run.ID
+	if run.Kind == "create_provider" {
+		// A create run must never overwrite a provider, including one added
+		// after the draft was submitted.
+		slug := strings.TrimSpace(strings.ToLower(d.Slug))
+		if p, err := a.Store.GetProvider(ctx, slug); err == nil && p.Slug != "" {
+			return fmt.Errorf("slug %q is already taken by %s; this run only creates new providers", slug, p.Name)
+		}
+	}
 	if logo == nil {
 		if pl, ok := a.pendingLogos.LoadAndDelete(id); ok {
 			logo, mime = pl.(pendingLogo).data, pl.(pendingLogo).mime
@@ -299,7 +313,7 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	if len(s) > 140 {
-		s = s[:140] + "..."
+		s = store.TruncateUTF8(s, 140) + "..."
 	}
 	return s
 }
@@ -334,7 +348,7 @@ func summarizeFetch(b anthropic.BetaWebFetchToolResultBlock) string {
 
 func truncate(s string, n int) string {
 	if len(s) > n {
-		return s[:n] + "..."
+		return store.TruncateUTF8(s, n) + "..."
 	}
 	return s
 }

@@ -32,6 +32,9 @@ type leaseDTO struct {
 type authDTO struct {
 	Type string `json:"type"`
 	Name string `json:"name"`
+	// Prefix goes before the secret, for example "Token ". Empty means the
+	// usual form for the type ("Bearer " for bearer, nothing otherwise).
+	Prefix string `json:"prefix,omitempty"`
 }
 
 func (s *Server) v1Services(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +56,7 @@ func (s *Server) v1Services(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"slug": sv.Slug, "name": sv.Name, "provider": sv.Provider, "category": sv.Category,
 			"available": sv.KeyCounts.Available > sv.KeyCounts.Busy, "base_url": sv.BaseURL,
-			"auth": authDTO{Type: sv.AuthType, Name: sv.AuthName},
+			"auth": authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)},
 		})
 	}
 	writeJSON(w, 200, map[string]any{"services": out})
@@ -102,7 +105,9 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 	for _, id := range exclude {
 		ex[id] = true
 	}
-	p, err := s.Pool.PickWait(ctx, sv, a.ID, ex, wait)
+	// A lease returns the plaintext secret, so hidden keys go only to apps a
+	// superadmin cleared for them.
+	p, err := s.Pool.PickWait(ctx, sv, a.ID, a.LeaseHidden, ex, wait)
 	if err != nil {
 		s.Store.AddEvent(ctx, store.NewEvent{Kind: "error", ServiceID: sv.ID, AppID: a.ID, StatusCode: 503, Detail: "lease: " + err.Error()})
 		return nil, err
@@ -124,7 +129,7 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 	s.Store.AddEvent(ctx, store.NewEvent{Kind: "lease", ServiceID: sv.ID, KeyID: p.Key.ID, AppID: a.ID})
 	return &leaseDTO{
 		LeaseID: l.ID, KeyID: p.Key.ID, Service: sv.Slug, Secret: p.Secret,
-		Auth: authDTO{Type: sv.AuthType, Name: sv.AuthName}, BaseURL: sv.BaseURL, ExpiresAt: l.ExpiresAt,
+		Auth: authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)}, BaseURL: sv.BaseURL, ExpiresAt: l.ExpiresAt,
 	}, nil
 }
 
@@ -166,6 +171,13 @@ type reportInput struct {
 	Rotate        bool   `json:"rotate"`
 }
 
+// leaseReportGrace is how long after expiry a lease can still be reported.
+// Later reports are refused: the key may have been replaced or reassigned.
+const leaseReportGrace = 10 * time.Minute
+
+// maxReportRetryAfter caps the cooldown one app can put on a shared key.
+const maxReportRetryAfter = 24 * 60 * 60
+
 // report applies an outcome to a lease and optionally issues the next lease.
 func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in reportInput) (*leaseDTO, int, error) {
 	out, ok := providers.ParseOutcome(in.Outcome)
@@ -179,23 +191,46 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	if l.Outcome != "" {
 		return nil, 409, errors.New("lease already reported")
 	}
+	if time.Now().After(l.ExpiresAt.Add(leaseReportGrace)) {
+		s.Pool.ReleaseLease(l.ID)
+		return nil, 410, errors.New("lease expired, report within 10 minutes of expiry")
+	}
+	sv, err := s.Store.GetService(ctx, l.ServiceID)
+	if err != nil {
+		return nil, 404, errors.New("service no longer exists")
+	}
+	// Access may have been revoked since the lease was issued.
+	if !a.AllowsLease() || !a.CanUse(sv.Slug) {
+		s.Pool.ReleaseLease(l.ID)
+		return nil, 403, errors.New("this app can no longer use service " + sv.Slug)
+	}
+	// Claim the lease first so two concurrent reports cannot both apply.
+	if err := s.Store.ClaimLeaseOutcome(ctx, l.ID, string(out)); err != nil {
+		if errors.Is(err, store.ErrLeaseReported) {
+			return nil, 409, errors.New("lease already reported")
+		}
+		return nil, 500, err
+	}
 	// Reporting ends the lease and frees its concurrency slot.
 	s.Pool.ReleaseLease(l.ID)
 	k, err := s.Store.GetKey(ctx, l.KeyID)
 	if err != nil {
 		return nil, 404, errors.New("key no longer exists")
 	}
-	sv, err := s.Store.GetService(ctx, l.ServiceID)
-	if err != nil {
-		return nil, 404, errors.New("service no longer exists")
+	// Client errors often quote the request URL, which carries query-auth
+	// keys. The message is shown to every dashboard user, so drop the secret.
+	msg := in.Message
+	if secret, derr := s.Pool.Box.Decrypt(k.SecretEnc); derr == nil {
+		msg = crypto.Scrub(msg, secret)
 	}
-	res := providers.Result{Outcome: out, RetryAfter: time.Duration(in.RetryAfterSec) * time.Second, Message: in.Message}
+	msg = crypto.Truncate(msg, 500)
+	retry := min(max(in.RetryAfterSec, 0), maxReportRetryAfter)
+	res := providers.Result{Outcome: out, RetryAfter: time.Duration(retry) * time.Second, Message: msg}
 	if err := s.Pool.Apply(ctx, sv, k, res); err != nil {
 		return nil, 500, err
 	}
-	_ = s.Store.SetLeaseOutcome(ctx, l.ID, string(out))
 	if out != providers.OK {
-		s.Store.AddEvent(ctx, store.NewEvent{Kind: string(out), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: in.StatusCode, Detail: in.Message})
+		s.Store.AddEvent(ctx, store.NewEvent{Kind: string(out), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: in.StatusCode, Detail: msg})
 	}
 	if !in.Rotate || out == providers.OK {
 		return nil, 200, nil

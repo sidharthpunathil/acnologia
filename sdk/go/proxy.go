@@ -67,7 +67,20 @@ func (p *Proxy) Do(req *http.Request) (*http.Response, error) {
 		out.Header = http.Header{}
 	}
 	p.client.setHeaders(out)
-	return p.client.httpClient.Do(out)
+	return p.client.proxyHTTPClient().Do(out)
+}
+
+// proxyHTTPClient is a shallow copy of the configured client that never
+// follows redirects, so the app token is not replayed to another host. The
+// SDK's default timeout is dropped because proxied bodies may stream for
+// longer; bound proxy calls with the request context instead.
+func (c *Client) proxyHTTPClient() *http.Client {
+	hc := *c.httpClient
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if c.defaultHTTP {
+		hc.Timeout = 0
+	}
+	return &hc
 }
 
 // Request builds and sends a request through the proxy.

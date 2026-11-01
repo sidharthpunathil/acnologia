@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+	"unicode/utf8"
 )
 
 type AgentInput struct {
@@ -186,10 +187,32 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, p RunPatch) error {
 
 func (s *Store) AddStep(ctx context.Context, runID int64, typ, title, detail string) {
 	if len(detail) > 8000 {
-		detail = detail[:8000] + "\n[truncated]"
+		detail = TruncateUTF8(detail, 8000) + "\n[truncated]"
 	}
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO agent_steps(run_id,seq,ts,type,title,detail)
 		VALUES(?, COALESCE((SELECT MAX(seq) FROM agent_steps WHERE run_id=?),0)+1, ?, ?, ?, ?)`, runID, runID, now(), typ, title, detail)
+}
+
+// TruncateUTF8 cuts s to at most n bytes without splitting a UTF-8 character.
+func TruncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// ClaimRun moves a run from one status to another only if it is still in the
+// expected status, so two concurrent callers cannot both act on it.
+func (s *Store) ClaimRun(ctx context.Context, id int64, from, to string) (bool, error) {
+	res, err := s.DB.ExecContext(ctx, `UPDATE agent_runs SET status=? WHERE id=? AND status=?`, to, id, from)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 func (s *Store) ListSteps(ctx context.Context, runID int64, after int) ([]AgentStep, error) {

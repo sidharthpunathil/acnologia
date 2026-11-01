@@ -32,6 +32,8 @@ const (
 	MaxWebSearches = 15
 	MaxWebFetches  = 30
 	maxConcurrent  = 2
+	// MaxLiveChecks caps live_check calls per run; each one spends the operator's key.
+	MaxLiveChecks = 5
 )
 
 type Config struct {
@@ -152,8 +154,14 @@ func (a *Agent) Submit(ctx context.Context, u *store.User, req RunRequest) (*sto
 	default:
 		return nil, errors.New("kind must be create_provider or update_provider")
 	}
+	// Updates change a provider that may already be in use, so they wait for
+	// review unless the operator asks for auto publish explicitly.
+	autoPublish := req.Kind == "create_provider"
+	if req.AutoPublish != nil {
+		autoPublish = *req.AutoPublish
+	}
 	in := store.AgentInput{Context: req.Context, URLs: urls, GitHub: strings.TrimSpace(req.GitHub),
-		AutoPublish: req.AutoPublish == nil || *req.AutoPublish, CreateService: req.CreateService == nil || *req.CreateService,
+		AutoPublish: autoPublish, CreateService: req.CreateService == nil || *req.CreateService,
 		HasTestKey: strings.TrimSpace(req.TestKey) != ""}
 	if req.Kind == "update_provider" {
 		in.CreateService = false
@@ -189,7 +197,7 @@ func runTitle(req RunRequest) string {
 	}
 	t = strings.Join(strings.Fields(t), " ")
 	if len(t) > 80 {
-		t = t[:80] + "..."
+		t = store.TruncateUTF8(t, 80) + "..."
 	}
 	return "New provider: " + t
 }
@@ -205,6 +213,7 @@ func (a *Agent) Cancel(ctx context.Context, id int64) error {
 	if c, ok := a.cancels.Load(id); ok {
 		c.(context.CancelFunc)()
 	}
+	a.pendingLogos.Delete(id)
 	st := "cancelled"
 	return a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Finished: true, ClearTestKey: true})
 }
@@ -222,7 +231,17 @@ func (a *Agent) PublishDraft(ctx context.Context, id int64, by string) (*store.A
 	if err := json.Unmarshal(r.Draft, &d); err != nil {
 		return nil, errors.New("run has no usable draft")
 	}
-	if err := a.publish(ctx, r, &d, by, nil, "", true); err != nil {
+	// Claim the run so two concurrent publish calls cannot both publish it.
+	ok, err := a.Store.ClaimRun(ctx, id, "needs_review", "publishing")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("only runs waiting for review can be published")
+	}
+	createService := r.Input.CreateService && r.Kind == "create_provider"
+	if err := a.publish(ctx, r, &d, by, nil, "", createService); err != nil {
+		_, _ = a.Store.ClaimRun(context.Background(), id, "publishing", "needs_review")
 		return nil, err
 	}
 	return a.Store.GetRun(ctx, id)
@@ -232,7 +251,23 @@ func (a *Agent) logf(ctx context.Context, id int64, typ, title, detail string) {
 	a.Store.AddStep(ctx, id, typ, title, detail)
 }
 
+// maxPendingLogos bounds the logos kept in memory for runs awaiting review.
+const maxPendingLogos = 50
+
+func (a *Agent) storePendingLogo(id int64, pl pendingLogo) {
+	n := 0
+	a.pendingLogos.Range(func(k, _ any) bool {
+		n++
+		if n >= maxPendingLogos {
+			a.pendingLogos.Delete(k)
+		}
+		return true
+	})
+	a.pendingLogos.Store(id, pl)
+}
+
 func (a *Agent) fail(ctx context.Context, id int64, msg string) {
+	a.pendingLogos.Delete(id)
 	st := "failed"
 	_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Error: &msg, Finished: true, ClearTestKey: true})
 	a.logf(ctx, id, "error", "Run failed", msg)

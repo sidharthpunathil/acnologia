@@ -57,6 +57,12 @@ export interface CogitoOptions {
   fetch?: FetchLike;
   /** Extra headers sent with every request to Cogito. */
   headers?: Record<string, string>;
+  /**
+   * Timeout for API calls (lease, report, services) in milliseconds. Default 75000, longer than
+   * the 60s maximum lease wait. 0 disables it. Proxy calls are not bounded by it; pass your own
+   * `signal` to bound those.
+   */
+  timeoutMs?: number;
 }
 
 /** Raw lease JSON as returned by the server. */

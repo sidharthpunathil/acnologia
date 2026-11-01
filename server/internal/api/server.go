@@ -2,13 +2,18 @@
 package api
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,6 +36,9 @@ type Server struct {
 	WebFS    fs.FS
 	LLMsTxt  []byte
 	limiter  *loginLimiter
+	// userMu serializes check-then-write user changes (first setup, keeping
+	// one superadmin) so concurrent requests cannot both pass the check.
+	userMu sync.Mutex
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -43,7 +51,12 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP, middleware.Recoverer, requestLog, privateSite)
+	// Client IP headers are attacker controlled unless a proxy sets them, and
+	// the login limiter keys on the client IP.
+	if s.Cfg.TrustProxyHeaders {
+		r.Use(middleware.RealIP)
+	}
+	r.Use(middleware.Recoverer, requestLog, s.privateSite)
 
 	r.Get("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -162,27 +175,74 @@ func requestLog(next http.Handler) http.Handler {
 
 // privateSite keeps every page out of search engines and AI crawlers, and
 // sets baseline security headers. Cogito is a private tool.
-func privateSite(next http.Handler) http.Handler {
+func (s *Server) privateSite(next http.Handler) http.Handler {
+	csp := dashboardCSP(inlineScriptHashes(s.WebFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
+		if !strings.HasPrefix(r.URL.Path, "/proxy/") {
+			// The dashboard loads only its own scripts and styles plus Google
+			// Fonts. Proxied responses get their own sandbox policy in relay.
+			h.Set("Content-Security-Policy", csp)
+		}
 		next.ServeHTTP(w, r)
 	})
 }
 
+// dashboardCSP allows the bundle from 'self' plus the exact inline scripts
+// shipped in index.html (the pre-paint theme script), by hash.
+func dashboardCSP(hashes []string) string {
+	script := "script-src 'self'"
+	for _, h := range hashes {
+		script += " 'sha256-" + h + "'"
+	}
+	return "default-src 'self'; " + script + "; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+		"font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; " +
+		"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+}
+
+var inlineScriptRe = regexp.MustCompile(`(?is)<script(\s[^>]*)?>(.*?)</script>`)
+
+// inlineScriptHashes returns base64 SHA-256 hashes of index.html's inline
+// scripts, computed from the file actually served so they always match.
+func inlineScriptHashes(web fs.FS) []string {
+	if web == nil {
+		return nil
+	}
+	b, err := fs.ReadFile(web, "index.html")
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, m := range inlineScriptRe.FindAllSubmatch(b, -1) {
+		if bytes.Contains(bytes.ToLower(m[1]), []byte("src=")) || len(bytes.TrimSpace(m[2])) == 0 {
+			continue
+		}
+		sum := sha256.Sum256(m[2])
+		out = append(out, base64.StdEncoding.EncodeToString(sum[:]))
+	}
+	return out
+}
+
 func jsonOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Mutating dashboard calls must be JSON. Browsers cannot send that cross-site
-		// without a CORS preflight, which blocks CSRF with the session cookie.
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.ContentLength != 0 &&
-			!strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Mutating dashboard calls must carry a header a cross-site form or
+		// simple request cannot set: X-Requested-With or a JSON content type.
+		// Either forces a CORS preflight, which blocks CSRF with the session
+		// cookie. This holds for bodyless calls too (rotate, reveal, publish).
+		json := strings.HasPrefix(r.Header.Get("Content-Type"), "application/json")
+		if r.ContentLength != 0 && !json {
 			writeErr(w, http.StatusUnsupportedMediaType, "bad_content_type", "use application/json")
 			return
 		}
-		if r.Method != http.MethodGet && r.Header.Get("X-Requested-With") == "" && r.Header.Get("Content-Type") == "" {
+		if !json && r.Header.Get("X-Requested-With") == "" {
 			writeErr(w, http.StatusBadRequest, "csrf", "missing X-Requested-With header")
 			return
 		}

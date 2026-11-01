@@ -291,7 +291,7 @@ class Cogito:
                 result = fn(lease)
             except KeyProblem as exc:
                 last = attempt >= max_attempts
-                kwargs = outcome_for(exc)
+                kwargs = outcome_for(exc, lease.secret)
                 kwargs["rotate"] = not last
                 nxt = lease.report(**kwargs)
                 if last:
@@ -300,7 +300,7 @@ class Cogito:
                 continue
             except BaseException as exc:
                 try:
-                    lease.report(**outcome_for(exc))
+                    lease.report(**outcome_for(exc, lease.secret))
                 except Exception:
                     pass
                 raise
@@ -392,7 +392,7 @@ class AsyncCogito:
                     result = await result
             except KeyProblem as exc:
                 last = attempt >= max_attempts
-                kwargs = outcome_for(exc)
+                kwargs = outcome_for(exc, lease.secret)
                 kwargs["rotate"] = not last
                 nxt = await lease.report(**kwargs)
                 if last:
@@ -401,7 +401,7 @@ class AsyncCogito:
                 continue
             except BaseException as exc:
                 try:
-                    await lease.report(**outcome_for(exc))
+                    await lease.report(**outcome_for(exc, lease.secret))
                 except Exception:
                     pass
                 raise

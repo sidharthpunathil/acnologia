@@ -11,10 +11,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 type Box struct {
@@ -23,14 +26,20 @@ type Box struct {
 }
 
 // LoadOrCreateKey returns the 32 byte master key. It prefers the env value,
-// then dataDir/master.key, and generates the file if neither exists.
+// then dataDir/master.key, and generates the file only if it does not exist.
+// Any other read error is returned so a transient failure never replaces a
+// working key.
 func LoadOrCreateKey(envValue, dataDir string) ([]byte, error) {
 	if envValue != "" {
 		return decodeKey(envValue)
 	}
 	path := filepath.Join(dataDir, "master.key")
-	if b, err := os.ReadFile(path); err == nil {
+	b, err := os.ReadFile(path)
+	if err == nil {
 		return decodeKey(strings.TrimSpace(string(b)))
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("read master key: %w", err)
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -87,6 +96,14 @@ func (b *Box) Decrypt(blob []byte) (string, error) {
 	return string(out), nil
 }
 
+// CheckValue is a keyed constant stored next to the data so a boot with a
+// different master key is detected before anything is encrypted with it.
+func (b *Box) CheckValue() string {
+	m := hmac.New(sha256.New, b.mac)
+	m.Write([]byte("cogito-master-key-check"))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 // Fingerprint is a keyed hash used to detect duplicate secrets without decrypting.
 func (b *Box) Fingerprint(secret string) string {
 	m := hmac.New(sha256.New, b.mac)
@@ -112,4 +129,26 @@ func Hint(secret string) string {
 		return "..."
 	}
 	return "..." + secret[len(secret)-4:]
+}
+
+// Scrub replaces the secret, raw and URL encoded, with [key] so upstream
+// errors and messages can be stored or shown without leaking it.
+func Scrub(msg, secret string) string {
+	if secret == "" || msg == "" {
+		return msg
+	}
+	msg = strings.ReplaceAll(msg, secret, "[key]")
+	msg = strings.ReplaceAll(msg, url.QueryEscape(secret), "[key]")
+	return strings.ReplaceAll(msg, url.PathEscape(secret), "[key]")
+}
+
+// Truncate cuts s to at most n bytes without splitting a UTF-8 character.
+func Truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

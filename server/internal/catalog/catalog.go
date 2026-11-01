@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -67,6 +68,13 @@ func Check(in *Input) (*providers.Spec, []string, providers.TestReport) {
 	if in.Color != "" && !colorRe.MatchString(in.Color) {
 		errs = append(errs, "color must look like #1a73e8")
 	}
+	in.Website, in.DocsURL = strings.TrimSpace(in.Website), strings.TrimSpace(in.DocsURL)
+	if in.Website != "" && !httpURL(in.Website) {
+		errs = append(errs, "website must be an http(s) URL")
+	}
+	if in.DocsURL != "" && !httpURL(in.DocsURL) {
+		errs = append(errs, "docs_url must be an http(s) URL")
+	}
 	if in.Status == "" {
 		in.Status = "active"
 	}
@@ -88,6 +96,13 @@ func Check(in *Input) (*providers.Spec, []string, providers.TestReport) {
 	// Store the normalized form.
 	in.Spec, _ = json.Marshal(spec)
 	return spec, errs, rep
+}
+
+// httpURL reports whether s is an absolute http(s) URL with a host. Links
+// such as javascript: would run in the dashboard when clicked.
+func httpURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // Publish validates, tests, saves a new version and swaps the live spec.

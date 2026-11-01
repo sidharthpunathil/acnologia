@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -54,7 +55,8 @@ CREATE TABLE IF NOT EXISTS services(
   queue_timeout_sec INTEGER NOT NULL DEFAULT 0,
   logo BLOB,
   logo_mime TEXT NOT NULL DEFAULT '',
-  logo_rev INTEGER NOT NULL DEFAULT 0
+  logo_rev INTEGER NOT NULL DEFAULT 0,
+  target_trusted INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS keys(
   id INTEGER PRIMARY KEY,
@@ -97,7 +99,8 @@ CREATE TABLE IF NOT EXISTS apps(
   mode TEXT NOT NULL DEFAULT 'both',
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
-  last_used_at INTEGER
+  last_used_at INTEGER,
+  lease_hidden INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS key_apps(
   key_id INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
@@ -208,6 +211,10 @@ func Open(dataDir string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// The database holds encrypted keys and password hashes: owner only.
+	for _, f := range []string{"cogito.db", "cogito.db-wal", "cogito.db-shm"} {
+		_ = os.Chmod(filepath.Join(dataDir, f), 0o600)
+	}
 	if err := migrate(db); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -241,7 +248,22 @@ func migrate(db *sql.DB) error {
 	if _, err = addColumn(db, "services", "logo_rev", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	_, err = addColumn(db, "keys", "last_ok_at", "INTEGER")
+	if _, err = addColumn(db, "keys", "last_ok_at", "INTEGER"); err != nil {
+		return err
+	}
+	// Services that existed before target trust was tracked were configured by
+	// whoever ran the instance; keep them usable for hidden keys.
+	added, err = addColumn(db, "services", "target_trusted", "INTEGER NOT NULL DEFAULT 0")
+	if err != nil {
+		return err
+	}
+	if added {
+		if _, err := db.Exec(`UPDATE services SET target_trusted=1`); err != nil {
+			return err
+		}
+	}
+	// Apps are not trusted with hidden keys until a superadmin says so.
+	_, err = addColumn(db, "apps", "lease_hidden", "INTEGER NOT NULL DEFAULT 0")
 	return err
 }
 

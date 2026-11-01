@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev`
+const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev, target_trusted`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
 	var created int64
 	err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.Provider, &s.Category, &s.Description, &s.BaseURL,
-		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev)
+		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev, &s.TargetTrusted)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -25,10 +25,10 @@ func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 }
 
 func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error) {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO services(slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO services(slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec,target_trusted)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
-		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now(), sv.MaxConcurrency, sv.QueueTimeoutSec)
+		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now(), sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted))
 	if err != nil {
 		return nil, err
 	}
@@ -37,9 +37,9 @@ func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error
 }
 
 func (s *Store) UpdateService(ctx context.Context, sv *Service) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=? WHERE id=?`,
+	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=?,target_trusted=? WHERE id=?`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
-		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.MaxConcurrency, sv.QueueTimeoutSec, sv.ID)
+		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted), sv.ID)
 	return err
 }
 
@@ -130,8 +130,11 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	rows2, err := s.DB.QueryContext(ctx, `SELECT service_id, COUNT(*) FROM events WHERE ts>? AND kind IN ('lease','proxy') GROUP BY service_id`,
-		time.Now().Add(-24*time.Hour).Unix())
+	rq := `SELECT e.service_id, COUNT(*) FROM events e WHERE e.ts>? AND e.kind IN ('lease','proxy')`
+	if !includeHidden {
+		rq += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+	}
+	rows2, err := s.DB.QueryContext(ctx, rq+` GROUP BY e.service_id`, time.Now().Add(-24*time.Hour).Unix())
 	if err != nil {
 		return err
 	}
@@ -166,4 +169,11 @@ func (s *Store) ServiceLogo(ctx context.Context, id int64) ([]byte, string, erro
 		return nil, "", ErrNotFound
 	}
 	return data, mime, err
+}
+
+// SetServiceTrusted records that a superadmin vouched for the service's
+// upstream target, so hidden keys may be sent to it.
+func (s *Store) SetServiceTrusted(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE services SET target_trusted=1 WHERE id=?`, id)
+	return err
 }

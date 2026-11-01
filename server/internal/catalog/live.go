@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cogito-keys/cogito/internal/providers"
+	"github.com/cogito-keys/cogito/internal/store"
 )
 
 // LiveReport is the result of trying a provider against the real API.
@@ -36,6 +37,8 @@ type LiveReport struct {
 func LiveCheck(ctx context.Context, spec *providers.Spec, secret string) LiveReport {
 	var rep LiveReport
 	c := SafeClient(20 * time.Second)
+	// The request carries a real key, so never follow a redirect to another host.
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if spec.Health != nil {
 		res, err := spec.Check(ctx, c, spec.BaseURL, secret)
 		switch {
@@ -53,7 +56,8 @@ func LiveCheck(ctx context.Context, spec *providers.Spec, secret string) LiveRep
 		rep.Health.Detail = "no health check defined"
 	}
 	for _, ex := range spec.Examples {
-		if !ex.Safe {
+		// Only read-only requests run with a real key, whatever the spec claims.
+		if !ex.Safe || !LiveSafeMethod(ex.Method) {
 			continue
 		}
 		rep.Example.Ran = true
@@ -101,14 +105,22 @@ func runExample(ctx context.Context, c *http.Client, spec *providers.Spec, ex pr
 	if rule != "" {
 		detail += ", matched rule: " + rule
 	}
-	preview := string(rb)
+	// Scrub before truncating so a key that straddles the cut cannot survive in part.
+	preview := scrub(string(rb), secret)
 	if len(preview) > 600 {
-		preview = preview[:600] + "..."
+		preview = store.TruncateUTF8(preview, 600) + "..."
 	}
 	if strings.Contains(detail, "json") || strings.HasPrefix(strings.TrimSpace(preview), "{") {
 		detail += "\n" + preview
 	}
 	return resp.StatusCode, string(res.Outcome), scrub(detail, secret)
+}
+
+// LiveSafeMethod reports whether an example may run against the real API
+// with an operator key. Only GET and HEAD are read-only by convention.
+func LiveSafeMethod(m string) bool {
+	m = strings.ToUpper(strings.TrimSpace(m))
+	return m == "" || m == http.MethodGet || m == http.MethodHead
 }
 
 // scrub removes a secret from text before it is shown or stored.

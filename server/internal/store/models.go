@@ -78,6 +78,9 @@ type Service struct {
 	LogoURL *string `json:"logo_url"`
 	HasLogo bool    `json:"-"`
 	LogoRev int     `json:"-"`
+	// TargetTrusted is false after someone other than a superadmin set the
+	// base URL or auth placement. Hidden keys are never sent to such a target.
+	TargetTrusted bool `json:"target_trusted"`
 }
 
 const (
@@ -177,6 +180,9 @@ type App struct {
 	Active          bool       `json:"active"`
 	CreatedAt       time.Time  `json:"created_at"`
 	LastUsedAt      *time.Time `json:"last_used_at"`
+	// LeaseHidden lets the app lease hidden keys. Only a superadmin can set
+	// it, and a token rotation by anyone else clears it.
+	LeaseHidden bool `json:"lease_hidden"`
 }
 
 func (a *App) CanUse(slug string) bool {

@@ -15,8 +15,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -29,17 +31,63 @@ var AllowedLogoMimes = map[string]bool{
 	"image/x-icon": true, "image/vnd.microsoft.icon": true, "image/gif": true,
 }
 
-// SafeClient refuses to connect to private, loopback and link-local
-// addresses, so URLs chosen by users or an AI cannot reach internal services.
+// blockedPrefixes are address ranges that are never public internet hosts:
+// private, loopback, link-local, carrier-grade NAT (also Tailscale and the
+// Alibaba metadata service), benchmarking, IETF protocol assignments,
+// documentation, multicast and reserved space.
+var blockedPrefixes = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range []string{
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+		"172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15",
+		"198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+		"::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8", "2001:db8::/32",
+	} {
+		out = append(out, netip.MustParsePrefix(p))
+	}
+	return out
+}()
+
+var (
+	nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour   = netip.MustParsePrefix("2002::/16")
+)
+
+// BlockedIP reports whether ip is not a public internet address. IPv4 that is
+// embedded in IPv6 (mapped, NAT64 or 6to4) is checked as the IPv4 address.
+func BlockedIP(ip netip.Addr) bool {
+	if !ip.IsValid() {
+		return true
+	}
+	ip = ip.Unmap()
+	if ip.Is6() {
+		b := ip.As16()
+		switch {
+		case nat64Prefix.Contains(ip):
+			return BlockedIP(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
+		case sixToFour.Contains(ip):
+			return BlockedIP(netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}))
+		}
+	}
+	for _, p := range blockedPrefixes {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// SafeClient refuses to connect to non-public addresses, so URLs chosen by
+// users or an AI cannot reach internal services. The check runs on the
+// resolved address at dial time, which also covers redirects and DNS rebinding.
 func SafeClient(timeout time.Duration) *http.Client {
 	d := &net.Dialer{Timeout: 10 * time.Second, Control: func(network, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil {
 			return err
 		}
-		ip := net.ParseIP(host)
-		if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-			ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.ParseIP("169.254.169.254")) {
+		ip, err := netip.ParseAddr(host)
+		if err != nil || BlockedIP(ip) {
 			return fmt.Errorf("refusing to connect to non-public address %s", host)
 		}
 		return nil
@@ -88,15 +136,12 @@ func FetchLogo(ctx context.Context, site string) ([]byte, string, string, error)
 				size = 512
 			}
 			found = append(found, cand{h[1], size})
-		}
-		// Largest first.
-		for i := 0; i < len(found); i++ {
-			for j := i + 1; j < len(found); j++ {
-				if found[j].size > found[i].size {
-					found[i], found[j] = found[j], found[i]
-				}
+			if len(found) >= 64 {
+				break
 			}
 		}
+		// Largest first.
+		sort.SliceStable(found, func(i, j int) bool { return found[i].size > found[j].size })
 		for _, f := range found {
 			if u, err := base.Parse(strings.TrimSpace(f.href)); err == nil {
 				candidates = append(candidates, u.String())

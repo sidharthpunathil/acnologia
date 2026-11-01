@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/pool"
@@ -50,8 +48,8 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		inflight += sv.InFlight
 	}
 	since := time.Now().Add(-24 * time.Hour)
-	reqs, _ := s.Store.CountEvents(ctx, since, "lease", "proxy")
-	rls, _ := s.Store.CountEvents(ctx, since, "rate_limited", "quota_exhausted")
+	reqs, _ := s.Store.CountEvents(ctx, since, isSuper(r), "lease", "proxy")
+	rls, _ := s.Store.CountEvents(ctx, since, isSuper(r), "rate_limited", "quota_exhausted")
 	evs, _ := s.Store.ListEvents(ctx, store.EventFilter{Limit: 15})
 	writeJSON(w, 200, map[string]any{
 		"services": len(svcs), "keys": map[string]int{
@@ -210,6 +208,7 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid", msg)
 		return
 	}
+	sv.TargetTrusted = isSuper(r)
 	created, err := s.Store.CreateService(r.Context(), sv)
 	if err != nil {
 		writeStoreErr(w, err)
@@ -229,9 +228,20 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
+	before := targetOf(sv)
 	if msg := in.apply(sv); msg != "" {
 		writeErr(w, 400, "invalid", msg)
 		return
+	}
+	// Where keys are sent decides who can read them. A superadmin saving the
+	// service vouches for its target; anyone else changing it revokes that,
+	// so hidden keys stop flowing until a superadmin confirms.
+	if isSuper(r) && (in.BaseURL != nil || in.AuthType != nil || in.AuthName != nil || in.Provider != nil) {
+		// The superadmin submitted the target fields (the edit form sends
+		// them), so they saw and confirmed where keys go.
+		sv.TargetTrusted = true
+	} else if targetOf(sv) != before {
+		sv.TargetTrusted = false
 	}
 	if _, err := s.Store.GetProvider(r.Context(), sv.Provider); err != nil {
 		writeErr(w, 400, "unknown_provider", "no provider named "+sv.Provider)
@@ -245,6 +255,11 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 	_ = s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r), s.Pool.InFlight())
 	s.fillLogos(r.Context(), sv)
 	writeJSON(w, 200, sv)
+}
+
+// targetOf is everything that decides where and how a key leaves the box.
+func targetOf(sv *store.Service) string {
+	return sv.BaseURL + "\x00" + sv.AuthType + "\x00" + sv.AuthName + "\x00" + sv.Provider
 }
 
 func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +333,7 @@ type keyInput struct {
 	MaxConc *int64 `json:"max_concurrency"`
 }
 
-func (in keyInput) validate(r *http.Request) (int, string) {
+func (s *Server) validateKey(in keyInput, r *http.Request) (int, string) {
 	if in.Hidden != nil && *in.Hidden && !isSuper(r) {
 		return 403, "only a superadmin can hide keys"
 	}
@@ -336,6 +351,18 @@ func (in keyInput) validate(r *http.Request) (int, string) {
 	}
 	if in.MaxConc != nil && (*in.MaxConc < -1 || *in.MaxConc > 1000) {
 		return 400, "max_concurrency must be -1 (use service default), 0 (unlimited) or up to 1000"
+	}
+	if in.QuotaLimit != nil && *in.QuotaLimit < -1 {
+		return 400, "quota_limit must be -1 (clear) or a positive number"
+	}
+	if in.AppIDs != nil && len(*in.AppIDs) > 0 {
+		ok, err := s.Store.AppsExist(r.Context(), *in.AppIDs)
+		if err != nil {
+			return 500, "could not check app_ids"
+		}
+		if !ok {
+			return 400, "app_ids names an app that does not exist"
+		}
 	}
 	return 0, ""
 }
@@ -362,7 +389,7 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, "invalid", fmt.Sprintf("key %d has no secret", i+1))
 			return
 		}
-		if code, msg := in.validate(r); code != 0 {
+		if code, msg := s.validateKey(in, r); code != 0 {
 			writeErr(w, code, "invalid", msg)
 			return
 		}
@@ -403,7 +430,9 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 		if in.Notes != nil {
 			nk.Notes = *in.Notes
 		}
-		nk.QuotaLimit = in.QuotaLimit
+		if in.QuotaLimit != nil && *in.QuotaLimit >= 0 {
+			nk.QuotaLimit = in.QuotaLimit
+		}
 		if in.MaxConc != nil && *in.MaxConc >= 0 {
 			nk.MaxConc = in.MaxConc
 		}
@@ -421,7 +450,16 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 	s.Store.AddAudit(r.Context(), userFrom(r), "key.create", sv.Slug, fmt.Sprintf("%d added, %d skipped", len(created), len(skipped)))
 	// Check new keys in the background so quotas show up without a manual click.
 	go s.checkMany(sv, created)
-	writeJSON(w, 201, map[string]any{"keys": created, "skipped": skipped})
+	resp := map[string]any{"keys": created, "skipped": skipped}
+	if !sv.TargetTrusted {
+		for _, k := range created {
+			if k.Hidden {
+				resp["warning"] = "hidden keys are not used until a superadmin saves this service's settings, because its base URL was set by someone else"
+				break
+			}
+		}
+	}
+	writeJSON(w, 201, resp)
 }
 
 func (s *Server) checkMany(sv *store.Service, keys []*store.Key) {
@@ -466,7 +504,7 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if code, msg := in.validate(r); code != 0 {
+	if code, msg := s.validateKey(in, r); code != 0 {
 		writeErr(w, code, "invalid", msg)
 		return
 	}
@@ -559,6 +597,10 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 422, "no_health_check", err.Error())
 		return
 	}
+	if errors.Is(err, pool.ErrUntrustedTarget) {
+		writeErr(w, 409, "untrusted_target", err.Error())
+		return
+	}
 	detail := "ok"
 	if err != nil {
 		detail = err.Error()
@@ -615,9 +657,25 @@ type appInput struct {
 	AllowedServices *[]string `json:"allowed_services"`
 	Mode            *string   `json:"mode"`
 	Active          *bool     `json:"active"`
+	LeaseHidden     *bool     `json:"lease_hidden"`
 }
 
-func (in appInput) apply(a *store.App) string {
+func (in appInput) apply(r *http.Request, a *store.App) (int, string) {
+	if in.LeaseHidden != nil {
+		// Leasing hands out the plaintext secret, so only a superadmin may let
+		// an app lease hidden keys.
+		if *in.LeaseHidden && !isSuper(r) {
+			return 403, "only a superadmin can let an app lease hidden keys"
+		}
+		a.LeaseHidden = *in.LeaseHidden
+	}
+	if msg := in.applyFields(a); msg != "" {
+		return 400, msg
+	}
+	return 0, ""
+}
+
+func (in appInput) applyFields(a *store.App) string {
 	if in.Name != nil {
 		a.Name = strings.TrimSpace(*in.Name)
 	}
@@ -653,8 +711,8 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := &store.App{Mode: "both", Active: true}
-	if msg := in.apply(a); msg != "" {
-		writeErr(w, 400, "invalid", msg)
+	if code, msg := in.apply(r, a); code != 0 {
+		writeErr(w, code, "invalid", msg)
 		return
 	}
 	tok, prefix, hash := newAppToken()
@@ -682,8 +740,8 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if msg := in.apply(a); msg != "" {
-		writeErr(w, 400, "invalid", msg)
+	if code, msg := in.apply(r, a); code != 0 {
+		writeErr(w, code, "invalid", msg)
 		return
 	}
 	if err := s.Store.UpdateApp(r.Context(), a); err != nil {
@@ -717,7 +775,9 @@ func (s *Server) rotateAppToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok, prefix, hash := newAppToken()
-	if err := s.Store.SetAppToken(r.Context(), id, hash, prefix); err != nil {
+	// Whoever rotates gets the token. If that is not a superadmin, the app
+	// loses access to hidden keys until a superadmin grants it again.
+	if err := s.Store.SetAppToken(r.Context(), id, hash, prefix, isSuper(r)); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
@@ -792,11 +852,14 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.TrimSpace(strings.ToLower(body.Email))
 	if !strings.Contains(email, "@") || !validPassword(body.Password) || !body.Role.Valid() {
-		writeErr(w, 400, "invalid", "valid email, role, and a password of at least 10 characters are required")
+		writeErr(w, 400, "invalid", "valid email, role, and a "+passwordRule+" are required")
 		return
 	}
-	h, _ := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
-	u, err := s.Store.CreateUser(r.Context(), email, body.Name, string(h), body.Role)
+	h, ok := hashPassword(w, body.Password)
+	if !ok {
+		return
+	}
+	u, err := s.Store.CreateUser(r.Context(), email, body.Name, h, body.Role)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -819,37 +882,54 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	target, err := s.Store.GetUser(r.Context(), id)
-	if err != nil {
-		writeStoreErr(w, err)
-		return
-	}
 	if body.Role != nil && !body.Role.Valid() {
 		writeErr(w, 400, "invalid", "unknown role")
 		return
 	}
+	p := store.UserPatch{Name: body.Name, Role: body.Role, Disabled: body.Disabled}
+	if body.Password != nil {
+		if !validPassword(*body.Password) {
+			writeErr(w, 400, "weak_password", passwordRule)
+			return
+		}
+		hs, ok := hashPassword(w, *body.Password)
+		if !ok {
+			return
+		}
+		p.PasswordHash = &hs
+	}
+	s.userMu.Lock()
+	target, err := s.Store.GetUser(r.Context(), id)
+	if err != nil {
+		s.userMu.Unlock()
+		writeStoreErr(w, err)
+		return
+	}
+	// Only removing an active superadmin can drop the active count.
 	demoting := (body.Role != nil && *body.Role != store.RoleSuperadmin) || (body.Disabled != nil && *body.Disabled)
-	if target.Role == store.RoleSuperadmin && demoting {
+	if target.Role == store.RoleSuperadmin && !target.Disabled && demoting {
 		if n, _ := s.Store.CountSuperadmins(r.Context()); n <= 1 {
+			s.userMu.Unlock()
 			writeErr(w, 400, "last_superadmin", "keep at least one active superadmin")
 			return
 		}
 	}
-	p := store.UserPatch{Name: body.Name, Role: body.Role, Disabled: body.Disabled}
-	if body.Password != nil {
-		if !validPassword(*body.Password) {
-			writeErr(w, 400, "weak_password", "password must be at least 10 characters")
-			return
-		}
-		h, _ := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
-		hs := string(h)
-		p.PasswordHash = &hs
-	}
-	if err := s.Store.UpdateUser(r.Context(), id, p); err != nil {
+	err = s.Store.UpdateUser(r.Context(), id, p)
+	s.userMu.Unlock()
+	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "user.update", target.Email, "")
+	if p.PasswordHash != nil {
+		// A reset must end every session of that user, or a stolen session
+		// outlives it. Keep the caller's own session when they reset themselves.
+		keep := ""
+		if id == userFrom(r).ID {
+			keep, _ = r.Context().Value(sessionHashKey).(string)
+		}
+		_ = s.Store.DeleteUserSessions(r.Context(), id, keep)
+	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "user.update", target.Email, userChangeDetail(target, body.Name, body.Role, body.Disabled, body.Password != nil))
 	u, _ := s.Store.GetUser(r.Context(), id)
 	writeJSON(w, 200, u)
 }
@@ -868,16 +948,38 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	if target.Role == store.RoleSuperadmin {
+	s.userMu.Lock()
+	if target.Role == store.RoleSuperadmin && !target.Disabled {
 		if n, _ := s.Store.CountSuperadmins(r.Context()); n <= 1 {
+			s.userMu.Unlock()
 			writeErr(w, 400, "last_superadmin", "keep at least one active superadmin")
 			return
 		}
 	}
-	if err := s.Store.DeleteUser(r.Context(), id); err != nil {
+	err = s.Store.DeleteUser(r.Context(), id)
+	s.userMu.Unlock()
+	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "user.delete", target.Email, "")
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// userChangeDetail describes a user update for the audit log.
+func userChangeDetail(before *store.User, name *string, role *store.Role, disabled *bool, password bool) string {
+	parts := []string{}
+	if name != nil && *name != before.Name {
+		parts = append(parts, "name changed")
+	}
+	if role != nil && *role != before.Role {
+		parts = append(parts, fmt.Sprintf("role %s to %s", before.Role, *role))
+	}
+	if disabled != nil && *disabled != before.Disabled {
+		parts = append(parts, "disabled="+strconv.FormatBool(*disabled))
+	}
+	if password {
+		parts = append(parts, "password reset")
+	}
+	return strings.Join(parts, ", ")
 }

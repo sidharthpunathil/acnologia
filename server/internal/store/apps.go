@@ -8,15 +8,15 @@ import (
 	"time"
 )
 
-const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at`
+const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden`
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var a App
 	var allowed string
-	var active int
+	var active, leaseHidden int
 	var created int64
 	var last sql.NullInt64
-	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -25,6 +25,7 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	a.AllowedServices = []string{}
 	_ = json.Unmarshal([]byte(allowed), &a.AllowedServices)
 	a.Active = active == 1
+	a.LeaseHidden = leaseHidden == 1
 	a.CreatedAt = time.Unix(created, 0).UTC()
 	a.LastUsedAt = toTime(last)
 	return &a, nil
@@ -32,8 +33,8 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 
 func (s *Store) CreateApp(ctx context.Context, a *App, tokenHash string) (*App, error) {
 	allowed, _ := json.Marshal(nonNil(a.AllowedServices))
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO apps(name,description,token_hash,token_prefix,allowed_services,mode,active,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		a.Name, a.Description, tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), now())
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO apps(name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?)`,
+		a.Name, a.Description, tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), now(), b2i(a.LeaseHidden))
 	if err != nil {
 		return nil, err
 	}
@@ -43,14 +44,26 @@ func (s *Store) CreateApp(ctx context.Context, a *App, tokenHash string) (*App, 
 
 func (s *Store) UpdateApp(ctx context.Context, a *App) error {
 	allowed, _ := json.Marshal(nonNil(a.AllowedServices))
-	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET name=?, description=?, allowed_services=?, mode=?, active=? WHERE id=?`,
-		a.Name, a.Description, string(allowed), a.Mode, b2i(a.Active), a.ID)
+	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET name=?, description=?, allowed_services=?, mode=?, active=?, lease_hidden=? WHERE id=?`,
+		a.Name, a.Description, string(allowed), a.Mode, b2i(a.Active), b2i(a.LeaseHidden), a.ID)
 	return err
 }
 
-func (s *Store) SetAppToken(ctx context.Context, id int64, tokenHash, prefix string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET token_hash=?, token_prefix=? WHERE id=?`, tokenHash, prefix, id)
-	return err
+// SetAppToken replaces the app token. keepHidden false also revokes the
+// app's access to hidden keys, since the new token holder may not be trusted.
+func (s *Store) SetAppToken(ctx context.Context, id int64, tokenHash, prefix string, keepHidden bool) error {
+	q := `UPDATE apps SET token_hash=?, token_prefix=? WHERE id=?`
+	if !keepHidden {
+		q = `UPDATE apps SET token_hash=?, token_prefix=?, lease_hidden=0 WHERE id=?`
+	}
+	res, err := s.DB.ExecContext(ctx, q, tokenHash, prefix, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) DeleteApp(ctx context.Context, id int64) error {
@@ -137,9 +150,20 @@ func (s *Store) OpenLeases(ctx context.Context) ([]*Lease, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) SetLeaseOutcome(ctx context.Context, id, outcome string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE leases SET outcome=? WHERE id=?`, outcome, id)
-	return err
+// ErrLeaseReported means the lease already has an outcome.
+var ErrLeaseReported = errors.New("lease already reported")
+
+// ClaimLeaseOutcome sets the outcome only if none is set yet, so two
+// concurrent reports cannot both apply.
+func (s *Store) ClaimLeaseOutcome(ctx context.Context, id, outcome string) error {
+	res, err := s.DB.ExecContext(ctx, `UPDATE leases SET outcome=? WHERE id=? AND outcome=''`, outcome, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrLeaseReported
+	}
+	return nil
 }
 
 // Housekeeping
@@ -152,7 +176,13 @@ func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 	}{
 		{`DELETE FROM sessions WHERE expires_at<?`, t.Unix()},
 		{`DELETE FROM leases WHERE created_at<?`, t.Add(-7 * 24 * time.Hour).Unix()},
-		{`DELETE FROM events WHERE ts<?`, t.Add(-eventRetention).Unix()},
+	}
+	// A retention of zero or less means keep events forever.
+	if eventRetention > 0 {
+		stmts = append(stmts, struct {
+			q string
+			a any
+		}{`DELETE FROM events WHERE ts<?`, t.Add(-eventRetention).Unix()})
 	}
 	for _, st := range stmts {
 		if _, err := s.DB.ExecContext(ctx, st.q, st.a); err != nil {

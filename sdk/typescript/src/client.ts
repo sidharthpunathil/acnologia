@@ -19,6 +19,21 @@ import type {
 
 export const VERSION = "0.1.0";
 const CLIENT_HEADER = `cogito-ts/${VERSION}`;
+const DEFAULT_TIMEOUT_MS = 75_000;
+const MAX_REPORT_MESSAGE = 500;
+const INSPECT = Symbol.for("nodejs.util.inspect.custom");
+
+/**
+ * Replace the lease secret (raw and URL encoded) with `[key]` and truncate. Errors from query
+ * auth services often carry the full request URL, key included, and a report must not copy it.
+ */
+export function scrubMessage(message: string, secret: string): string {
+  let out = message;
+  if (secret) {
+    out = out.split(secret).join("[key]").split(encodeURIComponent(secret)).join("[key]");
+  }
+  return out.slice(0, MAX_REPORT_MESSAGE);
+}
 
 function toSearchParams(query?: QueryInit): URLSearchParams {
   if (!query) return new URLSearchParams();
@@ -148,6 +163,20 @@ export class Lease {
   toJSON(): Omit<LeaseJSON, "secret"> & { secret: string } {
     return { ...this.raw, secret: "***" };
   }
+
+  /** Redacted view for `console.log` and `util.inspect` in Node. */
+  [INSPECT](): Record<string, unknown> {
+    return {
+      leaseId: this.leaseId,
+      keyId: this.keyId,
+      service: this.service,
+      secret: "***",
+      auth: this.auth,
+      baseUrl: this.baseUrl,
+      expiresAt: this.expiresAt,
+      reported: this._reported,
+    };
+  }
 }
 
 /** Calls go to Cogito's proxy, which injects a key and rotates on rate limits. */
@@ -166,7 +195,9 @@ export class Proxy {
       query,
     );
     const headers = { ...toHeaderRecord(rest.headers as HeadersLike | undefined), ...this.client._authHeaders() };
-    return this.client._fetch(url, { ...rest, method: method.toUpperCase(), headers });
+    // Never follow redirects, so the app token is not replayed to another host. No default
+    // timeout here because proxied bodies may stream; pass `signal` in init to bound a call.
+    return this.client._fetch(url, { ...rest, method: method.toUpperCase(), headers, redirect: "manual" });
   }
 
   get(path: string, query?: QueryInit, init: RequestInit = {}): Promise<Response> {
@@ -212,6 +243,7 @@ export class Cogito {
   private readonly token: string;
   private readonly fetchImpl: FetchLike | undefined;
   private readonly extraHeaders: Record<string, string>;
+  private readonly timeoutMs: number;
 
   constructor(opts: CogitoOptions) {
     if (!opts || !opts.baseUrl) throw new TypeError("Cogito: baseUrl is required");
@@ -220,6 +252,12 @@ export class Cogito {
     this.token = opts.token;
     this.fetchImpl = opts.fetch;
     this.extraHeaders = opts.headers ?? {};
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  /** Redacted view for `console.log` and `util.inspect` in Node. */
+  [INSPECT](): Record<string, unknown> {
+    return { baseUrl: this.baseUrl, token: "***" };
   }
 
   /** @internal */
@@ -244,6 +282,9 @@ export class Cogito {
   async _json<T>(method: string, path: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = { ...this._authHeaders(), Accept: "application/json" };
     const init: RequestInit = { method, headers };
+    if (this.timeoutMs > 0 && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      init.signal = AbortSignal.timeout(this.timeoutMs);
+    }
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(body);
@@ -340,7 +381,7 @@ export class Cogito {
               outcome: err.outcome,
               statusCode: err.statusCode,
               retryAfterSec: "retryAfter" in err ? (err as { retryAfter?: number }).retryAfter : undefined,
-              message: err.message,
+              message: scrubMessage(err.message, lease.secret),
               rotate,
             });
           } catch (reportErr) {
@@ -354,7 +395,7 @@ export class Cogito {
         try {
           await lease.report({
             outcome: "error",
-            message: err instanceof Error ? err.message : String(err),
+            message: scrubMessage(err instanceof Error ? err.message : String(err), lease.secret),
           });
         } catch {
           // keep the caller's error

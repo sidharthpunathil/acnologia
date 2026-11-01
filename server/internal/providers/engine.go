@@ -124,7 +124,7 @@ func (r *RetryAfter) resolve(h http.Header, parse func() any) time.Duration {
 	case "body_json":
 		if v, ok := JSONPath(parse(), r.Value); ok {
 			if f, ok := toFloat(v); ok && f > 0 {
-				return time.Duration(f * float64(time.Second))
+				return ClampSeconds(f)
 			}
 		}
 	}
@@ -242,6 +242,15 @@ func (m Match) matchesAny(status int, h http.Header, body []byte, low string, pa
 		return mm.matches(status, h, body, low, parse)
 	}
 	return m.matches(status, h, body, low, parse)
+}
+
+// Value is the credential exactly as Apply sends it: the secret with the
+// spec's prefix, or "Bearer " for bearer auth without a prefix.
+func (a Auth) Value(secret string) string {
+	if a.Type == "bearer" && a.Prefix == "" {
+		return "Bearer " + secret
+	}
+	return a.Prefix + secret
 }
 
 // Apply puts the secret where the provider expects it.
@@ -393,10 +402,10 @@ func parseTime(v any, format string) *time.Time {
 
 func parseSeconds(s string) (time.Duration, error) {
 	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil || f < 0 {
+	if err != nil || !(f >= 0) {
 		return 0, fmt.Errorf("not seconds")
 	}
-	return time.Duration(f * float64(time.Second)), nil
+	return ClampSeconds(f), nil
 }
 
 func containsInt(xs []int, v int) bool {

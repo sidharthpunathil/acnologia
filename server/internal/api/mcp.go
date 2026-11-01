@@ -260,8 +260,13 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 
 // mcpProxy runs the regular proxy handler in-process and captures the result.
 func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, method, path string, query map[string]string, body json.RawMessage) (map[string]any, error) {
-	if method == "" {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	switch method {
+	case "":
 		method = http.MethodGet
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return nil, fmt.Errorf("method must be GET, POST, PUT, PATCH or DELETE")
 	}
 	q := url.Values{}
 	for k, v := range query {
@@ -275,7 +280,11 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	if len(body) > 0 && string(body) != "null" {
 		rdr = bytes.NewReader(body)
 	}
-	req := httptest.NewRequest(method, target, rdr).WithContext(ctx)
+	req, err := http.NewRequestWithContext(ctx, method, "http://cogito.local"+target, rdr)
+	if err != nil {
+		return nil, fmt.Errorf("bad path or query: %v", err)
+	}
+	req.RemoteAddr = orig.RemoteAddr
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -283,12 +292,13 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	rctx.URLParams.Add("service", service)
 	rctx.URLParams.Add("*", strings.TrimPrefix(path, "/"))
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
-	rec := httptest.NewRecorder()
+	const limit = 200 << 10
+	// Keep at most limit+1 bytes: the HTTP proxy streams, but MCP buffers.
+	rec := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), max: limit + 1}
 	s.proxy(rec, req)
 
 	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type"), "key_id": rec.Header().Get("X-Cogito-Key-Id")}
 	b := rec.Body.Bytes()
-	const limit = 200 << 10
 	ct := rec.Header().Get("Content-Type")
 	switch {
 	case strings.Contains(ct, "json"):
@@ -309,6 +319,25 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 		}
 	}
 	return out, nil
+}
+
+// cappedRecorder records a response but stops accepting body bytes past max,
+// which makes the proxy stop reading the upstream body.
+type cappedRecorder struct {
+	*httptest.ResponseRecorder
+	max int
+}
+
+func (c *cappedRecorder) Write(p []byte) (int, error) {
+	room := c.max - c.Body.Len()
+	if room <= 0 {
+		return 0, io.ErrShortWrite
+	}
+	if len(p) > room {
+		n, _ := c.ResponseRecorder.Write(p[:room])
+		return n, io.ErrShortWrite
+	}
+	return c.ResponseRecorder.Write(p)
 }
 
 func truncate(b []byte, n int) []byte {

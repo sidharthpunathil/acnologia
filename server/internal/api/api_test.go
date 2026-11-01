@@ -59,7 +59,9 @@ type env struct {
 	t     *testing.T
 	srv   *httptest.Server
 	up    *fakeSerp
+	upURL string
 	super *http.Client
+	st    *store.Store
 }
 
 func newEnv(t *testing.T) *env {
@@ -83,7 +85,7 @@ func newEnv(t *testing.T) *env {
 		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Cogito {{BASE_URL}}"))
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)
-	e := &env{t: t, srv: srv, up: up, super: client()}
+	e := &env{t: t, srv: srv, up: up, upURL: ups.URL, super: client(), st: st}
 	e.do(e.super, "POST", "/api/auth/setup", map[string]any{"email": "root@x.io", "password": "supersecret1"}, 200, nil)
 	var svc store.Service
 	e.do(e.super, "POST", "/api/admin/services", map[string]any{"provider": "serpapi", "slug": "serpapi", "base_url": ups.URL}, 201, &svc)
@@ -283,14 +285,40 @@ func TestHiddenKeysAndRoles(t *testing.T) {
 	if rev.Secret != "hidden01" {
 		t.Fatal("reveal returned wrong secret")
 	}
-	// Hidden keys still serve traffic.
-	_, tok := e.app(map[string]any{"name": "site"})
+	// A lease hands out the plaintext, so hidden keys go only to apps a
+	// superadmin cleared. Without that, the hidden key is invisible to leases.
 	e.do(e.super, "PATCH", "/api/admin/keys/1", map[string]any{"status": "disabled"}, 200, nil)
+	plainID, plainTok := e.app(map[string]any{"name": "plain"})
+	e.do(http.DefaultClient, "POST", "/api/v1/lease", map[string]any{"service": "serpapi"}, 503, nil, "Authorization", "Bearer "+plainTok)
+	// Admins cannot grant it, on create or update.
+	e.do(admin, "POST", "/api/admin/apps", map[string]any{"name": "sneaky", "lease_hidden": true}, 403, nil)
+	e.do(admin, "PATCH", "/api/admin/apps/"+itoa(int(plainID)), map[string]any{"lease_hidden": true}, 403, nil)
+	// A superadmin can.
+	siteID, tok := e.app(map[string]any{"name": "site", "lease_hidden": true})
 	var l leaseDTO
 	e.do(http.DefaultClient, "POST", "/api/v1/lease", map[string]any{"service": "serpapi"}, 200, &l, "Authorization", "Bearer "+tok)
 	if l.Secret != "hidden01" {
 		t.Fatal("hidden key not used")
 	}
+	// An admin rotating that app's token gets the token, so the grant is revoked.
+	var rot struct{ Token string }
+	e.do(admin, "POST", "/api/admin/apps/"+itoa(int(siteID))+"/rotate-token", map[string]any{}, 200, &rot)
+	e.do(http.DefaultClient, "POST", "/api/v1/lease", map[string]any{"service": "serpapi"}, 503, nil, "Authorization", "Bearer "+rot.Token)
+
+	// Upstreams can echo the key, so proxying a hidden key needs the same
+	// grant. An admin's proxy app never reaches it.
+	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 503, nil, "Authorization", "Bearer "+plainTok)
+	_, trusted := e.app(map[string]any{"name": "trusted", "lease_hidden": true})
+	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 200, nil, "Authorization", "Bearer "+trusted)
+	// Not once an admin points the service somewhere else.
+	e.do(admin, "PATCH", "/api/admin/services/1", map[string]any{"base_url": e.upURL + "/v2"}, 200, nil)
+	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 503, nil, "Authorization", "Bearer "+trusted)
+	// A superadmin changing an unrelated field does not re-trust the target.
+	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"cooldown_sec": 30}, 200, nil)
+	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 503, nil, "Authorization", "Bearer "+trusted)
+	// Submitting the target confirms it.
+	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"base_url": e.upURL}, 200, nil)
+	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 200, nil, "Authorization", "Bearer "+trusted)
 }
 
 func TestHealthCheckAndDuplicates(t *testing.T) {

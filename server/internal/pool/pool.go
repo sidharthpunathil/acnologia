@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -16,6 +17,9 @@ import (
 )
 
 const maxCooldown = time.Hour
+
+// maxRetryAfter caps any cooldown a single outcome can set.
+const maxRetryAfter = 24 * time.Hour
 
 var Strategies = []string{"round_robin", "fill_first", "least_used", "most_quota", "random"}
 
@@ -55,7 +59,12 @@ type Pool struct {
 func New(s *store.Store, box *crypto.Box) *Pool {
 	return &Pool{
 		Store: s, Box: box, locks: map[int64]*sync.Mutex{}, slots: newSlots(),
-		Client: &http.Client{Timeout: 20 * time.Second},
+		Client: &http.Client{
+			Timeout: 20 * time.Second,
+			// Never follow a redirect with a key attached: Go forwards custom
+			// auth headers (x-api-key and friends) to the new host.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}
 }
 
@@ -92,7 +101,11 @@ func (pk *Picked) Release() {
 
 // Pick selects a key for the app, takes a concurrency slot on it, marks it
 // used, and returns it decrypted. Callers must Release it or hand it to a lease.
-func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, exclude map[int64]bool) (*Picked, error) {
+// Hidden keys are considered only when allowHidden is set and a superadmin
+// vouched for the service's target, so they never reach a host or an app
+// token holder that only an admin controls.
+func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool) (*Picked, error) {
+	allowHidden = allowHidden && svc.TargetTrusted
 	l := p.lock(svc.ID)
 	l.Lock()
 	defer l.Unlock()
@@ -107,7 +120,7 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, exclud
 	var earliest *time.Time
 	busy := false
 	for _, k := range keys {
-		if exclude[k.ID] || !allowed(k, appID) {
+		if exclude[k.ID] || !allowed(k, appID) || (k.Hidden && !allowHidden) {
 			continue
 		}
 		if !k.Available(now) {
@@ -247,6 +260,9 @@ func (p *Pool) Apply(ctx context.Context, svc *store.Service, k *store.Key, r pr
 		if d > maxCooldown && r.RetryAfter <= 0 {
 			d = maxCooldown
 		}
+		// A Retry-After comes from an upstream or a lease report; neither may
+		// park a shared key for longer than a day.
+		d = min(d, maxRetryAfter)
 		until := now.Add(d)
 		e.CooldownUntil, e.ConsecutiveFails, e.LastError = &until, &fails, ptr("rate limited: "+r.Message)
 	case providers.QuotaExhausted:
@@ -281,13 +297,19 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 	if spec.Health == nil {
 		return ErrNoHealthCheck
 	}
+	if k.Hidden && !svc.TargetTrusted {
+		return ErrUntrustedTarget
+	}
 	res, err := spec.Check(ctx, p.Client, svc.BaseURL, secret)
 	e := store.KeyEffect{Checked: true}
 	if err != nil {
+		// Transport errors quote the request URL, which carries query-auth keys.
+		err = scrubErr(err, secret)
 		e.LastError = ptr("health check failed: " + err.Error())
 		_ = p.Store.ApplyEffect(ctx, k.ID, e)
 		return err
 	}
+	res.Message = crypto.Scrub(res.Message, secret)
 	if res.Valid {
 		e.MarkOK = true
 	}
@@ -335,6 +357,28 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// scrubErr returns err with the secret removed from its text.
+func scrubErr(err error, secret string) error {
+	msg := crypto.Scrub(err.Error(), secret)
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Timeout() {
+		return &scrubbedErr{msg: msg, timeout: true}
+	}
+	return &scrubbedErr{msg: msg}
+}
+
+type scrubbedErr struct {
+	msg     string
+	timeout bool
+}
+
+func (e *scrubbedErr) Error() string { return e.msg }
+func (e *scrubbedErr) Timeout() bool { return e.timeout }
+
+// ErrUntrustedTarget means a hidden key would be sent to a base URL that a
+// superadmin has not confirmed.
+var ErrUntrustedTarget = errors.New("hidden keys are not sent to this service until a superadmin saves its base URL")
 
 // ErrNoHealthCheck means the provider has no free endpoint to test keys, so
 // validity is learned from real traffic instead.

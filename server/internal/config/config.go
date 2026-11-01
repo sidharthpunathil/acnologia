@@ -9,11 +9,14 @@ import (
 )
 
 type Config struct {
-	Addr               string
-	DataDir            string
-	MasterKey          string
-	PublicURL          string
-	SecureCookies      bool
+	Addr          string
+	DataDir       string
+	MasterKey     string
+	PublicURL     string
+	SecureCookies bool
+	// TrustProxyHeaders takes the client IP from X-Forwarded-For and friends.
+	// Enable it only behind a reverse proxy that overwrites those headers.
+	TrustProxyHeaders  bool
 	EventRetentionDays int
 	HealthInterval     time.Duration
 	MaxBodyBytes       int64
@@ -32,6 +35,7 @@ func Load(version string) Config {
 		MasterKey:          os.Getenv("COGITO_MASTER_KEY"),
 		PublicURL:          strings.TrimRight(os.Getenv("COGITO_PUBLIC_URL"), "/"),
 		SecureCookies:      envBool("COGITO_SECURE_COOKIES", false),
+		TrustProxyHeaders:  envBool("COGITO_TRUST_PROXY_HEADERS", false),
 		EventRetentionDays: envInt("COGITO_EVENT_RETENTION_DAYS", 30),
 		HealthInterval:     envDuration("COGITO_HEALTH_INTERVAL", 6*time.Hour),
 		MaxBodyBytes:       int64(envInt("COGITO_MAX_BODY_MB", 50)) << 20,

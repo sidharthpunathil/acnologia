@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -129,7 +131,25 @@ type credentials struct {
 	Password string `json:"password"`
 }
 
-func validPassword(p string) bool { return len(p) >= 10 && len(p) <= 128 }
+// bcrypt reads at most 72 bytes and the library rejects longer input, so cap
+// passwords there instead of storing an unusable hash.
+func validPassword(p string) bool { return len(p) >= 10 && len(p) <= 72 }
+
+const passwordRule = "password must be 10 to 72 characters"
+
+// hashPassword returns the bcrypt hash or writes a 400 and returns false.
+func hashPassword(w http.ResponseWriter, p string) (string, bool) {
+	h, err := bcrypt.GenerateFromPassword([]byte(p), bcrypt.DefaultCost)
+	if err != nil {
+		writeErr(w, 400, "weak_password", passwordRule)
+		return "", false
+	}
+	return string(h), true
+}
+
+// dummyHash is compared against when the user does not exist, so a login
+// takes the same time whether or not the email is registered.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("cogito-timing-equalizer"), bcrypt.DefaultCost)
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	var c credentials
@@ -138,27 +158,55 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	}
 	c.Email = strings.TrimSpace(strings.ToLower(c.Email))
 	if !strings.Contains(c.Email, "@") || !validPassword(c.Password) {
-		writeErr(w, 400, "invalid", "a valid email and a password of at least 10 characters are required")
+		writeErr(w, 400, "invalid", "a valid email and a "+passwordRule+" are required")
 		return
 	}
+	hash, ok := hashPassword(w, c.Password)
+	if !ok {
+		return
+	}
+	// Count and insert under one lock so concurrent setup calls cannot each
+	// create a superadmin.
+	s.userMu.Lock()
 	n, err := s.Store.CountUsers(r.Context())
 	if err != nil {
+		s.userMu.Unlock()
 		writeStoreErr(w, err)
 		return
 	}
 	if n > 0 {
+		s.userMu.Unlock()
 		writeErr(w, 409, "already_setup", "setup is already done")
 		return
 	}
-	hash, _ := bcrypt.GenerateFromPassword([]byte(c.Password), bcrypt.DefaultCost)
-	u, err := s.Store.CreateUser(r.Context(), c.Email, c.Name, string(hash), store.RoleSuperadmin)
+	u, err := s.Store.CreateUser(r.Context(), c.Email, c.Name, hash, store.RoleSuperadmin)
+	s.userMu.Unlock()
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
 	s.Store.AddAudit(r.Context(), u, "setup", u.Email, "created first superadmin")
-	s.startSession(w, r, u)
+	if !s.startSession(w, r, u) {
+		return
+	}
 	writeJSON(w, 200, map[string]any{"user": u})
+}
+
+// clientIP is the connection's address without the port, so reconnecting
+// does not reset the login limiter. With COGITO_TRUST_PROXY_HEADERS the
+// RealIP middleware has already replaced RemoteAddr.
+var proxyHeaderWarn sync.Once
+
+func clientIP(r *http.Request) string {
+	if r.Header.Get("X-Forwarded-For") != "" {
+		proxyHeaderWarn.Do(func() {
+			slog.Warn("requests carry X-Forwarded-For but COGITO_TRUST_PROXY_HEADERS is off; behind a reverse proxy every client shares one login rate limit, so set it to true there")
+		})
+	}
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return h
+	}
+	return r.RemoteAddr
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -166,40 +214,63 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &c) {
 		return
 	}
-	ip := r.RemoteAddr
-	if !s.limiter.allow(ip) {
+	email := strings.TrimSpace(strings.ToLower(c.Email))
+	ip := clientIP(r)
+	// Limit per address and per account: rotating addresses must not give
+	// unlimited guesses against one account.
+	if !s.limiter.allow(ip) || !s.limiter.allow("email:"+email) {
 		writeErr(w, 429, "too_many_attempts", "too many sign in attempts, wait a few minutes")
 		return
 	}
-	u, err := s.Store.GetUserByEmail(r.Context(), strings.TrimSpace(strings.ToLower(c.Email)))
-	if err != nil || u.Disabled || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(c.Password)) != nil {
+	u, err := s.Store.GetUserByEmail(r.Context(), email)
+	hash := dummyHash
+	if err == nil {
+		hash = []byte(u.PasswordHash)
+	}
+	pwOK := bcrypt.CompareHashAndPassword(hash, []byte(c.Password)) == nil
+	if err != nil || u.Disabled || !pwOK {
 		s.limiter.fail(ip)
+		if err == nil {
+			// Only real accounts get a per-account counter, which keeps its
+			// size bounded by the user count.
+			s.limiter.fail("email:" + email)
+		}
 		writeErr(w, 401, "bad_credentials", "wrong email or password")
 		return
 	}
 	s.limiter.reset(ip)
+	s.limiter.reset("email:" + email)
 	s.Store.TouchLogin(r.Context(), u.ID)
-	s.startSession(w, r, u)
+	if !s.startSession(w, r, u) {
+		return
+	}
+	s.Store.AddAudit(r.Context(), u, "login", u.Email, clientIP(r))
 	writeJSON(w, 200, map[string]any{"user": u})
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User) {
+// startSession issues a session cookie. On failure it writes the error
+// response and returns false.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User) bool {
 	tok := crypto.RandomToken("", 32)
 	if err := s.Store.CreateSession(r.Context(), crypto.SHA256(tok), u.ID, sessionTTL); err != nil {
 		writeStoreErr(w, err)
-		return
+		return false
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
-		Secure: s.Cfg.SecureCookies || r.TLS != nil, MaxAge: int(sessionTTL.Seconds()),
+		Secure: s.secureCookie(r), MaxAge: int(sessionTTL.Seconds()),
 	})
+	return true
 }
+
+func (s *Server) secureCookie(r *http.Request) bool { return s.Cfg.SecureCookies || r.TLS != nil }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_ = s.Store.DeleteSession(r.Context(), crypto.SHA256(c.Value))
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, Secure: s.secureCookie(r)})
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -224,11 +295,13 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !validPassword(*body.Password) {
-			writeErr(w, 400, "weak_password", "password must be at least 10 characters")
+			writeErr(w, 400, "weak_password", passwordRule)
 			return
 		}
-		h, _ := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
-		hs := string(h)
+		hs, ok := hashPassword(w, *body.Password)
+		if !ok {
+			return
+		}
 		p.PasswordHash = &hs
 	}
 	if err := s.Store.UpdateUser(r.Context(), u.ID, p); err != nil {
@@ -244,36 +317,64 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, nu)
 }
 
-// loginLimiter is a tiny per-IP failure counter.
+// loginLimiter is a tiny failure counter keyed by client IP or account.
 type loginLimiter struct {
-	mu   sync.Mutex
-	hits map[string][]time.Time
+	mu        sync.Mutex
+	hits      map[string][]time.Time
+	lastSweep time.Time
 }
+
+const (
+	loginWindow   = 10 * time.Minute
+	loginMaxFails = 10
+	// limiterCap bounds memory if failures arrive from very many keys.
+	limiterCap = 100_000
+)
 
 func newLoginLimiter() *loginLimiter { return &loginLimiter{hits: map[string][]time.Time{}} }
 
-func (l *loginLimiter) recent(ip string) []time.Time {
-	cut := time.Now().Add(-10 * time.Minute)
-	out := l.hits[ip][:0]
-	for _, t := range l.hits[ip] {
+// recent drops expired failures for key. Keys with none left are removed so
+// lookups for unknown keys never grow the map.
+func (l *loginLimiter) recent(key string) []time.Time {
+	ts, ok := l.hits[key]
+	if !ok {
+		return nil
+	}
+	cut := time.Now().Add(-loginWindow)
+	out := ts[:0]
+	for _, t := range ts {
 		if t.After(cut) {
 			out = append(out, t)
 		}
 	}
-	l.hits[ip] = out
+	if len(out) == 0 {
+		delete(l.hits, key)
+		return nil
+	}
+	l.hits[key] = out
 	return out
 }
 
-func (l *loginLimiter) allow(ip string) bool {
+func (l *loginLimiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.recent(ip)) < 10
+	return len(l.recent(key)) < loginMaxFails
 }
 
-func (l *loginLimiter) fail(ip string) {
+func (l *loginLimiter) fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.hits[ip] = append(l.recent(ip), time.Now())
+	now := time.Now()
+	if now.Sub(l.lastSweep) > time.Minute || len(l.hits) >= limiterCap {
+		for k := range l.hits {
+			l.recent(k)
+		}
+		l.lastSweep = now
+	}
+	if len(l.hits) >= limiterCap {
+		return // still full of live entries: refuse to grow further
+	}
+	l.hits[key] = append(l.recent(key), now)
 }
 
 func (l *loginLimiter) reset(ip string) {

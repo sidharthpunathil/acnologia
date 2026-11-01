@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
+from urllib.parse import quote
 
 from ._errors import KeyProblem
 
@@ -57,22 +58,39 @@ def _parse_time(value: Any) -> Optional[datetime]:
         return None
 
 
-def outcome_for(exc: Optional[BaseException]) -> Dict[str, Any]:
-    """Map an exception (or None for success) to report keyword arguments."""
+MAX_REPORT_MESSAGE = 500
+
+
+def scrub_message(message: Optional[str], secret: Optional[str]) -> Optional[str]:
+    """Replace the lease secret (raw and URL encoded) with `[key]` and truncate.
+
+    Errors from query auth services often carry the full request URL, key
+    included, and a report must not copy it to the server."""
+    if message is None:
+        return None
+    if secret:
+        message = message.replace(secret, "[key]").replace(quote(secret, safe=""), "[key]")
+    return message[:MAX_REPORT_MESSAGE]
+
+
+def outcome_for(exc: Optional[BaseException], secret: Optional[str] = None) -> Dict[str, Any]:
+    """Map an exception (or None for success) to report keyword arguments.
+
+    `secret` is scrubbed from the message built from the exception."""
     if exc is None:
         return {"outcome": "ok"}
     if isinstance(exc, KeyProblem):
         kwargs: Dict[str, Any] = {
             "outcome": exc.outcome,
             "status_code": exc.status_code,
-            "message": exc.message,
+            "message": scrub_message(exc.message, secret),
             "rotate": True,
         }
         retry_after = getattr(exc, "retry_after", None)
         if retry_after is not None:
             kwargs["retry_after_sec"] = retry_after
         return kwargs
-    return {"outcome": "error", "message": f"{type(exc).__name__}: {exc}"[:500]}
+    return {"outcome": "error", "message": scrub_message(f"{type(exc).__name__}: {exc}", secret)}
 
 
 @dataclass
@@ -178,7 +196,7 @@ class Lease(_LeaseBase):
     def __exit__(self, exc_type: Any, exc: Optional[BaseException], tb: Any) -> bool:
         if self.reported:
             return False
-        kwargs = outcome_for(exc)
+        kwargs = outcome_for(exc, self.secret)
         kwargs["rotate"] = False
         if exc is None:
             self.report(**kwargs)
@@ -227,7 +245,7 @@ class AsyncLease(_LeaseBase):
     async def __aexit__(self, exc_type: Any, exc: Optional[BaseException], tb: Any) -> bool:
         if self.reported:
             return False
-        kwargs = outcome_for(exc)
+        kwargs = outcome_for(exc, self.secret)
         kwargs["rotate"] = False
         if exc is None:
             await self.report(**kwargs)
