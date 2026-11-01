@@ -52,7 +52,7 @@ export function EventsList({
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-ink">
                 {showService && e.service_slug && (
                   sid ? (
-                    <Link to={`/services/${sid}`} className="font-medium hover:underline">
+                    <Link to={`/services/${sid}`} className="tap-inline font-medium hover:underline">
                       {e.service_slug}
                     </Link>
                   ) : (

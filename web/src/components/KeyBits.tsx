@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CheckCircle2, CircleHelp, XCircle } from "lucide-react";
-import type { DayActivity, Key, Validity } from "../lib/types";
+import type { DayActivity, Key, Provider, Validity } from "../lib/types";
 import { dateTime, num, plural, relTime } from "../lib/format";
 import { cx } from "./ui";
 
@@ -24,6 +24,28 @@ export function ValidityBadge({ validity, reason, className }: { validity: Valid
       {reason && <span className="sr-only">: {reason}</span>}
     </span>
   );
+}
+
+/**
+ * Why the key is valid, invalid or unknown, built from live fields so it keeps
+ * ticking ("Last worked 18s ago"). The server text is used only for invalid keys.
+ */
+export function validityText(k: Pick<Key, "validity" | "validity_reason" | "last_ok_at" | "last_error">, now: number): string {
+  if (k.validity === "invalid") return k.last_error || k.validity_reason || "The provider rejected this key";
+  if (k.last_ok_at) {
+    const r = relTime(k.last_ok_at, now);
+    return r === "just now" ? "Worked just now" : `Last worked ${r}`;
+  }
+  return "Not checked or used yet";
+}
+
+/**
+ * Whether a provider reports real quota reset times. Undefined when the provider
+ * is not loaded yet, so callers can hedge.
+ */
+export function providerGivesReset(p: Pick<Provider, "spec"> | undefined): boolean | undefined {
+  if (!p) return undefined;
+  return !!p.spec?.health?.quota?.reset_at;
 }
 
 /** Relative time with the exact time on hover and for screen readers. */
@@ -63,18 +85,22 @@ export function QuotaMeter({
   now,
   compact,
   className,
+  resetExact,
 }: {
-  k: Pick<Key, "quota_limit" | "quota_remaining" | "quota_reset_at">;
+  k: Pick<Key, "quota_limit" | "quota_remaining" | "quota_reset_at"> & Partial<Pick<Key, "effective_status" | "status">>;
   unit?: string;
   now: number;
   compact?: boolean;
   className?: string;
+  /** False when the provider does not report reset times, so an exhausted key's reset is Cogito's estimate. */
+  resetExact?: boolean;
 }) {
   const q = quotaInfo(k, unit);
   if (!q) return <span className={cx("font-mono text-xs text-faint", className)}>{compact ? "-" : "No quota data yet"}</span>;
   const pct = q.frac === null ? null : q.frac * 100;
   const bar = pct === null ? null : pct > 40 ? "bg-emerald-500" : pct > 10 ? "bg-amber-500" : "bg-red-500";
   const reset = k.quota_reset_at ? Date.parse(k.quota_reset_at) : NaN;
+  const exhausted = k.effective_status === "exhausted" || k.status === "exhausted";
   return (
     <div className={cx("min-w-0", className)}>
       <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-[12px] tabular-nums text-ink">
@@ -95,7 +121,11 @@ export function QuotaMeter({
       )}
       {!Number.isNaN(reset) && (
         <div className="mt-1 font-mono text-[11px] text-muted" title={dateTime(k.quota_reset_at)}>
-          {reset > now ? `resets ${relTime(k.quota_reset_at, now)}` : "reset due now"}
+          {reset <= now
+            ? "reset due now"
+            : exhausted && resetExact !== true
+              ? `resets ${relTime(k.quota_reset_at, now).replace(/^in /, "in about ")}${resetExact === false ? " (estimate)" : ""}`
+              : `resets ${relTime(k.quota_reset_at, now)}`}
         </div>
       )}
     </div>
@@ -115,7 +145,9 @@ function daySentence(d: DayActivity): string {
  * bar shows that day's numbers.
  */
 export function ActivityChart({ daily }: { daily: DayActivity[] }) {
+  // `pinned` is the day picked by a tap or click; `sel` also follows a mouse hover.
   const [sel, setSel] = useState<number | null>(null);
+  const [pinned, setPinned] = useState<number | null>(null);
   const totals = daily.reduce((a, d) => ({ r: a.r + d.requests, e: a.e + d.errors, l: a.l + d.rate_limited }), { r: 0, e: 0, l: 0 });
   const max = Math.max(1, ...daily.map((d) => d.requests + d.errors + d.rate_limited));
   const busiest = daily.reduce<DayActivity | null>((b, d) => (!b || d.requests > b.requests ? d : b), null);
@@ -130,7 +162,7 @@ export function ActivityChart({ daily }: { daily: DayActivity[] }) {
       <figcaption className="text-[13px] leading-relaxed text-muted">{summary}</figcaption>
       {!empty && (
         <>
-          <ol className="mt-3 flex h-24 items-end gap-[3px]" aria-label="Activity per day" onMouseLeave={() => setSel(null)}>
+          <ol className="mt-3 flex h-24 items-end gap-[3px]" aria-label="Activity per day" onPointerLeave={(e) => e.pointerType === "mouse" && setSel(pinned)}>
             {daily.map((d, i) => {
               const total = d.requests + d.errors + d.rate_limited;
               const h = (n: number) => `${(n / max) * 100}%`;
@@ -141,10 +173,17 @@ export function ActivityChart({ daily }: { daily: DayActivity[] }) {
                     type="button"
                     title={label}
                     aria-label={label}
-                    aria-pressed={sel === i}
-                    onMouseEnter={() => setSel(i)}
-                    onFocus={() => setSel(i)}
-                    onClick={() => setSel(sel === i ? null : i)}
+                    aria-pressed={pinned === i}
+                    // Hover previews with a mouse only; on touch the tap below decides.
+                    onPointerEnter={(e) => e.pointerType === "mouse" && setSel(i)}
+                    // Keyboard focus previews too, but not the focus a tap brings with it.
+                    onFocus={(e) => e.currentTarget.matches(":focus-visible") && setSel(i)}
+                    onClick={() => {
+                      // First tap selects the day; a second tap on the same bar clears it.
+                      const next = pinned === i ? null : i;
+                      setPinned(next);
+                      setSel(next);
+                    }}
                     className={cx(
                       "flex h-full w-full flex-col-reverse justify-start overflow-hidden rounded-[3px] transition-colors",
                       sel === i ? "bg-ink/[0.08]" : "hover:bg-ink/[0.04]",

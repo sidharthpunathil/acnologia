@@ -24,7 +24,7 @@ export function MultiSelect<T extends string | number>({
   if (!options.length) return <div className="rounded-xl border border-dashed border-line px-3 py-3 text-xs text-muted">{empty}</div>;
   const set = new Set(value);
   return (
-    <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-surface p-2">
+    <div className="flex flex-wrap gap-1.5 rounded-xl border border-line bg-surface p-2 sm:max-h-44 sm:overflow-y-auto">
       {options.map((o) => {
         const on = set.has(o.value);
         return (

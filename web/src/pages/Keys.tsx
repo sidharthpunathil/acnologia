@@ -14,7 +14,8 @@ import { useNow } from "../hooks/useNow";
 import { useTitle } from "../hooks/useTitle";
 import { EntityLogo, ServiceLogo } from "../components/EntityLogo";
 import { StatusPill } from "../components/StatusPill";
-import { QuotaMeter, TimeAgo, ValidityBadge } from "../components/KeyBits";
+import { QuotaMeter, TimeAgo, ValidityBadge, providerGivesReset, validityText } from "../components/KeyBits";
+import { usePoll } from "../hooks/usePoll";
 import { Button, Callout, Empty, IconButton, PageHeader, PageSkeleton, Select, Spinner, cx } from "../components/ui";
 import { InUse } from "./service/KeysTable";
 import { KeyDrawer } from "./service/KeyDrawer";
@@ -136,9 +137,9 @@ export function KeysPage() {
 
   useEffect(() => {
     void load(true);
-    const id = window.setInterval(() => document.visibilityState === "visible" && void load(true), 30000);
-    return () => window.clearInterval(id);
   }, [load]);
+  // Every 4s while the tab is visible, so in use, busy and cooldowns stay live.
+  usePoll(() => load(true), 4000);
 
   useEffect(() => {
     // Service limits and logos back the in use counts and tiles.
@@ -147,7 +148,25 @@ export function KeysPage() {
   }, [servicesLoaded, fetchServices, ensureProviders]);
 
   const live = useMemo(() => rows.map((k) => withLiveStatus(k, now) as KeyRow), [rows, now]);
-  const summary = useMemo(() => summarize(rows, now), [rows, now]);
+  const needle = q.trim().toLowerCase();
+  // Service and search narrow everything, tiles included; the tile and validity filters apply on top.
+  const scoped = useMemo(
+    () =>
+      live.filter((k) => {
+        if (serviceId && String(k.service_id) !== serviceId) return false;
+        if (needle && ![k.label, k.hint, k.service_name, k.service_slug, k.notes].some((f) => f?.toLowerCase().includes(needle))) return false;
+        return true;
+      }),
+    [live, serviceId, needle],
+  );
+  const summary = useMemo(() => summarize(scoped, now), [scoped, now]);
+  const allInvalid = rows.filter((k) => k.validity === "invalid").length;
+  const providers = useProviders((s) => s.providers);
+  const resetBy = useMemo(() => {
+    const out: Record<number, boolean | undefined> = {};
+    for (const s of services) out[s.id] = providerGivesReset(providers.find((p) => p.slug === s.provider));
+    return out;
+  }, [services, providers]);
   const serviceOptions = useMemo(() => {
     const m = new Map<number, string>();
     for (const k of rows) m.set(k.service_id, k.service_name);
@@ -156,13 +175,10 @@ export function KeysPage() {
   const maxBy = useMemo(() => Object.fromEntries(services.map((s) => [s.id, s.max_concurrency ?? 0])), [services]);
 
   const shown = useMemo(() => {
-    const n = q.trim().toLowerCase();
-    let list = live.filter((k) => {
-      if (serviceId && String(k.service_id) !== serviceId) return false;
+    let list = scoped.filter((k) => {
       if (validity && k.validity !== validity) return false;
       if (only === "low_quota" && !isLow(k)) return false;
       if (only === "unused_7d" && !isUnused(k, now)) return false;
-      if (n && ![k.label, k.hint, k.service_name, k.service_slug, k.notes].some((f) => f?.toLowerCase().includes(n))) return false;
       return true;
     });
     list = [...list];
@@ -171,7 +187,7 @@ export function KeysPage() {
     else if (sort === "label") list.sort((a, b) => (a.label || a.hint).localeCompare(b.label || b.hint));
     else list.sort((a, b) => t(b.last_used_at) - t(a.last_used_at));
     return list;
-  }, [live, q, serviceId, validity, only, sort, now]);
+  }, [scoped, validity, only, sort, now]);
 
   const filtered = !!(q || serviceId || validity || only);
   const clear = () => setParams(sort !== "last_used" ? new URLSearchParams({ sort }) : new URLSearchParams(), { replace: true });
@@ -181,7 +197,7 @@ export function KeysPage() {
     setLastCheck(null);
     try {
       const res = await checkAll();
-      const clean = res.invalid === 0 && res.failed === 0;
+      const clean = res.invalid === 0 && res.failed === 0 && (res.exhausted ?? 0) === 0;
       setLastCheck({ message: res.message, clean });
       if (clean) toast.success(res.message);
       else toast.info(res.message);
@@ -208,7 +224,7 @@ export function KeysPage() {
     <div>
       <PageHeader
         title="Keys"
-        meta={`${plural(summary.total, "key")} across ${plural(serviceOptions.length, "service")} · ${summary.invalid ? `${summary.invalid} need attention` : "none rejected"}`}
+        meta={`${plural(rows.length, "key")} across ${plural(serviceOptions.length, "service")} · ${allInvalid ? `${allInvalid} rejected` : "none rejected"}`}
         actions={
           <>
             <IconButton label="Refresh" onClick={() => void load(false)} disabled={refreshing}>
@@ -226,7 +242,7 @@ export function KeysPage() {
       {checking !== null && (
         <div className="mb-6 rounded-card bg-surface p-4 shadow-card" role="status" aria-live="polite">
           <div className="flex items-center justify-between gap-3 text-[13px]">
-            <span className="text-ink">Checking {plural(summary.total, "key")}, four at a time.</span>
+            <span className="text-ink">Checking {plural(rows.length, "key")}, four at a time.</span>
             <span className="font-mono text-xs tabular-nums text-muted">{Math.max(0, Math.round((now - checking) / 1000))}s</span>
           </div>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-well" aria-hidden="true">
@@ -282,7 +298,7 @@ export function KeysPage() {
                 placeholder="Search by label, hint, service or note"
                 aria-label="Search keys"
                 enterKeyHint="search"
-                className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-faint focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10"
+                className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-faint focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20"
               />
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex">
@@ -366,7 +382,7 @@ export function KeysPage() {
                             setOpenKey(k);
                           }
                         }}
-                        className="cursor-pointer align-middle transition-colors hover:bg-soft focus-visible:bg-soft focus-visible:outline-none"
+                        className="cursor-pointer align-middle transition-colors hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
                       >
                         <td className="px-4 py-3">
                           <div className="flex min-w-0 items-center gap-3">
@@ -380,14 +396,14 @@ export function KeysPage() {
                           </div>
                         </td>
                         <td className="px-3 py-3">
-                          <ValidityBadge validity={k.validity} reason={k.validity_reason} />
-                          <div className="mt-1 truncate text-[11px] text-muted" title={k.validity_reason}>
-                            {k.validity_reason}
+                          <ValidityBadge validity={k.validity} reason={validityText(k, now)} />
+                          <div className="mt-1 line-clamp-2 text-[11px] text-muted" title={validityText(k, now)}>
+                            {validityText(k, now)}
                           </div>
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-col items-start gap-1">
-                            <StatusPill k={k} now={now} />
+                            <StatusPill k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
                             <InUse k={k} serviceMax={maxBy[k.service_id] ?? 0} />
                           </div>
                         </td>
@@ -398,7 +414,7 @@ export function KeysPage() {
                           </div>
                         </td>
                         <td className="px-3 py-3">
-                          <QuotaMeter k={k} unit={k.quota_unit} now={now} compact />
+                          <QuotaMeter k={k} unit={k.quota_unit} now={now} compact resetExact={resetBy[k.service_id]} />
                         </td>
                         <td className="py-3 pr-3">
                           <ChevronRight className="h-4 w-4 text-faint" aria-hidden="true" />
@@ -430,11 +446,11 @@ export function KeysPage() {
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <ValidityBadge validity={k.validity} />
-                        <StatusPill k={k} now={now} />
+                        <StatusPill k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
                         <InUse k={k} serviceMax={maxBy[k.service_id] ?? 0} />
                       </div>
-                      {k.validity_reason && <div className="-mt-1 text-[12px] text-muted">{k.validity_reason}</div>}
-                      <QuotaMeter k={k} unit={k.quota_unit} now={now} compact />
+                      <div className="wrap-anywhere -mt-1 text-[12px] text-muted">{validityText(k, now)}</div>
+                      <QuotaMeter k={k} unit={k.quota_unit} now={now} compact resetExact={resetBy[k.service_id]} />
                       <div className="font-mono text-[11px] text-muted">
                         used <TimeAgo iso={k.last_used_at} now={now} /> · worked <TimeAgo iso={k.last_ok_at} now={now} />
                       </div>

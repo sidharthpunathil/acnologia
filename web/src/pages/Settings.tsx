@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Bot, CheckCircle2, FlaskConical, KeyRound, Lock, RefreshCcw, ShieldCheck, Terminal } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
-import { dateTime, relTime } from "../lib/format";
+import { dateTime, relTime, sentence } from "../lib/format";
 import type { AiRules } from "../lib/types";
 import { useAuth } from "../stores/auth";
 import { useAi } from "../stores/ai";
@@ -130,7 +130,7 @@ export function SettingsPage() {
               <Callout tone="amber" icon={<Terminal className="h-4 w-4" />}>
                 <div className="font-medium">AI is off</div>
                 <div className="wrap-anywhere mt-0.5">
-                  {status?.reason || statusError || "Add the AI key to .env, then restart Cogito."}
+                  {sentence(status?.reason || statusError || "Add the AI key to .env, then restart Cogito")}
                 </div>
               </Callout>
             )}

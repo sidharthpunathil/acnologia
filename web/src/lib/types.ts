@@ -152,6 +152,8 @@ export interface KeyInsights {
 export interface CheckSummary {
   checked: number;
   valid: number;
+  /** Keys that work but have no quota left. */
+  exhausted: number;
   invalid: number;
   failed: number;
   skipped: number;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTitle } from "../../hooks/useTitle";
 import { Link, useParams } from "react-router-dom";
-import { Activity, ArrowLeft, KeyRound, Plus, RefreshCw, ScrollText } from "lucide-react";
+import { Activity, ArrowLeft, Info, KeyRound, Plus, RefreshCw, ScrollText } from "lucide-react";
 import { useServices } from "../../stores/services";
 import { useProviders } from "../../stores/providers";
 import { useKeys } from "../../stores/keys";
@@ -15,6 +15,9 @@ import { can } from "../../lib/perms";
 import { STRATEGY_LABEL, compact, num } from "../../lib/format";
 import type { Key } from "../../lib/types";
 import { useNow } from "../../hooks/useNow";
+import { usePoll } from "../../hooks/usePoll";
+import { isBusy } from "../../components/StatusPill";
+import { providerGivesReset } from "../../components/KeyBits";
 import { ServiceLogo } from "../../components/EntityLogo";
 import { Tabs } from "../../components/Tabs";
 import { EventsList } from "../../components/EventsList";
@@ -78,9 +81,9 @@ export function ServicePage() {
   useEffect(() => {
     setNotFound(false);
     void refresh(true);
-    const t = window.setInterval(() => void refresh(true), 30000);
-    return () => window.clearInterval(t);
   }, [refresh]);
+  // Every 4s while the tab is visible, so in use and busy counts stay live.
+  usePoll(() => refresh(true), 4000);
 
   useEffect(() => {
     // App names power the restricted allow list. Members may not be allowed to list apps.
@@ -94,13 +97,20 @@ export function ServicePage() {
   // Live counts so a finished cooldown shows as available without waiting for a refetch.
   const counts = useMemo(() => {
     if (!service) return null;
-    if (!keysLoaded) return { ...service.key_counts, inUse: service.in_flight ?? 0 };
-    const c = { total: keys.length, available: 0, cooling: 0, exhausted: 0, invalid: 0, disabled: 0, backup: 0, inUse: 0 };
+    // The server counts busy keys inside available; the Available tile shows only free ones.
+    if (!keysLoaded) {
+      const kc = service.key_counts;
+      return { ...kc, busy: kc.busy ?? 0, available: Math.max(0, kc.available - (kc.busy ?? 0)), inUse: service.in_flight ?? 0 };
+    }
+    const max = service.max_concurrency ?? 0;
+    const c = { total: keys.length, available: 0, busy: 0, cooling: 0, exhausted: 0, invalid: 0, disabled: 0, backup: 0, inUse: 0 };
     for (const k of keys) {
       c.inUse += k.in_flight ?? 0;
       const s = liveStatus(k, now);
-      if (s === "active") c.available++;
-      else c[s]++;
+      if (s === "active") {
+        if (isBusy(k, max)) c.busy++;
+        else c.available++;
+      } else c[s]++;
       if (k.tier === "backup") c.backup++;
     }
     return c;
@@ -149,14 +159,15 @@ export function ServicePage() {
       </Link>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <ServiceLogo service={service} size="lg" />
+        <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
+          <ServiceLogo service={service} size="md" className="mt-0.5 sm:hidden" />
+          <ServiceLogo service={service} size="lg" className="hidden sm:flex" />
           <div className="min-w-0">
-            <h1 className="break-words font-mono text-[26px] leading-tight tracking-tight text-ink sm:text-[30px]">{service.name}</h1>
+            <h1 className="break-words font-mono text-[21px] leading-tight tracking-tight text-ink sm:text-[30px]">{service.name}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-xs text-muted">
               <span>{service.slug}</span>
               <span aria-hidden="true">·</span>
-              <Link to={`/providers/${service.provider}`} className="underline-offset-2 hover:text-ink hover:underline">
+              <Link to={`/providers/${service.provider}`} className="tap-inline underline-offset-2 hover:text-ink hover:underline">
                 {provider?.name ?? service.provider}
               </Link>
               <span aria-hidden="true">·</span>
@@ -172,26 +183,33 @@ export function ServicePage() {
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
           <IconButton label="Refresh" onClick={() => void refresh()} disabled={refreshing}>
             {refreshing ? <Spinner /> : <RefreshCw className="h-4 w-4" />}
           </IconButton>
-          {perms.manage && keys.length > 0 && (
-            <Button icon={<Activity className="h-4 w-4" />} loading={checking} onClick={() => void checkAll()}>
-              {checking ? "Checking keys" : "Check all"}
+          {perms.manage && keys.length > 0 && provider?.spec?.health && (
+            <Button icon={<Activity className="h-4 w-4" />} loading={checking} onClick={() => void checkAll()} className="flex-1 sm:flex-none">
+              {checking ? "Checking" : "Check all"}
             </Button>
           )}
           {perms.manage && (
-            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>
+            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)} className="flex-1 sm:flex-none">
               Add keys
             </Button>
           )}
         </div>
       </div>
       {service.description && <p className="mt-4 max-w-2xl text-[13px] text-muted">{service.description}</p>}
+      {perms.manage && keys.length > 0 && provider && !provider.spec?.health && (
+        <p className="mt-3 flex items-start gap-1.5 text-[13px] text-muted">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          This provider has no health check. Validity comes from real requests.
+        </p>
+      )}
 
-      <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Available" value={num(counts.available)} tone={counts.available > 0 ? "green" : "red"} />
+      <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7">
+        <Stat label="Available" value={num(counts.available)} tone={counts.available > 0 ? "green" : counts.busy > 0 ? undefined : "red"} />
+        <Stat label="Busy" value={num(counts.busy)} tone={counts.busy ? "violet" : undefined} sub="at their limit" />
         <Stat label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "amber" : undefined} />
         <Stat label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "amber" : undefined} />
         <Stat label="Invalid" value={num(counts.invalid)} tone={counts.invalid ? "red" : undefined} />
@@ -239,6 +257,7 @@ export function ServicePage() {
               perms={perms}
               serviceMax={service.max_concurrency ?? 0}
               quotaUnit={provider?.spec?.quota?.unit}
+              resetExact={providerGivesReset(provider)}
               onOpen={setOpenKey}
               onEdit={setEditing}
               onReveal={setRevealing}

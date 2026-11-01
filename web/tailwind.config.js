@@ -33,7 +33,7 @@ const tokens = {
     "ink-strong": "#000000",
     "on-ink": "#ffffff",
     muted: "#6b6b66",
-    faint: "#8f8f88",
+    faint: "#75756f",
     brand: "#e80000",
     "brand-soft": "#fdecec",
     "brand-ink": "#b00000",
@@ -49,16 +49,16 @@ const tokens = {
     soft: "#252421",
     well: "#2c2a27",
     line: "#2f2d29",
-    "line-strong": "#46443e",
+    "line-strong": "#5e5b54",
     ink: "#ecebe6",
     "ink-strong": "#ffffff",
     "on-ink": "#151412",
     muted: "#aaa89f",
-    faint: "#8c8a82",
+    faint: "#96948c",
     brand: "#ff5148",
     "brand-soft": "#3a1c19",
     "brand-ink": "#ff9a92",
-    spark: "#d92a1f",
+    spark: "#ff6b6b",
     wordmark: "#ff4a40",
     "chart-ok": "#c9c7bf",
     "code-bg": "#0f0e0d",
@@ -87,7 +87,8 @@ function hueVars(mode) {
           300: mix(p[500], base, 0.45),
           400: rgb(p[400]),
           500: rgb(p[500]),
-          600: rgb(p[600]),
+          // Solid fills get lighter in dark so dots and buttons stay visible on dark surfaces.
+          600: rgb(p[400]),
           700: rgb(p[300]),
           800: rgb(p[200]),
           900: rgb(p[100]),
@@ -138,6 +139,11 @@ export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      screens: {
+        // Centered dialogs and side sheets: wide screens, except short touch screens
+        // (phones in landscape), which keep bottom sheets. Mirrors SHEET_QUERY in Modal.tsx.
+        dlg: { raw: "(min-width: 640px) and (hover: hover), (min-width: 640px) and (min-height: 501px)" },
+      },
       colors: {
         canvas: v("canvas"),
         surface: v("surface"),

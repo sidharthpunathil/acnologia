@@ -9,10 +9,10 @@ type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-ink text-on-ink hover:bg-ink-strong disabled:bg-ink/40",
+  primary: "bg-ink text-on-ink hover:bg-ink-strong disabled:bg-well disabled:text-faint",
   secondary: "bg-surface text-ink shadow-card hover:bg-soft disabled:text-faint",
   ghost: "text-muted hover:text-ink hover:bg-ink/[0.05] disabled:text-faint",
-  danger: "bg-red-600 text-white hover:bg-red-600/90 disabled:bg-red-600/40",
+  danger: "bg-red-600 text-on-ink hover:bg-red-600/90 disabled:bg-well disabled:text-faint",
 };
 
 const sizes: Record<Size, string> = {
@@ -37,7 +37,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       type={type}
       disabled={disabled || loading}
       className={cx(
-        "tap inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:active:scale-100",
+        "tap inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:active:scale-100",
         variants[variant],
         sizes[size],
         className,
@@ -73,7 +73,7 @@ export function IconButton({
 }
 
 const fieldBase =
-  "field-input w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10 disabled:bg-canvas disabled:text-muted";
+  "field-input w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20 disabled:bg-canvas disabled:text-muted";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...rest },
@@ -183,12 +183,14 @@ export function Toggle({
       onClick={() => onChange(!checked)}
       className={cx(
         "switch-hit relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-ink" : "bg-line-strong",
+        checked ? "bg-ink" : "bg-line-strong ring-1 ring-inset ring-faint",
       )}
     >
       <span
         className={cx(
-          "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+          "inline-block h-4 w-4 rounded-full shadow transition-transform",
+          // The knob contrasts with the track in both themes: surface on ink when on, white on gray when off.
+          checked ? "bg-surface" : "bg-white",
           checked ? "translate-x-[18px]" : "translate-x-0.5",
         )}
       />
@@ -219,7 +221,7 @@ const tones: Record<BadgeTone, string> = {
   red: "bg-red-50 text-red-700",
   blue: "bg-sky-50 text-sky-700",
   violet: "bg-violet-50 text-violet-700",
-  dark: "bg-ink text-on-ink",
+  dark: "bg-ink/[0.12] font-medium text-ink",
 };
 
 export function Badge({

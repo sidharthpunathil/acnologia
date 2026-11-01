@@ -72,6 +72,15 @@
     --tabbar-h: 0px;
   }
 }
+/* Keyboard up on a touch screen: the tab bar steps aside and sticky bars drop to the bottom. */
+@media (pointer: coarse) and (max-width: 1023px) {
+  :root[data-typing] {
+    --tabbar-h: 0px;
+  }
+  :root[data-typing] .tabbar {
+    display: none;
+  }
+}
 
 /* The wordmark is drawn through the logo's alpha, so its red can be tuned per theme. */
 .wordmark {
@@ -110,6 +119,11 @@
   .field-input {
     min-height: 44px;
     font-size: 16px; /* stops iOS zooming into focused inputs */
+  }
+  /* Small standalone links: a 44px tall hit area without moving the layout. */
+  .tap-inline {
+    padding-block: 12px;
+    margin-block: -12px;
   }
   /* Grows the hit area without shrinking the painted track. */
   .switch-hit::before {
@@ -191,7 +205,8 @@
     transform: translateY(100%);
   }
 }
-@media (max-width: 639px) {
+/* Same condition as SHEET_QUERY in Modal.tsx: phones, and phones in landscape. */
+@media (max-width: 639px), (pointer: coarse) and (max-height: 500px) {
   .modal-in,
   .drawer-in {
     animation: sheet-in 280ms var(--ease-drawer) both;

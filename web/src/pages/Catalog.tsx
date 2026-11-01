@@ -19,12 +19,14 @@ const ALL = "__all";
 
 export function serviceMeta(s: Service): string {
   const c = s.key_counts;
-  const parts = [plural(c.total, "key")];
-  if (c.total > 0) parts.push(`${c.available} available`);
-  if (c.cooling) parts.push(`${c.cooling} cooling`);
-  if (c.exhausted) parts.push(`${c.exhausted} out of quota`);
+  // Problems first, so a narrow card never hides them behind the totals.
+  const parts: string[] = [];
   if (c.invalid) parts.push(`${c.invalid} invalid`);
+  if (c.exhausted) parts.push(`${c.exhausted} out of quota`);
   if (c.busy) parts.push(`${c.busy} busy`);
+  if (c.cooling) parts.push(`${c.cooling} cooling`);
+  parts.push(plural(c.total, "key"));
+  if (c.total > 0) parts.push(`${Math.max(0, c.available - (c.busy ?? 0))} available`);
   parts.push(STRATEGY_LABEL[s.strategy] ?? s.strategy);
   return parts.join(" · ");
 }
@@ -51,7 +53,7 @@ function ServiceCard({ s }: { s: Service }) {
           />
           <span className="sr-only">{healthy ? "Keys available" : "No key available"}</span>
         </div>
-        <div className="mt-1 truncate font-mono text-xs text-muted" title={meta}>
+        <div className="mt-1 line-clamp-2 font-mono text-xs text-muted" title={meta}>
           {meta}
         </div>
       </div>
@@ -138,7 +140,7 @@ export function CatalogPage() {
           enterKeyHint="search"
           aria-label="Search services"
           type="search"
-          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/10"
+          className="field-input h-[52px] w-full rounded-card bg-surface pl-11 pr-4 text-[15px] text-ink shadow-card placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ink/20"
         />
       </div>
 

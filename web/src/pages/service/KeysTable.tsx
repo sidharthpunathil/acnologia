@@ -8,7 +8,7 @@ import { ApiError, errorMessage } from "../../lib/api";
 import { StatusPill } from "../../components/StatusPill";
 import { ConfirmButton } from "../../components/ConfirmButton";
 import { Badge, IconButton, Spinner, cx } from "../../components/ui";
-import { QuotaMeter, TimeAgo, ValidityBadge } from "../../components/KeyBits";
+import { QuotaMeter, TimeAgo, ValidityBadge, validityText } from "../../components/KeyBits";
 import { withLiveStatus } from "./keyUtil";
 
 export interface KeyPerms {
@@ -31,8 +31,8 @@ export function InUse({ k, serviceMax }: { k: Key; serviceMax: number }) {
         busy ? "bg-violet-100 text-violet-800" : n > 0 ? "bg-violet-50 text-violet-700" : "text-faint",
       )}
     >
-      {busy && <span className="h-1.5 w-1.5 rounded-full bg-violet-600" aria-hidden="true" />}
-      {limit > 0 ? `${n}/${limit}` : n} {busy ? "busy" : "in use"}
+      {busy && <span className="h-1.5 w-1.5 rounded-full bg-violet-500" aria-hidden="true" />}
+      {limit > 0 ? `${n}/${limit}` : n} in use
     </span>
   );
 }
@@ -152,6 +152,7 @@ export function KeysTable({
   perms,
   serviceMax = 0,
   quotaUnit,
+  resetExact,
   onOpen,
   onEdit,
   onReveal,
@@ -162,6 +163,8 @@ export function KeysTable({
   perms: KeyPerms;
   serviceMax?: number;
   quotaUnit?: string;
+  /** Whether the provider reports quota reset times; see QuotaMeter. */
+  resetExact?: boolean;
   onOpen: (k: Key) => void;
   onEdit: (k: Key) => void;
   onReveal: (k: Key) => void;
@@ -178,11 +181,11 @@ export function KeysTable({
       <div className="hidden overflow-hidden rounded-card bg-surface shadow-card lg:block">
         <table className="w-full table-fixed text-left text-[13px]">
           <colgroup>
-            <col className="w-[26%]" />
+            <col className="w-[23%]" />
             <col className="w-[15%]" />
-            <col className="w-[14%]" />
-            <col className="w-[16%]" />
-            <col className="w-[13%]" />
+            <col className="w-[17%]" />
+            <col className="w-[18%]" />
+            <col className="w-[11%]" />
             <col className="w-[16%]" />
           </colgroup>
           <thead>
@@ -205,7 +208,7 @@ export function KeysTable({
                 aria-label={`Open details for ${k.label || k.hint}`}
                 onClick={open(k)}
                 onKeyDown={(e) => rowKey(e, () => onOpen(k))}
-                className="cursor-pointer align-middle transition-colors hover:bg-soft focus-visible:bg-soft focus-visible:outline-none"
+                className="cursor-pointer align-middle transition-colors hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
               >
                 <td className="px-4 py-3">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -220,19 +223,19 @@ export function KeysTable({
                   </div>
                 </td>
                 <td className="px-3 py-3">
-                  <ValidityBadge validity={k.validity} reason={k.validity_reason} />
-                  <div className="mt-1 truncate font-mono text-[11px] text-muted">
-                    worked <TimeAgo iso={k.last_ok_at} now={now} />
+                  <ValidityBadge validity={k.validity} reason={validityText(k, now)} />
+                  <div className="mt-1 line-clamp-2 text-[11px] text-muted" title={validityText(k, now)}>
+                    {validityText(k, now)}
                   </div>
                 </td>
                 <td className="px-3 py-3">
                   <div className="flex flex-col items-start gap-1">
-                    <StatusPill k={k} now={now} />
+                    <StatusPill k={k} now={now} serviceMax={serviceMax} />
                     <InUse k={k} serviceMax={serviceMax} />
                   </div>
                 </td>
                 <td className="px-3 py-3">
-                  <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact />
+                  <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />
                 </td>
                 <td className="px-3 py-3 font-mono text-xs text-muted">
                   <TimeAgo iso={k.last_used_at} now={now} />
@@ -262,13 +265,14 @@ export function KeysTable({
                 <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-faint" aria-hidden="true" />
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
-                <ValidityBadge validity={k.validity} reason={k.validity_reason} />
-                <StatusPill k={k} now={now} />
+                <ValidityBadge validity={k.validity} reason={validityText(k, now)} />
+                <StatusPill k={k} now={now} serviceMax={serviceMax} />
                 <InUse k={k} serviceMax={serviceMax} />
               </div>
-              <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact />
+              <div className="wrap-anywhere -mt-1 text-[12px] text-muted">{validityText(k, now)}</div>
+              <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />
               <div className="font-mono text-[11px] text-muted">
-                used <TimeAgo iso={k.last_used_at} now={now} /> · worked <TimeAgo iso={k.last_ok_at} now={now} /> · {num(k.usage_today)} today
+                used <TimeAgo iso={k.last_used_at} now={now} /> · {num(k.usage_today)} today
               </div>
             </button>
             {(perms.manage || perms.reveal) && (

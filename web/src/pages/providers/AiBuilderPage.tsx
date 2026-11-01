@@ -8,7 +8,7 @@ import { useAuth } from "../../stores/auth";
 import { toast } from "../../stores/toast";
 import { errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
-import { relTime } from "../../lib/format";
+import { relTime, sentence } from "../../lib/format";
 import { ProviderLogo } from "../../components/EntityLogo";
 import { Button, Callout, Field, IconButton, Input, Section, Skeleton, Textarea, Toggle } from "../../components/ui";
 import { RunStatusBadge } from "./AiRunPage";
@@ -135,7 +135,7 @@ export function AiBuilderPage() {
         <Callout tone="amber" icon={<Terminal className="h-4 w-4" />} className="mb-6">
           <div className="font-medium text-amber-950">The AI builder is off on this server</div>
           <div className="wrap-anywhere mt-1">
-            {status?.reason || statusError || "Add the AI key to your .env, then restart Cogito."} You can still{" "}
+            {sentence(status?.reason || statusError || "Add the AI key to your .env, then restart Cogito")} You can still{" "}
             <Link to="/providers/new" className="font-medium underline underline-offset-2">
               write a provider by hand
             </Link>
@@ -152,7 +152,7 @@ export function AiBuilderPage() {
       {!manage ? (
         <Callout>Only admins can start an AI build. Recent runs are below.</Callout>
       ) : (
-        <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-5 pb-16 lg:grid-cols-[minmax(0,1fr)_320px] lg:pb-0">
           <div className="space-y-5">
             <Section title="What should it build?" description="A provider name or a docs URL is enough. Add anything you know about limits, plans or quirks, and the agent will follow it.">
               {provider && (
@@ -221,9 +221,15 @@ export function AiBuilderPage() {
               </p>
             </Section>
 
-            {/* Sticky on phones so the main action stays in reach on a long form. */}
-            <div className="sticky bottom-[calc(var(--tabbar-h)+0.75rem)] z-20 lg:static">
-              <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="w-full shadow-pop lg:shadow-none">
+            <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="hidden w-full lg:inline-flex">
+              {updateSlug ? "Start improving" : "Build provider"}
+            </Button>
+          </div>
+
+          {/* Phones and tablets: the submit bar is pinned to the bottom (above the tab bar), so it stays in reach anywhere in the form. */}
+          <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 px-4 py-2.5 backdrop-blur lg:hidden">
+            <div className="mx-auto max-w-[1076px] sm:px-2">
+              <Button type="submit" variant="primary" loading={busy} disabled={!enabled} icon={<Sparkles className="h-4 w-4" />} className="w-full">
                 {updateSlug ? "Start improving" : "Build provider"}
               </Button>
             </div>

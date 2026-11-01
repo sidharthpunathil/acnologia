@@ -9,8 +9,9 @@ const FOCUSABLE =
 /** Open dialogs, newest last. Only the top one answers Escape and traps Tab. */
 const stack: symbol[] = [];
 
-/** Phone layout: dialogs and drawers become bottom sheets below this width. */
-const isPhone = () => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches;
+/** Phone layout, portrait or landscape: dialogs and drawers become bottom sheets. Mirrors the `dlg` screen. */
+const SHEET_QUERY = "(max-width: 639px), (pointer: coarse) and (max-height: 500px)";
+const isPhone = () => typeof window !== "undefined" && window.matchMedia(SHEET_QUERY).matches;
 
 /**
  * Accessible dialog: Escape closes, focus is trapped inside while open and
@@ -165,7 +166,7 @@ export function Modal({
   ({ title, description, children, footer, headerAction, header } = last.current);
 
   return createPortal(
-    <div className={cx("fixed inset-0 z-50 flex items-end justify-center", drawer ? "sm:items-stretch sm:justify-end" : "sm:items-center sm:p-6")}>
+    <div className={cx("fixed inset-0 z-50 flex items-end justify-center", drawer ? "dlg:items-stretch dlg:justify-end" : "dlg:items-center dlg:p-6")}>
       <div className={cx(closing ? "scrim-out" : "scrim-in", "scrim absolute inset-0 backdrop-blur-[2px]")} onClick={closing ? undefined : onClose} aria-hidden="true" />
       <div
         ref={panel}
@@ -177,12 +178,14 @@ export function Modal({
         className={cx(
           drawer ? (closing ? "drawer-out pointer-events-none" : "drawer-in") : closing ? "modal-out pointer-events-none" : "modal-in",
           "relative flex max-h-[92dvh] w-full flex-col overscroll-contain rounded-t-2xl bg-surface shadow-pop focus:outline-none",
-          drawer ? "sm:h-dvh sm:max-h-none sm:max-w-[480px] sm:rounded-none sm:rounded-l-2xl" : cx("sm:rounded-2xl", wide ? "sm:max-w-2xl" : "sm:max-w-lg"),
+          // On phones a drawer scrolls as one piece, header included, so short screens keep room for details.
+          drawer && "overflow-y-auto dlg:overflow-visible",
+          drawer ? "dlg:h-dvh dlg:max-h-none dlg:max-w-[480px] dlg:rounded-none dlg:rounded-l-2xl" : cx("dlg:rounded-2xl", wide ? "dlg:max-w-2xl" : "dlg:max-w-lg"),
         )}
       >
         {/* Grab handle: drag down to close on phones. */}
         <div
-          className="flex shrink-0 cursor-grab touch-none justify-center pb-1 pt-2 sm:hidden"
+          className="flex shrink-0 cursor-grab touch-none justify-center pb-1 pt-2 dlg:hidden"
           onPointerDown={onDragStart}
           onPointerMove={onDragMove}
           onPointerUp={onDragEnd}
@@ -192,7 +195,7 @@ export function Modal({
           <span className="h-1 w-10 rounded-full bg-line-strong" />
         </div>
         <div
-          className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 pb-4 pt-2 sm:pt-4"
+          className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 pb-4 pt-2 dlg:pt-4"
           onPointerDown={onDragStart}
           onPointerMove={onDragMove}
           onPointerUp={onDragEnd}
@@ -232,9 +235,17 @@ export function Modal({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className={cx("min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4", !footer && "pb-[max(1rem,env(safe-area-inset-bottom))]")}>{children}</div>
+        <div
+          className={cx(
+            "px-5 py-4",
+            drawer ? "dlg:min-h-0 dlg:flex-1 dlg:overflow-y-auto dlg:overscroll-contain" : "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+            !footer && "pb-[max(1rem,env(safe-area-inset-bottom))]",
+          )}
+        >
+          {children}
+        </div>
         {footer && (
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-line px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className={cx("flex shrink-0 flex-wrap justify-end gap-2 border-t border-line bg-surface px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]", drawer && "sticky bottom-0 dlg:static")}>
             {footer}
           </div>
         )}

@@ -452,6 +452,7 @@ export function ProviderEditorPage() {
   const [notFound, setNotFound] = useState(false);
   const [validation, setValidation] = useState<Validation>({ state: "idle" });
   const [note, setNote] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [addingService, setAddingService] = useState(false);
   const [triedSave, setTriedSave] = useState(false);
@@ -549,6 +550,7 @@ export function ProviderEditorPage() {
         const res = await update(draft.slug, payload, note.trim());
         toast.success(`Saved v${res.provider.version}`);
         setNote("");
+        setNoteOpen(false);
         const fresh = useProviders.getState().details[draft.slug];
         const input = fresh ? inputOf(fresh) : payload;
         setDraftState(input);
@@ -607,7 +609,7 @@ export function ProviderEditorPage() {
   };
 
   return (
-    <div className={(dirty || isNew) && !readOnly ? "pb-44 sm:pb-24" : undefined}>
+    <div className={(dirty || isNew) && !readOnly ? "pb-28" : undefined}>
       <Link to="/providers" className="tap mb-5 inline-flex items-center gap-1.5 font-mono text-xs text-muted hover:text-ink">
         <ArrowLeft className="h-3.5 w-3.5" /> Providers
       </Link>
@@ -628,7 +630,7 @@ export function ProviderEditorPage() {
                   {detail.status === "disabled" && <Badge tone="amber">disabled</Badge>}
                   <span>· {plural(detail.services_count, "service")}</span>
                   {safeHref(detail.docs_url) && (
-                    <a href={safeHref(detail.docs_url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-ink">
+                    <a href={safeHref(detail.docs_url)} target="_blank" rel="noreferrer" className="tap-inline inline-flex items-center gap-1 hover:text-ink">
                       · docs <ExternalLink className="h-3 w-3" />
                     </a>
                   )}
@@ -692,27 +694,52 @@ export function ProviderEditorPage() {
 
       {!readOnly && (dirty || isNew) && (
         <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 backdrop-blur">
-          <div className="mx-auto flex max-w-[1076px] flex-col gap-2 px-4 py-3 sm:flex-row lg:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:items-center sm:px-6">
-            <div className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-muted">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden="true" />
-              {isNew ? "New provider, not created yet" : "Unsaved changes. Saving creates a new version."}
-            </div>
-            {!isNew && (
+          <div className="mx-auto flex max-w-[1076px] flex-col gap-2 px-4 py-2.5 sm:px-6 sm:py-3 lg:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {/* Phones: the version note opens on demand so the bar stays one row above the keyboard. */}
+            {!isNew && noteOpen && (
               <Input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="What changed (optional)"
                 aria-label="Version note"
-                className="sm:w-64"
+                data-autofocus
+                className="sm:hidden"
               />
             )}
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-muted">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden="true" />
+                <span className="truncate sm:hidden">{isNew ? "Not created" : "Unsaved"}</span>
+                <span className="hidden truncate sm:inline">{isNew ? "New provider, not created yet" : "Unsaved changes. Saving creates a new version."}</span>
+              </div>
               {!isNew && (
-                <Button variant="ghost" onClick={discard}>
+                <Input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="What changed (optional)"
+                  aria-label="Version note"
+                  className="hidden sm:block sm:w-64"
+                />
+              )}
+              {!isNew && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="sm:hidden"
+                  aria-expanded={noteOpen}
+                  aria-label={note.trim() ? "Version note, added" : "Add a version note"}
+                  icon={note.trim() ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : undefined}
+                  onClick={() => setNoteOpen(!noteOpen)}
+                >
+                  Note
+                </Button>
+              )}
+              {!isNew && (
+                <Button size="sm" variant="ghost" onClick={discard} className="sm:h-10 sm:px-4 sm:text-sm">
                   Discard
                 </Button>
               )}
-              <Button variant="primary" loading={saving} onClick={() => void save()} className="flex-1 sm:flex-none">
+              <Button variant="primary" loading={saving} onClick={() => void save()}>
                 {isNew ? "Create provider" : "Save version"}
               </Button>
             </div>

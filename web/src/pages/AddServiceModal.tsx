@@ -97,7 +97,7 @@ function ProviderPicker({ onPick, onClose }: { onPick: (p: Provider) => void; on
           type="search"
           enterKeyHint="search"
           aria-label="Search providers"
-          className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm placeholder:text-faint focus:border-ink/30 focus:outline-none focus:ring-2 focus:ring-ink/10"
+          className="field-input h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm placeholder:text-faint focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20"
         />
       </div>
 
@@ -163,7 +163,7 @@ function ProviderPicker({ onPick, onClose }: { onPick: (p: Provider) => void; on
       {role !== "member" && (
         <p className="pt-1 text-center text-xs text-muted">
           Prefer writing rules yourself?{" "}
-          <Link to="/providers/new" onClick={onClose} className="inline-flex items-center gap-1 font-medium text-ink underline-offset-2 hover:underline">
+          <Link to="/providers/new" onClick={onClose} className="tap-inline inline-flex items-center gap-1 font-medium text-ink underline-offset-2 hover:underline">
             <PenLine className="h-3 w-3" /> Create a provider manually
           </Link>
         </p>

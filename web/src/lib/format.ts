@@ -75,6 +75,14 @@ export const STRATEGY_HELP: Record<string, string> = {
   random: "Weighted random by key weight.",
 };
 
+/** Server text as a sentence: capital first letter, full stop at the end. */
+export function sentence(s: string): string {
+  const t = s.trim();
+  if (!t) return t;
+  const c = t.charAt(0).toUpperCase() + t.slice(1);
+  return /[.!?]$/.test(c) ? c : `${c}.`;
+}
+
 export function slugify(s: string): string {
   return s
     .toLowerCase()

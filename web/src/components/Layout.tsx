@@ -186,6 +186,26 @@ export function Layout() {
   const overflow: NavItem[] = [...links.filter((l) => !TAB_PATHS.includes(l.to)), { to: "/account", label: "Your account", icon: UserRound }];
   const moreActive = overflow.some((l) => location.pathname.startsWith(l.to));
 
+  // While a text field has focus the keyboard is up: hide the tab bar so it does not
+  // cover the field (CSS keys off data-typing, on touch screens only).
+  useEffect(() => {
+    const isText = (el: Element | null) =>
+      !!el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !/^(checkbox|radio|button|submit|reset|file|color|range)$/i.test((el as HTMLInputElement).type)));
+    const root = document.documentElement;
+    const onIn = (e: FocusEvent) => {
+      if (isText(e.target as Element)) root.setAttribute("data-typing", "");
+    };
+    // Focus may move straight to another field, so check after it settles.
+    const onOut = () => window.setTimeout(() => !isText(document.activeElement) && root.removeAttribute("data-typing"), 0);
+    document.addEventListener("focusin", onIn);
+    document.addEventListener("focusout", onOut);
+    return () => {
+      document.removeEventListener("focusin", onIn);
+      document.removeEventListener("focusout", onOut);
+      root.removeAttribute("data-typing");
+    };
+  }, []);
+
   // Close the sheet on navigation, and move focus to the new page for screen readers.
   useEffect(() => {
     setMore(false);
@@ -249,7 +269,7 @@ export function Layout() {
       {/* Phone tab bar: the main destinations stay under the thumb. */}
       <nav
         aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-canvas/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur supports-[backdrop-filter]:bg-canvas/85 lg:hidden"
+        className="tabbar fixed inset-x-0 bottom-0 z-40 border-t border-line bg-canvas/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur supports-[backdrop-filter]:bg-canvas/85 lg:hidden"
       >
         <ul className="mx-auto flex max-w-md items-stretch gap-1">
           {tabs.map((l) => (
