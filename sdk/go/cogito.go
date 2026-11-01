@@ -163,6 +163,10 @@ const (
 	OutcomeQuotaExhausted Outcome = "quota_exhausted"
 	OutcomeInvalid        Outcome = "invalid"
 	OutcomeError          Outcome = "error"
+	// OutcomeBusy: the account is at its concurrency cap; the key steps aside briefly.
+	OutcomeBusy Outcome = "busy"
+	// OutcomeBanned: the provider suspended the account; the key leaves rotation.
+	OutcomeBanned Outcome = "banned"
 )
 
 // Report describes how a leased key behaved. Set Rotate to receive the next

@@ -10,7 +10,7 @@ from ._errors import KeyProblem
 if TYPE_CHECKING:  # pragma: no cover
     from ._client import AsyncCogito, Cogito
 
-OUTCOMES = ("ok", "rate_limited", "quota_exhausted", "invalid", "error")
+OUTCOMES = ("ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error")
 
 
 @dataclass(frozen=True)

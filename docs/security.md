@@ -159,11 +159,31 @@ flowchart LR
     subgraph Without["no key"]
         Logo["logo discovery"]
     end
-    P -->|"service base_url only,<br/>no redirects"| Prov[provider]
-    H -->|"service base_url only,<br/>no redirects"| Prov
+    P -->|"service base_url only,<br/>no redirects,<br/>optional egress proxy"| Prov[provider]
+    H -->|"service base_url only,<br/>no redirects,<br/>optional egress proxy"| Prov
     L -->|"provider's own domain only,<br/>GET examples, SafeClient"| Prov
     Logo -->|"SafeClient"| Site[provider website]
 ```
+
+Webhook deliveries carry no key and go through `SafeClient` unless
+`COGITO_WEBHOOK_ALLOW_PRIVATE=true`. Webhook URLs are encrypted at rest (Slack,
+Discord and Telegram URLs are secrets) and only a host hint is ever returned.
+Hidden keys never produce webhook events.
+
+An egress proxy sees which hosts keys travel to, and the keys themselves when
+a service's base URL is plain `http`. Assigning one is therefore part of a
+service's target: a non-superadmin assigning or changing it clears
+`target_trusted`, so hidden keys stop flowing until a superadmin confirms.
+Proxy URLs are encrypted at rest and shown without credentials.
+
+The response cache is shared by the apps of a service, so Cogito never caches
+a response made with a hidden or restricted key, a response the upstream marks
+`private` or `no-store`, or a body that contains the key. Idempotent replays
+are stored per app.
+
+Admin API tokens (`cogadm_`) are stored as SHA-256 hashes, carry a scope that
+never exceeds their owner's role, stop working when the owner is disabled, and
+cannot create tokens or change the account.
 
 `SafeClient` checks the resolved address at dial time, which also defeats DNS
 rebinding, and refuses loopback, private, link local (including cloud metadata

@@ -10,7 +10,7 @@ require "uri"
 #   res = cog.proxy("serpapi").get("/search.json", q: "coffee")
 module Cogito
   VERSION = "0.1.0"
-  OUTCOMES = %w[ok rate_limited quota_exhausted invalid error].freeze
+  OUTCOMES = %w[ok rate_limited busy quota_exhausted invalid banned error].freeze
   # Longest wait_sec the server accepts.
   MAX_WAIT_SEC = 60
   # Cap on a report message built from an exception.

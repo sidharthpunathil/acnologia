@@ -45,7 +45,7 @@ final class Lease
     }
 
     /**
-     * Report the outcome: ok, rate_limited, quota_exhausted, invalid or error.
+     * Report the outcome: ok, rate_limited, busy, quota_exhausted, invalid, banned or error.
      * Returns the next Lease when $rotate is true and another key is free.
      */
     public function report(

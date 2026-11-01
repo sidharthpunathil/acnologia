@@ -12,6 +12,9 @@ Key facts for agents:
 - HTTP 503 with code `all_keys_busy` means usable keys exist but every one is at its concurrency limit. It clears as soon as another caller reports; retry after `retry_after_sec` (usually 1) or lease with `wait_sec`.
 - An app may be limited to some services and to mode `proxy`, `lease` or `both`. Call `GET /api/v1/services` to see what you can use.
 - Report every lease within 10 minutes of `expires_at`. A second report gets 409, a late one 410.
+- HTTP 503 with code `service_unavailable` means the provider itself keeps failing and Cogito paused traffic to it (circuit breaker). Wait `retry_after_sec`.
+- HTTP 429 with code `app_limit_reached` means your app used up its daily or monthly request or budget limit. `reset_at` says when it lifts.
+- `{service}` can also be a service group: Cogito tries each member service in order and moves on when one has no usable key, is down, or runs out of keys. `X-Cogito-Service` says which member answered.
 
 ## Auth
 
@@ -31,15 +34,17 @@ Key facts for agents:
 - [GET /api/v1/services](/llms-full.txt#get-apiv1services): services this token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`.
 - [POST /api/v1/lease](/llms-full.txt#post-apiv1lease): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300, "wait_sec": 0}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name", "prefix"}, "base_url", "expires_at"}` (put `prefix` before the secret when present), or 503 `{"error": {"code": "no_key_available"}, "retry_after_sec": n}` or 503 `{"error": {"code": "all_keys_busy"}, "retry_after_sec": 1}`.
 - [POST /api/v1/leases/{lease_id}/report](/llms-full.txt#post-apiv1leaseslease_idreport): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
-- [ANY /proxy/{service}/{path}](/llms-full.txt#any-proxyservicepath): forwards to `base_url/{path}` with query string and body, injecting a key. Methods GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. Response headers add `X-Cogito-Key-Id` and `X-Cogito-Attempts`. Redirects are returned to you, not followed.
+- [ANY /proxy/{service}/{path}](/llms-full.txt#any-proxyservicepath): forwards to `base_url/{path}` with query string and body, injecting a key. Methods GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. Response headers add `X-Cogito-Key-Id`, `X-Cogito-Attempts` and `X-Cogito-Service`. Redirects are returned to you, not followed. On services with caching, identical GETs are answered from cache (`X-Cogito-Cache: hit`, no quota spent); send `Cache-Control: no-cache` to skip it. Send `Idempotency-Key: <id>` to make retries safe: a repeat within 10 minutes replays the first response (`Idempotent-Replayed: true`).
 - [GET /healthz](/llms-full.txt#public-endpoints): `{"ok": true, "version": "..."}`, no auth.
 
 ## Outcomes
 
 - `ok`: call succeeded, resets the key's failure counter.
 - `rate_limited`: key cools down for `retry_after_sec` (at most 24h), or exponential backoff from the service cooldown, capped at 1h.
+- `busy`: the account is at its concurrency limit. The key steps aside for `retry_after_sec` (default 1s) without backoff.
 - `quota_exhausted`: key parked as `exhausted` until its quota resets (or 24h).
 - `invalid`: key marked `invalid` and removed from rotation.
+- `banned`: the provider suspended the account. Key marked `banned`; only an operator reset brings it back.
 - `error`: provider or network failure that is not the key's fault. Key is not penalized.
 
 ## Proxy examples
@@ -60,6 +65,10 @@ Every SDK's lease call and `with_key` helper accept the wait option (`wait_sec` 
 - [Go](/llms-full.txt#go): `go get github.com/cogito-keys/cogito-go`, package `cogito`.
 - [PHP](/llms-full.txt#php): `composer require cogito/keys`, class `Cogito\Cogito`.
 - [Ruby](/llms-full.txt#ruby): `gem install cogito-keys`, then `require "cogito"`.
+
+## Admin API and CLI
+
+Operators can script the admin API with a token from Settings, API tokens (`Authorization: Bearer cogadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The same binary ships a client: `cogito ctl login https://cogito.example --token cogadm_...`, then `cogito ctl status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`.
 
 ## Optional
 

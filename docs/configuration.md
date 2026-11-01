@@ -18,6 +18,9 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `COGITO_HEALTH_INTERVAL` | `6h` | How often each key is re-checked with the provider. `0` or `off` disables background checks. Exhausted keys are re-checked hourly. |
 | `COGITO_EVENT_RETENTION_DAYS` | `30` | How long request events are kept. `0` or less keeps them forever. |
 | `COGITO_MAX_BODY_MB` | `50` | Largest proxied request body. |
+| `COGITO_CACHE_MB` | `64` | Memory for cached GET responses and idempotent replays. `0` turns caching off. |
+| `COGITO_WEBHOOK_ALLOW_PRIVATE` | `false` | Let webhooks reach private, loopback and link-local addresses, for a receiver on your own network. |
+| `COGITO_EGRESS_ECHO_URL` | `https://www.cloudflare.com/cdn-cgi/trace` | URL the egress proxy test calls to learn the proxy's public IP. |
 | `ANTHROPIC_API_KEY` | empty | Enables the AI provider builder and "Fill with AI". |
 | `COGITO_AI_MODEL` | `claude-opus-5-5` | Model for AI features. |
 | `GITHUB_TOKEN` | empty | Lets the AI builder read GitHub with a higher rate limit. Use a fine grained, public read only token. |

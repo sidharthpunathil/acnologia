@@ -81,10 +81,30 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
   `system_busy` (provider side, so the key is not penalized). Generic: 429, 402,
   401/403 and `Retry-After`.
 - **Cooldown with backoff**: `Retry-After` when given, otherwise the service
-  cooldown doubled per consecutive failure, capped at one hour.
+  cooldown doubled per consecutive failure, capped at one hour. A key that is
+  only `busy` (at its concurrency cap) steps aside for a second without
+  backoff. A key whose account was suspended is marked `banned` and stays out
+  until you reset it.
+- **Circuit breaker** per service: when the provider itself keeps failing
+  (5xx, timeouts), Cogito pauses traffic, answers 503 at once, and probes
+  until it recovers. Keys are not blamed for a provider outage.
 - **Quota tracking**: health checks read SerpAPI `account.json` and ElevenLabs
-  `/v1/user/subscription` (neither spends quota). Exhausted keys come back
-  automatically when the quota resets.
+  `/v1/user/subscription` (neither spends quota), and providers that report
+  quota in response headers (Brave Search) update it on every request.
+  Exhausted keys come back automatically when the quota resets.
+- **Response cache**: identical GET requests to search style APIs are
+  answered from memory, so repeats spend no quota. `Idempotency-Key` makes
+  retried POSTs safe.
+- **Service groups**: put several services behind one slug and Cogito falls
+  through to the next when one runs dry or goes down.
+- **App limits and spend**: per app daily and monthly request caps and USD
+  budgets, with spend tracked from each provider's price per request.
+- **Egress proxies**: route a service or a single key through an HTTP, HTTPS
+  or SOCKS5 proxy.
+- **Webhooks** to Slack, Discord, Telegram or any URL (signed JSON) when a key
+  goes bad, quota runs low, a pool runs dry or a provider goes down.
+- **Catalog** with SerpAPI, ElevenLabs, Serper, Brave Search, Tavily, Exa,
+  Firecrawl, Jina, SearchApi, Linkup and You.com built in.
 - **Key flags**:
   - `hidden`: only superadmins see the key or count it, and admins cannot
     infer it from events. Hidden keys are used (leased or proxied) only by
@@ -114,6 +134,9 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
   - PHP: [`sdk/php`](sdk/php)
   - Ruby: [`sdk/ruby`](sdk/ruby)
 - **Audit log** of every dashboard change and every secret reveal.
+- **Admin API tokens and `cogito ctl`**: scoped `cogadm_` tokens for scripts
+  and CI, and a command line client in the same binary
+  (`cogito ctl login`, `status`, `keys add`, `keys check`, `events`, ...).
 
 ## Providers are data, and AI builds them
 

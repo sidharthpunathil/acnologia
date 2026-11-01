@@ -371,3 +371,98 @@ cog = Cogito::Client.new("http://localhost:8080", "cog_xxx")
 res = cog.proxy("serpapi").get("/search.json", "q" => "coffee")
 data = cog.with_key("serpapi") { |lease| ... } # raise Cogito::RateLimited.new(retry_after: 3600) on 429
 ```
+
+
+## Resilience
+
+### Circuit breaker
+
+Every service has a circuit breaker. Provider errors (5xx, timeouts, refused connections) count toward it; rate limits, bad keys and client errors do not. After `breaker_threshold` errors within `breaker_window_sec` (defaults: 10 in 60s) the breaker opens and the proxy answers at once:
+
+```http
+HTTP/1.1 503 Service Unavailable
+Retry-After: 30
+
+{"error": {"code": "service_unavailable", "message": "SerpAPI keeps failing, so Cogito paused traffic to it"}, "retry_after_sec": 30}
+```
+
+After `breaker_reset_sec` (default 30s) one probe request goes through. Success closes the breaker; another provider error opens it again. Keys are never penalized for a provider outage. Set `breaker_threshold` to `-1` in a provider spec to turn it off.
+
+### Busy and banned keys
+
+- `busy` (for example ElevenLabs `too_many_concurrent_requests`): the key is healthy but at its concurrency cap. Cogito rotates to the next key immediately and parks this one for about a second, without raising its failure count.
+- `banned` (for example ElevenLabs `detected_unusual_activity`): the provider suspended the account. The key leaves rotation with status `banned`. Health checks skip it; an operator reset (`POST /api/admin/keys/{id}/reset`) brings it back.
+
+### Quota from response headers
+
+Providers that report quota on every response (Brave Search sends `X-RateLimit-Remaining: 1, 1999`) declare it in the spec:
+
+```json
+"quota": {"unit": "queries", "headers": {"limit": "X-RateLimit-Limit", "remaining": "X-RateLimit-Remaining", "reset": "X-RateLimit-Reset", "reset_format": "seconds", "index": 1}}
+```
+
+Each proxied response then updates the key's quota. When the provider reports 0 left, the key is parked until the reset it announced.
+
+## Response cache and idempotency
+
+A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Cogito-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Cogito never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `COGITO_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
+
+`Idempotency-Key` works on any method. The first response (below 500) is stored per app for 10 minutes and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice.
+
+## Service groups
+
+A group puts several services behind one slug, for example two SerpAPI accounts owned by different teams, or one API in two regions:
+
+```http
+GET /proxy/search/search.json?q=coffee
+Authorization: Bearer cog_...
+```
+
+Cogito tries the first member. It moves to the next when the member has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Cogito-Service` names the member that answered. An app allowed to use the group may use its members through it.
+
+## App limits and spend
+
+Each app can have `daily_requests`, `monthly_requests`, `daily_budget` and `monthly_budget` (USD, UTC days and months). Cost per request comes from the provider spec (`quota.cost_per_request`) or a service override. Cache hits are free and do not count as requests. A lease counts as one request when it is issued. Over a limit, proxy and lease calls answer:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 4210
+
+{"error": {"code": "app_limit_reached", "message": "this app reached its daily requests limit"}, "limit": "daily_requests", "reset_at": "2026-11-02T00:00:00Z", "retry_after_sec": 4210}
+```
+
+## Egress proxies
+
+Operators can route a service's or a single key's traffic through an HTTP, HTTPS or SOCKS5 proxy (`socks5h://` resolves DNS at the proxy). A key's proxy wins over its service's. Proxy URLs are encrypted at rest and shown without credentials. Health checks use the same route.
+
+## Webhooks
+
+Webhooks receive pool events: `key.invalid`, `key.banned`, `key.exhausted`, `key.recovered`, `quota.low` (under 10% left), `pool.empty`, `service.down`, `service.up`, `app.limit`. Formats: `json`, `slack`, `discord`, `telegram` (use `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>`). Repeats of the same event about the same key, service or app are sent at most once per 10 minutes. Hidden keys never produce events. By default webhook URLs may not point at private addresses; set `COGITO_WEBHOOK_ALLOW_PRIVATE=true` for an internal receiver.
+
+JSON deliveries carry:
+
+```http
+X-Cogito-Event: key.exhausted
+X-Cogito-Timestamp: 1793577600
+X-Cogito-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>" with the signing secret>
+
+{"type": "key.exhausted", "ts": "2026-11-01T22:00:00Z", "message": "SerpAPI key \"acct-3\" is out of quota", "service_id": 1, "service": "serpapi", "key_id": 3, "key": "acct-3"}
+```
+
+The signing secret (`whsec_...`) is shown once when the webhook is created. Reject deliveries whose timestamp is more than a few minutes old.
+
+## Admin API tokens and cogito ctl
+
+Create tokens in the dashboard (Settings, API tokens) or with `POST /api/admin/tokens {"name": "ci", "scope": "write", "expires_in_days": 90}`. Scopes: `read` (member), `write` (admin), `admin` (superadmin), capped at the creator's role. Tokens cannot manage tokens or change the account. Send them as `Authorization: Bearer cogadm_...` to any `/api/admin/` endpoint.
+
+```sh
+cogito ctl login https://cogito.example --token cogadm_... --name prod
+cogito ctl status
+cogito ctl keys add serpapi < keys.txt      # one per line: secret, or label,secret
+cogito ctl keys check serpapi
+cogito ctl events --service serpapi --kind rate_limited
+cogito ctl breaker serpapi --reset
+cogito ctl usage 3
+```
+
+The CLI stores servers in `~/.config/cogito/ctl.json` (mode 0600). `COGITO_URL` and `COGITO_TOKEN` override it for one command.

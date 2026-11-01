@@ -10,7 +10,7 @@ export interface AuthSpec {
   prefix?: string;
 }
 
-export type Outcome = "ok" | "rate_limited" | "quota_exhausted" | "invalid" | "error";
+export type Outcome = "ok" | "rate_limited" | "busy" | "quota_exhausted" | "invalid" | "banned" | "error";
 
 export interface Service {
   slug: string;
