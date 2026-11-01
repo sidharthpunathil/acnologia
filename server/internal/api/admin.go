@@ -13,6 +13,7 @@ import (
 
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/crypto"
+	"github.com/cogito-keys/cogito/internal/keyparse"
 	"github.com/cogito-keys/cogito/internal/pool"
 	"github.com/cogito-keys/cogito/internal/providers"
 	"github.com/cogito-keys/cogito/internal/store"
@@ -465,6 +466,13 @@ func (s *Server) validateKey(in keyInput, r *http.Request) (int, string) {
 	return 0, ""
 }
 
+// maxKeysPerRequest caps one key creation call. All keys go in one
+// transaction, so a failure stores none of them.
+const maxKeysPerRequest = keyparse.MaxKeys
+
+// createKeys adds keys to a service. The body is {keys: [...]} with one
+// object per key, or {text: "..."} with pasted text, a CSV, a .env file or a
+// JSON array, parsed by keyparse; both may be sent together.
 func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 	sv, ok := s.loadService(w, r)
 	if !ok {
@@ -472,16 +480,38 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Keys []keyInput `json:"keys"`
+		Text string     `json:"text"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	if len(body.Keys) == 0 || len(body.Keys) > 1000 {
-		writeErr(w, 400, "invalid", "send between 1 and 1000 keys")
+	var parsed *keyparse.Result
+	if strings.TrimSpace(body.Text) != "" {
+		res := keyparse.Parse(body.Text)
+		parsed = &res
+		for _, k := range res.Keys {
+			in := keyInput{Secret: &k.Secret}
+			if k.Label != "" {
+				in.Label = &k.Label
+			}
+			body.Keys = append(body.Keys, in)
+		}
+		if res.Overflow > 0 {
+			body.Keys = append(body.Keys, make([]keyInput, res.Overflow)...) // fail the cap below
+		}
+	}
+	if len(body.Keys) == 0 {
+		msg := "send between 1 and 5000 keys"
+		if parsed != nil {
+			msg = "no keys found in the text"
+		}
+		writeErr(w, 400, "invalid", msg)
 		return
 	}
-	created := []*store.Key{}
-	skipped := []string{}
+	if len(body.Keys) > maxKeysPerRequest {
+		writeErr(w, 400, "invalid", fmt.Sprintf("send at most %d keys per request (got %d)", maxKeysPerRequest, len(body.Keys)))
+		return
+	}
 	for i, in := range body.Keys {
 		if in.Secret == nil {
 			writeErr(w, 400, "invalid", fmt.Sprintf("key %d has no secret", i+1))
@@ -492,72 +522,31 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for i, in := range body.Keys {
-		secret := strings.TrimSpace(*in.Secret)
-		enc, err := s.Pool.Box.Encrypt(secret)
+	nks := make([]store.NewKey, 0, len(body.Keys))
+	for _, in := range body.Keys {
+		nk, err := s.newKey(sv, in, userFrom(r).ID)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
 		}
-		nk := store.NewKey{
-			ServiceID: sv.ID, SecretEnc: enc, SecretFP: s.Pool.Box.Fingerprint(secret), Hint: crypto.Hint(secret),
-			Tier: "primary", Weight: 1, Priority: 100, CreatedBy: userFrom(r).ID,
-		}
-		nk.Label = fmt.Sprintf("%s key %s", sv.Name, crypto.Hint(secret)[3:])
-		if in.Label != nil && strings.TrimSpace(*in.Label) != "" {
-			nk.Label = strings.TrimSpace(*in.Label)
-		}
-		if in.Tier != nil {
-			nk.Tier = *in.Tier
-		}
-		if in.Hidden != nil {
-			nk.Hidden = *in.Hidden
-		}
-		if in.Restricted != nil {
-			nk.Restricted = *in.Restricted
-		}
-		if in.AppIDs != nil {
-			nk.AppIDs = *in.AppIDs
-		}
-		if in.Weight != nil {
-			nk.Weight = *in.Weight
-		}
-		if in.Priority != nil {
-			nk.Priority = *in.Priority
-		}
-		if in.Notes != nil {
-			nk.Notes = *in.Notes
-		}
-		if a := in.accountPatch(); true {
-			deref := func(v *string) string {
-				if v == nil {
-					return ""
-				}
-				return *v
-			}
-			nk.Account = store.KeyAccount{Name: deref(a.Name), Email: deref(a.Email), Phone: deref(a.Phone), Ref: deref(a.Ref)}
-		}
-		if in.QuotaLimit != nil && *in.QuotaLimit >= 0 {
-			nk.QuotaLimit = in.QuotaLimit
-		}
-		if in.MaxConc != nil && *in.MaxConc >= 0 {
-			nk.MaxConc = in.MaxConc
-		}
-		k, err := s.Store.CreateKey(r.Context(), nk)
-		if err == store.ErrDuplicate {
-			skipped = append(skipped, fmt.Sprintf("line %d (%s) already exists", i+1, crypto.Hint(secret)))
-			continue
-		}
-		if err != nil {
-			writeStoreErr(w, err)
-			return
-		}
-		created = append(created, k)
+		nks = append(nks, nk)
+	}
+	created, dups, err := s.Store.CreateKeys(r.Context(), nks)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	skipped := []string{}
+	for _, i := range dups {
+		skipped = append(skipped, fmt.Sprintf("line %d (%s) already exists", i+1, nks[i].Hint))
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "key.create", sv.Slug, fmt.Sprintf("%d added, %d skipped", len(created), len(skipped)))
 	// Check new keys in the background so quotas show up without a manual click.
 	go s.checkMany(sv, created)
 	resp := map[string]any{"keys": created, "skipped": skipped}
+	if parsed != nil {
+		resp["ignored"] = len(parsed.Ignored)
+	}
 	if !sv.TargetTrusted {
 		for _, k := range created {
 			if k.Hidden {
@@ -567,6 +556,63 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 201, resp)
+}
+
+// DefaultKeyLabel is the label of a key added without one.
+func DefaultKeyLabel(sv *store.Service, secret string) string {
+	return fmt.Sprintf("%s key %s", sv.Name, crypto.Hint(secret)[3:])
+}
+
+// newKey builds the row for one validated key input.
+func (s *Server) newKey(sv *store.Service, in keyInput, by int64) (store.NewKey, error) {
+	secret := strings.TrimSpace(*in.Secret)
+	enc, err := s.Pool.Box.Encrypt(secret)
+	if err != nil {
+		return store.NewKey{}, err
+	}
+	nk := store.NewKey{
+		ServiceID: sv.ID, SecretEnc: enc, SecretFP: s.Pool.Box.Fingerprint(secret), Hint: crypto.Hint(secret),
+		Tier: "primary", Weight: 1, Priority: 100, CreatedBy: by, Label: DefaultKeyLabel(sv, secret),
+	}
+	if in.Label != nil && strings.TrimSpace(*in.Label) != "" {
+		nk.Label = strings.TrimSpace(*in.Label)
+	}
+	if in.Tier != nil {
+		nk.Tier = *in.Tier
+	}
+	if in.Hidden != nil {
+		nk.Hidden = *in.Hidden
+	}
+	if in.Restricted != nil {
+		nk.Restricted = *in.Restricted
+	}
+	if in.AppIDs != nil {
+		nk.AppIDs = *in.AppIDs
+	}
+	if in.Weight != nil {
+		nk.Weight = *in.Weight
+	}
+	if in.Priority != nil {
+		nk.Priority = *in.Priority
+	}
+	if in.Notes != nil {
+		nk.Notes = *in.Notes
+	}
+	deref := func(v *string) string {
+		if v == nil {
+			return ""
+		}
+		return *v
+	}
+	a := in.accountPatch()
+	nk.Account = store.KeyAccount{Name: deref(a.Name), Email: deref(a.Email), Phone: deref(a.Phone), Ref: deref(a.Ref)}
+	if in.QuotaLimit != nil && *in.QuotaLimit >= 0 {
+		nk.QuotaLimit = in.QuotaLimit
+	}
+	if in.MaxConc != nil && *in.MaxConc >= 0 {
+		nk.MaxConc = in.MaxConc
+	}
+	return nk, nil
 }
 
 func (s *Server) checkMany(sv *store.Service, keys []*store.Key) {

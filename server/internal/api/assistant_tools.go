@@ -21,6 +21,12 @@ type toolOut struct {
 	Summary string
 	Secret  string
 	Link    string
+	// Card and Entities feed the rich transcript row.
+	Card     *chatCard
+	Entities []chatEntity
+	// Silent tools (ask_user, wait_for_build) write their own transcript
+	// item, so runTool adds no tool row for them.
+	Silent bool
 }
 
 type chatTool struct {
@@ -57,6 +63,26 @@ func (t *chatTool) secretsIn(in map[string]any) []string {
 					out = append(out, strings.TrimSpace(s))
 				}
 			}
+		}
+	}
+	return out
+}
+
+// entitiesOf reads up to 60 named rows from a tool's JSON result.
+func entitiesOf(model, typ string) []chatEntity {
+	var list []map[string]any
+	if json.Unmarshal([]byte(model), &list) != nil {
+		return nil
+	}
+	out := []chatEntity{}
+	for _, m := range list {
+		if len(out) == 60 {
+			break
+		}
+		id, _ := argNum(m, "id")
+		e := chatEntity{Type: typ, ID: id, Slug: argStr(m, "slug"), Name: argStr(m, "name")}
+		if e.Name != "" && (e.ID != 0 || e.Slug != "") {
+			out = append(out, e)
 		}
 	}
 	return out
@@ -109,7 +135,7 @@ func (cs *chatSession) resolveService(v string) (*store.Service, error) {
 	if v == "" {
 		return nil, errors.New("say which service (its slug, name or id)")
 	}
-	svcs, err := cs.s.Store.ListServices(cs.r.Context())
+	svcs, err := cs.s.Store.ListServices(cs.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -229,9 +255,11 @@ func init() {
 			Name: "list_providers", Role: store.RoleMember, Props: none,
 			Desc: "Providers Acnologia knows (built in, manual and AI built), with how many services use each.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
-				return cs.simple("GET", "/api/admin/providers", nil, "Listed providers", func(m map[string]any) any {
+				out := cs.simple("GET", "/api/admin/providers", nil, "Listed providers", func(m map[string]any) any {
 					return rows(m["providers"], "slug", "name", "category", "status", "builtin", "services_count", "base_url", "auth_type")
 				})
+				out.Entities = entitiesOf(out.Model, "provider")
+				return out
 			},
 		},
 		{
@@ -253,10 +281,12 @@ func init() {
 			Name: "list_services", Role: store.RoleMember, Props: none,
 			Desc: "Services with their provider, base URL, strategy and key counts.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
-				return cs.simple("GET", "/api/admin/services", nil, "Listed services", func(m map[string]any) any {
+				out := cs.simple("GET", "/api/admin/services", nil, "Listed services", func(m map[string]any) any {
 					return rows(m["services"], "id", "slug", "name", "provider", "base_url", "auth_type", "strategy",
 						"key_counts", "requests_24h", "max_concurrency", "target_trusted")
 				})
+				out.Entities = entitiesOf(out.Model, "service")
+				return out
 			},
 		},
 		{
@@ -318,9 +348,11 @@ func init() {
 			Name: "list_apps", Role: store.RoleMember, Props: none,
 			Desc: "Apps (consumers) with mode, allowed services and whether they are active. Tokens are never shown.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
-				return cs.simple("GET", "/api/admin/apps", nil, "Listed apps", func(m map[string]any) any {
+				out := cs.simple("GET", "/api/admin/apps", nil, "Listed apps", func(m map[string]any) any {
 					return rows(m["apps"], "id", "name", "description", "mode", "allowed_services", "active", "lease_hidden", "token_prefix", "last_used_at")
 				})
+				out.Entities = entitiesOf(out.Model, "app")
+				return out
 			},
 		},
 		{
@@ -396,7 +428,10 @@ func init() {
 					return toolFail(msg)
 				}
 				slug, _ := out["slug"].(string)
+				id, _ := argNum(out, "id")
+				ent := chatEntity{Type: "service", ID: id, Slug: slug, Name: argStr(out, "name")}
 				return toolOut{OK: true, Summary: "Created service " + slug, Link: fmt.Sprintf("/services/%v", out["id"]),
+					Card: &chatCard{Type: "service", Service: &ent, Extra: map[string]any{"provider": out["provider"]}}, Entities: []chatEntity{ent},
 					Model: asJSON(pick(out, "id", "slug", "name", "provider", "base_url", "auth_type", "auth_name", "strategy"))}
 			},
 		},
@@ -431,40 +466,22 @@ func init() {
 			},
 		},
 		{
-			Name: "add_keys", Role: store.RoleAdmin, Required: []string{"service", "keys"},
+			Name: "add_keys", Role: store.RoleAdmin, Required: []string{"service"},
 			Props: map[string]any{
 				"service": map[string]any{"type": "string", "description": "slug, name or id"},
-				"keys": map[string]any{"type": "array", "items": map[string]any{
-					"type": "object", "required": []string{"secret"},
-					"properties": withProps(keyInputProps, map[string]any{"secret": map[string]any{"type": "string", "description": "the API key exactly as given"}}),
+				"batch":   map[string]any{"type": "string", "description": `"latest" for every key still in the vault from the most recent paste, or a batch id such as b2. Labels parsed from the paste are used.`},
+				"key_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
+					"description": "vault refs such as k3, from [key k3 ...c21e] placeholders"},
+				"keys": map[string]any{"type": "array", "description": "per key details; give ref for a pasted key", "items": map[string]any{
+					"type": "object",
+					"properties": withProps(keyInputProps, map[string]any{
+						"ref":    map[string]any{"type": "string", "description": "vault ref such as k3"},
+						"secret": map[string]any{"type": "string", "description": "only for a key that reached you as plain text, never a placeholder"},
+					}),
 				}},
 			},
-			Desc: "Add API keys to a service, with optional label, account details (name, email, phone, other id), tier and notes. Duplicates are skipped. New keys are health checked in the background.",
-			Run: func(cs *chatSession, in map[string]any) toolOut {
-				sv, err := cs.resolveService(argStr(in, "service"))
-				if err != nil {
-					return toolFail(err.Error())
-				}
-				ks, _ := in["keys"].([]any)
-				if len(ks) == 0 {
-					return toolFail("no keys given")
-				}
-				code, out, msg := cs.api("POST", fmt.Sprintf("/api/admin/services/%d/keys", sv.ID), map[string]any{"keys": ks})
-				if code >= 400 {
-					return toolFail(msg)
-				}
-				created := rows(out["keys"], "id", "label", "hint", "account_name", "account_email", "account_phone", "account_ref")
-				skipped, _ := out["skipped"].([]any)
-				sum := fmt.Sprintf("Added %d key(s) to %s", len(created), sv.Slug)
-				if len(skipped) > 0 {
-					sum += fmt.Sprintf(", skipped %d", len(skipped))
-				}
-				res := map[string]any{"service": sv.Slug, "created": created, "skipped": skipped}
-				if wv, ok := out["warning"]; ok {
-					res["warning"] = wv
-				}
-				return toolOut{OK: true, Summary: sum, Model: asJSON(res), Link: fmt.Sprintf("/services/%d", sv.ID)}
-			},
+			Desc: "Add API keys to a service. Pasted keys reach you as placeholders [key k3 ...c21e]: pass batch \"latest\" to add every key from the last paste in one call, key_refs for some of them, or keys with ref plus account details, label, tier or notes. Labels from the paste are kept. Duplicates are skipped. New keys are health checked in the background.",
+			Run:  addKeysTool,
 		},
 		{
 			Name: "update_key", Role: store.RoleAdmin, Required: []string{"key_id"},
@@ -547,7 +564,9 @@ func init() {
 				}
 				app, _ := out["app"].(map[string]any)
 				tok, _ := out["token"].(string)
+				appID, _ := argNum(app, "id")
 				return toolOut{OK: true, Secret: tok, Summary: fmt.Sprintf("Created app %v", app["name"]), Link: "/apps",
+					Entities: []chatEntity{{Type: "app", ID: appID, Name: argStr(app, "name")}},
 					Model: asJSON(map[string]any{"app": pick(app, "id", "name", "mode", "allowed_services"),
 						"token": "shown to the user once in the chat; tell them to copy it now"})}
 			},
@@ -577,30 +596,44 @@ func init() {
 			},
 		},
 		{
+			Name: "search_providers", Role: store.RoleMember, Required: []string{"query"},
+			Props: map[string]any{"query": map[string]any{"type": "string", "description": "a name, slug, website or docs URL, such as gemini or https://ai.google.dev/api"}},
+			Desc:  "Search the provider catalog by name, slug, website and docs URL. Use it before starting a provider build: a built in provider is always better.",
+			Run:   searchProvidersTool,
+		},
+		{
 			Name: "start_provider_build", Role: store.RoleAdmin, Required: []string{"name"},
 			Props: map[string]any{
-				"name":    map[string]any{"type": "string", "description": "the API or company name"},
-				"context": map[string]any{"type": "string", "description": "anything the user said about it"},
-				"urls":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "docs or website URLs the user gave"},
+				"name":         map[string]any{"type": "string", "description": "the API or company name"},
+				"context":      map[string]any{"type": "string", "description": "anything the user said about it"},
+				"urls":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "docs or website URLs the user gave"},
+				"test_key_ref": map[string]any{"type": "string", "description": "vault ref of one pasted key for the builder's live check, such as k1"},
 			},
-			Desc: "Start the AI provider builder for an API Acnologia does not know yet. It researches the docs and publishes a provider in a few minutes; then create a service and add keys. Returns a run id to check with get_ai_run.",
-			Run: func(cs *chatSession, in map[string]any) toolOut {
-				ctxText := argStr(in, "name")
-				if c := argStr(in, "context"); c != "" {
-					ctxText += ". " + c
-				}
-				body := map[string]any{"kind": "create_provider", "context": ctxText}
-				if u, ok := in["urls"].([]any); ok {
-					body["urls"] = u
-				}
-				code, out, msg := cs.api("POST", "/api/admin/ai/runs", body)
-				if code >= 400 {
-					return toolFail(msg)
-				}
-				id := out["id"]
-				return toolOut{OK: true, Summary: fmt.Sprintf("Started AI provider build %v", id), Link: fmt.Sprintf("/providers/ai/%v", id),
-					Model: asJSON(pick(out, "id", "status", "title"))}
+			Desc: "Start the AI provider builder for an API the catalog does not have (search_providers first). It researches the docs, writes and tests a provider and publishes it with a service in a few minutes. Then call wait_for_build with the run id.",
+			Run:  startBuildTool,
+		},
+		{
+			Name: "wait_for_build", Role: store.RoleMember, Required: []string{"run_id"},
+			Props: map[string]any{
+				"run_id":      map[string]any{"type": "integer"},
+				"timeout_sec": map[string]any{"type": "integer", "description": "default and most 600"},
 			},
+			Desc: "Wait for a provider build to end while the user watches its progress card. Returns published (with provider and service), needs_review or failed with the reason.",
+			Run:  waitBuildTool,
+		},
+		{
+			Name: "ask_user", Role: store.RoleMember, Required: []string{"question", "kind"},
+			Props: map[string]any{
+				"question": map[string]any{"type": "string"},
+				"kind":     map[string]any{"type": "string", "enum": []string{"names", "choice"}, "description": "names: a name for each pasted key; choice: pick one option"},
+				"key_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "for names: the keys to name"},
+				"batch":    map[string]any{"type": "string", "description": "for names: a batch id or latest instead of key_refs"},
+				"suggestions": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"},
+					"description": "for names: a suggested name per ref"},
+				"choices": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "for choice: 2 to 8 short options"},
+			},
+			Desc: "Ask the user a structured question shown as a form, then end your turn; the answer comes as the next message. Only when a decision is truly theirs: never for keys that already have labels from the paste.",
+			Run:  askUserTool,
 		},
 
 		// ---- destructive (admin, needs confirmation) ----
@@ -648,7 +681,7 @@ func init() {
 			Desc:  "Delete an app; its token stops working. The user must confirm.",
 			Describe: func(cs *chatSession, in map[string]any) (string, error) {
 				id, _ := argNum(in, "app_id")
-				a, err := cs.s.Store.GetApp(cs.r.Context(), id)
+				a, err := cs.s.Store.GetApp(cs.ctx, id)
 				if err != nil {
 					return "", fmt.Errorf("no app %d", id)
 				}
@@ -665,7 +698,7 @@ func init() {
 			Desc:  "Replace an app's token; the old one stops working at once. The new token is shown to the user only. The user must confirm.",
 			Describe: func(cs *chatSession, in map[string]any) (string, error) {
 				id, _ := argNum(in, "app_id")
-				a, err := cs.s.Store.GetApp(cs.r.Context(), id)
+				a, err := cs.s.Store.GetApp(cs.ctx, id)
 				if err != nil {
 					return "", fmt.Errorf("no app %d", id)
 				}

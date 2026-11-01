@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,13 +26,24 @@ import (
 // Every tool is a call to the dashboard API made as the signed in user, so
 // roles, validation and the audit log apply exactly as in the UI. Destructive
 // tools wait for the user to press Confirm. Conversations are encrypted at
-// rest, pasted key secrets are replaced by their hint once the turn ends, and
-// app tokens go to the user only, never back to the model.
+// rest, pasted key secrets go to a per thread vault and reach Claude only as
+// placeholders (see assistant_vault.go), and app tokens go to the user only,
+// never back to the model.
+//
+// A turn runs as a server side job: the request that starts it waits a short
+// while and then returns with turn.active set, the job keeps writing items to
+// the thread as they happen, and the client polls GET thread until the turn
+// ends. So a turn can wait for a provider build without hitting HTTP timeouts.
 
 const (
-	chatMaxTurns     = 12
+	chatMaxTurns     = 24
 	chatMaxModelText = 12000
-	chatMaxMessage   = 20000
+	// chatMaxMessage fits a 1 MB file of keys dropped into the composer.
+	chatMaxMessage = 1 << 20
+	// chatTurnTimeout bounds one turn, including waits for provider builds.
+	chatTurnTimeout = 15 * time.Minute
+	// chatWaitBudget caps the time one turn spends in wait_for_build.
+	chatWaitBudget = 10 * time.Minute
 )
 
 // chatBlock is one content block of the model conversation, stored in our own
@@ -67,7 +79,53 @@ type chatItem struct {
 	Secret  string    `json:"secret,omitempty"`
 	Pending *chatPend `json:"pending,omitempty"`
 	Link    string    `json:"link,omitempty"`
-	TS      time.Time `json:"ts"`
+	// Keys counts the keys found in a user message; their secrets are in the
+	// vault and Text shows only their hints.
+	Keys int `json:"keys,omitempty"`
+	// Build is a provider build the turn follows (kind build).
+	Build *chatBuild `json:"build,omitempty"`
+	// Ask is a structured question for the user (kind ask).
+	Ask *chatAsk `json:"ask,omitempty"`
+	// Card is a rich result of a tool call: keys added, a service, a provider.
+	Card *chatCard `json:"card,omitempty"`
+	// Entities are the services, keys, apps and providers a tool result
+	// names, with ids, so the UI can link them.
+	Entities []chatEntity `json:"entities,omitempty"`
+	// Suggestions are short follow ups the model proposes at the end of a turn.
+	Suggestions []string  `json:"suggestions,omitempty"`
+	TS          time.Time `json:"ts"`
+}
+
+type chatEntity struct {
+	Type string `json:"type"` // service, key, app, provider
+	ID   int64  `json:"id,omitempty"`
+	Slug string `json:"slug,omitempty"`
+	Name string `json:"name"`
+}
+
+type chatCard struct {
+	Type     string         `json:"type"` // keys, service, provider
+	Service  *chatEntity    `json:"service,omitempty"`
+	Keys     []chatCardKey  `json:"keys,omitempty"`
+	KeyTotal int            `json:"key_total,omitempty"`
+	Skipped  int            `json:"skipped,omitempty"`
+	Provider *chatCardProv  `json:"provider,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
+}
+
+type chatCardKey struct {
+	ID     int64  `json:"id"`
+	Label  string `json:"label"`
+	Hint   string `json:"hint"`
+	Status string `json:"status"`
+}
+
+type chatCardProv struct {
+	Slug    string `json:"slug"`
+	Name    string `json:"name"`
+	Version int    `json:"version"`
+	Passed  int    `json:"tests_passed"`
+	Failed  int    `json:"tests_failed"`
 }
 
 type chatPend struct {
@@ -88,18 +146,108 @@ type chatData struct {
 	Messages []chatMsg       `json:"messages"`
 	Items    []chatItem      `json:"items"`
 	Pending  []pendingAction `json:"pending"`
+	// Vault holds pasted key secrets, each encrypted on its own, until a tool
+	// uses them. The model sees only their refs.
+	Vault    []vaultEntry `json:"vault,omitempty"`
+	VaultSeq int          `json:"vault_seq,omitempty"`
+	BatchSeq int          `json:"batch_seq,omitempty"`
 }
 
-// chatSession is the state of one request against a thread.
+// chatSession is the state of one turn against a thread.
 type chatSession struct {
-	s       *Server
-	r       *http.Request
-	user    *store.User
-	thread  int64
-	data    *chatData
-	secrets map[string]bool // key secrets seen this request, redacted on save
-	newIDs  map[string]bool // items created this request
-	tokens  map[string]string
+	s *Server
+	r *http.Request
+	// ctx outlives the request that started the turn.
+	ctx    context.Context
+	cookie string
+	remote string
+	user   *store.User
+	thread int64
+	title  string
+	data   *chatData
+	turn   *turnState
+	// halt ends the turn after the current tool results (ask_user).
+	halt     bool
+	waitUsed time.Duration
+	secrets  map[string]bool // key secrets seen this turn, redacted on save
+	newIDs   map[string]bool // items created this turn
+}
+
+// turnState is what GET thread reports while a turn runs.
+type turnState struct {
+	mu      sync.Mutex
+	step    string
+	started time.Time
+	done    chan struct{}
+	cancel  context.CancelFunc
+}
+
+func (t *turnState) setStep(s string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.step = s
+	t.mu.Unlock()
+}
+
+func (t *turnState) view() map[string]any {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return map[string]any{"active": true, "step": t.step, "started_at": t.started}
+}
+
+// chatTurns maps a thread id to its running turn.
+var chatTurns sync.Map
+
+// chatTokens holds one time app tokens by thread until the owner's next
+// request picks them up. They are never stored.
+var chatTokens sync.Map // thread id -> *tokenBox
+
+type tokenBox struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+func putToken(thread int64, itemID, tok string) {
+	v, _ := chatTokens.LoadOrStore(thread, &tokenBox{m: map[string]string{}})
+	b := v.(*tokenBox)
+	b.mu.Lock()
+	b.m[itemID] = tok
+	b.mu.Unlock()
+}
+
+// takeTokens hands out the waiting tokens of a thread once.
+func takeTokens(thread int64) map[string]string {
+	v, ok := chatTokens.LoadAndDelete(thread)
+	if !ok {
+		return nil
+	}
+	b := v.(*tokenBox)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.m
+}
+
+func withTokens(items []chatItem, toks map[string]string) []chatItem {
+	if len(toks) == 0 {
+		return items
+	}
+	out := make([]chatItem, len(items))
+	copy(out, items)
+	for i := range out {
+		if t, ok := toks[out[i].ID]; ok {
+			out[i].Secret = t
+		}
+	}
+	return out
+}
+
+func turnView(thread int64) map[string]any {
+	if v, ok := chatTurns.Load(thread); ok {
+		return v.(*turnState).view()
+	}
+	return map[string]any{"active": false}
 }
 
 // ---- persistence ----
@@ -175,7 +323,7 @@ func (s *Server) chatGet(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"thread": t, "items": d.Items})
+	writeJSON(w, 200, map[string]any{"thread": t, "items": withTokens(d.Items, takeTokens(id)), "turn": turnView(id)})
 }
 
 func (s *Server) chatDelete(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +335,12 @@ func (s *Server) chatDelete(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	// The vault lived in the thread row and is gone with it; stop a running
+	// turn so it cannot write the thread back.
+	if v, ok := chatTurns.Load(id); ok {
+		v.(*turnState).cancel()
+	}
+	takeTokens(id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -202,15 +356,21 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid", fmt.Sprintf("send a message of 1 to %d characters", chatMaxMessage))
 		return
 	}
-	s.chatTurn(w, r, func(cs *chatSession) {
-		// A new message makes any confirmation still waiting stale.
+	s.chatTurn(w, r, func(cs *chatSession) error {
+		// A new message makes any confirmation or question still waiting stale.
 		for i := range cs.data.Pending {
 			if cs.data.Pending[i].Status == "waiting" {
 				cs.setPending(i, "expired")
 			}
 		}
-		cs.addItem(chatItem{Kind: "user", Text: text, OK: true})
-		cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: []chatBlock{{Type: "text", Text: text}}})
+		cs.expireAsks()
+		model, shown, n, err := cs.vaultMessage(text)
+		if err != nil {
+			return err
+		}
+		cs.addItem(chatItem{Kind: "user", Text: shown, Keys: n, OK: true})
+		cs.appendUser(chatBlock{Type: "text", Text: model})
+		return nil
 	})
 }
 
@@ -222,7 +382,7 @@ func (s *Server) chatConfirm(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	s.chatTurn(w, r, func(cs *chatSession) {
+	s.chatTurn(w, r, func(cs *chatSession) error {
 		idx := -1
 		for i, p := range cs.data.Pending {
 			if p.ID == body.PendingID && p.Status == "waiting" {
@@ -231,28 +391,37 @@ func (s *Server) chatConfirm(w http.ResponseWriter, r *http.Request) {
 		}
 		if idx < 0 {
 			cs.addItem(chatItem{Kind: "error", Text: "That confirmation is no longer waiting. Ask again if you still want it."})
-			return
+			return nil
 		}
 		p := cs.data.Pending[idx]
 		if !body.Approve {
 			cs.setPending(idx, "cancelled")
-			cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: []chatBlock{{Type: "text",
-				Text: "[The user pressed Cancel on: " + p.Desc + ". Nothing was done.]"}}})
-			return
+			cs.appendUser(chatBlock{Type: "text", Text: "[The user pressed Cancel on: " + p.Desc + ". Nothing was done.]"})
+			return nil
 		}
 		cs.setPending(idx, "approved")
 		t := chatToolByName(p.Tool)
 		var in map[string]any
 		_ = json.Unmarshal(p.Input, &in)
 		out := cs.runTool(t, in, p.Input)
-		cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: []chatBlock{{Type: "text",
-			Text: "[The user pressed Confirm on: " + p.Desc + ". Result: " + out.Model + "]"}}})
+		cs.appendUser(chatBlock{Type: "text", Text: "[The user pressed Confirm on: " + p.Desc + ". Result: " + out.Model + "]"})
+		return nil
 	})
 }
 
-// chatTurn loads the thread, applies the user's action, runs the model until
-// it answers, saves, and returns the items created by this request.
-func (s *Server) chatTurn(w http.ResponseWriter, r *http.Request, apply func(cs *chatSession)) {
+// chatWait is how long the request that starts a turn waits for it before
+// returning with the turn still active.
+func (s *Server) chatWait() time.Duration {
+	if s.chatWaitFor > 0 {
+		return s.chatWaitFor
+	}
+	return 20 * time.Second
+}
+
+// chatTurn loads the thread, applies the user's action, then runs the model
+// as a job that saves the thread as it goes. The response carries the items
+// so far and turn.active while the job still runs.
+func (s *Server) chatTurn(w http.ResponseWriter, r *http.Request, apply func(cs *chatSession) error) {
 	id, ok := idParam(w, r)
 	if !ok {
 		return
@@ -266,46 +435,125 @@ func (s *Server) chatTurn(w http.ResponseWriter, r *http.Request, apply func(cs 
 		writeErr(w, 409, "busy", "this chat is still answering the previous message")
 		return
 	}
-	defer unlock()
 	u := userFrom(r)
 	t, d, err := s.loadChat(r.Context(), id, u.ID)
 	if err != nil {
+		unlock()
 		writeStoreErr(w, err)
 		return
 	}
-	cs := &chatSession{s: s, r: r, user: u, thread: id, data: d, secrets: map[string]bool{}, newIDs: map[string]bool{}, tokens: map[string]string{}}
-	apply(cs)
-	if len(d.Messages) > 0 && d.Messages[len(d.Messages)-1].Role == "user" {
-		if err := cs.loop(r.Context()); err != nil {
-			cs.addItem(chatItem{Kind: "error", Text: err.Error()})
-		}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), chatTurnTimeout)
+	ts := &turnState{started: time.Now().UTC(), step: "Thinking", done: make(chan struct{}), cancel: cancel}
+	cs := &chatSession{s: s, r: r, ctx: ctx, cookie: r.Header.Get("Cookie"), remote: r.RemoteAddr, user: u, thread: id,
+		title: t.Title, data: d, turn: ts, secrets: map[string]bool{}, newIDs: map[string]bool{}}
+	if err := apply(cs); err != nil {
+		cancel()
+		unlock()
+		writeErr(w, 400, "invalid", err.Error())
+		return
 	}
-	if t.Title == "New chat" {
-		for _, it := range d.Items {
-			if it.Kind == "user" {
-				t.Title = crypto.Truncate(firstLineOf(cs.redact(it.Text)), 60)
-				break
+	cs.nameThread()
+	if err := cs.save(); err != nil {
+		cancel()
+		unlock()
+		writeStoreErr(w, err)
+		return
+	}
+	run := len(d.Messages) > 0 && d.Messages[len(d.Messages)-1].Role == "user" && !cs.halt
+	if !run {
+		cancel()
+		unlock()
+		s.turnReply(w, cs, t, true)
+		return
+	}
+	chatTurns.Store(id, ts)
+	go func() {
+		defer func() {
+			chatTurns.CompareAndDelete(id, ts)
+			cancel()
+			unlock()
+			close(ts.done)
+		}()
+		if err := cs.loop(ctx); err != nil {
+			msg := err.Error()
+			if ctx.Err() != nil {
+				msg = "The assistant stopped: this turn ran out of time or the chat was deleted."
 			}
+			cs.addItem(chatItem{Kind: "error", Text: msg})
 		}
+		if err := cs.save(); err != nil && !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("saving chat failed", "thread", id, "err", err)
+		}
+	}()
+	select {
+	case <-ts.done:
+		s.turnReply(w, cs, t, true)
+	case <-time.After(s.chatWait()):
+		s.turnReply(w, cs, t, false)
+	case <-r.Context().Done():
 	}
-	cs.redactAll()
+}
+
+// turnReply answers the request that started a turn. When the turn is done
+// it returns the items it created; otherwise the saved transcript so far.
+func (s *Server) turnReply(w http.ResponseWriter, cs *chatSession, t *store.ChatThread, done bool) {
+	t.Title = cs.title
+	t.UpdatedAt = time.Now().UTC()
+	if !done {
+		_, d, err := s.loadChat(context.Background(), cs.thread, cs.user.ID)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		all := withTokens(d.Items, takeTokens(cs.thread))
+		writeJSON(w, 200, map[string]any{"thread": t, "items": all, "all": all, "turn": turnView(cs.thread)})
+		return
+	}
+	toks := takeTokens(cs.thread)
 	fresh := []chatItem{}
-	for _, it := range d.Items {
+	for _, it := range cs.data.Items {
 		if cs.newIDs[it.ID] {
-			it.Secret = cs.tokens[it.ID]
 			fresh = append(fresh, it)
 		}
 	}
-	blob, err := s.sealChat(d)
-	if err == nil {
-		err = s.Store.SaveThread(context.Background(), id, u.ID, t.Title, blob)
-	}
-	if err != nil {
-		writeStoreErr(w, err)
+	writeJSON(w, 200, map[string]any{"thread": t, "items": withTokens(fresh, toks), "all": withTokens(cs.data.Items, toks),
+		"turn": map[string]any{"active": false}})
+}
+
+// nameThread titles a new chat after its first message (keys already masked).
+func (cs *chatSession) nameThread() {
+	if cs.title != "New chat" {
 		return
 	}
-	t.UpdatedAt = time.Now().UTC()
-	writeJSON(w, 200, map[string]any{"thread": t, "items": fresh, "all": d.Items})
+	for _, it := range cs.data.Items {
+		if it.Kind == "user" {
+			cs.title = crypto.Truncate(firstLineOf(cs.redact(it.Text)), 60)
+			return
+		}
+	}
+}
+
+// save scrubs secrets seen so far and writes the thread, so a client polling
+// GET thread sees the turn as it happens.
+func (cs *chatSession) save() error {
+	cs.redactAll()
+	blob, err := cs.s.sealChat(cs.data)
+	if err != nil {
+		return err
+	}
+	return cs.s.Store.SaveThread(context.Background(), cs.thread, cs.user.ID, cs.title, blob)
+}
+
+// appendUser adds blocks to the conversation as the user, merged into the
+// last message when that is the user's too (after ask_user ends a turn on
+// tool results).
+func (cs *chatSession) appendUser(blocks ...chatBlock) {
+	n := len(cs.data.Messages)
+	if n > 0 && cs.data.Messages[n-1].Role == "user" {
+		cs.data.Messages[n-1].Blocks = append(cs.data.Messages[n-1].Blocks, blocks...)
+		return
+	}
+	cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: blocks})
 }
 
 func firstLineOf(s string) string {
@@ -429,6 +677,7 @@ func (cs *chatSession) loop(ctx context.Context) error {
 		if cs.s.chatModel != nil {
 			converse = cs.s.chatModel
 		}
+		cs.turn.setStep("Thinking")
 		resp, err := converse(ctx, system, cs.params(), tools)
 		if err != nil {
 			return fmt.Errorf("the assistant could not answer: %v", err)
@@ -440,8 +689,8 @@ func (cs *chatSession) loop(ctx context.Context) error {
 			switch b := block.AsAny().(type) {
 			case anthropic.BetaTextBlock:
 				msg.Blocks = append(msg.Blocks, chatBlock{Type: "text", Text: b.Text})
-				if t := strings.TrimSpace(b.Text); t != "" {
-					cs.addItem(chatItem{Kind: "assistant", Text: t, OK: true})
+				if t, sugg := splitSuggestions(b.Text); t != "" || len(sugg) > 0 {
+					cs.addItem(chatItem{Kind: "assistant", Text: t, Suggestions: sugg, OK: true})
 				}
 			case anthropic.BetaToolUseBlock:
 				raw := json.RawMessage(b.JSON.Input.Raw())
@@ -451,6 +700,12 @@ func (cs *chatSession) loop(ctx context.Context) error {
 			}
 		}
 		cs.data.Messages = append(cs.data.Messages, msg)
+		if cs.halt {
+			// ask_user: the answer comes back as the user's next message.
+			cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: results})
+			return nil
+		}
+		_ = cs.save()
 		switch resp.StopReason {
 		case anthropic.BetaStopReasonToolUse:
 			cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: results})
@@ -481,13 +736,19 @@ You are talking to %s (%s), role %s. You act only through tools, which call Acno
 
 Concepts: a provider describes an API. A service is a provider plus settings and keys; apps reach it at /proxy/<service slug>. Keys belong to a service. A key can record who it belongs to: account_name, account_email, account_phone, and account_ref (any other identifier, such as a username or account id).
 
-Adding keys: when the user names a provider and gives keys, call list_services. If exactly one service uses that provider, add the keys there. If several do, ask which. If none does, call list_providers: if the provider exists, create_service from it, then add_keys. If no provider fits, offer start_provider_build (the AI provider builder) or a generic service with a base_url the user gives. Put any email, phone, name or other identifier the user mentions for a key into its account fields. Label keys usefully (for example the account email) when the user gives no label.
+Pasted keys: you never see key secrets. Before a message reaches you, Acnologia moves every key in it to a vault and puts a placeholder in its place, such as [key k3 ...c21e]: k3 is the key's ref and c21e its last four characters. Labels next to a key stay in the text (acct-1 [key k1 ...a1b2] means k1 is labeled acct-1). A big paste arrives as one line, such as [Pasted 300 keys, stored as batch b2 (refs k5 to k304). Labels: ...]. To store pasted keys call add_keys with batch "latest" (every key from the last paste, one call however many there are), or key_refs, or keys with a ref each when you add account details. Never ask for, repeat or invent a secret, and never put a placeholder in a secret field. Refer to keys by label or by their last four characters.
+
+Adding keys: when the user names a provider and gives keys, find where they go. Call list_services: if exactly one service uses that provider, add the keys there; if several do, ask which. If none does, call search_providers with the name and any URL the user gave (it matches name, slug, website and docs URL). If a provider fits, prefer it (built in ones above all): create_service from it, then add_keys. Only when nothing fits, call start_provider_build (pass test_key_ref with one pasted key so it can run a live check), then call wait_for_build right away and keep calling it until the build ends. When it is published, create the service if the build did not, add the pasted keys with add_keys, and tell the user what is set up. If it needs review or fails, say so plainly with the link and stop. Put any email, phone, name or other identifier the user mentions for a key into its account fields. Use the labels from the paste as they are; when keys have no labels, label them usefully (for example the account email), and use ask_user with kind names only when the user clearly wants to name them.
+
+Finish the job inside this turn. Never tell the user to come back later, to check on something, or to ask you again: wait for builds with wait_for_build and complete every step yourself. Ask only when a decision is genuinely the user's, and then use ask_user (kind choice for a short list of options, such as which of two Google APIs they meant), which shows a form and ends your turn.
 
 Deleting keys, services or apps and rotating app tokens need the user's confirmation: call the tool, then tell the user what will happen and that a Confirm button is shown. Do not call it again.
 
 You cannot reveal stored key secrets, manage users, or read the audit log. App tokens from create_app or rotate_app_token are shown to the user directly; you never see them.
 
-Be brief: short sentences, plain text, no headings. Use simple lists only when listing several items.`,
+Be brief: short sentences, plain text, no headings. Use simple lists only when listing several items.
+
+When your final reply of a turn leaves obvious next steps, end it with one last line "Suggestions: first | second | third": two or three short follow ups the user might send next, in their voice, under 40 characters each (for example "Suggestions: Check both Gemini keys | Create a proxy app for Gemini"). The line is shown as buttons, not as text. Leave it out when nothing obvious follows.`,
 		cs.user.Name, cs.user.Email, cs.user.Role)
 	if svcs, err := cs.s.Store.ListServices(ctx); err == nil && len(svcs) > 0 {
 		b.WriteString("\n\nServices right now (slug: name, provider):")
@@ -524,15 +785,20 @@ func (cs *chatSession) runTool(t *chatTool, in map[string]any, raw json.RawMessa
 	for _, sec := range t.secretsIn(in) {
 		cs.secrets[sec] = true
 	}
+	cs.turn.setStep(stepText(t.Name))
 	out := t.Run(cs, in)
 	if len(out.Model) > chatMaxModelText {
 		out.Model = crypto.Truncate(out.Model, chatMaxModelText) + "\n...(truncated)"
 	}
-	itemID := cs.addItem(chatItem{Kind: "tool", Tool: t.Name, Input: cs.redactRaw(raw), OK: out.OK,
-		Summary: out.Summary, Detail: crypto.Truncate(out.Model, 4000), Link: out.Link})
-	if out.Secret != "" {
-		cs.tokens[itemID] = out.Secret
+	if out.Silent {
+		return out
 	}
+	itemID := cs.addItem(chatItem{Kind: "tool", Tool: t.Name, Input: cs.redactRaw(raw), OK: out.OK,
+		Summary: out.Summary, Detail: crypto.Truncate(out.Model, 4000), Link: out.Link, Card: out.Card, Entities: out.Entities})
+	if out.Secret != "" {
+		putToken(cs.thread, itemID, out.Secret)
+	}
+	_ = cs.save()
 	return out
 }
 
@@ -570,12 +836,12 @@ func (cs *chatSession) api(method, path string, body any) (int, map[string]any, 
 	}
 	// Drop the outer request's chi route context, or the router would treat
 	// this call as a sub route of the chat endpoint.
-	ctx := context.WithValue(cs.r.Context(), chi.RouteCtxKey, nil)
+	ctx := context.WithValue(cs.ctx, chi.RouteCtxKey, nil)
 	req := httptest.NewRequest(method, "http://cogito.internal"+path, rdr).WithContext(ctx)
-	req.Header.Set("Cookie", cs.r.Header.Get("Cookie"))
+	req.Header.Set("Cookie", cs.cookie)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "cogito-assistant")
-	req.RemoteAddr = cs.r.RemoteAddr
+	req.RemoteAddr = cs.remote
 	rec := httptest.NewRecorder()
 	cs.s.handler().ServeHTTP(rec, req)
 	var out map[string]any

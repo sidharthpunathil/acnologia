@@ -94,3 +94,87 @@
     animation: none;
   }
 }
+
+/* Live status: a thin ring orbits the mark while a turn runs. */
+.chat-orbit::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 10px;
+  padding: 1.5px;
+  background: conic-gradient(from 0deg, transparent 0deg, rgb(var(--brand) / 0.9) 70deg, transparent 140deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: chat-orbit 1.6s linear infinite;
+}
+.chat-orbit > * {
+  animation: chat-breathe 2.4s ease-in-out infinite;
+}
+@keyframes chat-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Step text and status pills crossfade when they change. */
+@keyframes chat-swap {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+.chat-swap {
+  animation: chat-swap 220ms var(--ease-out) both;
+}
+
+/* The build progress line glides between phases. */
+.chat-progress {
+  transition: width 600ms var(--ease-out);
+}
+
+.chat-spin {
+  animation: spin 1.2s linear infinite;
+}
+
+/* Buttons and chips press in a touch. */
+.press {
+  transition-property: transform, background-color, color, border-color, opacity;
+}
+.press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Drop overlay over the chat area. */
+@keyframes chat-drop-in {
+  from {
+    opacity: 0;
+  }
+}
+.chat-drop {
+  animation: chat-drop-in 140ms ease-out both;
+}
+.chat-drop-panel {
+  animation: chat-reveal 200ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-orbit::before {
+    display: none;
+  }
+  .chat-orbit > * {
+    animation: none;
+  }
+  .chat-swap,
+  .chat-drop,
+  .chat-drop-panel,
+  .chat-spin {
+    animation: none;
+  }
+  .chat-progress {
+    transition: none;
+  }
+  .press:active:not(:disabled) {
+    transform: none;
+  }
+}

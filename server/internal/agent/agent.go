@@ -34,6 +34,8 @@ const (
 	maxConcurrent  = 2
 	// MaxLiveChecks caps live_check calls per run; each one spends the operator's key.
 	MaxLiveChecks = 5
+	// MaxTestKeys caps the keys one run carries.
+	MaxTestKeys = 5000
 )
 
 type Config struct {
@@ -124,12 +126,16 @@ func (a *Agent) SetRules(ctx context.Context, rules, by string) (Rules, error) {
 // ---- runs ----
 
 type RunRequest struct {
-	Kind          string   `json:"kind"`
-	ProviderSlug  string   `json:"provider_slug"`
-	Context       string   `json:"context"`
-	URLs          []string `json:"urls"`
-	GitHub        string   `json:"github"`
-	TestKey       string   `json:"test_key"`
+	Kind         string   `json:"kind"`
+	ProviderSlug string   `json:"provider_slug"`
+	Context      string   `json:"context"`
+	URLs         []string `json:"urls"`
+	GitHub       string   `json:"github"`
+	TestKey      string   `json:"test_key"`
+	// TestKeys are more keys for the run. The first of test_key and
+	// test_keys runs the live check; all are added to the service a publish
+	// creates. At most MaxTestKeys.
+	TestKeys      []string `json:"test_keys"`
 	AutoPublish   *bool    `json:"auto_publish"`
 	CreateService *bool    `json:"create_service"`
 }
@@ -166,46 +172,51 @@ func (a *Agent) Submit(ctx context.Context, u *store.User, req RunRequest) (*sto
 	if req.AutoPublish != nil {
 		autoPublish = *req.AutoPublish
 	}
+	keys := testKeys(req)
+	if len(keys) > MaxTestKeys {
+		return nil, fmt.Errorf("send at most %d test keys", MaxTestKeys)
+	}
 	in := store.AgentInput{Context: req.Context, URLs: urls, GitHub: strings.TrimSpace(req.GitHub),
 		AutoPublish: autoPublish, CreateService: req.CreateService == nil || *req.CreateService,
-		HasTestKey: strings.TrimSpace(req.TestKey) != ""}
+		HasTestKey: len(keys) > 0, TestKeyCount: len(keys)}
 	if req.Kind == "update_provider" {
 		in.CreateService = false
 	}
 	run := &store.AgentRun{Kind: req.Kind, Status: "queued", ProviderSlug: req.ProviderSlug, Input: in,
-		Title: runTitle(req), CreatedByID: u.ID, CreatedBy: u.Email}
-	if in.HasTestKey {
-		enc, err := a.Box.Encrypt(strings.TrimSpace(req.TestKey))
+		Title: a.fallbackTitle(ctx, req), CreatedByID: u.ID, CreatedBy: u.Email}
+	if len(keys) > 0 {
+		enc, err := a.Box.Encrypt(keys[0])
 		if err != nil {
 			return nil, err
 		}
 		run.TestKeyEnc = enc
+		all, _ := json.Marshal(keys)
+		if run.TestKeysEnc, err = a.Box.Encrypt(string(all)); err != nil {
+			return nil, err
+		}
 	}
 	created, err := a.Store.CreateRun(ctx, run)
 	if err != nil {
 		return nil, err
 	}
 	a.Store.AddStep(ctx, created.ID, "info", "Queued", "Waiting for a free agent slot.")
+	go a.nameRun(created.ID, CallerOf(u), req, created.Title)
 	go a.execute(created.ID)
 	return created, nil
 }
 
-func runTitle(req RunRequest) string {
-	if req.Kind == "update_provider" {
-		return "Improve " + req.ProviderSlug
+// testKeys is test_key then test_keys, trimmed, without blanks or repeats.
+func testKeys(req RunRequest) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, k := range append([]string{req.TestKey}, req.TestKeys...) {
+		k = strings.TrimSpace(k)
+		if k != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
 	}
-	t := req.Context
-	if t == "" && len(req.URLs) > 0 {
-		t = req.URLs[0]
-	}
-	if t == "" {
-		t = req.GitHub
-	}
-	t = strings.Join(strings.Fields(t), " ")
-	if len(t) > 80 {
-		t = store.TruncateUTF8(t, 80) + "..."
-	}
-	return "New provider: " + t
+	return out
 }
 
 func (a *Agent) Cancel(ctx context.Context, id int64) error {
@@ -221,7 +232,7 @@ func (a *Agent) Cancel(ctx context.Context, id int64) error {
 	}
 	a.pendingLogos.Delete(id)
 	st := "cancelled"
-	return a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Finished: true, ClearTestKey: true})
+	return a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Finished: true, ClearTestKey: true, ClearTestKeys: true})
 }
 
 // PublishDraft publishes a run that is waiting for review.
@@ -275,7 +286,7 @@ func (a *Agent) storePendingLogo(id int64, pl pendingLogo) {
 func (a *Agent) fail(ctx context.Context, id int64, msg string) {
 	a.pendingLogos.Delete(id)
 	st := "failed"
-	_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Error: &msg, Finished: true, ClearTestKey: true})
+	_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Error: &msg, Finished: true, ClearTestKey: true, ClearTestKeys: true})
 	a.logf(ctx, id, "error", "Run failed", msg)
 	slog.Warn("agent run failed", "run", id, "err", msg)
 }

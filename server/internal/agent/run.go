@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
 	"github.com/cogito-keys/cogito/internal/catalog"
+	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/providers"
 	"github.com/cogito-keys/cogito/internal/store"
 )
@@ -66,8 +67,15 @@ func (a *Agent) execute(id int64) {
 		s.fixedSlug = run.ProviderSlug
 	}
 	defer func() {
+		// The live check key goes when the agent stops. The full list stays
+		// only while the run waits for review, for the service a publish
+		// creates then.
 		u := s.usage
-		_ = a.Store.UpdateRun(context.Background(), id, store.RunPatch{Usage: &u, ClearTestKey: true})
+		p := store.RunPatch{Usage: &u, ClearTestKey: true, ClearTestKeys: true}
+		if cur, err := a.Store.GetRun(context.Background(), id); err == nil && cur.Status == "needs_review" {
+			p.ClearTestKeys = false
+		}
+		_ = a.Store.UpdateRun(context.Background(), id, p)
 	}()
 
 	if err := a.loop(ctx, s); err != nil {
@@ -288,7 +296,7 @@ func (a *Agent) publish(ctx context.Context, run *store.AgentRun, d *draft, by s
 	}
 	a.logf(ctx, id, "done", fmt.Sprintf("Published %s v%d", p.Name, p.Version),
 		fmt.Sprintf("%d/%d fixture tests passed. Live now, no restart needed.", rep.Passed, rep.Passed+rep.Failed))
-	patch := store.RunPatch{Finished: true}
+	patch := store.RunPatch{Finished: true, ClearTestKeys: true}
 	st := "published"
 	patch.Status = &st
 	if createService {
@@ -299,6 +307,7 @@ func (a *Agent) publish(ctx context.Context, run *store.AgentRun, d *draft, by s
 				patch.ServiceID = &created.ID
 				a.logf(ctx, id, "done", "Added "+created.Name+" to the catalog", "Service /"+created.Slug+" is ready for keys.")
 				a.Store.AddAudit(ctx, nil, "service.create", created.Slug, "by AI run "+fmt.Sprint(id))
+				a.addTestKeys(ctx, run, created)
 			} else {
 				a.logf(ctx, id, "error", "Could not create the service", err.Error())
 			}
@@ -352,4 +361,50 @@ func truncate(s string, n int) string {
 		return store.TruncateUTF8(s, n) + "..."
 	}
 	return s
+}
+
+// addTestKeys stores the run's test keys in the service its publish created
+// and logs how many, never the secrets. The caller wipes them from the run.
+func (a *Agent) addTestKeys(ctx context.Context, run *store.AgentRun, sv *store.Service) {
+	if len(run.TestKeysEnc) == 0 {
+		return
+	}
+	plain, err := a.Box.Decrypt(run.TestKeysEnc)
+	var keys []string
+	if err == nil {
+		err = json.Unmarshal([]byte(plain), &keys)
+	}
+	if err != nil {
+		a.logf(ctx, run.ID, "error", "Could not add the test keys", "they could not be decrypted")
+		return
+	}
+	nks := make([]store.NewKey, 0, len(keys))
+	for _, k := range keys {
+		enc, err := a.Box.Encrypt(k)
+		if err != nil {
+			a.logf(ctx, run.ID, "error", "Could not add the test keys", err.Error())
+			return
+		}
+		hint := crypto.Hint(k)
+		nks = append(nks, store.NewKey{ServiceID: sv.ID, SecretEnc: enc, SecretFP: a.Box.Fingerprint(k), Hint: hint,
+			Label: fmt.Sprintf("%s key %s", sv.Name, hint[3:]), Tier: "primary", Weight: 1, Priority: 100, CreatedBy: run.CreatedByID})
+	}
+	created, dups, err := a.Store.CreateKeys(ctx, nks)
+	if err != nil {
+		a.logf(ctx, run.ID, "error", "Could not add the test keys", err.Error())
+		return
+	}
+	detail := fmt.Sprintf("%d added to /%s.", len(created), sv.Slug)
+	if len(dups) > 0 {
+		detail += fmt.Sprintf(" %d were already there.", len(dups))
+	}
+	a.logf(ctx, run.ID, "done", fmt.Sprintf("Added %d %s to %s", len(created), pluralKeys(len(created)), sv.Name), detail)
+	a.Store.AddAudit(ctx, nil, "key.create", sv.Slug, fmt.Sprintf("%d added, %d skipped, by AI run %d", len(created), len(dups), run.ID))
+}
+
+func pluralKeys(n int) string {
+	if n == 1 {
+		return "key"
+	}
+	return "keys"
 }

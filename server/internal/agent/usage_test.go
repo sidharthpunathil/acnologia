@@ -82,8 +82,17 @@ func TestBuilderRecordsEveryCall(t *testing.T) {
 	if got.Status != "failed" {
 		t.Fatalf("run status %s", got.Status)
 	}
-	calls, err := a.Store.ListAICalls(ctx, time.Now().Add(-time.Hour))
-	if err != nil || len(calls) != 1 {
+	// Two rows: the builder's call and the run naming call. This fake gives
+	// both the same answer, so they look alike.
+	var calls []store.AICall
+	for i := 0; i < 100; i++ {
+		calls, err = a.Store.ListAICalls(ctx, time.Now().Add(-time.Hour))
+		if len(calls) == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil || len(calls) != 2 {
 		t.Fatalf("ledger: %+v %v", calls, err)
 	}
 	c := calls[0]

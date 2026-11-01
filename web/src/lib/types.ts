@@ -546,6 +546,8 @@ export interface AgentRun {
   kind: string;
   status: AgentRunStatus;
   title: string;
+  /** One or two sentences on what the run builds. Empty until the server writes one. */
+  description?: string;
   provider_slug: string;
   input: {
     context: string;
@@ -554,6 +556,8 @@ export interface AgentRun {
     auto_publish: boolean;
     create_service: boolean;
     has_test_key: boolean;
+    /** How many test keys came with the run (test_key plus test_keys). */
+    test_key_count?: number;
   };
   draft: ProviderInput | null;
   report: TestReport | null;
@@ -584,6 +588,8 @@ export interface AgentRunInput {
   urls: string[];
   github: string;
   test_key?: string;
+  /** Every pasted key. The first is used for the live check; all are added to a created service. */
+  test_keys?: string[];
   auto_publish: boolean;
   create_service: boolean;
 }
@@ -620,7 +626,7 @@ export interface ChatAi {
   reason: string;
 }
 
-export type ChatItemKind = "user" | "assistant" | "tool" | "confirm" | "error";
+export type ChatItemKind = "user" | "assistant" | "tool" | "confirm" | "error" | "build" | "ask";
 
 export type ChatPendingStatus = "waiting" | "approved" | "cancelled" | "expired";
 
@@ -640,7 +646,93 @@ export interface ChatItem {
   pending?: { id: string; status: ChatPendingStatus };
   /** An in app path, such as /services/3. */
   link?: string;
+  /** Keys found in a user message. Their secrets stay in the server's vault; text shows only hints. */
+  keys?: number;
+  /** A provider build the turn follows (kind build). */
+  build?: ChatBuild;
+  /** A structured question for the user (kind ask). */
+  ask?: ChatAsk;
+  /** Rich result of a tool call. */
+  card?: ChatCard;
+  /** Services, keys, apps and providers the tool result names, with ids, for links. */
+  entities?: ChatEntity[];
+  /** Short follow ups the model proposed at the end of a turn. */
+  suggestions?: string[];
   ts: string;
+}
+
+export interface ChatEntity {
+  type: "service" | "key" | "app" | "provider";
+  id?: number;
+  slug?: string;
+  name: string;
+}
+
+export interface ChatBuild {
+  run_id: number;
+  title: string;
+  status: AgentRunStatus | string;
+  /** 0 research, 1 spec, 2 tests, 3 live check, 4 publish. */
+  phase: number;
+  step: string;
+  started_at: string;
+  finished_at?: string;
+  provider_slug?: string;
+  service_id?: number;
+  error?: string;
+}
+
+export interface ChatAskRow {
+  ref: string;
+  /** "...c21e" */
+  hint: string;
+  suggestion: string;
+}
+
+export interface ChatAsk {
+  id: string;
+  kind: "names" | "choice";
+  question: string;
+  rows?: ChatAskRow[];
+  choices?: string[];
+  status: "waiting" | "answered" | "expired";
+  answer?: string;
+}
+
+export interface ChatCardKey {
+  id: number;
+  label: string;
+  hint: string;
+  status: string;
+}
+
+export interface ChatCard {
+  type: "keys" | "service" | "provider";
+  service?: ChatEntity;
+  keys?: ChatCardKey[];
+  key_total?: number;
+  skipped?: number;
+  provider?: { slug: string; name: string; version: number; tests_passed: number; tests_failed: number };
+  extra?: Record<string, unknown>;
+}
+
+/** A turn runs on the server; while active the client polls the thread. */
+export interface ChatTurn {
+  active: boolean;
+  /** What the assistant is doing right now, such as "Running the tests". */
+  step?: string;
+  started_at?: string;
+}
+
+/** Body for POST /api/admin/chat/threads/{id}/answer. */
+export interface ChatAnswer {
+  ask_id: string;
+  /** names: a name per key ref. */
+  names?: Record<string, string>;
+  /** names: let the assistant pick. */
+  auto?: boolean;
+  /** choice: the option picked. */
+  choice?: string;
 }
 
 export interface ChatReply {
@@ -649,6 +741,7 @@ export interface ChatReply {
   items: ChatItem[];
   /** The full transcript. */
   all: ChatItem[];
+  turn?: ChatTurn;
 }
 
 /** Tool groups an app's MCP server can expose. */

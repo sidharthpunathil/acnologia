@@ -8,6 +8,7 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDown,
+  FileUp,
   MessagesSquare,
   SquarePen,
   TriangleAlert,
@@ -27,12 +28,17 @@ import {
   Steps,
   UserBubble,
 } from "./assistant/items";
+import { AskCard, BuildCard, Suggestions, ToolCards, useEntities } from "./assistant/cards";
 import {
   Composer,
   EmptyState,
+  LiveStatus,
   NewChatButton,
+  Shortcuts,
   ThreadList,
-  Working,
+  mergeAttachments,
+  toAttachment,
+  type Attachment,
 } from "./assistant/parts";
 import "./assistant/assistant.css";
 
@@ -69,6 +75,32 @@ function runSeconds(row: { items: ChatItem[]; since?: string }): number | null {
 const reducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/** Files the composer takes: plain text exports of keys. */
+const DROP_TYPES = /\.(txt|csv|env|json)$/i;
+const DROP_MAX = 1 << 20;
+
+async function readDropped(files: File[]): Promise<{ text: string; names: string[]; skipped: string[] }> {
+  const parts: string[] = [];
+  const names: string[] = [];
+  const skipped: string[] = [];
+  for (const f of files) {
+    const textual = DROP_TYPES.test(f.name) || f.name.startsWith(".env") || f.type.startsWith("text/") || f.type === "application/json";
+    if (!textual) {
+      skipped.push(`${f.name} is not a .txt, .csv, .env or .json file`);
+      continue;
+    }
+    if (f.size > DROP_MAX) {
+      skipped.push(`${f.name} is over 1 MB`);
+      continue;
+    }
+    parts.push(await f.text());
+    names.push(f.name);
+  }
+  return { text: parts.join("\n"), names, skipped };
+}
+
+const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
+
 export function AssistantPage() {
   const param = useParams().threadId;
   const routeId = param && /^\d+$/.test(param) ? Number(param) : null;
@@ -82,15 +114,22 @@ export function AssistantPage() {
     items,
     loadingThread,
     sending,
+    turn,
+    lastSent,
     fetch,
     open,
     create,
     remove,
     send,
     confirm,
+    answer: answerAsk,
   } = useAssistant();
   const [text, setText] = useState("");
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   const [sheet, setSheet] = useState(false);
+  const entities = useEntities(items);
   const box = useRef<HTMLTextAreaElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const current = threads.find((t) => t.id === currentId) ?? null;
@@ -120,8 +159,9 @@ export function AssistantPage() {
   const delayFor = (it: ChatItem) =>
     animates(it) ? delays.current.get(it.id) : undefined;
 
-  const busy = sending !== null;
-  const working = busy && sending === currentId;
+  const active = !!turn?.active;
+  const busy = sending !== null || active;
+  const working = (sending !== null && sending === currentId) || active;
   const off = !!ai && !ai.enabled;
   useTitle(title ?? "Assistant");
 
@@ -228,11 +268,16 @@ export function AssistantPage() {
     }
   };
 
-  const submit = async (e?: FormEvent) => {
+  const submit = async (e?: FormEvent, override?: string) => {
     e?.preventDefault();
-    const msg = text.trim();
+    const typed = override ?? text.trim();
+    const att = override === undefined ? attachment : null;
+    const msg = [typed, att?.text.trim()].filter(Boolean).join("\n\n");
     if (!msg || busy || off) return;
-    setText("");
+    if (override === undefined) {
+      setText("");
+      setAttachment(null);
+    }
     try {
       if (currentId === null) {
         const t = await create();
@@ -240,7 +285,10 @@ export function AssistantPage() {
       }
       await send(msg);
     } catch (err) {
-      setText((cur) => cur || msg);
+      if (override === undefined) {
+        setText((cur) => cur || typed);
+        if (att) setAttachment((cur) => cur ?? att);
+      }
       if (err instanceof ApiError && err.code === "busy")
         toast.info(
           "Still working on your last message. Try again in a moment.",
@@ -266,6 +314,103 @@ export function AssistantPage() {
       else toast.error(errorMessage(err));
     }
   };
+
+  const onAnswerAsk = async (body: Parameters<typeof answerAsk>[0]) => {
+    try {
+      await answerAsk(body);
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
+
+  // The last message you sent this session, as typed (keys and all), for Retry and Edit.
+  const lastUser = [...items].reverse().find((it) => it.kind === "user");
+  const lastRaw = currentId !== null ? lastSent[currentId] : undefined;
+  const retry = () => {
+    if (!lastUser) return;
+    void submit(undefined, lastRaw ?? lastUser.text ?? "");
+  };
+  const edit = () => {
+    if (!lastUser) return;
+    const raw = lastRaw ?? lastUser.text ?? "";
+    const att = toAttachment(raw, "Your last message");
+    if (att && att.keys >= 3) {
+      // Keep the keys out of the textarea, as when they were pasted.
+      const prose = raw
+        .split("\n")
+        .filter((l) => !toAttachment(l, ""))
+        .join("\n")
+        .trim();
+      setText(prose || "Add these keys");
+      setAttachment(att);
+    } else setText(raw);
+    window.setTimeout(() => {
+      const el = box.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 0);
+  };
+
+  // ---- drop files of keys anywhere on the chat ----
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!hasFiles(e) || off) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (!hasFiles(e) || off) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDrop = async (e: React.DragEvent) => {
+    if (!hasFiles(e) || off) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const { text: body, names, skipped } = await readDropped(Array.from(e.dataTransfer.files));
+    for (const s of skipped) toast.error(s);
+    if (!names.length) return;
+    const att = toAttachment(body, names.join(", "));
+    if (att) {
+      setAttachment((cur) => mergeAttachments(cur, att));
+      setText((cur) => cur.trim() || "Add these keys");
+    } else {
+      toast.info(`No keys found in ${names.join(", ")}. Its text is in the message box.`);
+      setText((cur) => (cur ? `${cur}\n${body}` : body).slice(0, 20000));
+    }
+    window.setTimeout(() => box.current?.focus({ preventScroll: true }), 0);
+  };
+
+  // ---- keyboard ----
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = isMac() ? e.metaKey : e.ctrlKey;
+      const target = e.target as HTMLElement | null;
+      const typing = !!target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+      if (mod && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSheet((v) => !v);
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        newChat();
+      } else if (e.key === "/" && !typing && !mod && !e.altKey) {
+        e.preventDefault();
+        box.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // newChat only navigates; a stale copy is fine.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fillExample = (ex: string) => {
     setText(ex);
@@ -301,6 +446,7 @@ export function AssistantPage() {
       return (
         <div key={row.key} className={cx(spacing, GUTTER)}>
           <Steps items={row.items} seconds={runSeconds(row)} fresh={delayFor} />
+          <ToolCards items={row.items} />
         </div>
       );
     const it = row.item;
@@ -309,20 +455,45 @@ export function AssistantPage() {
       delay !== undefined && it.kind !== "assistant" ? "fade-up" : undefined;
     const style = delay && anim ? { animationDelay: `${delay}ms` } : undefined;
     let body = null;
-    if (it.kind === "user") body = <UserBubble text={it.text ?? ""} />;
-    else if (it.kind === "assistant") {
-      // Actions sit under the last reply before your next message, as the turn's answer.
-      const next = rows[i + 1];
-      const endOfTurn =
-        !next || (next.kind === "item" && next.item.kind === "user");
+    if (it.kind === "user")
       body = (
-        <AssistantText
-          item={it}
-          reveal={delay}
-          actions={endOfTurn && !(working && !next)}
+        <UserBubble
+          text={it.text ?? ""}
+          keys={it.keys}
+          onEdit={it.id === lastUser?.id && !working ? edit : undefined}
         />
       );
-    } else if (it.kind === "confirm")
+    else if (it.kind === "assistant") {
+      const next = rows[i + 1];
+      const last = !next;
+      const endOfTurn = last || (next.kind === "item" && next.item.kind === "user");
+      body = (
+        <>
+          <AssistantText
+            item={it}
+            reveal={delay}
+            entities={entities}
+            actions={!(working && last)}
+            onRetry={last && !working && lastUser ? retry : undefined}
+          />
+          {endOfTurn && last && !working && it.suggestions?.length ? (
+            <Suggestions items={it.suggestions} disabled={busy || off} onPick={(s) => void submit(undefined, s)} />
+          ) : null}
+        </>
+      );
+    } else if (it.kind === "build")
+      body = (
+        <div className={GUTTER}>
+          <BuildCard item={it} />
+        </div>
+      );
+    else if (it.kind === "ask")
+      body = (
+        <div className={GUTTER}>
+          <AskCard item={it} busy={busy} onAnswer={onAnswerAsk} />
+        </div>
+      );
+    else if (it.kind === "confirm")
       body = (
         <div className={GUTTER}>
           <ConfirmCard
@@ -358,14 +529,34 @@ export function AssistantPage() {
     >
       <section
         aria-labelledby="chat-title"
-        className="flex min-w-0 flex-1 flex-col"
+        className="relative flex min-w-0 flex-1 flex-col"
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={(e) => void onDrop(e)}
       >
+        {dragging && (
+          <div
+            className="chat-drop pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-canvas/80 p-4 backdrop-blur-[2px]"
+            aria-hidden="true"
+          >
+            <div className="chat-drop-panel flex w-full max-w-sm flex-col items-center rounded-3xl border-2 border-dashed border-line-strong bg-surface px-6 py-8 text-center shadow-lift">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-soft text-brand">
+                <FileUp className="h-5 w-5" />
+              </span>
+              <div className="mt-3 text-[15px] font-semibold text-ink">Drop a file of keys</div>
+              <div className="mt-1 text-[13px] leading-relaxed text-muted">
+                .txt, .csv, .env or .json, up to 1 MB. Claude sees only placeholders.
+              </div>
+            </div>
+          </div>
+        )}
         {/* History and New chat stay out of the way: a quiet bar above the centred chat. */}
         <div className="mx-auto flex h-12 w-full max-w-[728px] shrink-0 items-center gap-2 px-3 sm:px-6">
           <Button
             size="sm"
             variant="ghost"
-            className="-ml-2"
+            className="press -ml-2"
             icon={<MessagesSquare className="h-4 w-4" aria-hidden="true" />}
             onClick={() => setSheet(true)}
             aria-haspopup="dialog"
@@ -433,7 +624,7 @@ export function AssistantPage() {
               )}
               {working && (
                 <div className="mt-6">
-                  <Working />
+                  <LiveStatus step={turn?.step} startedAt={turn?.started_at} />
                 </div>
               )}
             </div>
@@ -469,10 +660,13 @@ export function AssistantPage() {
               ref={box}
               value={text}
               onChange={setText}
-              onSubmit={submit}
+              onSubmit={(e) => void submit(e)}
               busy={busy}
               off={off}
               model={ai?.model}
+              attachment={attachment}
+              onAttach={(a) => setAttachment((cur) => mergeAttachments(cur, a))}
+              onClearAttachment={() => setAttachment(null)}
             />
           </div>
         </div>
@@ -481,6 +675,9 @@ export function AssistantPage() {
       <Modal open={sheet} onClose={() => setSheet(false)} title="Chats">
         <NewChatButton onClick={newChat} className="mb-3" />
         <div className="-mx-2">{loaded ? list : <ListSkeleton />}</div>
+        <div className="mt-4">
+          <Shortcuts />
+        </div>
       </Modal>
     </div>
   );

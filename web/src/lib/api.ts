@@ -5,9 +5,11 @@ import type {
   AuditEntry,
   AuthState,
   ChatAi,
+  ChatAnswer,
   ChatItem,
   ChatReply,
   ChatThread,
+  ChatTurn,
   CogitoEvent,
   CheckSummary,
   Key,
@@ -223,11 +225,13 @@ export const api = {
   // Assistant chat
   listChatThreads: () => request<{ threads: ChatThread[]; ai: ChatAi }>("GET", "/api/admin/chat/threads"),
   createChatThread: () => request<{ thread: ChatThread; items: ChatItem[] }>("POST", "/api/admin/chat/threads", {}),
-  getChatThread: (id: number) => request<{ thread: ChatThread; items: ChatItem[] }>("GET", `/api/admin/chat/threads/${id}`),
+  getChatThread: (id: number) =>
+    request<{ thread: ChatThread; items: ChatItem[]; turn?: ChatTurn }>("GET", `/api/admin/chat/threads/${id}`),
   deleteChatThread: (id: number) => request<unknown>("DELETE", `/api/admin/chat/threads/${id}`),
   sendChatMessage: (id: number, text: string) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/messages`, { text }),
   confirmChat: (id: number, pendingId: string, approve: boolean) =>
     request<ChatReply>("POST", `/api/admin/chat/threads/${id}/confirm`, { pending_id: pendingId, approve }),
+  answerChat: (id: number, body: ChatAnswer) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/answer`, body),
 
   // Audit
   listAudit: () => request<{ audit: AuditEntry[] }>("GET", "/api/admin/audit"),

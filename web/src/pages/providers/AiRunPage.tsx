@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTitle } from "../../hooks/useTitle";
+import { FadeText, plainText } from "../../components/FadeText";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -178,7 +179,7 @@ export function AiRunPage() {
   // Steps already recorded when the page opens render still; new ones fade up as they stream in.
   const firstSeq = useRef<{ run: number; seq: number } | null>(null);
   if (state && firstSeq.current?.run !== id) firstSeq.current = { run: id, seq: state.steps.reduce((m, s) => Math.max(m, s.seq), -1) };
-  useTitle(run ? `${run.title || run.draft?.name || "Run"} #${run.id}` : "AI run");
+  useTitle(run ? `${plainText(run.title) || run.draft?.name || "Run"} #${run.id}` : "AI run");
 
   // Poll every 1.5s while the run is active; fetch once otherwise.
   useEffect(() => {
@@ -207,7 +208,7 @@ export function AiRunPage() {
     if (prevStatus.current && prevStatus.current !== run.status && !ACTIVE_STATUSES.has(run.status)) {
       refreshProviders().catch(() => undefined);
       refreshServices().catch(() => undefined);
-      if (run.status === "published") toast.success(`${run.draft?.name ?? run.title} is live`);
+      if (run.status === "published") toast.success(`${run.draft?.name ?? plainText(run.title)} is live`);
     }
     prevStatus.current = run.status;
   }, [run, refreshProviders, refreshServices]);
@@ -270,9 +271,16 @@ export function AiRunPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="min-w-0 break-words font-mono text-[24px] leading-tight tracking-tight text-ink sm:text-[28px]">{run.title || run.draft?.name || `Run #${run.id}`}</h1>
+            <h1 className="min-w-0 break-words font-mono text-[24px] leading-tight tracking-tight text-ink sm:text-[28px]">
+              <FadeText text={plainText(run.title) || run.draft?.name || `Run #${run.id}`} />
+            </h1>
             <RunStatusBadge status={run.status} />
           </div>
+          {plainText(run.description) && (
+            <div className="mt-1.5 max-w-2xl text-[14px] leading-relaxed text-muted">
+              <FadeText text={plainText(run.description)} />
+            </div>
+          )}
           <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
             #{run.id} · {run.kind === "update_provider" ? `update ${run.provider_slug}` : "new provider"} · {run.created_by} · started {dateTime(run.created_at)} ·{" "}
             <span className="tabular-nums">{elapsed(run.created_at, end)}</span>

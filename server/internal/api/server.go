@@ -55,6 +55,10 @@ type Server struct {
 	routerH    http.Handler
 	// chatModel replaces the Claude call in tests.
 	chatModel func(ctx context.Context, system string, msgs []anthropic.BetaMessageParam, tools []anthropic.BetaToolUnionParam) (*anthropic.BetaMessage, error)
+	// chatWaitFor overrides how long a chat request waits for its turn (tests).
+	chatWaitFor time.Duration
+	// buildPoll overrides how often wait_for_build polls a run (tests).
+	buildPoll time.Duration
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -144,6 +148,7 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/chat/threads/{id}", s.chatDelete)
 		r.Post("/chat/threads/{id}/messages", s.chatSend)
 		r.Post("/chat/threads/{id}/confirm", s.chatConfirm)
+		r.Post("/chat/threads/{id}/answer", s.chatAnswer)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleAdmin))

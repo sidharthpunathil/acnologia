@@ -30,6 +30,8 @@ var defaultPrice = Price{Input: 4, CacheWrite: 5, CacheRead: 0.20, Output: 20, W
 // suffixed id (claude-opus-5-5-20261001) matches its base entry.
 var prices = map[string]Price{
 	"claude-opus-5-5": defaultPrice,
+	// Haiku names builder runs: $1 input, $5 output per MTok.
+	"claude-haiku-5-5": {Input: 1, CacheWrite: 1.25, CacheRead: 0.10, Output: 5},
 }
 
 // PriceFor returns the price of a model, falling back to the default.

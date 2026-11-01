@@ -6,11 +6,15 @@ import {
   Check,
   ChevronRight,
   Clock,
+  KeyRound,
+  Pencil,
+  RotateCcw,
   TriangleAlert,
   X,
 } from "lucide-react";
 import { safeAppPath } from "../../lib/url";
-import type { ChatItem } from "../../lib/types";
+import type { ChatEntity, ChatItem } from "../../lib/types";
+import { linkify } from "./cards";
 import { CopyButton, SecretBox } from "../../components/CopyButton";
 import { Button, Callout, cx } from "../../components/ui";
 
@@ -61,8 +65,10 @@ function words(text: string, reveal: Reveal | null): ReactNode {
   );
 }
 
-/** Renders `inline code` inside a line of plain text. */
-function inline(text: string, reveal: Reveal | null): ReactNode {
+type Entities = Map<string, ChatEntity> | undefined;
+
+/** Renders `inline code` inside a line of plain text, and names from tool results as chips. */
+function inline(text: string, reveal: Reveal | null, entities?: Entities): ReactNode {
   const parts = text.split(/(`[^`\n]+`)/g);
   return parts.map((p, i) =>
     p.length > 2 && p.startsWith("`") && p.endsWith("`") ? (
@@ -77,13 +83,13 @@ function inline(text: string, reveal: Reveal | null): ReactNode {
         {p.slice(1, -1)}
       </code>
     ) : (
-      <Fragment key={i}>{words(p, reveal)}</Fragment>
+      <Fragment key={i}>{linkify(p, entities, (seg, k) => <Fragment key={k}>{words(seg, reveal)}</Fragment>)}</Fragment>
     ),
   );
 }
 
 /** Plain text with two small extras: `inline code` and lines starting with "- " as a list. */
-export function RichText({ text, reveal }: { text: string; reveal?: number }) {
+export function RichText({ text, reveal, entities }: { text: string; reveal?: number; entities?: Entities }) {
   const r = reveal !== undefined ? new Reveal(reveal) : null;
   const blocks: Array<{ list: boolean; lines: string[] }> = [];
   for (const line of text.split("\n")) {
@@ -100,14 +106,14 @@ export function RichText({ text, reveal }: { text: string; reveal?: number }) {
           <ul key={i} className="list-disc space-y-1 pl-5 marker:text-faint">
             {b.lines.map((l, j) => (
               <li key={j} className="whitespace-pre-wrap pl-0.5">
-                {inline(l, r)}
+                {inline(l, r, entities)}
               </li>
             ))}
           </ul>
         ) : // Blank lines between blocks are already spacing; drop them at the edges.
         b.lines.join("\n").trim() ? (
           <p key={i} className="whitespace-pre-wrap">
-            {inline(b.lines.join("\n").replace(/^\n+|\n+$/g, ""), r)}
+            {inline(b.lines.join("\n").replace(/^\n+|\n+$/g, ""), r, entities)}
           </p>
         ) : null,
       )}
@@ -156,40 +162,85 @@ export function Mark({
 /** Width of the avatar column (24px mark plus a 12px gap), so steps and approvals line up with the text. */
 export const GUTTER = "pl-9";
 
-export function UserBubble({ text }: { text: string }) {
+/** A quiet text action under a message: Copy, Retry, Edit. */
+function MsgAction({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
   return (
-    <div className="flex justify-end">
+    <button
+      type="button"
+      onClick={onClick}
+      className="press tap-inline inline-flex items-center gap-1 rounded-md px-1 text-[12px] text-faint transition-[color,transform] duration-150 hover:text-ink"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/** Shown on hover or focus with a mouse; always shown on touch screens. */
+const ACTIONS_ROW =
+  "flex items-center gap-3 transition-opacity duration-150 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100";
+
+export function UserBubble({ text, keys, onEdit }: { text: string; keys?: number; onEdit?: () => void }) {
+  // A message with many keys stays compact: the server keeps only their hints anyway.
+  const long = text.length > 600;
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="group/user flex flex-col items-end">
       <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-[20px] bg-surface px-4 py-2 text-[15px] leading-[1.55] text-ink shadow-card sm:max-w-[75%] sm:text-[14px]">
-        {text}
+        {keys ? (
+          <span className="mb-1 flex items-center gap-1.5 font-mono text-[11px] text-muted">
+            <KeyRound className="h-3 w-3" aria-hidden="true" />
+            {keys} {keys === 1 ? "key" : "keys"}, sent to Claude as placeholders
+          </span>
+        ) : null}
+        {long && !open ? `${text.slice(0, 600)}…` : text}
+        {long && (
+          <button
+            type="button"
+            onClick={() => setOpen(!open)}
+            className="press ml-1 text-[12px] font-medium text-muted underline-offset-4 hover:text-ink hover:underline"
+            aria-expanded={open}
+          >
+            {open ? "Show less" : "Show all"}
+          </button>
+        )}
       </div>
+      {onEdit && (
+        <div className={cx(ACTIONS_ROW, "-mr-1 mt-1 [@media(hover:hover)]:group-hover/user:opacity-100")}>
+          <MsgAction icon={<Pencil className="h-3 w-3" aria-hidden="true" />} label="Edit" onClick={onEdit} />
+        </div>
+      )}
     </div>
   );
 }
 
-/** A reply: plain text on the page, no bubble. The last reply of a turn gets a copy action, shown on hover or focus. */
+/** A reply: plain text on the page, no bubble. Every reply can be copied; the last one can be retried. */
 export function AssistantText({
   item,
   reveal,
   actions,
+  entities,
+  onRetry,
 }: {
   item: ChatItem;
   reveal?: number;
   actions?: boolean;
+  entities?: Entities;
+  onRetry?: () => void;
 }) {
   return (
     <div className="group/msg flex gap-3">
       <Mark className="mt-px" />
       <div className="min-w-0 flex-1">
         <div className="wrap-anywhere text-[15px] leading-[1.65] text-ink sm:text-[14px]">
-          <RichText text={item.text ?? ""} reveal={reveal} />
+          <RichText text={item.text ?? ""} reveal={reveal} entities={entities} />
         </div>
         {actions ? (
-          <div className="-ml-2 mt-1 flex items-center gap-3 transition-opacity duration-150 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:group-hover/msg:opacity-100">
-            <CopyButton
-              text={item.text ?? ""}
-              label="Copy"
-              className="text-faint"
-            />
+          <div className={cx(ACTIONS_ROW, "-ml-2 mt-1 [@media(hover:hover)]:group-hover/msg:opacity-100")}>
+            <CopyButton text={item.text ?? ""} label="Copy" className="press text-faint" />
+            {onRetry && (
+              <MsgAction icon={<RotateCcw className="h-3 w-3" aria-hidden="true" />} label="Retry" onClick={onRetry} />
+            )}
             <OpenLink link={item.link} />
           </div>
         ) : (
@@ -238,7 +289,10 @@ function StepRow({ item, delay }: { item: ChatItem; delay?: number }) {
             <span className="font-medium text-red-700"> failed</span>
           )}
           {item.summary && (
-            <span className="wrap-anywhere text-muted"> {item.summary}</span>
+            <span className="wrap-anywhere text-muted">
+              {" "}
+              {linkify(item.summary, entityMap(item.entities), (seg, k) => <Fragment key={k}>{seg}</Fragment>)}
+            </span>
           )}
           <span className="ml-2 inline-flex items-center gap-3 align-baseline">
             {(hasInput || hasDetail) && (
@@ -275,6 +329,13 @@ function StepRow({ item, delay }: { item: ChatItem; delay?: number }) {
       )}
     </li>
   );
+}
+
+function entityMap(list?: ChatEntity[]): Entities {
+  if (!list?.length) return undefined;
+  const m = new Map<string, ChatEntity>();
+  for (const e of list) if (e.name && e.name.length >= 3 && !m.has(e.name)) m.set(e.name, e);
+  return m;
 }
 
 function Code({ label, value }: { label: string; value: string }) {

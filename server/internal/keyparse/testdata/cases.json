@@ -1,0 +1,305 @@
+[
+  {
+    "name": "empty input",
+    "input": "   \n\n",
+    "keys": [],
+    "ignored": []
+  },
+  {
+    "name": "env file with export, comments and a non key value",
+    "input": "# serpapi keys\nexport SERP_KEY_1=\"a1b2c3d4e5f6a7b8c9d0e1f2\"\nSERP_KEY_2: 'f0e1d2c3b4a5968778695a4b'\n// old one below\nDEBUG=true\n",
+    "keys": [
+      {
+        "label": "SERP_KEY_1",
+        "secret": "a1b2c3d4e5f6a7b8c9d0e1f2"
+      },
+      {
+        "label": "SERP_KEY_2",
+        "secret": "f0e1d2c3b4a5968778695a4b"
+      }
+    ],
+    "ignored": [
+      "DEBUG=true"
+    ]
+  },
+  {
+    "name": "csv with header, comma separated",
+    "input": "label,key,email\nalice,sk_live_51HxAbCdEf0123456789,alice@x.io\nbob, \"sk_live_51HxZyXwVu9876543210\" ,bob@x.io\ncarol,,carol@x.io\n",
+    "keys": [
+      {
+        "label": "alice",
+        "secret": "sk_live_51HxAbCdEf0123456789"
+      },
+      {
+        "label": "bob",
+        "secret": "sk_live_51HxZyXwVu9876543210"
+      }
+    ],
+    "ignored": [
+      "carol,,carol@x.io"
+    ]
+  },
+  {
+    "name": "tsv with name and api_key header",
+    "input": "Name\tAPI_KEY\nprod\tAIzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStUv\nstaging\tAIzaSyZ9y8X7w6V5u4T3s2R1q0PoNmLkJiHgFe\n",
+    "keys": [
+      {
+        "label": "prod",
+        "secret": "AIzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStUv"
+      },
+      {
+        "label": "staging",
+        "secret": "AIzaSyZ9y8X7w6V5u4T3s2R1q0PoNmLkJiHgFe"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "json array of strings",
+    "input": "[\"sk-proj-0123456789abcdef\", \"  sk-proj-fedcba9876543210  \", \"\", 42]",
+    "keys": [
+      {
+        "label": "",
+        "secret": "sk-proj-0123456789abcdef"
+      },
+      {
+        "label": "",
+        "secret": "sk-proj-fedcba9876543210"
+      }
+    ],
+    "ignored": [
+      "\"\"",
+      "42"
+    ]
+  },
+  {
+    "name": "json array of objects",
+    "input": "[{\"name\":\"acct-1\",\"api_key\":\"xai-1234567890abcdefgh\"},{\"label\":\"acct-2\",\"apiKey\":\"xai-abcdefgh1234567890\",\"name\":\"ignored name\"},{\"account\":\"team\",\"token\":\"ghp_0123456789ABCDEFGHIJ\"},{\"label\":\"no secret\"},{\"key\":\"has space inside\"}]",
+    "keys": [
+      {
+        "label": "acct-1",
+        "secret": "xai-1234567890abcdefgh"
+      },
+      {
+        "label": "acct-2",
+        "secret": "xai-abcdefgh1234567890"
+      },
+      {
+        "label": "team",
+        "secret": "ghp_0123456789ABCDEFGHIJ"
+      }
+    ],
+    "ignored": [
+      "{\"label\":\"no secret\"}",
+      "{\"key\":\"has space inside\"}"
+    ]
+  },
+  {
+    "name": "label then key with comma or space",
+    "input": "acct-1, sk_live_abc123def456ghi789\nacct-2 sk_live_zyx987wvu654tsr321\n",
+    "keys": [
+      {
+        "label": "acct-1",
+        "secret": "sk_live_abc123def456ghi789"
+      },
+      {
+        "label": "acct-2",
+        "secret": "sk_live_zyx987wvu654tsr321"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "mixed separators on one line",
+    "input": "key_0000000000000001|key_0000000000000002;key_0000000000000003\tkey_0000000000000004 key_0000000000000005,key_0000000000000006",
+    "keys": [
+      {
+        "label": "",
+        "secret": "key_0000000000000001"
+      },
+      {
+        "label": "",
+        "secret": "key_0000000000000002"
+      },
+      {
+        "label": "",
+        "secret": "key_0000000000000003"
+      },
+      {
+        "label": "",
+        "secret": "key_0000000000000004"
+      },
+      {
+        "label": "",
+        "secret": "key_0000000000000005"
+      },
+      {
+        "label": "",
+        "secret": "key_0000000000000006"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "quotes, backticks and trailing punctuation",
+    "input": "Here: `tvly-dev-A1B2C3D4E5F6G7H8`, \"tvly-dev-Z9Y8X7W6V5U4T3S2\". And (tvly-dev-M1N2B3V4C5X6Z7L8)!",
+    "keys": [
+      {
+        "label": "Here",
+        "secret": "tvly-dev-A1B2C3D4E5F6G7H8"
+      },
+      {
+        "label": "",
+        "secret": "tvly-dev-Z9Y8X7W6V5U4T3S2"
+      },
+      {
+        "label": "And",
+        "secret": "tvly-dev-M1N2B3V4C5X6Z7L8"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "urls, emails and short words are ignored",
+    "input": "see https://serpapi.com/manage-api-key for alice@example.com 12345 abc",
+    "keys": [],
+    "ignored": [
+      "see",
+      "https://serpapi.com/manage-api-key",
+      "for",
+      "alice@example.com",
+      "12345",
+      "abc"
+    ]
+  },
+  {
+    "name": "duplicates keep the first position and borrow a later label",
+    "input": "9f8e7d6c5b4a39281706f5e4\nprimary 9f8e7d6c5b4a39281706f5e4\nother 9f8e7d6c5b4a39281706f5e4\n",
+    "keys": [
+      {
+        "label": "primary",
+        "secret": "9f8e7d6c5b4a39281706f5e4"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "bullets and numbers never become labels",
+    "input": "- 6b1f0c9e2d8a7b3c4e5f6a7b\n* 7c2a1d0f3e9b8c4d5f6a7b8c\n1. 8d3b2e1a4f0c9d5e6a7b8c9d\n",
+    "keys": [
+      {
+        "label": "",
+        "secret": "6b1f0c9e2d8a7b3c4e5f6a7b"
+      },
+      {
+        "label": "",
+        "secret": "7c2a1d0f3e9b8c4d5f6a7b8c"
+      },
+      {
+        "label": "",
+        "secret": "8d3b2e1a4f0c9d5e6a7b8c9d"
+      }
+    ],
+    "ignored": [
+      "-",
+      "*",
+      "1"
+    ]
+  },
+  {
+    "name": "long tokens without digits are keys from 24 characters",
+    "input": "abcdefghijklmnopqrstuvwx abcdefghijklmnopqrstuvw",
+    "keys": [
+      {
+        "label": "",
+        "secret": "abcdefghijklmnopqrstuvwx"
+      }
+    ],
+    "ignored": [
+      "abcdefghijklmnopqrstuvw"
+    ]
+  },
+  {
+    "name": "colon without a space stays part of the key",
+    "input": "AC0123456789abcdef:auth0123456789token",
+    "keys": [
+      {
+        "label": "",
+        "secret": "AC0123456789abcdef:auth0123456789token"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "prose with a key in the middle",
+    "input": "please add my elevenlabs key sk_7f3e9a1b2c4d5e6f7a8b9c0d1e2f thanks",
+    "keys": [
+      {
+        "label": "key",
+        "secret": "sk_7f3e9a1b2c4d5e6f7a8b9c0d1e2f"
+      }
+    ],
+    "ignored": [
+      "please",
+      "add",
+      "my",
+      "elevenlabs",
+      "thanks"
+    ]
+  },
+  {
+    "name": "invalid json falls back to text",
+    "input": "[not json] key: q1w2e3r4t5y6u7i8o9p0",
+    "keys": [
+      {
+        "label": "key",
+        "secret": "q1w2e3r4t5y6u7i8o9p0"
+      }
+    ],
+    "ignored": [
+      "not",
+      "json"
+    ]
+  },
+  {
+    "name": "crlf line endings",
+    "input": "one=AAAABBBBCCCCDDDD1111\r\ntwo=AAAABBBBCCCCDDDD2222\r\n",
+    "keys": [
+      {
+        "label": "one",
+        "secret": "AAAABBBBCCCCDDDD1111"
+      },
+      {
+        "label": "two",
+        "secret": "AAAABBBBCCCCDDDD2222"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "base64 keys with padding are not env lines",
+    "input": "dGhpcyBpcyBhIHRlc3Qga2V5MTIz==\n",
+    "keys": [
+      {
+        "label": "",
+        "secret": "dGhpcyBpcyBhIHRlc3Qga2V5MTIz=="
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "a long word with a digit is a key, not a label",
+    "input": "averyveryveryveryveryveryveryveryveryveryveryveryverylonglabelname1x sk_live_0011223344556677",
+    "keys": [
+      {
+        "label": "",
+        "secret": "averyveryveryveryveryveryveryveryveryveryveryveryverylonglabelname1x"
+      },
+      {
+        "label": "",
+        "secret": "sk_live_0011223344556677"
+      }
+    ],
+    "ignored": []
+  }
+]

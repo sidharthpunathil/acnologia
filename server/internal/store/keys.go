@@ -140,9 +140,23 @@ type NewKey struct {
 var ErrDuplicate = errors.New("duplicate")
 
 func (s *Store) CreateKey(ctx context.Context, nk NewKey) (*Key, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
+	keys, dups, err := s.CreateKeys(ctx, []NewKey{nk})
 	if err != nil {
 		return nil, err
+	}
+	if len(dups) > 0 {
+		return nil, ErrDuplicate
+	}
+	return keys[0], nil
+}
+
+// CreateKeys inserts keys in one transaction: either every new key is stored
+// or none is. Secrets already in their service are skipped and their indexes
+// in nks returned as dups; the created keys come back in input order.
+func (s *Store) CreateKeys(ctx context.Context, nks []NewKey) ([]*Key, []int, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
 	}
 	defer tx.Rollback()
 	// Never reuse a deleted key's id: events, leases and in-memory slots are
@@ -150,32 +164,49 @@ func (s *Store) CreateKey(ctx context.Context, nk NewKey) (*Key, error) {
 	var hw sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(COALESCE((SELECT CAST(v AS INTEGER) FROM meta WHERE k='keys_seq'),0), COALESCE((SELECT MAX(id) FROM keys),0),
 		COALESCE((SELECT MAX(key_id) FROM events),0), COALESCE((SELECT MAX(key_id) FROM leases),0))`).Scan(&hw); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	newID := hw.Int64 + 1
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(k,v) VALUES('keys_seq',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprint(newID)); err != nil {
-		return nil, err
-	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO keys(id,service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency,
+	next := hw.Int64 + 1
+	ids, dups := []int64{}, []int{}
+	for i, nk := range nks {
+		// A failed INSERT (a duplicate) rolls back only that statement, so the
+		// transaction stays usable.
+		_, err := tx.ExecContext(ctx, `INSERT INTO keys(id,service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency,
 		account_name,account_email,account_phone,account_ref)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		newID, nk.ServiceID, nk.Label, nk.SecretEnc, nk.SecretFP, nk.Hint, nk.Tier, b2i(nk.Hidden), b2i(nk.Restricted),
-		nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now(), fromInt(nk.MaxConc),
-		nk.Account.Name, nk.Account.Email, nk.Account.Phone, nk.Account.Ref)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			return nil, ErrDuplicate
+			next, nk.ServiceID, nk.Label, nk.SecretEnc, nk.SecretFP, nk.Hint, nk.Tier, b2i(nk.Hidden), b2i(nk.Restricted),
+			nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now(), fromInt(nk.MaxConc),
+			nk.Account.Name, nk.Account.Email, nk.Account.Phone, nk.Account.Ref)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE") {
+				dups = append(dups, i)
+				continue
+			}
+			return nil, nil, err
 		}
-		return nil, err
+		if err := setKeyApps(ctx, tx, next, nk.AppIDs); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, next)
+		next++
 	}
-	id, _ := res.LastInsertId()
-	if err := setKeyApps(ctx, tx, id, nk.AppIDs); err != nil {
-		return nil, err
+	if len(ids) > 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meta(k,v) VALUES('keys_seq',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprint(ids[len(ids)-1])); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.GetKey(ctx, id)
+	out := make([]*Key, 0, len(ids))
+	for _, id := range ids {
+		k, err := s.GetKey(ctx, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, k)
+	}
+	return out, dups, nil
 }
 
 func setKeyApps(ctx context.Context, tx *sql.Tx, keyID int64, appIDs []int64) error {

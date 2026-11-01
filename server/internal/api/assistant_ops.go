@@ -202,7 +202,7 @@ func opsTools() []*chatTool {
 			Desc: "Turn on the manage tool set for an app's MCP server, which lets anyone holding that app's token manage keys through MCP. The user must confirm.",
 			Describe: func(cs *chatSession, in map[string]any) (string, error) {
 				id, _ := argNum(in, "app_id")
-				a, err := cs.s.Store.GetApp(cs.r.Context(), id)
+				a, err := cs.s.Store.GetApp(cs.ctx, id)
 				if err != nil {
 					return "", fmt.Errorf("no app %d", id)
 				}

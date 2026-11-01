@@ -16,6 +16,9 @@ type AgentInput struct {
 	AutoPublish   bool     `json:"auto_publish"`
 	CreateService bool     `json:"create_service"`
 	HasTestKey    bool     `json:"has_test_key"`
+	// TestKeyCount is how many test keys came with the run (test_key plus
+	// test_keys). The secrets themselves are never in the input.
+	TestKeyCount int `json:"test_key_count,omitempty"`
 }
 
 type AgentUsage struct {
@@ -32,6 +35,7 @@ type AgentRun struct {
 	Kind         string          `json:"kind"`
 	Status       string          `json:"status"`
 	Title        string          `json:"title"`
+	Description  string          `json:"description"`
 	ProviderSlug string          `json:"provider_slug"`
 	Input        AgentInput      `json:"input"`
 	Draft        json.RawMessage `json:"draft"`
@@ -47,6 +51,22 @@ type AgentRun struct {
 
 	CreatedByID int64  `json:"-"`
 	TestKeyEnc  []byte `json:"-"`
+	// TestKeysEnc is every test key, an encrypted JSON array of strings. It is
+	// added to the service a publish creates and wiped when the run ends.
+	TestKeysEnc []byte `json:"-"`
+}
+
+// migrateRuns adds the run columns introduced after agent_runs shipped.
+func migrateRuns(db *sql.DB) error {
+	for _, c := range []struct{ col, def string }{
+		{"description", "TEXT NOT NULL DEFAULT ''"},
+		{"test_keys_enc", "BLOB"},
+	} {
+		if _, err := addColumn(db, "agent_runs", c.col, c.def); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type AgentStep struct {
@@ -58,7 +78,7 @@ type AgentStep struct {
 }
 
 const runCols = `id, kind, status, title, provider_slug, input, test_key_enc, draft, report, live, summary, error, service_id, usage,
-COALESCE(created_by,0), created_by_email, created_at, finished_at`
+COALESCE(created_by,0), created_by_email, created_at, finished_at, description, test_keys_enc`
 
 func nullJSON(s string) json.RawMessage {
 	if s == "" {
@@ -73,7 +93,7 @@ func scanRun(row interface{ Scan(...any) error }) (*AgentRun, error) {
 	var svc, fin sql.NullInt64
 	var c int64
 	err := row.Scan(&r.ID, &r.Kind, &r.Status, &r.Title, &r.ProviderSlug, &input, &r.TestKeyEnc, &draft, &report, &live,
-		&r.Summary, &r.Error, &svc, &usage, &r.CreatedByID, &r.CreatedBy, &c, &fin)
+		&r.Summary, &r.Error, &svc, &usage, &r.CreatedByID, &r.CreatedBy, &c, &fin, &r.Description, &r.TestKeysEnc)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -94,8 +114,9 @@ func scanRun(row interface{ Scan(...any) error }) (*AgentRun, error) {
 
 func (s *Store) CreateRun(ctx context.Context, r *AgentRun) (*AgentRun, error) {
 	in, _ := json.Marshal(r.Input)
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO agent_runs(kind,status,title,provider_slug,input,test_key_enc,created_by,created_by_email,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?)`, r.Kind, r.Status, r.Title, r.ProviderSlug, string(in), r.TestKeyEnc, r.CreatedByID, r.CreatedBy, now())
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO agent_runs(kind,status,title,description,provider_slug,input,test_key_enc,test_keys_enc,created_by,created_by_email,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.Kind, r.Status, r.Title, r.Description, r.ProviderSlug, string(in), r.TestKeyEnc, r.TestKeysEnc,
+		r.CreatedByID, r.CreatedBy, now())
 	if err != nil {
 		return nil, err
 	}
@@ -126,12 +147,14 @@ func (s *Store) ListRuns(ctx context.Context, limit int) ([]*AgentRun, error) {
 
 // RunPatch updates the fields that are set.
 type RunPatch struct {
-	Status, Title, ProviderSlug, Summary, Error *string
-	Draft, Report, Live                         any
-	ServiceID                                   *int64
-	Usage                                       *AgentUsage
-	Finished                                    bool
-	ClearTestKey                                bool
+	Status, Title, Description, ProviderSlug, Summary, Error *string
+	Draft, Report, Live                                      any
+	ServiceID                                                *int64
+	Usage                                                    *AgentUsage
+	Finished                                                 bool
+	ClearTestKey                                             bool
+	// ClearTestKeys wipes the full list of test keys (test_keys_enc).
+	ClearTestKeys bool
 }
 
 func (s *Store) UpdateRun(ctx context.Context, id int64, p RunPatch) error {
@@ -142,6 +165,9 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, p RunPatch) error {
 	}
 	if p.Title != nil {
 		add("title=?", *p.Title)
+	}
+	if p.Description != nil {
+		add("description=?", *p.Description)
 	}
 	if p.ProviderSlug != nil {
 		add("provider_slug=?", *p.ProviderSlug)
@@ -170,6 +196,9 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, p RunPatch) error {
 	}
 	if p.ClearTestKey {
 		sets = append(sets, "test_key_enc=NULL")
+	}
+	if p.ClearTestKeys {
+		sets = append(sets, "test_keys_enc=NULL")
 	}
 	if len(sets) == 0 {
 		return nil
@@ -236,7 +265,19 @@ func (s *Store) ListSteps(ctx context.Context, runID int64, after int) ([]AgentS
 
 // FailStaleRuns marks runs that were in progress when the server stopped.
 func (s *Store) FailStaleRuns(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE agent_runs SET status='failed', error='server restarted during the run', finished_at=?, test_key_enc=NULL
+	_, err := s.DB.ExecContext(ctx, `UPDATE agent_runs SET status='failed', error='server restarted during the run', finished_at=?, test_key_enc=NULL, test_keys_enc=NULL
 		WHERE status IN ('queued','running','testing')`, now())
 	return err
+}
+
+// RenameRun sets a run's title and description, only while its title is
+// still ifTitle, so a late AI naming call never overwrites the name taken
+// from an accepted draft. It reports whether the run changed.
+func (s *Store) RenameRun(ctx context.Context, id int64, title, description, ifTitle string) (bool, error) {
+	res, err := s.DB.ExecContext(ctx, `UPDATE agent_runs SET title=?, description=? WHERE id=? AND title=?`, title, description, id, ifTitle)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }

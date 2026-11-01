@@ -172,6 +172,7 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 			return text + "\nFix these and submit again.", true, false
 		}
 		s.accepted, s.summary = d, in.Summary
+		a.nameFromDraft(ctx, s, d)
 		a.logf(ctx, id, "result", fmt.Sprintf("Accepted: %d/%d tests pass", rep.Passed, rep.Passed+rep.Failed), in.Summary)
 		return "Accepted. Acnologia will fetch the logo and publish it now. Reply with nothing more.", false, true
 	}

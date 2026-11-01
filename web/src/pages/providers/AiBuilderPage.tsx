@@ -11,6 +11,9 @@ import { can } from "../../lib/perms";
 import { relTime, sentence } from "../../lib/format";
 import { ProviderLogo } from "../../components/EntityLogo";
 import { Button, Callout, Field, IconButton, Input, Section, Skeleton, Textarea, Toggle } from "../../components/ui";
+import { KeyPasteArea, KeyPreview, useKeyInput } from "../../components/KeyPaste";
+import { FadeText, plainText } from "../../components/FadeText";
+import { ACTIVE_STATUSES } from "../../stores/ai";
 import { RunStatusBadge } from "./AiRunPage";
 
 function UrlList({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
@@ -57,7 +60,7 @@ export function AiBuilderPage() {
   const [context, setContext] = useState("");
   const [urls, setUrls] = useState<string[]>([""]);
   const [github, setGithub] = useState("");
-  const [testKey, setTestKey] = useState("");
+  const keys = useKeyInput();
   const [autoPublish, setAutoPublish] = useState(true);
   const [createService, setCreateService] = useState(!updateSlug);
   const [busy, setBusy] = useState(false);
@@ -70,6 +73,14 @@ export function AiBuilderPage() {
   }, [fetchStatus, fetchRuns, ensureProviders]);
 
   useEffect(() => setCreateService(!updateSlug), [updateSlug]);
+
+  // Titles and descriptions arrive a moment after a run starts, so refresh while any run is still going.
+  const anyActive = runs.some((r) => ACTIVE_STATUSES.has(r.status));
+  useEffect(() => {
+    if (!anyActive) return;
+    const t = window.setInterval(() => fetchRuns().catch(() => undefined), 4000);
+    return () => window.clearInterval(t);
+  }, [anyActive, fetchRuns]);
 
   const enabled = !!status?.enabled;
   const cleanUrls = useMemo(() => urls.map((u) => u.trim()).filter(Boolean), [urls]);
@@ -86,6 +97,7 @@ export function AiBuilderPage() {
       toast.error(`"${bad}" is not a full URL. Start it with https://`);
       return;
     }
+    const secrets = keys.parsed.keys.map((k) => k.secret);
     setBusy(true);
     try {
       const run = await start({
@@ -94,11 +106,12 @@ export function AiBuilderPage() {
         context: context.trim(),
         urls: cleanUrls,
         github: github.trim(),
-        test_key: testKey.trim() || undefined,
+        test_key: secrets[0],
+        test_keys: secrets.length ? secrets : undefined,
         auto_publish: autoPublish,
         create_service: updateSlug ? false : createService,
       });
-      setTestKey("");
+      keys.reset();
       navigate(`/providers/ai/${run.id}`);
     } catch (err) {
       toast.error(errorMessage(err));
@@ -194,8 +207,17 @@ export function AiBuilderPage() {
           </div>
 
           <div className="space-y-5">
-            <Section title="Test key" description="Optional. Used once for a cheap live check: the health check and the first safe example. It stays encrypted during the run and is wiped when the run ends.">
-              <Input type="password" autoComplete="off" value={testKey} onChange={(e) => setTestKey(e.target.value)} placeholder="Paste a key to test with" aria-label="Test key" className="font-mono" />
+            <Section
+              title="Keys"
+              description="Optional. The first key is used once for a cheap live check. If the builder creates a service, every key is added to it. Keys stay encrypted during the run and are wiped when it ends."
+            >
+              <div className="space-y-3">
+                <KeyPasteArea input={keys} id="ai-keys" label="Keys" rows={4} placeholder={"Paste keys, one per line or in any format, or drop a file"} />
+                {(keys.text.trim() || keys.parsed.keys.length > 0) && <KeyPreview parsed={keys.parsed} stale={keys.stale} show={5} />}
+                {keys.parsed.keys.length > 1 && updateSlug && (
+                  <p className="text-xs leading-relaxed text-muted">This run updates a provider and does not create a service, so only the first key is used.</p>
+                )}
+              </div>
             </Section>
 
             <Section title="When it passes">
@@ -260,10 +282,15 @@ export function AiBuilderPage() {
               <li key={r.id}>
                 <Link to={`/providers/ai/${r.id}`} className="flex min-h-[60px] items-center gap-3 px-4 py-3 transition-colors hover:bg-soft">
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 truncate text-[14px] font-medium text-ink">{r.title || r.provider_slug || `Run #${r.id}`}</span>
-                      <RunStatusBadge status={r.status} />
+                    <div className="flex items-center gap-2">
+                      <FadeText text={plainText(r.title) || r.provider_slug || `Run #${r.id}`} className="truncate text-[14px] font-medium text-ink" />
+                      <span className="shrink-0">
+                        <RunStatusBadge status={r.status} />
+                      </span>
                     </div>
+                    {plainText(r.description) && (
+                      <FadeText text={plainText(r.description)} className="mt-0.5 line-clamp-2 max-w-3xl text-[13px] leading-snug text-muted" />
+                    )}
                     <div className="mt-0.5 truncate font-mono text-[11px] text-muted">
                       #{r.id} · {r.kind === "update_provider" ? "update" : "create"}
                       {r.provider_slug ? ` · ${r.provider_slug}` : ""} · {r.created_by} · {relTime(r.created_at)}
