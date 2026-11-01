@@ -150,7 +150,7 @@ A report later than 10 minutes after expiry gets 410; a second report gets 409.
 ```mermaid
 stateDiagram-v2
     [*] --> active: key added
-    active --> cooling: rate_limited<br/>(Retry-After, or cooldown x 2^fails, max 1h;<br/>any cooldown capped at 24h)
+    active --> cooling: rate_limited<br/>(Retry-After, or cooldown x 2^fails, max 1h,<br/>any cooldown capped at 24h)
     cooling --> active: cooldown_until passes
     active --> exhausted: quota_exhausted, or health check<br/>shows zero remaining
     exhausted --> active: quota_reset_at passes (worker),<br/>or a good health check

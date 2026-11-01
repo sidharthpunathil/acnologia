@@ -21,6 +21,8 @@ Acnologia strips all three before forwarding to the provider. An app can be rest
 ```
 GET /healthz   -> 200 {"ok": true, "version": "1.0.0"}
 GET /llms.txt  -> this summary
+GET /docs/{slug}.md -> one doc as Markdown (see Docs as Markdown)
+GET /api/docs  -> JSON index of the docs
 ```
 
 ## GET /api/v1/services
@@ -466,3 +468,16 @@ cogito ctl usage 3
 ```
 
 The CLI stores servers in `~/.config/cogito/ctl.json` (mode 0600). `COGITO_URL` and `COGITO_TOKEN` override it for one command.
+
+## Docs as Markdown
+
+This reference covers the consumer API. The rest of the docs are served as raw Markdown (`text/markdown`, no auth) at `/docs/{slug}.md`, and rendered for people at `/docs/{slug}`. `GET /api/docs` lists them as JSON: `{"docs": [{"slug", "title", "description", "size"}]}`.
+
+- [/docs/overview.md](/docs/overview.md): what Acnologia does, quick start, features and self-hosting.
+- [/docs/api.md](/docs/api.md): consumer error codes and the dashboard API with required roles.
+- [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, backups and upgrading.
+- [/docs/architecture.md](/docs/architecture.md): components, packages, request pipeline, data model and background work.
+- [/docs/flows.md](/docs/flows.md): diagrams of the proxy, key selection, leases, key states, health checks, sign in, MCP and the AI builder.
+- [/docs/security.md](/docs/security.md): roles, hidden keys, secrets at rest, web protections and outbound requests.
+- [/docs/providers.md](/docs/providers.md): provider specs and how to add one.
+- [/docs/development.md](/docs/development.md): setup, layout, tests and conventions.

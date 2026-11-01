@@ -23,13 +23,14 @@ import {
 } from "lucide-react";
 import { useTitle } from "../hooks/useTitle";
 import { useAuth } from "../stores/auth";
-import { Brand } from "../components/Layout";
 import { CodeBlock } from "../components/CodeBlock";
 import { cx } from "../components/ui";
 import { useTheme } from "../stores/theme";
 import { HeroDemo } from "../demos/HeroDemo";
 import { AlertsDemo } from "../demos/AlertsDemo";
 import { RecoveryDemo } from "../demos/RecoveryDemo";
+import { DocsHeader } from "./docs/DocsHeader";
+import { DOCS } from "./docs/manifest";
 
 const SECTIONS = [
   { id: "how", label: "How it works" },
@@ -40,6 +41,7 @@ const SECTIONS = [
   { id: "integrate", label: "Integrate" },
   { id: "operate", label: "Operate" },
   { id: "security", label: "Security" },
+  { id: "guides", label: "Guides" },
 ];
 
 const STEPS = [
@@ -188,12 +190,8 @@ export function DocsPage() {
 
   return (
     <div className="min-h-dvh bg-canvas text-ink">
-      <header className="sticky top-0 z-20 border-b border-line bg-canvas/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Link to="/" className="tap flex items-center gap-3" aria-label="Acnologia home">
-            <Brand />
-            <span className="font-mono text-xs text-faint">docs</span>
-          </Link>
+      <DocsHeader
+        nav={
           <nav className="hidden items-center gap-5 text-[13px] text-muted lg:flex" aria-label="On this page">
             {SECTIONS.map((s) => (
               <a key={s.id} href={`#${s.id}`} className="transition-colors hover:text-ink">
@@ -201,15 +199,8 @@ export function DocsPage() {
               </a>
             ))}
           </nav>
-          <Link
-            to="/"
-            className="tap inline-flex h-8 items-center gap-1.5 rounded-lg bg-ink px-3 text-[13px] font-medium text-canvas transition-opacity hover:opacity-90"
-          >
-            {signedIn ? "Open dashboard" : "Sign in"}
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-          </Link>
-        </div>
-      </header>
+        }
+      />
 
       <main className="mx-auto max-w-6xl px-4 pb-24 sm:px-6">
         {/* Hero */}
@@ -479,6 +470,31 @@ export function DocsPage() {
               <li key={t} className="flex gap-3">
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-faint" aria-hidden />
                 <span>{t}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {/* Guides */}
+        <section className="border-t border-line py-16">
+          <Heading id="guides" eyebrow="Guides" title="Read the rest of the docs">
+            Each guide is also plain Markdown at <Code>/docs/{"{page}"}.md</Code>, listed in{" "}
+            <a className="text-ink underline decoration-line-strong underline-offset-4" href="/llms.txt">
+              /llms.txt
+            </a>{" "}
+            for agents.
+          </Heading>
+          <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {DOCS.map((d) => (
+              <li key={d.slug} className="min-w-0">
+                <Link
+                  to={`/docs/${d.slug}`}
+                  className="tap group flex h-full flex-col rounded-xl border border-line bg-surface p-5 shadow-card transition-[border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+                >
+                  <d.icon className="h-4 w-4 text-muted transition-colors group-hover:text-brand" aria-hidden />
+                  <span className="mt-3 font-medium text-ink-strong">{d.title}</span>
+                  <span className="mt-1.5 text-sm leading-relaxed text-muted">{d.blurb}</span>
+                </Link>
               </li>
             ))}
           </ul>

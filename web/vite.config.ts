@@ -4,7 +4,10 @@ import react from "@vitejs/plugin-react";
 // COGITO_BACKEND points the dev server at another instance, for example a review copy.
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
 const backend = env.COGITO_BACKEND || "http://localhost:8080";
-const proxied = ["/api", "/proxy", "/mcp", "/healthz", "/llms.txt", "/llms-full.txt"];
+// "/api" covers /api/docs. Keys starting with ^ are regular expressions: the raw
+// docs (/docs/<slug>.md) and their images come from the backend, while /docs
+// and /docs/<slug> stay with the SPA.
+const proxied = ["/api", "/proxy", "/mcp", "/healthz", "/llms.txt", "/llms-full.txt", "^/docs/[^/]+\\.md$", "^/docs/assets/"];
 
 export default defineConfig({
   plugins: [react()],

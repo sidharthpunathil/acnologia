@@ -10,6 +10,11 @@ web:
 llms:
 	cp docs/llms.txt server/internal/llmstxt/llms.txt
 	cp docs/llms-full.txt server/internal/llmstxt/llms-full.txt
+	mkdir -p server/internal/docsmd/files server/internal/docsmd/assets
+	cp README.md server/internal/docsmd/files/overview.md
+	cp docs/architecture.md docs/flows.md docs/security.md docs/configuration.md \
+		docs/api.md docs/providers.md docs/development.md server/internal/docsmd/files/
+	cp docs/screenshots/*.png docs/brand/logo.png server/internal/docsmd/assets/
 
 build: web llms
 	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../bin/cogito ./cmd/cogito

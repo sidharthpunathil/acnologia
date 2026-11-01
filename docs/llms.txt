@@ -70,6 +70,20 @@ Every SDK's lease call and `with_key` helper accept the wait option (`wait_sec` 
 
 Operators can script the admin API with a token from Settings, API tokens (`Authorization: Bearer cogadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The same binary ships a client: `cogito ctl login https://cogito.example --token cogadm_...`, then `cogito ctl status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`.
 
+## Docs
+
+Every page of the docs is also served as raw Markdown. Fetch these when you need detail beyond the consumer API.
+
+- [Overview](/docs/overview.md): what Acnologia does, quick start, calling it, failure handling, features and self-hosting.
+- [HTTP API](/docs/api.md): consumer error codes and the full dashboard API with required roles.
+- [Configuration](/docs/configuration.md): every environment variable, per service settings, running, backups and upgrading.
+
 ## Optional
 
 - [Full reference](/llms-full.txt): every endpoint with request and response examples, provider error mapping, MCP tool arguments and SDK snippets.
+- [Server architecture](/docs/architecture.md): components, packages, middleware pipeline, data model, boot and background work.
+- [Request flows](/docs/flows.md): sequence and state diagrams for proxy requests, key selection, leases, key states, health checks, sign in, MCP and the AI builder.
+- [Security model](/docs/security.md): roles, hidden keys, secrets at rest, web protections, limits and outbound requests.
+- [Provider specs](/docs/providers.md): how providers are defined, validated, published, versioned and added.
+- [Development](/docs/development.md): setup, repository layout, tests and conventions.
+- [Docs index](/api/docs): JSON list of every doc with slug, title, description and size.

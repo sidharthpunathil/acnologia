@@ -7,7 +7,7 @@ There are three ways in:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/llms.txt`, `/robots.txt` | none |
+| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/api/docs`, `/robots.txt` | none |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer cog_...`, `X-Cogito-Token`, or `?cogito_token=` |
 | Dashboard | `/api/auth`, `/api/admin`, `/api/logos` | `cogito_session` cookie |
 
