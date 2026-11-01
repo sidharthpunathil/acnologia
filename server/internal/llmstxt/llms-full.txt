@@ -1,6 +1,6 @@
-# Cogito: full reference
+# Acnologia: full reference
 
-> Cogito is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
+> Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
 
 Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code": "string", "message": "string"}}` with a matching HTTP status.
 
@@ -14,7 +14,7 @@ X-Cogito-Token: cog_xxx               (alternative)
 ?cogito_token=cog_xxx                  (proxy only, for URL-only tools)
 ```
 
-Cogito strips all three before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong or inactive gets 401; a service or mode the app may not use gets 403.
+Acnologia strips all three before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong or inactive gets 401; a service or mode the app may not use gets 403.
 
 ## Public endpoints
 
@@ -113,7 +113,7 @@ For `no_key_available`, `retry_after_sec` is the time until the earliest cooldow
 
 ## POST /api/v1/leases/{lease_id}/report
 
-Tell Cogito how the key did. Always report, including on success. On a service with a concurrency limit, reporting is also what releases the lease's slot on the key; an unreported lease blocks that slot until it expires.
+Tell Acnologia how the key did. Always report, including on success. On a service with a concurrency limit, reporting is also what releases the lease's slot on the key; an unreported lease blocks that slot until it expires.
 
 ```http
 POST /api/v1/leases/lse_7f3a9c/report
@@ -131,7 +131,7 @@ Only `outcome` is required.
 
 With `rotate: true` the response carries a new lease on a different key in `next`, or `null` when none is available. With `rotate: false`, `next` is `null`.
 
-Rules: report within 10 minutes after `expires_at` (later reports get 410), only once per lease (a second report gets 409), and only while the app may still use the service (403 otherwise). `retry_after_sec` is capped at 86400. Do not put the secret in `message`; Cogito removes it anyway because messages are shown on the dashboard.
+Rules: report within 10 minutes after `expires_at` (later reports get 410), only once per lease (a second report gets 409), and only while the app may still use the service (403 otherwise). `retry_after_sec` is capped at 86400. Do not put the secret in `message`; Acnologia removes it anyway because messages are shown on the dashboard.
 
 ### Outcomes
 
@@ -160,7 +160,7 @@ The proxy applies this mapping itself.
 
 ## ANY /proxy/{service}/{path}
 
-Call Cogito instead of the provider. Cogito forwards to `base_url/{path}` with the same method, query string, headers and body, injects a key where `auth.type` says, and on a rate limit retries with the next key (up to the service `max_attempts`). Only for apps in mode `proxy` or `both`.
+Call Acnologia instead of the provider. Acnologia forwards to `base_url/{path}` with the same method, query string, headers and body, injects a key where `auth.type` says, and on a rate limit retries with the next key (up to the service `max_attempts`). Only for apps in mode `proxy` or `both`.
 
 Response: the provider's status, headers and body, plus:
 
@@ -169,7 +169,7 @@ X-Cogito-Key-Id: 14      which key served the request
 X-Cogito-Attempts: 2     how many keys were tried
 ```
 
-Allowed methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS (others get 405). A path containing a literal `?` or `#`, or a `.` or `..` segment, gets 400 `bad_path`; percent encoded characters such as `%2F` are forwarded as sent. Provider redirects are returned to you rather than followed, with the key removed from response headers. Responses carry `Content-Security-Policy: sandbox`, so they cannot run script on the Cogito origin.
+Allowed methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS (others get 405). A path containing a literal `?` or `#`, or a `.` or `..` segment, gets 400 `bad_path`; percent encoded characters such as `%2F` are forwarded as sent. Provider redirects are returned to you rather than followed, with the key removed from response headers. Responses carry `Content-Security-Policy: sandbox`, so they cannot run script on the Acnologia origin.
 
 If no key is available the proxy answers 503 `no_key_available` with `retry_after_sec`, like the lease endpoint. On a service with a concurrency limit, a request that finds every key busy waits in a queue for up to the service `queue_timeout_sec` (ElevenLabs default 30s); if no slot frees up in time the proxy answers 503 `all_keys_busy`. The proxy never sends more than a key's limit in parallel, so you do not need your own throttling.
 
@@ -193,7 +193,7 @@ curl -s -X POST "http://localhost:8080/proxy/elevenlabs/v1/text-to-speech/21m00T
   -H "Authorization: Bearer cog_xxx" \
   -H "Content-Type: application/json" \
   -H "Accept: audio/mpeg" \
-  -d '{"text": "Hello from Cogito.", "model_id": "eleven_multilingual_v2"}' \
+  -d '{"text": "Hello from Acnologia.", "model_id": "eleven_multilingual_v2"}' \
   -o hello.mp3
 ```
 
@@ -201,7 +201,7 @@ Equivalent to calling `https://api.elevenlabs.io/v1/text-to-speech/{voice_id}` w
 
 ## Concurrency limits
 
-Some providers cap simultaneous requests per key (ElevenLabs returns 429 `too_many_concurrent_requests`). Cogito enforces a per key limit so that never happens:
+Some providers cap simultaneous requests per key (ElevenLabs returns 429 `too_many_concurrent_requests`). Acnologia enforces a per key limit so that never happens:
 
 - Each service has `max_concurrency` (0 means unlimited); a key can override it. ElevenLabs defaults to 2 per key.
 - Each service has `queue_timeout_sec`, how long proxied requests wait for a slot. ElevenLabs defaults to 30s.
@@ -268,8 +268,8 @@ Concurrency support is the same everywhere: `lease` and `with_key` take a wait o
 | Python | `lease(..., wait_sec=20)`, `with_key(..., wait_sec=20)` | `AllKeysBusy` (subclass of `NoKeyAvailable`), `.busy` |
 | TypeScript | `lease(s, { waitSec: 20 })`, `withKey(s, fn, { waitSec: 20 })` | `AllKeysBusyError` (extends `NoKeyAvailableError`), `.busy` |
 | Go | `LeaseOptions{Wait: 20 * time.Second}`, `WithWait(20 * time.Second)` | `*ErrNoKeyAvailable` with `Busy: true`, matches `cogito.AllKeysBusy` |
-| PHP | `lease($s, waitSec: 20)`, `withKey($s, $fn, waitSec: 20)` | `Cogito\Exception\AllKeysBusy` (extends `NoKeyAvailable`), `->busy` |
-| Ruby | `lease(s, wait_sec: 20)`, `with_key(s, wait_sec: 20)` | `Cogito::AllKeysBusy` (subclass of `NoKeyAvailable`), `busy?` |
+| PHP | `lease($s, waitSec: 20)`, `withKey($s, $fn, waitSec: 20)` | `Acnologia\Exception\AllKeysBusy` (extends `NoKeyAvailable`), `->busy` |
+| Ruby | `lease(s, wait_sec: 20)`, `with_key(s, wait_sec: 20)` | `Acnologia::AllKeysBusy` (subclass of `NoKeyAvailable`), `busy?` |
 
 ### Python
 
@@ -294,7 +294,7 @@ def search(lease):
 data = cog.with_key("serpapi", search)
 ```
 
-Also `AsyncCogito`. Exceptions: `CogitoError`, `NoKeyAvailable`, `AllKeysBusy`, `RateLimited`, `QuotaExhausted`, `InvalidKey`.
+Also `AsyncAcnologia`. Exceptions: `CogitoError`, `NoKeyAvailable`, `AllKeysBusy`, `RateLimited`, `QuotaExhausted`, `InvalidKey`.
 
 ### TypeScript and JavaScript
 
@@ -357,7 +357,7 @@ composer require cogito/keys
 ```php
 $cog = new Cogito\Cogito('http://localhost:8080', 'cog_xxx');
 $res = $cog->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
-$data = $cog->withKey('serpapi', function (Cogito\Lease $lease) { /* throw Cogito\Exception\RateLimited::after(3600) on 429 */ });
+$data = $cog->withKey('serpapi', function (Cogito\Lease $lease) { /* throw Acnologia\Exception\RateLimited::after(3600) on 429 */ });
 ```
 
 ### Ruby
@@ -367,9 +367,9 @@ gem install cogito-keys
 ```
 
 ```ruby
-cog = Cogito::Client.new("http://localhost:8080", "cog_xxx")
+cog = Acnologia::Client.new("http://localhost:8080", "cog_xxx")
 res = cog.proxy("serpapi").get("/search.json", "q" => "coffee")
-data = cog.with_key("serpapi") { |lease| ... } # raise Cogito::RateLimited.new(retry_after: 3600) on 429
+data = cog.with_key("serpapi") { |lease| ... } # raise Acnologia::RateLimited.new(retry_after: 3600) on 429
 ```
 
 
@@ -383,14 +383,14 @@ Every service has a circuit breaker. Provider errors (5xx, timeouts, refused con
 HTTP/1.1 503 Service Unavailable
 Retry-After: 30
 
-{"error": {"code": "service_unavailable", "message": "SerpAPI keeps failing, so Cogito paused traffic to it"}, "retry_after_sec": 30}
+{"error": {"code": "service_unavailable", "message": "SerpAPI keeps failing, so Acnologia paused traffic to it"}, "retry_after_sec": 30}
 ```
 
 After `breaker_reset_sec` (default 30s) one probe request goes through. Success closes the breaker; another provider error opens it again. Keys are never penalized for a provider outage. Set `breaker_threshold` to `-1` in a provider spec to turn it off.
 
 ### Busy and banned keys
 
-- `busy` (for example ElevenLabs `too_many_concurrent_requests`): the key is healthy but at its concurrency cap. Cogito rotates to the next key immediately and parks this one for about a second, without raising its failure count.
+- `busy` (for example ElevenLabs `too_many_concurrent_requests`): the key is healthy but at its concurrency cap. Acnologia rotates to the next key immediately and parks this one for about a second, without raising its failure count.
 - `banned` (for example ElevenLabs `detected_unusual_activity`): the provider suspended the account. The key leaves rotation with status `banned`. Health checks skip it; an operator reset (`POST /api/admin/keys/{id}/reset`) brings it back.
 
 ### Quota from response headers
@@ -405,7 +405,7 @@ Each proxied response then updates the key's quota. When the provider reports 0 
 
 ## Response cache and idempotency
 
-A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Cogito-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Cogito never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `COGITO_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
+A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Cogito-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Acnologia never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `COGITO_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
 
 `Idempotency-Key` works on any method. The first response (below 500) is stored per app for 10 minutes and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice.
 
@@ -418,7 +418,7 @@ GET /proxy/search/search.json?q=coffee
 Authorization: Bearer cog_...
 ```
 
-Cogito tries the first member. It moves to the next when the member has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Cogito-Service` names the member that answered. An app allowed to use the group may use its members through it.
+Acnologia tries the first member. It moves to the next when the member has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Cogito-Service` names the member that answered. An app allowed to use the group may use its members through it.
 
 ## App limits and spend
 
