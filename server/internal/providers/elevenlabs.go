@@ -19,6 +19,8 @@ func (elevenLabs) Template() Template {
 		Description: "Text to speech, speech to text, voice cloning and sound effects. Character quota per billing cycle.",
 		BaseURL:     "https://api.elevenlabs.io", AuthType: "header", AuthName: "xi-api-key", Icon: "audio-lines",
 		DefaultCooldownSec: 5, DocsURL: "https://elevenlabs.io/docs/api-reference",
+		// The free plan allows 2 concurrent requests; raise it per key for paid plans.
+		DefaultMaxConcurrency: 2, DefaultQueueTimeoutSec: 30,
 	}
 }
 

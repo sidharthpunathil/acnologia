@@ -39,6 +39,9 @@ func (w *Worker) tick(ctx context.Context) {
 			_ = w.Store.SetMeta(ctx, "usage_day", today)
 		}
 	}
+	if n := w.Pool.SweepLeases(); n > 0 {
+		slog.Info("released expired lease slots", "count", n)
+	}
 	if n, err := w.Store.ReactivateExhausted(ctx); err == nil && n > 0 {
 		slog.Info("reactivated exhausted keys", "count", n)
 	}

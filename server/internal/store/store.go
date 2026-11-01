@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS services(
   cooldown_sec INTEGER NOT NULL,
   max_attempts INTEGER NOT NULL,
   icon TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  max_concurrency INTEGER NOT NULL DEFAULT 0,
+  queue_timeout_sec INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS keys(
   id INTEGER PRIMARY KEY,
@@ -77,6 +79,7 @@ CREATE TABLE IF NOT EXISTS keys(
   notes TEXT NOT NULL DEFAULT '',
   created_by INTEGER,
   created_at INTEGER NOT NULL,
+  max_concurrency INTEGER,
   UNIQUE(service_id, secret_fp)
 );
 CREATE INDEX IF NOT EXISTS keys_service ON keys(service_id);
@@ -143,7 +146,49 @@ func Open(dataDir string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &Store{DB: db}, nil
+}
+
+// migrate adds columns introduced after the first release to existing databases.
+func migrate(db *sql.DB) error {
+	added, err := addColumn(db, "services", "max_concurrency", "INTEGER NOT NULL DEFAULT 0")
+	if err != nil {
+		return err
+	}
+	if _, err := addColumn(db, "services", "queue_timeout_sec", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if added {
+		// ElevenLabs caps concurrent requests per account (2 on the free plan).
+		if _, err := db.Exec(`UPDATE services SET max_concurrency=2, queue_timeout_sec=30 WHERE provider='elevenlabs'`); err != nil {
+			return err
+		}
+	}
+	_, err = addColumn(db, "keys", "max_concurrency", "INTEGER")
+	return err
+}
+
+func addColumn(db *sql.DB, table, col, def string) (bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if name == col {
+			return false, nil
+		}
+	}
+	rows.Close()
+	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + col + ` ` + def)
+	return err == nil, err
 }
 
 func (s *Store) Close() error { return s.DB.Close() }

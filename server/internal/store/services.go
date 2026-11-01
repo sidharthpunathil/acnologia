@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at`
+const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
 	var created int64
 	err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.Provider, &s.Category, &s.Description, &s.BaseURL,
-		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created)
+		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -25,10 +25,10 @@ func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 }
 
 func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error) {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO services(slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO services(slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
-		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now())
+		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now(), sv.MaxConcurrency, sv.QueueTimeoutSec)
 	if err != nil {
 		return nil, err
 	}
@@ -37,9 +37,9 @@ func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error
 }
 
 func (s *Store) UpdateService(ctx context.Context, sv *Service) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=? WHERE id=?`,
+	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=? WHERE id=?`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
-		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.ID)
+		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.MaxConcurrency, sv.QueueTimeoutSec, sv.ID)
 	return err
 }
 
@@ -75,13 +75,13 @@ func (s *Store) ListServices(ctx context.Context) ([]*Service, error) {
 
 // FillStats computes key counts and 24h request totals. Hidden keys are
 // counted only when includeHidden is set.
-func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bool) error {
+func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bool, inflight map[int64]int) error {
 	byID := map[int64]*Service{}
 	for _, sv := range svcs {
 		byID[sv.ID] = sv
 		sv.KeyCounts = KeyCounts{}
 	}
-	q := `SELECT service_id, status, tier, cooldown_until, quota_remaining FROM keys`
+	q := `SELECT id, service_id, status, tier, cooldown_until, quota_remaining, max_concurrency FROM keys`
 	if !includeHidden {
 		q += ` WHERE hidden=0`
 	}
@@ -94,10 +94,11 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 	for rows.Next() {
 		var sid int64
 		var k Key
-		var cd, qr sql.NullInt64
-		if err := rows.Scan(&sid, &k.Status, &k.Tier, &cd, &qr); err != nil {
+		var cd, qr, mc sql.NullInt64
+		if err := rows.Scan(&k.ID, &sid, &k.Status, &k.Tier, &cd, &qr, &mc); err != nil {
 			return err
 		}
+		k.MaxConcurrency = toInt(mc)
 		sv := byID[sid]
 		if sv == nil {
 			continue
@@ -108,9 +109,14 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 		if k.Tier == "backup" {
 			c.Backup++
 		}
+		n := inflight[k.ID]
+		sv.InFlight += n
 		switch {
 		case k.Available(t):
 			c.Available++
+			if lim := k.ConcurrencyLimit(sv); lim > 0 && n >= lim {
+				c.Busy++
+			}
 		case k.Status == StatusActive && k.CooldownUntil != nil && k.CooldownUntil.After(t):
 			c.Cooling++
 		case k.Status == StatusExhausted || (k.Status == StatusActive && k.QuotaRemaining != nil):

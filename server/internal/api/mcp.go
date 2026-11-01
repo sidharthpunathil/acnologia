@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -50,10 +52,12 @@ var mcpTools = []map[string]any{
 	},
 	{
 		"name":        "get_key",
-		"description": "Lease an API key for a service. Returns the secret, where to put it (query param or header), and a lease_id to report the outcome with report_key.",
+		"description": "Lease an API key for a service. Returns the secret, where to put it (query param or header), and a lease_id. Always call report_key when done: on services with a concurrency limit the lease reserves the key until reported.",
 		"inputSchema": obj(map[string]any{
 			"service":         str("Service slug"),
 			"exclude_key_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Key ids to skip"},
+			"ttl_sec":         map[string]any{"type": "integer", "description": "How long to hold the key. On concurrency limited services the key is reserved for you until you report or this expires."},
+			"wait_sec":        map[string]any{"type": "integer", "description": "Wait up to this many seconds (max 60) for a key when all are busy"},
 		}, "service"),
 	},
 	{
@@ -167,6 +171,8 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 	var args struct {
 		Service       string            `json:"service"`
 		ExcludeKeyIDs []int64           `json:"exclude_key_ids"`
+		TTLSec        int               `json:"ttl_sec"`
+		WaitSec       int               `json:"wait_sec"`
 		LeaseID       string            `json:"lease_id"`
 		Outcome       string            `json:"outcome"`
 		RetryAfterSec int               `json:"retry_after_sec"`
@@ -198,7 +204,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			return nil, err
 		}
-		if err := s.Store.FillStats(ctx, svcs, true); err != nil {
+		if err := s.Store.FillStats(ctx, svcs, true, s.Pool.InFlight()); err != nil {
 			return nil, err
 		}
 		list := []map[string]any{}
@@ -207,7 +213,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 				continue
 			}
 			list = append(list, map[string]any{"slug": sv.Slug, "name": sv.Name, "category": sv.Category,
-				"available": sv.KeyCounts.Available > 0, "base_url": sv.BaseURL})
+				"available": sv.KeyCounts.Available > sv.KeyCounts.Busy, "base_url": sv.BaseURL})
 		}
 		if name == "pool_status" {
 			if len(list) == 0 {
@@ -224,11 +230,11 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			return nil, err
 		}
-		l, err := s.issueLease(ctx, a, sv, args.ExcludeKeyIDs, 0)
+		l, err := s.issueLease(ctx, a, sv, args.ExcludeKeyIDs, time.Duration(args.TTLSec)*time.Second, time.Duration(min(max(args.WaitSec, 0), 60))*time.Second)
 		if err != nil {
 			var nk *pool.NoKeyError
 			if errors.As(err, &nk) {
-				return nil, fmt.Errorf("no key available, retry in %.0f seconds", nk.RetryAfter.Seconds())
+				return nil, fmt.Errorf("%s, retry in %.0f seconds", nk.Error(), math.Ceil(nk.RetryAfter.Seconds()))
 			}
 			return nil, err
 		}

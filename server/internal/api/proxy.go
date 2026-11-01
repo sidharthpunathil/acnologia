@@ -101,8 +101,14 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	var lastBody []byte
 	var lastKey int64
 
+	queue := time.Duration(sv.QueueTimeoutSec) * time.Second
 	for attempt := 1; attempt <= sv.MaxAttempts; attempt++ {
-		picked, err := s.Pool.Pick(r.Context(), sv, a.ID, tried)
+		waitStart := time.Now()
+		picked, err := s.Pool.PickWait(r.Context(), sv, a.ID, tried, queue)
+		waited := time.Since(waitStart)
+		if err != nil && r.Context().Err() != nil {
+			return // client went away while queued
+		}
 		if err != nil {
 			if last != nil {
 				break // out of keys, relay the last upstream answer
@@ -117,6 +123,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		tried[k.ID] = true
 		req, err := buildUpstream(r.Context(), r, sv, path, body, picked.Secret)
 		if err != nil {
+			picked.Release()
 			writeErr(w, 400, "bad_request", err.Error())
 			return
 		}
@@ -124,20 +131,28 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		resp, err := s.UpClient.Do(req)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
+			picked.Release()
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + scrub(err.Error(), picked.Secret)})
 			writeErr(w, 502, "upstream_unreachable", "could not reach "+sv.Name)
 			return
 		}
+		detail := r.Method + " /" + path
+		if waited >= 100*time.Millisecond {
+			detail += " (queued " + waited.Round(10*time.Millisecond).String() + " for a free key)"
+		}
 		s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "proxy", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, LatencyMS: latency,
-			Detail: r.Method + " /" + path})
+			Detail: detail})
 
 		if resp.StatusCode < 400 {
 			_ = s.Pool.Apply(r.Context(), sv, k, providers.Result{Outcome: providers.OK})
+			// The slot stays held until the (possibly streamed) body is fully sent.
 			relay(w, resp, k.ID, attempt, nil)
+			picked.Release()
 			return
 		}
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		resp.Body.Close()
+		picked.Release()
 		res := prov.Classify(resp.StatusCode, resp.Header, rb)
 		res.Message = scrub(res.Message, picked.Secret)
 		_ = s.Pool.Apply(r.Context(), sv, k, res)

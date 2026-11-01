@@ -26,7 +26,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	if err := s.Store.FillStats(ctx, svcs, isSuper(r)); err != nil {
+	if err := s.Store.FillStats(ctx, svcs, isSuper(r), s.Pool.InFlight()); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
@@ -40,6 +40,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		tot.Invalid += c.Invalid
 		tot.Disabled += c.Disabled
 		tot.Backup += c.Backup
+		tot.Busy += c.Busy
+	}
+	inflight := 0
+	for _, sv := range svcs {
+		inflight += sv.InFlight
 	}
 	since := time.Now().Add(-24 * time.Hour)
 	reqs, _ := s.Store.CountEvents(ctx, since, "lease", "proxy")
@@ -48,8 +53,9 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"services": len(svcs), "keys": map[string]int{
 			"total": tot.Total, "active": tot.Available, "cooling": tot.Cooling, "exhausted": tot.Exhausted,
-			"invalid": tot.Invalid, "disabled": tot.Disabled, "backup": tot.Backup,
+			"invalid": tot.Invalid, "disabled": tot.Disabled, "backup": tot.Backup, "busy": tot.Busy,
 		},
+		"in_flight":    inflight,
 		"requests_24h": reqs, "rate_limits_24h": rls, "recent_events": maskEvents(r, evs),
 	})
 }
@@ -63,7 +69,7 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listServices(w http.ResponseWriter, r *http.Request) {
 	svcs, err := s.Store.ListServices(r.Context())
 	if err == nil {
-		err = s.Store.FillStats(r.Context(), svcs, isSuper(r))
+		err = s.Store.FillStats(r.Context(), svcs, isSuper(r), s.Pool.InFlight())
 	}
 	if err != nil {
 		writeStoreErr(w, err)
@@ -90,7 +96,7 @@ func (s *Server) getService(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r)); err != nil {
+	if err := s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r), s.Pool.InFlight()); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
@@ -110,6 +116,8 @@ type serviceInput struct {
 	CooldownSec *int    `json:"cooldown_sec"`
 	MaxAttempts *int    `json:"max_attempts"`
 	Icon        *string `json:"icon"`
+	MaxConc     *int    `json:"max_concurrency"`
+	QueueSec    *int    `json:"queue_timeout_sec"`
 }
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
@@ -136,6 +144,12 @@ func (in serviceInput) apply(sv *store.Service) string {
 	if in.MaxAttempts != nil {
 		sv.MaxAttempts = *in.MaxAttempts
 	}
+	if in.MaxConc != nil {
+		sv.MaxConcurrency = *in.MaxConc
+	}
+	if in.QueueSec != nil {
+		sv.QueueTimeoutSec = *in.QueueSec
+	}
 	sv.BaseURL = strings.TrimRight(sv.BaseURL, "/")
 	switch {
 	case !slugRe.MatchString(sv.Slug):
@@ -154,6 +168,10 @@ func (in serviceInput) apply(sv *store.Service) string {
 		return "cooldown_sec must be between 1 and 86400"
 	case sv.MaxAttempts < 1 || sv.MaxAttempts > 20:
 		return "max_attempts must be between 1 and 20"
+	case sv.MaxConcurrency < 0 || sv.MaxConcurrency > 1000:
+		return "max_concurrency must be between 0 (unlimited) and 1000"
+	case sv.QueueTimeoutSec < 0 || sv.QueueTimeoutSec > 300:
+		return "queue_timeout_sec must be between 0 and 300"
 	}
 	u, err := url.Parse(sv.BaseURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -179,6 +197,7 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 		Slug: prov, Name: t.Name, Provider: t.Provider, Category: t.Category, Description: t.Description,
 		BaseURL: t.BaseURL, AuthType: t.AuthType, AuthName: t.AuthName, Strategy: "round_robin",
 		CooldownSec: t.DefaultCooldownSec, MaxAttempts: 5, Icon: t.Icon,
+		MaxConcurrency: t.DefaultMaxConcurrency, QueueTimeoutSec: t.DefaultQueueTimeoutSec,
 	}
 	if msg := in.apply(sv); msg != "" {
 		writeErr(w, 400, "invalid", msg)
@@ -211,7 +230,7 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.update", sv.Slug, "")
-	_ = s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r))
+	_ = s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r), s.Pool.InFlight())
 	writeJSON(w, 200, sv)
 }
 
@@ -250,7 +269,15 @@ func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.fillInFlight(keys...)
 	writeJSON(w, 200, map[string]any{"keys": keys})
+}
+
+func (s *Server) fillInFlight(keys ...*store.Key) {
+	inf := s.Pool.InFlight()
+	for _, k := range keys {
+		k.InFlight = inf[k.ID]
+	}
 }
 
 type keyInput struct {
@@ -265,6 +292,8 @@ type keyInput struct {
 	Priority   *int     `json:"priority"`
 	Notes      *string  `json:"notes"`
 	QuotaLimit *int64   `json:"quota_limit"`
+	// MaxConc overrides the service concurrency limit; -1 clears the override.
+	MaxConc *int64 `json:"max_concurrency"`
 }
 
 func (in keyInput) validate(r *http.Request) (int, string) {
@@ -282,6 +311,9 @@ func (in keyInput) validate(r *http.Request) (int, string) {
 	}
 	if in.Secret != nil && strings.TrimSpace(*in.Secret) == "" {
 		return 400, "secret cannot be empty"
+	}
+	if in.MaxConc != nil && (*in.MaxConc < -1 || *in.MaxConc > 1000) {
+		return 400, "max_concurrency must be -1 (use service default), 0 (unlimited) or up to 1000"
 	}
 	return 0, ""
 }
@@ -350,6 +382,9 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 			nk.Notes = *in.Notes
 		}
 		nk.QuotaLimit = in.QuotaLimit
+		if in.MaxConc != nil && *in.MaxConc >= 0 {
+			nk.MaxConc = in.MaxConc
+		}
 		k, err := s.Store.CreateKey(r.Context(), nk)
 		if err == store.ErrDuplicate {
 			skipped = append(skipped, fmt.Sprintf("line %d (%s) already exists", i+1, crypto.Hint(secret)))
@@ -424,6 +459,13 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 		}
 		p.QuotaLimit = &q
 	}
+	if in.MaxConc != nil {
+		m := in.MaxConc
+		if *m < 0 {
+			m = nil
+		}
+		p.MaxConc = &m
+	}
 	if in.Secret != nil {
 		secret := strings.TrimSpace(*in.Secret)
 		enc, err := s.Pool.Box.Encrypt(secret)
@@ -453,6 +495,7 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.fillInFlight(nk)
 	writeJSON(w, 200, nk)
 }
 

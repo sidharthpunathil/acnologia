@@ -80,6 +80,9 @@ func run() error {
 	}
 
 	p := pool.New(st, box)
+	if err := p.RestoreLeases(ctx); err != nil {
+		return err
+	}
 	srv := api.New(cfg, st, p, webui.FS(), llmstxt.Content)
 	w := &worker.Worker{Store: st, Pool: p, HealthInterval: cfg.HealthInterval,
 		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour}

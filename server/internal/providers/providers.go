@@ -58,6 +58,9 @@ type Template struct {
 	Icon               string `json:"icon"`
 	DefaultCooldownSec int    `json:"default_cooldown_sec"`
 	DocsURL            string `json:"docs_url"`
+	// DefaultMaxConcurrency caps in-flight requests per key; 0 means unlimited.
+	DefaultMaxConcurrency  int `json:"default_max_concurrency"`
+	DefaultQueueTimeoutSec int `json:"default_queue_timeout_sec"`
 }
 
 type Provider interface {

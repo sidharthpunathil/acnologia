@@ -28,12 +28,19 @@ func ValidStrategy(s string) bool {
 	return false
 }
 
-// NoKeyError means no key is available right now.
+// NoKeyError means no key is available right now. Busy is set when usable
+// keys exist but every one of them is at its concurrency limit.
 type NoKeyError struct {
 	RetryAfter time.Duration
+	Busy       bool
 }
 
-func (e *NoKeyError) Error() string { return "no key available" }
+func (e *NoKeyError) Error() string {
+	if e.Busy {
+		return "all keys are busy"
+	}
+	return "no key available"
+}
 
 type Pool struct {
 	Store  *store.Store
@@ -42,11 +49,12 @@ type Pool struct {
 
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
+	slots *slots
 }
 
 func New(s *store.Store, box *crypto.Box) *Pool {
 	return &Pool{
-		Store: s, Box: box, locks: map[int64]*sync.Mutex{},
+		Store: s, Box: box, locks: map[int64]*sync.Mutex{}, slots: newSlots(),
 		Client: &http.Client{Timeout: 20 * time.Second},
 	}
 }
@@ -62,13 +70,28 @@ func (p *Pool) lock(serviceID int64) *sync.Mutex {
 	return l
 }
 
-// Picked is a selected key with its decrypted secret.
+// Picked is a selected key with its decrypted secret. It holds one
+// concurrency slot on the key until Release is called (or, for a lease,
+// until the lease is reported or expires).
 type Picked struct {
 	Key    *store.Key
 	Secret string
+
+	once    sync.Once
+	release func()
 }
 
-// Pick selects a key for the app, marks it used, and returns it decrypted.
+// Release frees the key's concurrency slot. Safe to call more than once.
+func (pk *Picked) Release() {
+	pk.once.Do(func() {
+		if pk.release != nil {
+			pk.release()
+		}
+	})
+}
+
+// Pick selects a key for the app, takes a concurrency slot on it, marks it
+// used, and returns it decrypted. Callers must Release it or hand it to a lease.
 func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, exclude map[int64]bool) (*Picked, error) {
 	l := p.lock(svc.ID)
 	l.Lock()
@@ -79,8 +102,10 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, exclud
 		return nil, err
 	}
 	now := time.Now()
+	p.slots.sweep(now)
 	var primary, backup []*store.Key
 	var earliest *time.Time
+	busy := false
 	for _, k := range keys {
 		if exclude[k.ID] || !allowed(k, appID) {
 			continue
@@ -89,6 +114,10 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, exclud
 			if k.CooldownUntil != nil && k.CooldownUntil.After(now) && (earliest == nil || k.CooldownUntil.Before(*earliest)) {
 				earliest = k.CooldownUntil
 			}
+			continue
+		}
+		if lim := k.ConcurrencyLimit(svc); lim > 0 && p.slots.count(k.ID) >= lim {
+			busy = true
 			continue
 		}
 		if k.Tier == "backup" {
@@ -102,8 +131,11 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, exclud
 		set = backup
 	}
 	if len(set) == 0 {
-		e := &NoKeyError{}
-		if earliest != nil {
+		e := &NoKeyError{Busy: busy}
+		switch {
+		case busy:
+			e.RetryAfter = time.Second
+		case earliest != nil:
 			e.RetryAfter = time.Until(*earliest)
 		}
 		return nil, e
@@ -116,7 +148,9 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, exclud
 	if err := p.Store.MarkUsed(ctx, k.ID); err != nil {
 		return nil, err
 	}
-	return &Picked{Key: k, Secret: secret}, nil
+	p.slots.acquire(k.ID)
+	keyID, svcID := k.ID, svc.ID
+	return &Picked{Key: k, Secret: secret, release: func() { p.slots.release(keyID, svcID) }}, nil
 }
 
 func allowed(k *store.Key, appID int64) bool {

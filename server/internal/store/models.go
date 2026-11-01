@@ -46,6 +46,7 @@ type KeyCounts struct {
 	Invalid   int `json:"invalid"`
 	Disabled  int `json:"disabled"`
 	Backup    int `json:"backup"`
+	Busy      int `json:"busy"`
 }
 
 type Service struct {
@@ -65,6 +66,11 @@ type Service struct {
 	CreatedAt   time.Time `json:"created_at"`
 	KeyCounts   KeyCounts `json:"key_counts"`
 	Requests24h int       `json:"requests_24h"`
+	// MaxConcurrency is the default number of in-flight requests per key; 0 means unlimited.
+	MaxConcurrency int `json:"max_concurrency"`
+	// QueueTimeoutSec is how long a proxied request waits for a free key when all are busy.
+	QueueTimeoutSec int `json:"queue_timeout_sec"`
+	InFlight        int `json:"in_flight"`
 }
 
 const (
@@ -100,8 +106,19 @@ type Key struct {
 	LastCheckedAt    *time.Time `json:"last_checked_at"`
 	Notes            string     `json:"notes"`
 	CreatedAt        time.Time  `json:"created_at"`
+	// MaxConcurrency overrides the service default when set; 0 means unlimited.
+	MaxConcurrency *int64 `json:"max_concurrency"`
+	InFlight       int    `json:"in_flight"`
 
 	SecretEnc []byte `json:"-"`
+}
+
+// ConcurrencyLimit is the effective in-flight cap for the key; 0 means unlimited.
+func (k *Key) ConcurrencyLimit(svc *Service) int {
+	if k.MaxConcurrency != nil {
+		return int(*k.MaxConcurrency)
+	}
+	return svc.MaxConcurrency
 }
 
 // Available reports whether the key can be handed out right now.

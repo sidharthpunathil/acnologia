@@ -117,6 +117,26 @@ func (s *Store) GetLease(ctx context.Context, id string) (*Lease, error) {
 	return &l, nil
 }
 
+// OpenLeases returns unexpired leases that have not been reported yet.
+func (s *Store) OpenLeases(ctx context.Context) ([]*Lease, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at FROM leases WHERE outcome='' AND expires_at>?`, now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Lease{}
+	for rows.Next() {
+		var l Lease
+		var c, e int64
+		if err := rows.Scan(&l.ID, &l.KeyID, &l.AppID, &l.ServiceID, &c, &e); err != nil {
+			return nil, err
+		}
+		l.CreatedAt, l.ExpiresAt = time.Unix(c, 0).UTC(), time.Unix(e, 0).UTC()
+		out = append(out, &l)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) SetLeaseOutcome(ctx context.Context, id, outcome string) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE leases SET outcome=? WHERE id=?`, outcome, id)
 	return err

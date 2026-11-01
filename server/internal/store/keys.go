@@ -10,16 +10,16 @@ import (
 
 const keyCols = `id, service_id, label, secret_enc, hint, tier, hidden, restricted, status, weight, priority, cooldown_until,
 consecutive_fails, quota_limit, quota_remaining, quota_reset_at, usage_total, usage_today, last_used_at, last_error,
-last_checked_at, notes, created_at`
+last_checked_at, notes, created_at, max_concurrency`
 
 func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	var k Key
 	var hidden, restricted int
-	var cd, ql, qr, qra, lu, lc sql.NullInt64
+	var cd, ql, qr, qra, lu, lc, mc sql.NullInt64
 	var created int64
 	err := row.Scan(&k.ID, &k.ServiceID, &k.Label, &k.SecretEnc, &k.Hint, &k.Tier, &hidden, &restricted, &k.Status,
 		&k.Weight, &k.Priority, &cd, &k.ConsecutiveFails, &ql, &qr, &qra, &k.UsageTotal, &k.UsageToday, &lu,
-		&k.LastError, &lc, &k.Notes, &created)
+		&k.LastError, &lc, &k.Notes, &created, &mc)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -29,6 +29,7 @@ func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	k.Hidden, k.Restricted = hidden == 1, restricted == 1
 	k.CooldownUntil, k.QuotaLimit, k.QuotaRemaining, k.QuotaResetAt = toTime(cd), toInt(ql), toInt(qr), toTime(qra)
 	k.LastUsedAt, k.LastCheckedAt = toTime(lu), toTime(lc)
+	k.MaxConcurrency = toInt(mc)
 	k.CreatedAt = time.Unix(created, 0).UTC()
 	k.AppIDs = []int64{}
 	k.computeEffective(time.Now())
@@ -129,6 +130,7 @@ type NewKey struct {
 	QuotaLimit *int64
 	AppIDs     []int64
 	CreatedBy  int64
+	MaxConc    *int64
 }
 
 var ErrDuplicate = errors.New("duplicate")
@@ -139,10 +141,10 @@ func (s *Store) CreateKey(ctx context.Context, nk NewKey) (*Key, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO keys(service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	res, err := tx.ExecContext(ctx, `INSERT INTO keys(service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		nk.ServiceID, nk.Label, nk.SecretEnc, nk.SecretFP, nk.Hint, nk.Tier, b2i(nk.Hidden), b2i(nk.Restricted),
-		nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now())
+		nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now(), fromInt(nk.MaxConc))
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrDuplicate
@@ -185,6 +187,7 @@ type KeyPatch struct {
 	Priority   *int
 	Notes      *string
 	QuotaLimit **int64
+	MaxConc    **int64
 }
 
 func (s *Store) UpdateKey(ctx context.Context, id int64, p KeyPatch) error {
@@ -237,6 +240,9 @@ func (s *Store) UpdateKey(ctx context.Context, id int64, p KeyPatch) error {
 	}
 	if p.QuotaLimit != nil {
 		steps = append(steps, func() error { return set(`quota_limit=?`, fromInt(*p.QuotaLimit)) })
+	}
+	if p.MaxConc != nil {
+		steps = append(steps, func() error { return set(`max_concurrency=?`, fromInt(*p.MaxConc)) })
 	}
 	for _, st := range steps {
 		if err := st(); err != nil {

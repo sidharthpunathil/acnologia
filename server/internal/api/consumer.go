@@ -38,7 +38,7 @@ func (s *Server) v1Services(w http.ResponseWriter, r *http.Request) {
 	a := appFrom(r)
 	svcs, err := s.Store.ListServices(r.Context())
 	if err == nil {
-		err = s.Store.FillStats(r.Context(), svcs, true)
+		err = s.Store.FillStats(r.Context(), svcs, true, s.Pool.InFlight())
 	}
 	if err != nil {
 		writeStoreErr(w, err)
@@ -52,7 +52,7 @@ func (s *Server) v1Services(w http.ResponseWriter, r *http.Request) {
 		// Apps learn only whether a key is available, never how many exist.
 		out = append(out, map[string]any{
 			"slug": sv.Slug, "name": sv.Name, "provider": sv.Provider, "category": sv.Category,
-			"available": sv.KeyCounts.Available > 0, "base_url": sv.BaseURL,
+			"available": sv.KeyCounts.Available > sv.KeyCounts.Busy, "base_url": sv.BaseURL,
 			"auth": authDTO{Type: sv.AuthType, Name: sv.AuthName},
 		})
 	}
@@ -86,31 +86,41 @@ func writeNoKey(w http.ResponseWriter, err error) bool {
 	if retry > 0 {
 		w.Header().Set("Retry-After", itoa(retry))
 	}
-	writeJSON(w, 503, map[string]any{
-		"error":           apiError{Code: "no_key_available", Message: "every key for this service is cooling down, exhausted or disabled"},
-		"retry_after_sec": retry,
-	})
+	e := apiError{Code: "no_key_available", Message: "every key for this service is cooling down, exhausted or disabled"}
+	if nk.Busy {
+		e = apiError{Code: "all_keys_busy", Message: "every usable key is at its concurrency limit, retry shortly"}
+	}
+	writeJSON(w, 503, map[string]any{"error": e, "retry_after_sec": retry})
 	return true
 }
 
-func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl time.Duration) (*leaseDTO, error) {
+// issueLease picks a key and creates a lease. On keys with a concurrency
+// limit the lease holds a slot until it is reported or expires, so set a
+// ttl close to how long you need the key.
+func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration) (*leaseDTO, error) {
 	ex := map[int64]bool{}
 	for _, id := range exclude {
 		ex[id] = true
 	}
-	p, err := s.Pool.Pick(ctx, sv, a.ID, ex)
+	p, err := s.Pool.PickWait(ctx, sv, a.ID, ex, wait)
 	if err != nil {
 		s.Store.AddEvent(ctx, store.NewEvent{Kind: "error", ServiceID: sv.ID, AppID: a.ID, StatusCode: 503, Detail: "lease: " + err.Error()})
 		return nil, err
 	}
 	if ttl <= 0 || ttl > 24*time.Hour {
 		ttl = 5 * time.Minute
+		if p.Key.ConcurrencyLimit(sv) > 0 {
+			// A forgotten lease blocks a slot, so default to a shorter hold.
+			ttl = 2 * time.Minute
+		}
 	}
 	now := time.Now().UTC()
 	l := &store.Lease{ID: crypto.RandomToken("lse_", 16), KeyID: p.Key.ID, AppID: a.ID, ServiceID: sv.ID, CreatedAt: now, ExpiresAt: now.Add(ttl)}
 	if err := s.Store.CreateLease(ctx, l); err != nil {
+		p.Release()
 		return nil, err
 	}
+	s.Pool.HoldLease(p, l.ID, l.ExpiresAt)
 	s.Store.AddEvent(ctx, store.NewEvent{Kind: "lease", ServiceID: sv.ID, KeyID: p.Key.ID, AppID: a.ID})
 	return &leaseDTO{
 		LeaseID: l.ID, KeyID: p.Key.ID, Service: sv.Slug, Secret: p.Secret,
@@ -128,6 +138,7 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 		Service       string  `json:"service"`
 		ExcludeKeyIDs []int64 `json:"exclude_key_ids"`
 		TTLSec        int     `json:"ttl_sec"`
+		WaitSec       int     `json:"wait_sec"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -136,7 +147,8 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	l, err := s.issueLease(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second)
+	wait := time.Duration(min(max(body.WaitSec, 0), 60)) * time.Second
+	l, err := s.issueLease(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second, wait)
 	if err != nil {
 		if !writeNoKey(w, err) {
 			writeStoreErr(w, err)
@@ -167,6 +179,8 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	if l.Outcome != "" {
 		return nil, 409, errors.New("lease already reported")
 	}
+	// Reporting ends the lease and frees its concurrency slot.
+	s.Pool.ReleaseLease(l.ID)
 	k, err := s.Store.GetKey(ctx, l.KeyID)
 	if err != nil {
 		return nil, 404, errors.New("key no longer exists")
@@ -186,7 +200,7 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	if !in.Rotate || out == providers.OK {
 		return nil, 200, nil
 	}
-	next, err := s.issueLease(ctx, a, sv, []int64{k.ID}, 0)
+	next, err := s.issueLease(ctx, a, sv, []int64{k.ID}, 0, 0)
 	if err != nil {
 		var nk *pool.NoKeyError
 		if errors.As(err, &nk) {
