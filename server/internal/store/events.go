@@ -27,7 +27,7 @@ func nz(v int64) any {
 }
 
 func (s *Store) AddEvent(ctx context.Context, e NewEvent) {
-	e.Detail = truncate(e.Detail, 500)
+	e.Detail = truncate(s.Scrub(ctx, e.Detail), 500)
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,status_code,latency_ms,detail,cost) VALUES(?,?,?,?,?,?,?,?,?)`,
 		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), e.StatusCode, e.LatencyMS, e.Detail, e.Cost)
 }
@@ -115,7 +115,7 @@ func (s *Store) AddAudit(ctx context.Context, u *User, action, target, detail st
 		uid, email = u.ID, u.Email
 	}
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
-		now(), uid, email, action, target, detail)
+		now(), uid, email, action, s.Scrub(ctx, target), s.Scrub(ctx, detail))
 }
 
 func (s *Store) ListAudit(ctx context.Context, limit int) ([]*AuditEntry, error) {

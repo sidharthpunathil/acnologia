@@ -121,12 +121,52 @@ database files 0600.
 - There is no tool that reveals a stored key secret. Tool results sent to
   Claude never contain secrets, and new app tokens are shown to you once and
   never sent to Claude or stored.
-- Keys you paste are sent to Claude (Anthropic) so it can add them. Once added,
-  every copy in the thread, including your own message, is replaced by the
-  key's last four characters. Threads are encrypted at rest with the master
-  key and visible only to their owner.
+- Keys you paste never reach Claude. Before a message goes to the model,
+  Acnologia finds the keys in it (the paste parser, then the pattern detector
+  for keys inside URLs, after `Bearer`, in JSON fields or glued to text),
+  encrypts each one into the thread's vault and puts a placeholder such as
+  `[key k3 ...c21e]` in its place. Tools resolve the placeholders on the
+  server. Your own message is stored as the prose without the keys, plus a
+  list of label and last four characters. Threads are encrypted at rest with
+  the master key and visible only to their owner.
 - Key account fields (email, phone, name) are personal data: members see them
   empty, and they are not written to events or the audit log.
+
+## What the model can and cannot see
+
+Every request to Anthropic, from the Assistant, the provider builder, Fill
+with AI and run naming, goes through one HTTP middleware on the shared client
+that rewrites the request body before it leaves the server:
+
+- Known secrets are replaced by `[key ...c21e]`: every pool key, webhook URL
+  and secret, and egress proxy URL (decrypted once into a multi pattern
+  matcher and reloaded when one changes), plus the builder run's test keys
+  and the keys a chat turn handled. Raw, query escaped and path escaped forms
+  are matched. Values shorter than 8 characters are not matched exactly.
+- Unknown secrets are replaced by `[secret ...c21e]` by pattern: common
+  prefixes (`sk-ant-`, `sk-`, `AIza`, `ghp_`, `xox`, `tvly-`, `AKIA`,
+  `sk_live_`, JWTs, Acnologia's own `cog_` tokens), `Bearer` and `Basic`
+  credentials, auth headers, `key=`, `api_key=`, `token=`, `secret=` and
+  `password=` in URLs, env lines and JSON, and long random looking tokens.
+  Hex hashes, UUIDs, words, identifiers and paths are left alone.
+- The system prompt and every tool result get both passes. Replayed model
+  output gets the known pass only; thinking blocks and web search results are
+  not touched, since the API checks their signatures.
+
+So Claude sees key hints, labels, statuses and quotas, but not a secret,
+including a key an upstream echoes in an error or a live check. The builder's
+live checks use the test key on the server; the model gets the result with
+the key replaced.
+
+The same redactor runs where text is stored or sent: agent steps and run
+errors, run notes, events, the audit log, key `last_error`, webhook payloads
+and delivery errors, and every log line (a wrapping `slog` handler).
+
+Limits: a short key with no prefix and no `key=` in front of it (a bare 12
+character token in a sentence) is caught only if it is already a pool key or
+the paste parser finds it. Leasing a key, through the API or the MCP
+`lease_key` tool, returns the secret to the app by design; use proxy mode for
+any client you would not hand a key to.
 
 ## Web protections
 

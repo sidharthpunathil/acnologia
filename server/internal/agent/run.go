@@ -13,6 +13,7 @@ import (
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/providers"
+	"github.com/cogito-keys/cogito/internal/redact"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -63,6 +64,9 @@ func (a *Agent) execute(id int64) {
 	if run.TestKeyEnc != nil {
 		s.testKey, _ = a.Box.Decrypt(run.TestKeyEnc)
 	}
+	// The test keys ride in the context from here on, so every model
+	// request, step, run error and log line of this run is scrubbed of them.
+	ctx = redact.WithSecrets(ctx, a.runSecrets(run, s.testKey)...)
 	if run.Kind == "update_provider" {
 		s.fixedSlug = run.ProviderSlug
 	}
@@ -82,7 +86,7 @@ func (a *Agent) execute(id int64) {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return // cancelled by the user; Cancel already updated the run
 		}
-		a.fail(context.Background(), id, err.Error())
+		a.fail(context.WithoutCancel(ctx), id, err.Error())
 		return
 	}
 	a.finish(ctx, s)
@@ -407,4 +411,18 @@ func pluralKeys(n int) string {
 		return "key"
 	}
 	return "keys"
+}
+
+// runSecrets is the live check key and every other test key of a run.
+func (a *Agent) runSecrets(run *store.AgentRun, testKey string) []string {
+	out := []string{testKey}
+	if len(run.TestKeysEnc) > 0 {
+		if plain, err := a.Box.Decrypt(run.TestKeysEnc); err == nil {
+			var keys []string
+			if json.Unmarshal([]byte(plain), &keys) == nil {
+				out = append(out, keys...)
+			}
+		}
+	}
+	return out
 }

@@ -25,10 +25,12 @@ import (
 	"github.com/cogito-keys/cogito/internal/breaker"
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/config"
+	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/egress"
 	"github.com/cogito-keys/cogito/internal/llmstxt"
 	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/pool"
+	"github.com/cogito-keys/cogito/internal/redact"
 	"github.com/cogito-keys/cogito/internal/respcache"
 	"github.com/cogito-keys/cogito/internal/store"
 )
@@ -77,7 +79,29 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 	if p.Notify == nil {
 		p.Notify = notify.New(st, p.Box, catalog.SafeClient(15*time.Second))
 	}
+	if st.Redactor() == nil {
+		st.SetRedactor(NewRedactor(st, p.Box))
+	}
 	return s
+}
+
+// NewRedactor returns a Redactor that knows every secret the store holds:
+// pool keys, webhook URLs and secrets, egress proxy URLs. It decrypts them
+// once and again only after the store reports a change.
+func NewRedactor(st *store.Store, box *crypto.Box) *redact.Redactor {
+	return redact.New(func(ctx context.Context) ([]string, error) {
+		blobs, err := st.SecretBlobs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(blobs))
+		for _, b := range blobs {
+			if sec, err := box.Decrypt(b); err == nil {
+				out = append(out, sec)
+			}
+		}
+		return out, nil
+	})
 }
 
 func (s *Server) Router() http.Handler {

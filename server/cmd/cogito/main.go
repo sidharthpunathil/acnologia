@@ -27,6 +27,7 @@ import (
 	"github.com/cogito-keys/cogito/internal/llmstxt"
 	"github.com/cogito-keys/cogito/internal/notify"
 	"github.com/cogito-keys/cogito/internal/pool"
+	"github.com/cogito-keys/cogito/internal/redact"
 	"github.com/cogito-keys/cogito/internal/store"
 	"github.com/cogito-keys/cogito/internal/webui"
 	"github.com/cogito-keys/cogito/internal/worker"
@@ -49,7 +50,10 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "ctl" {
 		os.Exit(ctl.Run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	// Every log line passes the redactor: patterns from the start, the pool's
+	// known secrets once the store is open.
+	logHandler = redact.NewHandler(slog.NewTextHandler(os.Stdout, nil))
+	slog.SetDefault(slog.New(logHandler))
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -63,6 +67,9 @@ func genKey() string {
 	}
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+// logHandler is the redacting default log handler.
+var logHandler *redact.Handler
 
 func run() error {
 	config.LoadDotEnv(".env")
@@ -127,6 +134,12 @@ func run() error {
 	p.Egress = egress.New(st, box, egress.NewTransport(nil))
 	p.Egress.EchoURL = cfg.EgressEchoURL
 	srv := api.New(cfg, st, p, cat, ag, webui.FS(), llmstxt.Content)
+	if err := st.Redactor().Refresh(ctx); err != nil {
+		slog.Warn("could not load secrets for redaction; patterns still apply", "err", err)
+	}
+	if logHandler != nil {
+		logHandler.Use(st.Redactor())
+	}
 	w := &worker.Worker{Store: st, Pool: p, HealthInterval: cfg.HealthInterval,
 		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour}
 	go w.Run(ctx)

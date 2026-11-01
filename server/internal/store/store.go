@@ -8,15 +8,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/cogito-keys/cogito/internal/redact"
 )
 
 var ErrNotFound = errors.New("not found")
 
 type Store struct {
 	DB *sql.DB
+	// red redacts secrets from text the store writes (see redact.go).
+	red atomic.Pointer[redact.Redactor]
 }
 
 const schema = `

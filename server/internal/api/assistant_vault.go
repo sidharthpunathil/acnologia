@@ -1,14 +1,17 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/keyparse"
+	"github.com/cogito-keys/cogito/internal/redact"
 )
 
 // The key vault keeps pasted secrets away from Claude.
@@ -22,7 +25,10 @@ import (
 // cost Claude a few tokens and one add_keys call with batch "latest".
 // add_keys and start_provider_build resolve refs server side; an entry is
 // wiped once its key is stored. Deleting the thread deletes the vault with
-// it. The transcript keeps only hints.
+// it. The transcript keeps the prose and a key_list of labels and hints.
+// The redact pattern detector runs after keyparse, so a key in a URL, after
+// Bearer or glued to text is vaulted too; the model client scrubs whatever
+// is left (see internal/redact).
 
 // vaultEntry is one pasted key.
 type vaultEntry struct {
@@ -43,40 +49,78 @@ const (
 	vaultModelText = 8000
 )
 
-// mask is how the transcript shows a secret: its last four characters.
-func mask(secret string) string {
-	if len(secret) <= 4 {
-		return "…"
+// chatKeyRef is one key of a user message as the transcript shows it.
+type chatKeyRef struct {
+	Label string `json:"label"`
+	Hint  string `json:"hint"`
+}
+
+// findKeys is keyparse, then the redact pattern detector for what keyparse
+// misses: a key inside a URL (?key=AIza...), after "Bearer", in a JSON field
+// or glued to other text.
+func findKeys(text string) keyparse.Result {
+	res := keyparse.Parse(text)
+	if res.Overflow > 0 {
+		return res
 	}
-	return "…" + secret[len(secret)-4:]
+	seen := map[string]bool{}
+	for _, k := range res.Keys {
+		seen[k.Secret] = true
+	}
+	for _, m := range redact.Find(text) {
+		sec := text[m.Start:m.End]
+		if seen[sec] || strings.HasPrefix(sec, "[") {
+			continue
+		}
+		inside := false
+		for _, k := range res.Keys {
+			inside = inside || strings.Contains(k.Secret, sec)
+		}
+		if inside {
+			continue
+		}
+		if len(res.Keys) >= keyparse.MaxKeys {
+			res.Overflow++
+			continue
+		}
+		seen[sec] = true
+		res.Keys = append(res.Keys, keyparse.Key{Secret: sec})
+	}
+	return res
 }
 
 // vaultMessage moves the keys in a user message into the vault. It returns
-// the text for the model (placeholders), the text for the transcript (hints)
-// and how many keys it found.
-func (cs *chatSession) vaultMessage(text string) (model, shown string, n int, err error) {
-	res := keyparse.Parse(text)
+// the text for the model (placeholders), the text for the transcript (the
+// prose without the keys), the keys as label and hint, and how many keys it
+// found.
+func (cs *chatSession) vaultMessage(text string) (model, shown string, list []chatKeyRef, n int, err error) {
+	res := findKeys(text)
 	if len(res.Keys) == 0 {
-		return text, text, 0, nil
+		return text, text, nil, 0, nil
 	}
 	if res.Overflow > 0 {
-		return "", "", 0, fmt.Errorf("send at most %d keys per message", keyparse.MaxKeys)
+		return "", "", nil, 0, fmt.Errorf("send at most %d keys per message", keyparse.MaxKeys)
 	}
+	list = make([]chatKeyRef, 0, len(res.Keys))
+	for _, k := range res.Keys {
+		list = append(list, chatKeyRef{Label: k.Label, Hint: crypto.Hint(k.Secret)})
+	}
+	shown = proseOnly(text, res.Keys)
 	d := cs.data
 	d.BatchSeq++
 	batch := "b" + strconv.Itoa(d.BatchSeq)
-	type pair struct{ secret, ph, hint string }
+	type pair struct{ secret, ph string }
 	pairs := make([]pair, 0, len(res.Keys))
 	literal := true
 	for _, k := range res.Keys {
 		enc, err := cs.s.Pool.Box.Encrypt(k.Secret)
 		if err != nil {
-			return "", "", 0, err
+			return "", "", nil, 0, err
 		}
 		d.VaultSeq++
 		ref := "k" + strconv.Itoa(d.VaultSeq)
 		d.Vault = append(d.Vault, vaultEntry{Ref: ref, Batch: batch, Label: k.Label, Hint: crypto.Hint(k.Secret), Enc: enc})
-		pairs = append(pairs, pair{k.Secret, "[key " + ref + " " + crypto.Hint(k.Secret) + "]", mask(k.Secret)})
+		pairs = append(pairs, pair{k.Secret, "[key " + ref + " " + crypto.Hint(k.Secret) + "]"})
 		if !strings.Contains(text, k.Secret) {
 			literal = false // found only in an escaped form, such as JSON
 		}
@@ -86,15 +130,13 @@ func (cs *chatSession) vaultMessage(text string) (model, shown string, n int, er
 	}
 	// Longest first, so a secret inside another never splits it.
 	sort.SliceStable(pairs, func(i, j int) bool { return len(pairs[i].secret) > len(pairs[j].secret) })
-	mp, sp := make([]string, 0, 2*len(pairs)), make([]string, 0, 2*len(pairs))
+	mp := make([]string, 0, 2*len(pairs))
 	for _, p := range pairs {
 		mp = append(mp, p.secret, p.ph)
-		sp = append(sp, p.secret, p.hint)
 	}
 	model = strings.NewReplacer(mp...).Replace(text)
-	shown = strings.NewReplacer(sp...).Replace(text)
 	if literal && len(res.Keys) <= vaultInline && len(model) <= vaultModelText {
-		return model, shown, len(res.Keys), nil
+		return model, shown, list, len(res.Keys), nil
 	}
 	first, last := d.Vault[len(d.Vault)-len(res.Keys)].Ref, d.Vault[len(d.Vault)-1].Ref
 	prose := proseLines(model, literal)
@@ -117,24 +159,117 @@ func (cs *chatSession) vaultMessage(text string) (model, shown string, n int, er
 	default:
 		fmt.Fprintf(&b, " %d have labels, for example %s.]", len(labeled), strings.Join(labeled[:20], ", "))
 	}
-	model = b.String()
-	hints := []string{}
-	for i, k := range res.Keys {
-		if i == 3 {
-			break
+	return b.String(), shown, list, len(res.Keys), nil
+}
+
+// keyWords are words that only describe a paste: CSV headers, env exports
+// and the joins between keys. A line left with nothing else once its keys
+// are gone is not prose.
+var keyWords = map[string]bool{
+	"label": true, "name": true, "key": true, "keys": true, "secret": true, "api_key": true, "apikey": true,
+	"token": true, "account": true, "export": true, "and": true, "or": true, "also": true, "plus": true,
+	"bearer": true, "basic": true,
+}
+
+// proseOnly is the user's message without its keys: lines that held only
+// keys (with their labels) go, keys inside a sentence are cut out with the
+// label right before them, and blank runs collapse to one blank line.
+func proseOnly(text string, keys []keyparse.Key) string {
+	if t := strings.TrimSpace(text); strings.HasPrefix(t, "[") && json.Valid([]byte(t)) {
+		return "" // a JSON array of keys is all data
+	}
+	cuts := make([]*regexp.Regexp, 0, len(keys))
+	labels := map[string]bool{}
+	sorted := append([]keyparse.Key(nil), keys...)
+	sort.SliceStable(sorted, func(i, j int) bool { return len(sorted[i].Secret) > len(sorted[j].Secret) })
+	for _, k := range sorted {
+		q := regexp.QuoteMeta(k.Secret)
+		if k.Label != "" {
+			labels[strings.ToLower(k.Label)] = true
+			q = `(?:` + regexp.QuoteMeta(k.Label) + `["'\x60]?\s*[:=,;|]?\s*)?["'\x60]?` + q + `["'\x60]?`
 		}
-		hints = append(hints, mask(k.Secret))
+		cuts = append(cuts, regexp.MustCompile(q))
 	}
-	more := ""
-	if len(res.Keys) > 3 {
-		more = fmt.Sprintf(" and %d more", len(res.Keys)-3)
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines))
+	header := true
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if header && t != "" {
+			header = false
+			if _, _, _, ok := csvHeaderLine(t); ok {
+				continue
+			}
+		}
+		had := false
+		for _, re := range cuts {
+			if re.MatchString(t) {
+				had = true
+				t = re.ReplaceAllString(t, "")
+			}
+		}
+		if !had {
+			out = append(out, strings.TrimRight(l, " \t"))
+			continue
+		}
+		t = emptyPairs.Replace(t)
+		t = strings.Join(strings.Fields(t), " ")
+		t = strings.TrimLeft(t, ",;|")
+		t = strings.TrimSpace(t)
+		if onlyKeyWords(t, labels) {
+			continue
+		}
+		out = append(out, t)
 	}
-	sprose := proseLines(shown, literal)
-	if sprose != "" {
-		sprose += "\n"
+	// Collapse runs of blank lines to one and trim.
+	res := make([]string, 0, len(out))
+	for _, l := range out {
+		if strings.TrimSpace(l) == "" && (len(res) == 0 || strings.TrimSpace(res[len(res)-1]) == "") {
+			continue
+		}
+		res = append(res, l)
 	}
-	shown = fmt.Sprintf("%s%d keys: %s%s", sprose, len(res.Keys), strings.Join(hints, ", "), more)
-	return model, shown, len(res.Keys), nil
+	return strings.TrimSpace(strings.Join(res, "\n"))
+}
+
+var emptyPairs = strings.NewReplacer(`""`, "", "''", "", "``", "", "()", "", "[]", "", "{}", "", "<>", "")
+
+func onlyKeyWords(t string, labels map[string]bool) bool {
+	for _, w := range strings.FieldsFunc(t, func(r rune) bool {
+		return !(r == '_' || r == '-' || r == '.' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r > 127)
+	}) {
+		lw := strings.ToLower(strings.Trim(w, ".-_"))
+		if lw == "" || keyWords[lw] || labels[strings.ToLower(w)] || labels[lw] {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// csvHeaderLine mirrors keyparse's CSV header rule: a line naming a label
+// and a secret column.
+func csvHeaderLine(line string) (string, int, int, bool) {
+	sep := "\t"
+	if strings.Contains(line, ",") {
+		sep = ","
+	} else if !strings.Contains(line, "\t") {
+		return "", 0, 0, false
+	}
+	lab, sec := -1, -1
+	for i, c := range strings.Split(line, sep) {
+		switch strings.ToLower(strings.Trim(strings.TrimSpace(c), "\"'`")) {
+		case "label", "name":
+			if lab < 0 {
+				lab = i
+			}
+		case "key", "secret", "api_key":
+			if sec < 0 {
+				sec = i
+			}
+		}
+	}
+	return sep, lab, sec, lab >= 0 && sec >= 0
 }
 
 // proseLines keeps the lines of a message that hold no key, so the

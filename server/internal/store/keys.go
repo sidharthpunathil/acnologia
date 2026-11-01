@@ -198,6 +198,9 @@ func (s *Store) CreateKeys(ctx context.Context, nks []NewKey) ([]*Key, []int, er
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
+	if len(ids) > 0 {
+		s.keysChanged()
+	}
 	out := make([]*Key, 0, len(ids))
 	for _, id := range ids {
 		k, err := s.GetKey(ctx, id)
@@ -320,7 +323,13 @@ func (s *Store) UpdateKey(ctx context.Context, id int64, p KeyPatch) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if p.SecretEnc != nil {
+		s.keysChanged()
+	}
+	return nil
 }
 
 // DeleteKey removes a key. Events of a hidden key are deleted with it so they
@@ -337,7 +346,11 @@ func (s *Store) DeleteKey(ctx context.Context, id int64) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM keys WHERE id=?`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.keysChanged()
+	return nil
 }
 
 // CountKeys returns the number of stored keys.
@@ -425,7 +438,7 @@ func (s *Store) ApplyEffect(ctx context.Context, id int64, e KeyEffect) error {
 		add(`quota_reset_at=?`, fromTime(*e.QuotaResetAt))
 	}
 	if e.LastError != nil {
-		add(`last_error=?`, *e.LastError)
+		add(`last_error=?`, s.Scrub(ctx, *e.LastError))
 	}
 	if e.Checked {
 		add(`last_checked_at=?`, now())

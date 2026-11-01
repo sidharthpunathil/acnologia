@@ -114,8 +114,9 @@ func scanRun(row interface{ Scan(...any) error }) (*AgentRun, error) {
 
 func (s *Store) CreateRun(ctx context.Context, r *AgentRun) (*AgentRun, error) {
 	in, _ := json.Marshal(r.Input)
+	in = s.Redactor().JSON(ctx, in)
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO agent_runs(kind,status,title,description,provider_slug,input,test_key_enc,test_keys_enc,created_by,created_by_email,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.Kind, r.Status, r.Title, r.Description, r.ProviderSlug, string(in), r.TestKeyEnc, r.TestKeysEnc,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.Kind, r.Status, s.Scrub(ctx, r.Title), s.Scrub(ctx, r.Description), r.ProviderSlug, string(in), r.TestKeyEnc, r.TestKeysEnc,
 		r.CreatedByID, r.CreatedBy, now())
 	if err != nil {
 		return nil, err
@@ -164,24 +165,24 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, p RunPatch) error {
 		add("status=?", *p.Status)
 	}
 	if p.Title != nil {
-		add("title=?", *p.Title)
+		add("title=?", s.Scrub(ctx, *p.Title))
 	}
 	if p.Description != nil {
-		add("description=?", *p.Description)
+		add("description=?", s.Scrub(ctx, *p.Description))
 	}
 	if p.ProviderSlug != nil {
 		add("provider_slug=?", *p.ProviderSlug)
 	}
 	if p.Summary != nil {
-		add("summary=?", *p.Summary)
+		add("summary=?", s.Scrub(ctx, *p.Summary))
 	}
 	if p.Error != nil {
-		add("error=?", *p.Error)
+		add("error=?", s.Scrub(ctx, *p.Error))
 	}
 	for col, v := range map[string]any{"draft": p.Draft, "report": p.Report, "live": p.Live} {
 		if v != nil {
 			b, _ := json.Marshal(v)
-			add(col+"=?", string(b))
+			add(col+"=?", string(s.Redactor().JSON(ctx, b)))
 		}
 	}
 	if p.ServiceID != nil {
@@ -215,6 +216,7 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, p RunPatch) error {
 }
 
 func (s *Store) AddStep(ctx context.Context, runID int64, typ, title, detail string) {
+	title, detail = s.Scrub(ctx, title), s.Scrub(ctx, detail)
 	if len(detail) > 8000 {
 		detail = TruncateUTF8(detail, 8000) + "\n[truncated]"
 	}
@@ -274,7 +276,8 @@ func (s *Store) FailStaleRuns(ctx context.Context) error {
 // still ifTitle, so a late AI naming call never overwrites the name taken
 // from an accepted draft. It reports whether the run changed.
 func (s *Store) RenameRun(ctx context.Context, id int64, title, description, ifTitle string) (bool, error) {
-	res, err := s.DB.ExecContext(ctx, `UPDATE agent_runs SET title=?, description=? WHERE id=? AND title=?`, title, description, id, ifTitle)
+	res, err := s.DB.ExecContext(ctx, `UPDATE agent_runs SET title=?, description=? WHERE id=? AND title=?`,
+		s.Scrub(ctx, title), s.Scrub(ctx, description), id, ifTitle)
 	if err != nil {
 		return false, err
 	}

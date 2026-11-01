@@ -9,11 +9,14 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +26,7 @@ import (
 
 	"github.com/cogito-keys/cogito/internal/catalog"
 	"github.com/cogito-keys/cogito/internal/crypto"
+	"github.com/cogito-keys/cogito/internal/redact"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -67,7 +71,11 @@ func New(cfg Config, st *store.Store, cat *catalog.Catalog, box *crypto.Box) *Ag
 		a.model = "claude-opus-5-5"
 	}
 	if strings.TrimSpace(cfg.APIKey) != "" {
-		opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey), option.WithMaxRetries(3)}
+		// Every request to Anthropic, from the builder, the Assistant, Fill
+		// with AI and run naming, passes through redactRequest, so a new
+		// caller or tool cannot forget to scrub what it sends.
+		opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey), option.WithMaxRetries(3),
+			option.WithMiddleware(a.redactRequest)}
 		if cfg.BaseURL != "" {
 			opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 		}
@@ -144,7 +152,10 @@ func (a *Agent) Submit(ctx context.Context, u *store.User, req RunRequest) (*sto
 	if !a.enabled {
 		return nil, ErrDisabled
 	}
-	req.Context = strings.TrimSpace(req.Context)
+	// Notes are free text a key can be pasted into. They are stored, shown
+	// and sent to Claude, so keys (the run's own and anything key shaped)
+	// are replaced by their hint first.
+	req.Context = strings.TrimSpace(a.Store.Scrub(redact.WithSecrets(ctx, testKeys(req)...), req.Context))
 	urls := []string{}
 	for _, x := range req.URLs {
 		if x = strings.TrimSpace(x); x != "" {
@@ -284,9 +295,31 @@ func (a *Agent) storePendingLogo(id int64, pl pendingLogo) {
 }
 
 func (a *Agent) fail(ctx context.Context, id int64, msg string) {
+	msg = a.Store.Scrub(ctx, msg)
 	a.pendingLogos.Delete(id)
 	st := "failed"
 	_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Error: &msg, Finished: true, ClearTestKey: true, ClearTestKeys: true})
 	a.logf(ctx, id, "error", "Run failed", msg)
 	slog.Warn("agent run failed", "run", id, "err", msg)
+}
+
+// redactRequest is the model boundary. It rewrites the body of every
+// Messages API request: known secrets (pool keys, plus the extras in the
+// request context, such as a run's test keys) and key shaped strings become
+// hint placeholders before anything leaves for Anthropic.
+func (a *Agent) redactRequest(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+	if req.Body == nil || req.Body == http.NoBody {
+		return next(req)
+	}
+	b, err := io.ReadAll(req.Body)
+	_ = req.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	ctx := redact.WithSecrets(req.Context(), a.github)
+	b = a.Store.Redactor().MessagesRequest(ctx, b)
+	req.Body = io.NopCloser(bytes.NewReader(b))
+	req.ContentLength = int64(len(b))
+	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil }
+	return next(req)
 }

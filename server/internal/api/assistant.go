@@ -19,6 +19,7 @@ import (
 
 	"github.com/cogito-keys/cogito/internal/agent"
 	"github.com/cogito-keys/cogito/internal/crypto"
+	"github.com/cogito-keys/cogito/internal/redact"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -82,6 +83,9 @@ type chatItem struct {
 	// Keys counts the keys found in a user message; their secrets are in the
 	// vault and Text shows only their hints.
 	Keys int `json:"keys,omitempty"`
+	// KeyList is those keys as label and hint ("...c21e"), in paste order.
+	// Text is then the prose alone, without the keys.
+	KeyList []chatKeyRef `json:"key_list,omitempty"`
 	// Build is a provider build the turn follows (kind build).
 	Build *chatBuild `json:"build,omitempty"`
 	// Ask is a structured question for the user (kind ask).
@@ -364,11 +368,15 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		cs.expireAsks()
-		model, shown, n, err := cs.vaultMessage(text)
+		model, shown, list, n, err := cs.vaultMessage(text)
 		if err != nil {
 			return err
 		}
-		cs.addItem(chatItem{Kind: "user", Text: shown, Keys: n, OK: true})
+		// Anything key shaped that is left (a known pool key in prose, say)
+		// is scrubbed from both copies as a last line.
+		ctx := cs.ctx
+		model, shown = cs.s.Store.Scrub(ctx, model), cs.s.Store.Scrub(ctx, shown)
+		cs.addItem(chatItem{Kind: "user", Text: shown, Keys: n, KeyList: list, OK: true})
 		cs.appendUser(chatBlock{Type: "text", Text: model})
 		return nil
 	})
@@ -475,7 +483,7 @@ func (s *Server) chatTurn(w http.ResponseWriter, r *http.Request, apply func(cs 
 			close(ts.done)
 		}()
 		if err := cs.loop(ctx); err != nil {
-			msg := err.Error()
+			msg := cs.s.Store.Scrub(cs.redactCtx(ctx), err.Error())
 			if ctx.Err() != nil {
 				msg = "The assistant stopped: this turn ran out of time or the chat was deleted."
 			}
@@ -586,6 +594,16 @@ func (cs *chatSession) setPending(i int, status string) {
 	}
 }
 
+// redactCtx carries the secrets this turn handled, so the model boundary
+// and Scrub replace them even before they are pool keys.
+func (cs *chatSession) redactCtx(ctx context.Context) context.Context {
+	list := make([]string, 0, len(cs.secrets))
+	for s := range cs.secrets {
+		list = append(list, s)
+	}
+	return redact.WithSecrets(ctx, list...)
+}
+
 // redact replaces key secrets seen this request with their hint.
 func (cs *chatSession) redact(s string) string {
 	for sec := range cs.secrets {
@@ -678,7 +696,7 @@ func (cs *chatSession) loop(ctx context.Context) error {
 			converse = cs.s.chatModel
 		}
 		cs.turn.setStep("Thinking")
-		resp, err := converse(ctx, system, cs.params(), tools)
+		resp, err := converse(cs.redactCtx(ctx), system, cs.params(), tools)
 		if err != nil {
 			return fmt.Errorf("the assistant could not answer: %v", err)
 		}
@@ -787,6 +805,11 @@ func (cs *chatSession) runTool(t *chatTool, in map[string]any, raw json.RawMessa
 	}
 	cs.turn.setStep(stepText(t.Name))
 	out := t.Run(cs, in)
+	// Tool results go to Claude and into the transcript: scrub pool keys,
+	// keys this turn handled, and anything key shaped (an upstream error
+	// that echoes a key, a URL with ?key=).
+	rctx := cs.redactCtx(cs.ctx)
+	out.Model, out.Summary = cs.s.Store.Scrub(rctx, out.Model), cs.s.Store.Scrub(rctx, out.Summary)
 	if len(out.Model) > chatMaxModelText {
 		out.Model = crypto.Truncate(out.Model, chatMaxModelText) + "\n...(truncated)"
 	}

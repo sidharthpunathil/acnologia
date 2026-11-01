@@ -73,6 +73,7 @@ func (s *Store) GetEgress(ctx context.Context, id int64) (*EgressProxy, error) {
 }
 
 func (s *Store) CreateEgress(ctx context.Context, p *EgressProxy) (*EgressProxy, error) {
+	defer s.keysChanged()
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO egress_proxies(name,url_enc,url_hint,region,notes,created_at) VALUES(?,?,?,?,?,?)`,
 		p.Name, p.URLEnc, p.URLHint, p.Region, p.Notes, now())
 	if err != nil {
@@ -84,6 +85,7 @@ func (s *Store) CreateEgress(ctx context.Context, p *EgressProxy) (*EgressProxy,
 
 // UpdateEgress saves name, region and notes, and the URL when URLEnc is set.
 func (s *Store) UpdateEgress(ctx context.Context, p *EgressProxy) error {
+	defer s.keysChanged()
 	if p.URLEnc != nil {
 		_, err := s.DB.ExecContext(ctx, `UPDATE egress_proxies SET name=?, region=?, notes=?, url_enc=?, url_hint=? WHERE id=?`,
 			p.Name, p.Region, p.Notes, p.URLEnc, p.URLHint, p.ID)
@@ -96,6 +98,7 @@ func (s *Store) UpdateEgress(ctx context.Context, p *EgressProxy) error {
 // DeleteEgress removes a proxy and detaches it from services and keys, which
 // then connect directly again.
 func (s *Store) DeleteEgress(ctx context.Context, id int64) error {
+	defer s.keysChanged()
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err

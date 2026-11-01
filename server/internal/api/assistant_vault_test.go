@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cogito-keys/cogito/internal/agent"
+	"github.com/cogito-keys/cogito/internal/crypto"
 	"github.com/cogito-keys/cogito/internal/store"
 )
 
@@ -136,8 +137,9 @@ func TestAssistantVaultKeeps300KeysAwayFromClaude(t *testing.T) {
 			t.Fatal("the transcript holds a secret")
 		}
 	}
-	if got.Items[0].Keys != 300 || !strings.Contains(got.Items[0].Text, "300 keys: …") {
-		t.Fatalf("user item: %d %q", got.Items[0].Keys, got.Items[0].Text)
+	if u := got.Items[0]; u.Keys != 300 || len(u.KeyList) != 300 || u.Text != "add these serpapi keys please" ||
+		u.KeyList[0] != (chatKeyRef{Label: "acct-0", Hint: crypto.Hint(secrets[0])}) || u.KeyList[1].Label != "" {
+		t.Fatalf("user item: %d keys, %d listed, %q", u.Keys, len(u.KeyList), u.Text)
 	}
 	if d := e.chatData(id); len(d.Vault) != 0 {
 		t.Fatalf("vault kept %d used entries", len(d.Vault))
@@ -158,8 +160,9 @@ func TestAssistantSmallPasteGetsInlinePlaceholders(t *testing.T) {
 	if len(d.Vault) != 2 || d.Vault[0].Label != "acct-1" || string(d.Vault[0].Enc) == "sk_live_abc123def456ghi789" {
 		t.Fatalf("vault: %+v", d.Vault)
 	}
-	if d.Items[0].Text != "acct-1, …i789 and acct-2 …r321" {
-		t.Fatalf("shown: %q", d.Items[0].Text)
+	if it := d.Items[0]; it.Text != "" || len(it.KeyList) != 2 || it.KeyList[0] != (chatKeyRef{"acct-1", "...i789"}) ||
+		it.KeyList[1] != (chatKeyRef{"acct-2", "...r321"}) {
+		t.Fatalf("shown: %q %+v", it.Text, it.KeyList)
 	}
 	// Deleting the thread takes the vault with it.
 	e.do(e.super, "DELETE", "/api/admin/chat/threads/"+itoa(int(id)), nil, 200, nil)

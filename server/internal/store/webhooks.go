@@ -84,6 +84,7 @@ func (s *Store) GetWebhook(ctx context.Context, id int64) (*Webhook, error) {
 }
 
 func (s *Store) CreateWebhook(ctx context.Context, w *Webhook) (*Webhook, error) {
+	defer s.keysChanged()
 	events, _ := json.Marshal(nonNil(w.Events))
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO webhooks(name,url_enc,url_hint,format,events,secret_enc,active,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		w.Name, w.URLEnc, w.URLHint, w.Format, string(events), w.SecretEnc, b2i(w.Active), now())
@@ -97,6 +98,7 @@ func (s *Store) CreateWebhook(ctx context.Context, w *Webhook) (*Webhook, error)
 // UpdateWebhook saves name, format, events and active. A non-nil URLEnc also
 // replaces the URL.
 func (s *Store) UpdateWebhook(ctx context.Context, w *Webhook) error {
+	defer s.keysChanged()
 	events, _ := json.Marshal(nonNil(w.Events))
 	if w.URLEnc != nil {
 		_, err := s.DB.ExecContext(ctx, `UPDATE webhooks SET name=?, format=?, events=?, active=?, url_enc=?, url_hint=? WHERE id=?`,
@@ -109,12 +111,13 @@ func (s *Store) UpdateWebhook(ctx context.Context, w *Webhook) error {
 }
 
 func (s *Store) DeleteWebhook(ctx context.Context, id int64) error {
+	defer s.keysChanged()
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM webhooks WHERE id=?`, id)
 	return err
 }
 
 // RecordWebhookDelivery stores the result of the latest delivery attempt.
 func (s *Store) RecordWebhookDelivery(ctx context.Context, id int64, status int, errMsg string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE webhooks SET last_sent_at=?, last_status=?, last_error=? WHERE id=?`, now(), status, errMsg, id)
+	_, err := s.DB.ExecContext(ctx, `UPDATE webhooks SET last_sent_at=?, last_status=?, last_error=? WHERE id=?`, now(), status, s.Scrub(ctx, errMsg), id)
 	return err
 }

@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -212,6 +213,19 @@ func (n *Notifier) Deliver(ctx context.Context, h *store.Webhook, e Event) (int,
 	if err != nil {
 		return 0, fmt.Errorf("cannot decrypt webhook URL")
 	}
+	// Messages quote upstream errors, which can echo a key; the payload
+	// leaves the server, so scrub it here.
+	e.Message = n.Store.Scrub(ctx, e.Message)
+	if len(e.Data) > 0 {
+		data := make(map[string]any, len(e.Data))
+		for k, v := range e.Data {
+			if s, ok := v.(string); ok {
+				v = n.Store.Scrub(ctx, s)
+			}
+			data[k] = v
+		}
+		e.Data = data
+	}
 	body, err := Payload(h.Format, e)
 	if err != nil {
 		return 0, err
@@ -234,7 +248,9 @@ func (n *Notifier) Deliver(ctx context.Context, h *store.Webhook, e Event) (int,
 	req.Header.Set("X-Cogito-Event", e.Type)
 	resp, err := n.Client.Do(req)
 	if err != nil {
-		return 0, err
+		// The URL is itself a secret (Slack, Discord and Telegram put the
+		// token in it), and transport errors quote it.
+		return 0, errors.New(strings.ReplaceAll(err.Error(), u, h.URLHint))
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
