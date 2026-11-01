@@ -171,6 +171,13 @@ func (c *Catalog) Delete(ctx context.Context, slug string) error {
 func (c *Catalog) Boot(ctx context.Context) error {
 	for _, b := range providers.Builtins() {
 		if _, err := c.Store.GetProvider(ctx, b.Slug); err == nil {
+			// Already seeded: only fill in a logo that is still missing, so
+			// existing installs get logos added in newer releases.
+			if _, _, lerr := c.Store.ProviderLogo(ctx, b.Slug); errors.Is(lerr, store.ErrNotFound) {
+				if data, mime := providers.SeedLogo(b.Slug); data != nil {
+					_ = c.Store.SetProviderLogo(ctx, b.Slug, data, mime)
+				}
+			}
 			continue
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
@@ -181,8 +188,12 @@ func (c *Catalog) Boot(ctx context.Context) error {
 		if _, err := c.Store.SaveProvider(ctx, p, "system", "built-in"); err != nil {
 			return err
 		}
-		if b.Logo != nil {
-			if err := c.Store.SetProviderLogo(ctx, b.Slug, b.Logo, b.LogoMime); err != nil {
+		logo, mime := b.Logo, b.LogoMime
+		if logo == nil {
+			logo, mime = providers.SeedLogo(b.Slug)
+		}
+		if logo != nil {
+			if err := c.Store.SetProviderLogo(ctx, b.Slug, logo, mime); err != nil {
 				return err
 			}
 		}

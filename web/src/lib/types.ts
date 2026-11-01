@@ -458,6 +458,8 @@ export interface Provider {
   updated_at: string;
   created_at: string;
   services_count: number;
+  /** Visible keys across every service built on this provider. */
+  keys_count: number;
   spec: ProviderSpec;
   base_url: string;
   auth_type: string;
@@ -476,6 +478,7 @@ export type ProviderInput = Omit<
   | "updated_at"
   | "created_at"
   | "services_count"
+  | "keys_count"
   | "base_url"
   | "auth_type"
   | "auth_name"

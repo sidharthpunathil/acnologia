@@ -9,7 +9,7 @@ import { plural, relTime } from "../../lib/format";
 import type { Provider } from "../../lib/types";
 import { ProviderLogo } from "../../components/EntityLogo";
 import { Tabs } from "../../components/Tabs";
-import { Badge, Callout, Empty, PageHeader, PageSkeleton } from "../../components/ui";
+import { Badge, Callout, Empty, PageHeader, PageSkeleton, cx } from "../../components/ui";
 
 export function SourceBadge({ source }: { source: Provider["source"] }) {
   if (source === "ai")
@@ -25,16 +25,23 @@ export function SourceBadge({ source }: { source: Provider["source"] }) {
 
 function ProviderCard({ p }: { p: Provider }) {
   const disabled = p.status === "disabled";
+  // No keys yet: keep the card quiet until it is hovered or focused.
+  const idle = (p.keys_count ?? 0) === 0;
   return (
     <Link
       to={`/providers/${encodeURIComponent(p.slug)}`}
-      className="group flex flex-col gap-3 rounded-card bg-surface p-4 shadow-card transition-[box-shadow,transform] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift"
+      className={cx(
+        "group flex flex-col gap-3 rounded-card p-4 transition-[box-shadow,transform,background-color] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift",
+        idle ? "bg-surface/55 shadow-none ring-1 ring-inset ring-line hover:bg-surface" : "bg-surface shadow-card",
+      )}
     >
       <div className="flex items-start gap-3.5">
-        <ProviderLogo provider={p} />
+        <span className={cx("shrink-0", idle && "grayscale opacity-50 transition-[filter,opacity] duration-200 ease-out group-hover:grayscale-0 group-hover:opacity-100 group-focus-visible:grayscale-0 group-focus-visible:opacity-100")}>
+          <ProviderLogo provider={p} />
+        </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={disabled ? "truncate text-[15px] font-medium text-muted" : "truncate text-[15px] font-medium text-ink"}>{p.name}</span>
+            <span className={disabled || idle ? "truncate text-[15px] font-medium text-muted" : "truncate text-[15px] font-medium text-ink"}>{p.name}</span>
             {disabled && <Badge>disabled</Badge>}
           </div>
           <div className="mt-1 truncate font-mono text-xs text-muted">
@@ -46,6 +53,7 @@ function ProviderCard({ p }: { p: Provider }) {
       <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
         <SourceBadge source={p.source} />
         <Badge tone={p.services_count > 0 ? "green" : "neutral"}>{plural(p.services_count, "service")}</Badge>
+        {idle ? <Badge>No keys</Badge> : <Badge tone="green">{plural(p.keys_count, "key")}</Badge>}
         <span className="ml-auto font-mono text-[11px] text-faint">{p.updated_at ? `updated ${relTime(p.updated_at)}` : ""}</span>
       </div>
     </Link>

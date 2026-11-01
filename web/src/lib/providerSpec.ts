@@ -123,6 +123,7 @@ export function fromTemplate(t: ProviderTemplate): Provider {
     updated_at: "",
     created_at: "",
     services_count: 0,
+    keys_count: 0,
     spec,
     base_url: t.base_url,
     auth_type: t.auth_type,

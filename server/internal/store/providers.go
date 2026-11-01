@@ -25,6 +25,8 @@ type Provider struct {
 	UpdatedAt     time.Time       `json:"updated_at"`
 	LogoURL       *string         `json:"logo_url"`
 	ServicesCount int             `json:"services_count"`
+	// KeysCount counts visible keys across every service built on this provider.
+	KeysCount int `json:"keys_count"`
 
 	HasLogo bool `json:"-"`
 	LogoRev int  `json:"-"`
@@ -40,7 +42,8 @@ type ProviderVersion struct {
 
 const providerCols = `p.slug, p.name, p.category, p.description, p.website, p.docs_url, p.color, p.status, p.builtin, p.source,
 p.version, p.spec, p.created_at, p.updated_at, p.logo IS NOT NULL, p.logo_rev,
-(SELECT COUNT(*) FROM services s WHERE s.provider=p.slug)`
+(SELECT COUNT(*) FROM services s WHERE s.provider=p.slug),
+(SELECT COUNT(*) FROM keys k JOIN services s ON s.id=k.service_id WHERE s.provider=p.slug AND k.hidden=0)`
 
 func scanProvider(row interface{ Scan(...any) error }) (*Provider, error) {
 	var p Provider
@@ -48,7 +51,7 @@ func scanProvider(row interface{ Scan(...any) error }) (*Provider, error) {
 	var spec string
 	var c, u int64
 	err := row.Scan(&p.Slug, &p.Name, &p.Category, &p.Description, &p.Website, &p.DocsURL, &p.Color, &p.Status, &builtin,
-		&p.Source, &p.Version, &spec, &c, &u, &p.HasLogo, &p.LogoRev, &p.ServicesCount)
+		&p.Source, &p.Version, &spec, &c, &u, &p.HasLogo, &p.LogoRev, &p.ServicesCount, &p.KeysCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

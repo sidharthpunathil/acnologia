@@ -12,7 +12,7 @@ import { STRATEGY_LABEL, compact, plural } from "../lib/format";
 import type { Service } from "../lib/types";
 import { Tabs } from "../components/Tabs";
 import { ServiceLogo } from "../components/EntityLogo";
-import { Button, Callout, Empty, PageSkeleton } from "../components/ui";
+import { Button, Callout, Empty, PageSkeleton, cx } from "../components/ui";
 import { AddServiceModal } from "./AddServiceModal";
 
 const ALL = "__all";
@@ -49,15 +49,22 @@ function FreeTierLine({ provider }: { provider: string }) {
 function ServiceCard({ s }: { s: Service }) {
   const healthy = s.key_counts.available > 0;
   const meta = serviceMeta(s);
+  // No keys yet: keep the card quiet until it is hovered or focused.
+  const idle = s.key_counts.total === 0;
   return (
     <Link
       to={`/services/${s.id}`}
-      className="group flex min-h-[72px] items-center gap-3.5 rounded-card bg-surface px-4 py-4 shadow-card transition-[box-shadow,transform] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift"
+      className={cx(
+        "group flex min-h-[72px] items-center gap-3.5 rounded-card px-4 py-4 transition-[box-shadow,transform,background-color] duration-150 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.99] hover:shadow-lift",
+        idle ? "bg-surface/55 shadow-none ring-1 ring-inset ring-line hover:bg-surface" : "bg-surface shadow-card",
+      )}
     >
-      <ServiceLogo service={s} />
+      <span className={cx("shrink-0", idle && "grayscale opacity-50 transition-[filter,opacity] duration-200 ease-out group-hover:grayscale-0 group-hover:opacity-100 group-focus-visible:grayscale-0 group-focus-visible:opacity-100")}>
+        <ServiceLogo service={s} />
+      </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="min-w-0 truncate text-[15px] font-medium text-ink">{s.name}</span>
+          <span className={cx("min-w-0 truncate text-[15px] font-medium", idle ? "text-muted" : "text-ink")}>{s.name}</span>
           <span
             className={healthy ? "h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" : "h-1.5 w-1.5 shrink-0 rounded-full bg-line-strong"}
             aria-hidden="true"

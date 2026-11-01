@@ -119,7 +119,7 @@ func TestValidateAndLogos(t *testing.T) {
 	for _, p := range list.Providers {
 		got[p.Slug] = p.LogoURL != nil
 	}
-	if !got["serpapi"] || !got["elevenlabs"] || got["generic"] {
+	if !got["serpapi"] || !got["elevenlabs"] || !got["generic"] {
 		t.Fatalf("logo presence: %v", got)
 	}
 	var sv store.Service
@@ -155,5 +155,30 @@ func TestValidateAndLogos(t *testing.T) {
 	e.do(e.super, "GET", "/api/admin/ai/rules", nil, 200, &rules)
 	if rules.UpdatedBy != "root@x.io" || !strings.Contains(rules.Rules, "voice") {
 		t.Fatalf("rules: %+v", rules)
+	}
+}
+
+func TestBuiltinLogosAndKeyCounts(t *testing.T) {
+	e := newEnv(t)
+	var list struct {
+		Providers []struct {
+			Slug      string  `json:"slug"`
+			LogoURL   *string `json:"logo_url"`
+			KeysCount int     `json:"keys_count"`
+		}
+	}
+	e.addKeys(map[string]any{"secret": "countme1"}, map[string]any{"secret": "hiddenx1", "hidden": true})
+	e.do(e.super, "GET", "/api/admin/providers", nil, 200, &list)
+	for _, p := range list.Providers {
+		if p.LogoURL == nil {
+			t.Errorf("built-in provider %s has no logo", p.Slug)
+		}
+		want := 0
+		if p.Slug == "serpapi" {
+			want = 1 // hidden keys are not counted
+		}
+		if p.KeysCount != want {
+			t.Errorf("%s keys_count = %d, want %d", p.Slug, p.KeysCount, want)
+		}
 	}
 }
