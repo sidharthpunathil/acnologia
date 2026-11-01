@@ -226,6 +226,7 @@ func TestAssistantReadToolsReachTheirRoutes(t *testing.T) {
 	add("key_details", `{"key_id":1}`)
 	add("app_usage", `{"app_id":`+itoa(int(appID))+`}`)
 	add("service_breaker", `{"service":"serpapi"}`)
+	add("app_mcp_settings", `{"app_id":`+itoa(int(appID))+`}`)
 	f := &fakeClaude{replies: []string{`{"content":[` + strings.Join(calls, ",") + `],"stop_reason":"tool_use"}`, text("done")}}
 	e.api.chatModel = f.converse
 	id := e.newChat(e.super)
@@ -248,5 +249,37 @@ func TestAssistantReadToolsReachTheirRoutes(t *testing.T) {
 		if tl.Desc == "" || !tl.Role.Valid() || (tl.Confirm && tl.Describe == nil) {
 			t.Errorf("tool %s is incomplete", tl.Name)
 		}
+	}
+}
+
+func TestAssistantMCPSettingsMergeAndManageNeedsConfirm(t *testing.T) {
+	e := newEnv(t)
+	appID, _ := e.app(map[string]any{"name": "agent"})
+	a := itoa(int(appID))
+	f := &fakeClaude{replies: []string{
+		toolUse("tu_1", "update_app_mcp", `{"app_id":`+a+`,"insights":true}`),
+		toolUse("tu_2", "update_app_mcp", `{"app_id":`+a+`,"manage":true}`),
+		toolUse("tu_3", "enable_app_mcp_manage", `{"app_id":`+a+`}`),
+		text("Press Confirm."),
+	}}
+	e.api.chatModel = f.converse
+	id := e.newChat(e.super)
+	var out chatResp
+	e.do(e.super, "POST", "/api/admin/chat/threads/"+itoa(int(id))+"/messages", map[string]any{"text": "set up mcp"}, 200, &out)
+	st, _ := e.st.GetMCPSettings(context.Background(), appID)
+	if !st.Insights || !st.Core || st.Manage {
+		t.Fatalf("merge lost a setting or manage turned on without confirm: %+v", st)
+	}
+	var pend string
+	for _, it := range out.Items {
+		if it.Kind == "confirm" && it.Pending != nil {
+			pend = it.Pending.ID
+		}
+	}
+	f.replies = []string{text("Done.")}
+	e.do(e.super, "POST", "/api/admin/chat/threads/"+itoa(int(id))+"/confirm", map[string]any{"pending_id": pend, "approve": true}, 200, nil)
+	st, _ = e.st.GetMCPSettings(context.Background(), appID)
+	if !st.Manage || !st.Insights {
+		t.Fatalf("confirm did not enable manage or lost insights: %+v", st)
 	}
 }

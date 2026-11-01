@@ -179,6 +179,39 @@ func opsTools() []*chatTool {
 				return cs.simple("POST", path, nil, "Purged the cache of "+sv.Slug, nil)
 			},
 		},
+		{
+			Name: "app_mcp_settings", Role: store.RoleMember, Required: []string{"app_id"}, Props: map[string]any{"app_id": idProp("")},
+			Desc: "An app's MCP server settings: which tool sets are on, every tool with whether it is enabled, and the endpoint URL.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				id, _ := argNum(in, "app_id")
+				return cs.simple("GET", fmt.Sprintf("/api/admin/apps/%d/mcp", id), nil, fmt.Sprintf("Read MCP settings of app %d", id), nil)
+			},
+		},
+		{
+			Name: "update_app_mcp", Role: store.RoleAdmin, Required: []string{"app_id"}, Props: mcpProps(idProp),
+			Desc: "Change an app's MCP server: tool sets (core, service_tools, insights), resources, prompts, exclusive leases by default, result size, extra instructions, or tools to hide. Only the fields you send change. Turning on the manage tool set needs enable_app_mcp_manage.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				if on, _ := in["manage"].(bool); on {
+					return toolFail("turning on the manage tool set needs enable_app_mcp_manage, which asks the user to confirm")
+				}
+				return cs.patchMCP(in)
+			},
+		},
+		{
+			Name: "enable_app_mcp_manage", Role: store.RoleAdmin, Confirm: true, Required: []string{"app_id"}, Props: map[string]any{"app_id": idProp("")},
+			Desc: "Turn on the manage tool set for an app's MCP server, which lets anyone holding that app's token manage keys through MCP. The user must confirm.",
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				id, _ := argNum(in, "app_id")
+				a, err := cs.s.Store.GetApp(cs.r.Context(), id)
+				if err != nil {
+					return "", fmt.Errorf("no app %d", id)
+				}
+				return fmt.Sprintf("Turn on key management tools in the MCP server of app %s; anyone with its token can then manage keys", a.Name), nil
+			},
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				return cs.patchMCP(map[string]any{"app_id": in["app_id"], "manage": true})
+			},
+		},
 		confirmDelete("delete_webhook", "webhook_id", "webhook", "/api/admin/webhooks/%d"),
 		confirmDelete("delete_egress_proxy", "proxy_id", "egress proxy", "/api/admin/egress/%d"),
 		confirmDelete("delete_group", "group_id", "service group", "/api/admin/groups/%d"),
@@ -203,4 +236,46 @@ func confirmDelete(name, idField, what, pathFmt string) *chatTool {
 			return cs.simple("DELETE", fmt.Sprintf(pathFmt, id), nil, fmt.Sprintf("Deleted %s %d", what, id), nil)
 		},
 	}
+}
+
+func mcpProps(idProp func(string) map[string]any) map[string]any {
+	b := func(d string) map[string]any { return map[string]any{"type": "boolean", "description": d} }
+	return map[string]any{
+		"app_id":            idProp(""),
+		"core":              b("lease, report, renew and proxy tools"),
+		"service_tools":     b("tools generated from each provider's examples"),
+		"insights":          b("read only key insights"),
+		"manage":            b("turn off key management tools (turning on needs enable_app_mcp_manage)"),
+		"resources":         b(""),
+		"prompts":           b(""),
+		"exclusive_default": b("get_key is exclusive unless the call says otherwise"),
+		"max_result_kb":     map[string]any{"type": "integer", "description": "cap on tool result size, 1 to 2048"},
+		"instructions":      map[string]any{"type": "string", "description": "extra instructions sent to MCP clients"},
+		"disabled_tools":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "tool names to hide; replaces the list"},
+	}
+}
+
+// patchMCP merges the given fields into the app's MCP settings, since the
+// API replaces the whole settings object.
+func (cs *chatSession) patchMCP(in map[string]any) toolOut {
+	id, _ := argNum(in, "app_id")
+	path := fmt.Sprintf("/api/admin/apps/%d/mcp", id)
+	code, cur, msg := cs.api("GET", path, nil)
+	if code >= 400 {
+		return toolFail(msg)
+	}
+	settings, _ := cur["settings"].(map[string]any)
+	if settings == nil {
+		return toolFail("could not read the current MCP settings")
+	}
+	for _, k := range []string{"core", "service_tools", "insights", "manage", "resources", "prompts",
+		"exclusive_default", "max_result_kb", "instructions", "disabled_tools"} {
+		if v, ok := in[k]; ok && v != nil {
+			settings[k] = v
+		}
+	}
+	delete(settings, "updated_at")
+	return cs.simple("PUT", path, settings, fmt.Sprintf("Updated MCP settings of app %d", id), func(m map[string]any) any {
+		return map[string]any{"settings": m["settings"], "endpoint": m["endpoint"]}
+	})
 }
