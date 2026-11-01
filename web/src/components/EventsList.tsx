@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Link } from "react-router-dom";
 import type { CogitoEvent, EventKind } from "../lib/types";
 import { dateTime, relTime } from "../lib/format";
@@ -34,12 +35,24 @@ export function EventsList({
   showService?: boolean;
   serviceIdBySlug?: Record<string, number>;
 }) {
+  // Events that arrive after the first render settle in, so a live feed does
+  // not jump. The first batch renders still: nothing is new on page load.
+  // Each id remembers when it first showed up; the class stays for the length
+  // of the entrance, so a clock tick re-render cannot cut it short.
+  const seen = useRef<Map<number, number> | null>(null);
+  const t = Date.now();
+  if (seen.current === null) seen.current = new Map(events.map((e) => [e.id, 0]));
+  for (const e of events) if (!seen.current.has(e.id)) seen.current.set(e.id, t);
+  const isFresh = (id: number) => {
+    const at = seen.current?.get(id) ?? 0;
+    return at > 0 && t - at < 400;
+  };
   return (
     <ul className="divide-y divide-line overflow-hidden rounded-card bg-surface shadow-card">
       {events.map((e) => {
         const sid = e.service_id ?? serviceIdBySlug?.[e.service_slug];
         return (
-          <li key={e.id} className="flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+          <li key={e.id} className={cx("flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4", isFresh(e.id) && "fade-up")}>
             <div className="flex min-w-0 items-center gap-2 sm:w-[150px] sm:shrink-0">
               <KindBadge kind={e.kind} />
               {e.status_code > 0 && (
@@ -64,14 +77,16 @@ export function EventsList({
                     <span className="font-medium">{e.service_slug}</span>
                   )
                 )}
-                {e.key_label && <span className="font-mono text-xs text-muted">key {e.key_label}</span>}
-                {e.app_name && <span className="font-mono text-xs text-muted">app {e.app_name}</span>}
+                {e.key_label && <span className="wrap-anywhere min-w-0 font-mono text-xs text-muted">key {e.key_label}</span>}
+                {e.app_name && <span className="wrap-anywhere min-w-0 font-mono text-xs text-muted">app {e.app_name}</span>}
               </div>
               {e.detail && <div className="wrap-anywhere mt-0.5 line-clamp-2 text-xs text-muted" title={e.detail}>{e.detail}</div>}
             </div>
-            <div className="flex shrink-0 items-center gap-3 font-mono text-[11px] text-faint">
+            <div className="flex shrink-0 items-center gap-3 font-mono text-[11px] tabular-nums text-faint">
               {e.latency_ms > 0 && <span>{e.latency_ms}ms</span>}
-              <span title={dateTime(e.ts)}>{relTime(e.ts, now)}</span>
+              <time dateTime={e.ts} title={dateTime(e.ts)}>
+                {relTime(e.ts, now)}
+              </time>
             </div>
           </li>
         );

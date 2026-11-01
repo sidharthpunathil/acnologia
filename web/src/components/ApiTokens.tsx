@@ -10,7 +10,7 @@ import { useNow } from "../hooks/useNow";
 import { Modal } from "./Modal";
 import { CopyButton, SecretBox } from "./CopyButton";
 import { ConfirmButton } from "./ConfirmButton";
-import { Badge, Button, Field, Input, Section, Select, Skeleton } from "./ui";
+import { Badge, Button, Field, Input, Section, Select, Skeleton, cx } from "./ui";
 
 const SCOPES_FOR: Record<Role, TokenScope[]> = {
   member: ["read"],
@@ -81,6 +81,8 @@ export function ApiTokens() {
   const [days, setDays] = useState(90);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{ token: string; info: AdminToken } | null>(null);
+  // The token made in this visit fades into the list instead of appearing at once.
+  const [freshId, setFreshId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -115,6 +117,7 @@ export function ApiTokens() {
       const res = await ops.createToken({ name: n, scope, expires_in_days: days });
       setCreated(res);
       setName("");
+      setFreshId(res.info.id);
       setTokens((list) => [res.info, ...list.filter((t) => t.id !== res.info.id)]);
     } catch (err) {
       toast.error(errorMessage(err));
@@ -185,10 +188,10 @@ export function ApiTokens() {
             {tokens.map((t) => {
               const expired = !!t.expires_at && Date.parse(t.expires_at) <= now;
               return (
-                <li key={t.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <li key={t.id} className={cx("flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between", t.id === freshId && "fade-up")}>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[13px] font-medium text-ink">{t.name}</span>
+                      <span className="wrap-anywhere min-w-0 text-[13px] font-medium text-ink">{t.name}</span>
                       <Badge tone={SCOPE_TONE[t.scope]}>{t.scope}</Badge>
                       {expired && <Badge tone="red">expired</Badge>}
                     </div>

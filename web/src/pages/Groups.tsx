@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useTitle } from "../hooks/useTitle";
 import { ArrowDown, ArrowUp, ChevronRight, Info, Pencil, Plus, Waypoints, X } from "lucide-react";
 import { useServices } from "../stores/services";
@@ -11,7 +11,7 @@ import { ops, type ServiceGroup } from "../lib/ops";
 import { Modal } from "../components/Modal";
 import { CopyButton } from "../components/CopyButton";
 import { ConfirmButton } from "../components/ConfirmButton";
-import { Button, Callout, Empty, Field, IconButton, Input, PageHeader, PageSkeleton, Select, Textarea } from "../components/ui";
+import { Button, Callout, Empty, Field, IconButton, Input, PageHeader, PageSkeleton, Select, Textarea, cx } from "../components/ui";
 
 const MIN_MEMBERS = 2;
 const MAX_MEMBERS = 20;
@@ -39,11 +39,57 @@ function MemberPicker({
 }) {
   const nameBySlug = Object.fromEntries(options.map((s) => [s.slug, s.name]));
   const remaining = options.filter((s) => !value.includes(s.slug));
+  const rows = useRef(new Map<string, HTMLLIElement>());
+  const tops = useRef(new Map<string, number>());
+  // Members that were just added fade in; the ones already there do not.
+  const known = useRef(new Set(value));
+  // Moving a row re-inserts its DOM node, which drops focus. Put it back.
+  const refocus = useRef<{ slug: string; dir: -1 | 1 } | null>(null);
+
+  const snapshot = () => {
+    tops.current = new Map([...rows.current].map(([slug, el]) => [slug, el.getBoundingClientRect().top]));
+  };
+
+  // FLIP: rows that changed place slide from where they were to where they are.
+  useLayoutEffect(() => {
+    const before = tops.current;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const [slug, el] of rows.current) {
+      const was = before.get(slug);
+      if (was === undefined || reduce) continue;
+      const dy = was - el.getBoundingClientRect().top;
+      if (Math.abs(dy) < 1) continue;
+      el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0)" }], {
+        duration: 220,
+        easing: "cubic-bezier(0.77, 0, 0.175, 1)",
+      });
+    }
+    tops.current = new Map();
+    const f = refocus.current;
+    refocus.current = null;
+    if (f) {
+      const row = rows.current.get(f.slug);
+      const btns = row?.querySelectorAll<HTMLButtonElement>("button[data-move]");
+      const want = btns?.[f.dir === -1 ? 0 : 1];
+      const other = btns?.[f.dir === -1 ? 1 : 0];
+      (want && !want.disabled ? want : other)?.focus();
+    }
+    known.current = new Set(value);
+  }, [value]);
+
   const move = (i: number, d: -1 | 1) => {
+    snapshot();
+    refocus.current = { slug: value[i], dir: d };
     const next = value.slice();
     [next[i], next[i + d]] = [next[i + d], next[i]];
     onChange(next);
   };
+  const removeAt = (slug: string) => {
+    snapshot();
+    onChange(value.filter((x) => x !== slug));
+  };
+  // Opening the editor fills the whole list at once; only animate a single added member.
+  const fresh = (slug: string) => !known.current.has(slug) && (known.current.size > 0 || value.length === 1);
   const full = value.length >= MAX_MEMBERS;
   return (
     <div>
@@ -53,19 +99,26 @@ function MemberPicker({
       {value.length > 0 ? (
         <ol className="divide-y divide-line rounded-xl border border-line bg-surface">
           {value.map((slug, i) => (
-            <li key={slug} className="flex items-center gap-2 px-3 py-1.5">
+            <li
+              key={slug}
+              ref={(el) => {
+                if (el) rows.current.set(slug, el);
+                else rows.current.delete(slug);
+              }}
+              className={cx("relative flex items-center gap-2 bg-surface px-3 py-1.5 first:rounded-t-xl last:rounded-b-xl", fresh(slug) && "fade-up")}
+            >
               <span className="w-5 shrink-0 font-mono text-xs text-faint">{i + 1}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] text-ink">{nameBySlug[slug] ?? slug}</span>
                 <span className="block truncate font-mono text-[11px] text-faint">{slug}</span>
               </span>
-              <IconButton label={`Move ${slug} up`} disabled={i === 0} onClick={() => move(i, -1)}>
+              <IconButton data-move label={`Move ${slug} up`} disabled={i === 0} onClick={() => move(i, -1)}>
                 <ArrowUp className="h-4 w-4" />
               </IconButton>
-              <IconButton label={`Move ${slug} down`} disabled={i === value.length - 1} onClick={() => move(i, 1)}>
+              <IconButton data-move label={`Move ${slug} down`} disabled={i === value.length - 1} onClick={() => move(i, 1)}>
                 <ArrowDown className="h-4 w-4" />
               </IconButton>
-              <IconButton label={`Remove ${slug}`} onClick={() => onChange(value.filter((x) => x !== slug))} className="hover:text-red-700">
+              <IconButton label={`Remove ${slug}`} onClick={() => removeAt(slug)} className="hover:text-red-700">
                 <X className="h-4 w-4" />
               </IconButton>
             </li>
@@ -80,7 +133,9 @@ function MemberPicker({
         value=""
         disabled={full || remaining.length === 0}
         onChange={(e) => {
-          if (e.target.value) onChange([...value, e.target.value]);
+          if (!e.target.value) return;
+          snapshot();
+          onChange([...value, e.target.value]);
         }}
       >
         <option value="">{full ? `At most ${MAX_MEMBERS} members` : remaining.length ? "Add a service..." : "No more services to add"}</option>
@@ -309,13 +364,14 @@ export function GroupsPage() {
         <ul className="space-y-2.5">
           {groups.map((g) => (
             <li key={g.id} className="rounded-card bg-surface p-4 shadow-card sm:px-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
+              {/* Actions stay top right at every width, so phones do not get a lone row of icons. */}
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-[15px] font-medium text-ink">{g.name}</span>
-                    <span className="font-mono text-xs text-muted">{g.slug}</span>
+                    <span className="wrap-anywhere min-w-0 text-[15px] font-medium text-ink">{g.name}</span>
+                    <span className="wrap-anywhere font-mono text-xs text-muted">{g.slug}</span>
                   </div>
-                  {g.description && <div className="mt-0.5 text-[13px] text-muted">{g.description}</div>}
+                  {g.description && <div className="wrap-anywhere mt-0.5 text-[13px] text-muted">{g.description}</div>}
                   <div className="mt-2 flex flex-wrap items-center gap-1 font-mono text-xs">
                     {g.members.map((m, i) => (
                       <span key={m} className="inline-flex items-center gap-1">
@@ -329,13 +385,13 @@ export function GroupsPage() {
                       </span>
                     ))}
                   </div>
-                  <div className="mt-2 flex min-w-0 items-center gap-1 rounded-lg border border-line bg-canvas py-0.5 pl-2.5 pr-0.5">
+                  <div className="mt-3 flex min-w-0 max-w-md items-center gap-1 rounded-lg border border-line bg-canvas py-0.5 pl-2.5 pr-0.5">
                     <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">/proxy/{g.slug}/...</code>
                     <CopyButton text={`${origin}/proxy/${g.slug}/`} label="Copy URL" />
                   </div>
                 </div>
                 {manage && (
-                  <div className="flex shrink-0 flex-wrap items-center gap-1">
+                  <div className="-mr-1.5 -mt-1 flex shrink-0 items-center gap-0.5">
                     <IconButton
                       label="Edit group"
                       onClick={() => {

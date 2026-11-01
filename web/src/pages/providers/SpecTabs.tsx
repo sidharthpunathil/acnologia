@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, ChevronDown, Copy, FlaskConical, ListOrdered, Plus, Trash2, XCircle } from "lucide-react";
 import type { AuthType, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecRule, Strategy, TestReport } from "../../lib/types";
 import { OUTCOMES } from "../../lib/types";
@@ -45,6 +45,88 @@ function move<T>(list: T[], i: number, d: -1 | 1): T[] {
   return next;
 }
 
+/**
+ * Stable keys, slide and focus for an ordered list edited with up, down,
+ * duplicate and delete. Keys follow items when they move, so an open rule
+ * stays open on the rule you moved. Rows that change place slide there
+ * (FLIP), and focus returns to the arrow you pressed.
+ */
+function useOrderedList(length: number) {
+  const seq = useRef(0);
+  const keys = useRef<number[]>([]);
+  // Items added or removed elsewhere (the add button, the JSON tab): grow or trim at the end.
+  const added = useRef<number | null>(null);
+  const mounted = useRef(false);
+  if (keys.current.length < length) {
+    const grow = Array.from({ length: length - keys.current.length }, () => ++seq.current);
+    // One item added after the first render (the add button): let it fade in.
+    if (mounted.current && grow.length === 1) added.current = grow[0];
+    keys.current = [...keys.current, ...grow];
+  } else if (keys.current.length > length) keys.current = keys.current.slice(0, length);
+  const els = useRef(new Map<number, HTMLElement>());
+  const tops = useRef<Map<number, number> | null>(null);
+  const focus = useRef<{ key: number; dir: -1 | 1 } | null>(null);
+
+  useLayoutEffect(() => {
+    mounted.current = true;
+    const before = tops.current;
+    tops.current = null;
+    if (before && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      for (const [k, el] of els.current) {
+        const was = before.get(k);
+        if (was === undefined) continue;
+        const dy = was - el.getBoundingClientRect().top;
+        if (Math.abs(dy) < 1) continue;
+        el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0)" }], { duration: 240, easing: "cubic-bezier(0.77, 0, 0.175, 1)" });
+      }
+    }
+    const f = focus.current;
+    focus.current = null;
+    if (f) {
+      const btns = els.current.get(f.key)?.querySelectorAll<HTMLButtonElement>("button[data-move]");
+      const want = btns?.[f.dir === -1 ? 0 : 1];
+      const other = btns?.[f.dir === -1 ? 1 : 0];
+      (want && !want.disabled ? want : other)?.focus({ preventScroll: true });
+    }
+  });
+
+  const snapshot = () => {
+    tops.current = new Map([...els.current].map(([k, el]) => [k, el.getBoundingClientRect().top]));
+  };
+  return {
+    key: (i: number) => keys.current[i],
+    ref: (i: number) => {
+      // Bound to the key at render time, so detaching an old row clears its own entry.
+      const k = keys.current[i];
+      return (el: HTMLElement | null) => {
+        if (el) els.current.set(k, el);
+        else els.current.delete(k);
+      };
+    },
+    /** True for the copy a duplicate just made, so it can fade in. */
+    isNew: (i: number) => added.current === keys.current[i],
+    move: (i: number, d: -1 | 1) => {
+      const j = i + d;
+      if (j < 0 || j >= keys.current.length) return;
+      snapshot();
+      const next = keys.current.slice();
+      [next[i], next[j]] = [next[j], next[i]];
+      keys.current = next;
+      focus.current = { key: next[j], dir: d };
+    },
+    duplicate: (i: number) => {
+      snapshot();
+      const k = ++seq.current;
+      added.current = k;
+      keys.current = [...keys.current.slice(0, i + 1), k, ...keys.current.slice(i + 1)];
+    },
+    remove: (i: number) => {
+      snapshot();
+      keys.current = keys.current.filter((_, j) => j !== i);
+    },
+  };
+}
+
 /** Up, down, duplicate and delete controls for an ordered list item. */
 function ItemControls({
   index,
@@ -65,10 +147,10 @@ function ItemControls({
 }) {
   return (
     <div className="ml-auto flex shrink-0 items-center gap-0.5">
-      <IconButton label={`Move ${label} up`} disabled={disabled || index === 0} onClick={() => onMove(-1)}>
+      <IconButton data-move label={`Move ${label} up`} disabled={disabled || index === 0} onClick={() => onMove(-1)}>
         <ArrowUp className="h-4 w-4" />
       </IconButton>
-      <IconButton label={`Move ${label} down`} disabled={disabled || index === count - 1} onClick={() => onMove(1)}>
+      <IconButton data-move label={`Move ${label} down`} disabled={disabled || index === count - 1} onClick={() => onMove(1)}>
         <ArrowDown className="h-4 w-4" />
       </IconButton>
       <IconButton label={`Duplicate ${label}`} disabled={disabled} onClick={onDuplicate}>
@@ -259,6 +341,8 @@ function RuleCard({
   onDuplicate,
   onRemove,
   readOnly,
+  rowRef,
+  enter,
 }: {
   rule: SpecRule;
   index: number;
@@ -268,6 +352,8 @@ function RuleCard({
   onDuplicate: () => void;
   onRemove: () => void;
   readOnly?: boolean;
+  rowRef?: (el: HTMLElement | null) => void;
+  enter?: boolean;
 }) {
   const [open, setOpen] = useState(!rule.name);
   const src = rule.retry_after?.source ?? "none";
@@ -280,7 +366,7 @@ function RuleCard({
     .filter(Boolean)
     .join(" and ");
   return (
-    <li className="rounded-card bg-surface shadow-card">
+    <li ref={rowRef} className={cx("rounded-card bg-surface shadow-card", enter && "fade-up")}>
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:flex-nowrap sm:px-4">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-soft font-mono text-[11px] text-muted">{index + 1}</span>
         <button
@@ -361,6 +447,7 @@ export function RulesTab({ spec, onChange, readOnly }: SpecTabProps) {
   const rules = spec.rules;
   const setRules = (r: SpecRule[]) => onChange({ ...spec, rules: r });
   const add = () => setRules([...rules, { name: "", match: { status: [429] }, outcome: "rate_limited" }]);
+  const order = useOrderedList(rules.length);
   return (
     <div className="space-y-5">
       <Section
@@ -393,15 +480,26 @@ export function RulesTab({ spec, onChange, readOnly }: SpecTabProps) {
         <ol className="space-y-2.5">
           {rules.map((r, i) => (
             <RuleCard
-              key={i}
+              key={order.key(i)}
+              rowRef={order.ref(i)}
+              enter={order.isNew(i)}
               rule={r}
               index={i}
               count={rules.length}
               readOnly={readOnly}
               onChange={(nr) => setRules(rules.map((x, j) => (j === i ? nr : x)))}
-              onMove={(d) => setRules(move(rules, i, d))}
-              onDuplicate={() => setRules([...rules.slice(0, i + 1), { ...r, name: `${r.name} copy` }, ...rules.slice(i + 1)])}
-              onRemove={() => setRules(rules.filter((_, j) => j !== i))}
+              onMove={(d) => {
+                order.move(i, d);
+                setRules(move(rules, i, d));
+              }}
+              onDuplicate={() => {
+                order.duplicate(i);
+                setRules([...rules.slice(0, i + 1), { ...r, name: `${r.name} copy` }, ...rules.slice(i + 1)]);
+              }}
+              onRemove={() => {
+                order.remove(i);
+                setRules(rules.filter((_, j) => j !== i));
+              }}
             />
           ))}
         </ol>
@@ -525,6 +623,7 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
   const list = spec.examples;
   const setList = (l: SpecExample[]) => onChange({ ...spec, examples: l });
   const add = () => setList([...list, { name: "", method: "GET", path: "/", query: {}, body: null, safe: true }]);
+  const order = useOrderedList(list.length);
   return (
     <div className="space-y-5">
       <Section
@@ -539,7 +638,7 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
           {list.map((ex, i) => {
             const set = (p: Partial<SpecExample>) => setList(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
             return (
-              <li key={i} className="rounded-card bg-surface p-4 shadow-card">
+              <li key={order.key(i)} ref={order.ref(i)} className={cx("rounded-card bg-surface p-4 shadow-card", order.isNew(i) && "fade-up")}>
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <Badge tone="dark">{ex.method}</Badge>
@@ -551,9 +650,18 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
                     count={list.length}
                     label={ex.name || `example ${i + 1}`}
                     disabled={readOnly}
-                    onMove={(d) => setList(move(list, i, d))}
-                    onDuplicate={() => setList([...list.slice(0, i + 1), { ...ex, name: `${ex.name} copy` }, ...list.slice(i + 1)])}
-                    onRemove={() => setList(list.filter((_, j) => j !== i))}
+                    onMove={(d) => {
+                      order.move(i, d);
+                      setList(move(list, i, d));
+                    }}
+                    onDuplicate={() => {
+                      order.duplicate(i);
+                      setList([...list.slice(0, i + 1), { ...ex, name: `${ex.name} copy` }, ...list.slice(i + 1)]);
+                    }}
+                    onRemove={() => {
+                      order.remove(i);
+                      setList(list.filter((_, j) => j !== i));
+                    }}
                   />
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_120px_1fr]">
@@ -604,6 +712,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
   const list = spec.tests;
   const setList = (l: SpecFixture[]) => onChange({ ...spec, tests: l });
   const add = () => setList([...list, { name: "", status: 429, headers: {}, body: "", expect: "rate_limited" }]);
+  const order = useOrderedList(list.length);
   const resultFor = (name: string, i: number) => report?.results.find((r) => r.name === name) ?? report?.results[i];
   return (
     <div className="space-y-5">
@@ -634,7 +743,7 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
             const set = (p: Partial<SpecFixture>) => setList(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
             const r = resultFor(t.name, i);
             return (
-              <li key={i} className={cx("rounded-card bg-surface p-4 shadow-card", r && !r.ok && "ring-1 ring-red-200")}>
+              <li key={order.key(i)} ref={order.ref(i)} className={cx("rounded-card bg-surface p-4 shadow-card", r && !r.ok && "ring-1 ring-red-200", order.isNew(i) && "fade-up")}>
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -662,9 +771,18 @@ export function TestsTab({ spec, onChange, readOnly, report }: SpecTabProps & { 
                     count={list.length}
                     label={t.name || `test ${i + 1}`}
                     disabled={readOnly}
-                    onMove={(d) => setList(move(list, i, d))}
-                    onDuplicate={() => setList([...list.slice(0, i + 1), { ...t, name: `${t.name} copy` }, ...list.slice(i + 1)])}
-                    onRemove={() => setList(list.filter((_, j) => j !== i))}
+                    onMove={(d) => {
+                      order.move(i, d);
+                      setList(move(list, i, d));
+                    }}
+                    onDuplicate={() => {
+                      order.duplicate(i);
+                      setList([...list.slice(0, i + 1), { ...t, name: `${t.name} copy` }, ...list.slice(i + 1)]);
+                    }}
+                    onRemove={() => {
+                      order.remove(i);
+                      setList(list.filter((_, j) => j !== i));
+                    }}
                   />
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_110px_1fr]">

@@ -18,7 +18,7 @@ import { MultiSelect } from "../components/MultiSelect";
 import { SecretBox } from "../components/CopyButton";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { AiFillButton, AiFillPanel, useAiFill } from "../components/AiFill";
-import { Badge, Button, Empty, Field, IconButton, Input, PageHeader, PageSkeleton, Select, Textarea, Toggle } from "../components/ui";
+import { Badge, Button, Empty, Field, IconButton, Input, PageHeader, PageSkeleton, Select, Textarea, Toggle, cx } from "../components/ui";
 
 const MODE_HELP: Record<AppMode, string> = {
   proxy: "Calls go through /proxy. The app never sees a raw key.",
@@ -446,11 +446,11 @@ export function AppsPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[15px] font-medium text-ink">{a.name}</span>
+                    <span className={cx("wrap-anywhere min-w-0 text-[15px] font-medium", a.active ? "text-ink" : "text-muted")}>{a.name}</span>
                     <Badge tone={a.mode === "lease" ? "blue" : a.mode === "proxy" ? "violet" : "neutral"}>{a.mode}</Badge>
                     {!a.active && <Badge>paused</Badge>}
                   </div>
-                  {a.description && <div className="mt-0.5 text-[13px] text-muted">{a.description}</div>}
+                  {a.description && <div className="wrap-anywhere mt-0.5 text-[13px] text-muted">{a.description}</div>}
                   <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
                     {a.token_prefix}... · {a.allowed_services?.length ? a.allowed_services.map((s) => nameBySlug[s] ?? s).join(", ") : "all services"} ·{" "}
                     <span title={dateTime(a.last_used_at)}>used {relTime(a.last_used_at, now)}</span>
@@ -458,13 +458,13 @@ export function AppsPage() {
                   </div>
                   <AppUsageLine app={a} now={now} />
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-1">
+                <div className="-mx-1 flex shrink-0 flex-wrap items-center gap-1 border-t border-line pt-2 sm:mx-0 sm:border-0 sm:pt-0">
                   <Button size="sm" variant="ghost" icon={<Plug className="h-3.5 w-3.5" />} onClick={() => setMcpApp(a)} aria-label={`MCP settings for ${a.name}`} className="mr-1">
                     MCP
                   </Button>
                   {/* Kept together so a narrow row wraps as a group, not one icon at a time. */}
                   <div className="flex items-center gap-1">
-                    <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} ariaLabel={a.active ? `${a.name} is active` : `${a.name} is paused`} />
+                    <Toggle checked={a.active} onChange={(v) => void toggleActive(a, v)} disabled={!manage} caption={a.active ? "Active" : "Paused"} ariaLabel={a.active ? `${a.name} is active` : `${a.name} is paused`} />
                     {manage && (
                       <>
                         <span className="mx-1 h-5 w-px bg-line" />

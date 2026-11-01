@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { CheckCircle2, FlaskConical, KeyRound, Lock, RefreshCcw, ShieldCheck, Terminal } from "lucide-react";
+import { ArrowRight, CheckCircle2, FlaskConical, KeyRound, Lock, RefreshCcw, ShieldCheck, Terminal } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
 import { dateTime, relTime, sentence } from "../lib/format";
@@ -92,7 +92,7 @@ export function SettingsPage() {
                   readOnly={!canEdit}
                   onChange={(e) => setText(e.target.value)}
                   placeholder={RULES_PLACEHOLDER}
-                  className="min-h-[280px] font-mono text-[13px] leading-relaxed read-only:bg-soft"
+                  className="min-h-[280px] font-mono text-[13px] leading-relaxed placeholder:text-faint/70 read-only:bg-soft"
                 />
               </Field>
               {canEdit && (
@@ -135,8 +135,9 @@ export function SettingsPage() {
                 </div>
               </Callout>
             )}
-            <Link to="/providers/ai" className="mt-4 inline-block text-[13px] font-medium text-ink underline-offset-2 hover:underline">
+            <Link to="/providers/ai" className="group mt-4 inline-flex items-center gap-1 text-[13px] font-medium text-ink underline-offset-2 hover:underline">
               Open the provider builder
+              <ArrowRight className="h-3.5 w-3.5 text-muted transition-transform duration-150 ease-out group-hover:translate-x-0.5" aria-hidden="true" />
             </Link>
           </Section>
 

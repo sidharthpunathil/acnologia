@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, CircleHelp, XCircle } from "lucide-react";
 import type { DayActivity, Key, Provider, Validity } from "../lib/types";
-import { dateTime, num, plural, relTime } from "../lib/format";
+import { compact as short, dateTime, num, plural, relTime } from "../lib/format";
 import { cx } from "./ui";
 
 const VALIDITY: Record<Validity, { label: string; icon: typeof CheckCircle2; cls: string }> = {
@@ -37,6 +37,69 @@ export function validityText(k: Pick<Key, "validity" | "validity_reason" | "last
     return r === "just now" ? "Worked just now" : `Last worked ${r}`;
   }
   return "Not checked or used yet";
+}
+
+const VALIDITY_ICON: Record<Validity, string> = {
+  valid: "text-emerald-600",
+  invalid: "text-red-600",
+  unknown: "text-faint",
+};
+
+/**
+ * True when the validity badge would only repeat the status pill, as with an
+ * invalid key that is also out of rotation for being invalid.
+ */
+export function validityRepeatsStatus(k: Pick<Key, "validity" | "effective_status">): boolean {
+  return k.validity === "invalid" && (k.effective_status === "invalid" || k.effective_status === "banned");
+}
+
+/**
+ * Whether the key works, as one quiet line: an icon for the verdict and the
+ * reason as text. Lets a table carry validity without a second pill per row.
+ */
+export function ValidityLine({
+  k,
+  now,
+  clamp = true,
+  className,
+}: {
+  k: Pick<Key, "validity" | "validity_reason" | "last_ok_at" | "last_error">;
+  now: number;
+  /** Two lines at most, with the full text on hover. Off for cards that can grow. */
+  clamp?: boolean;
+  className?: string;
+}) {
+  const v = VALIDITY[k.validity ?? "unknown"] ?? VALIDITY.unknown;
+  const I = v.icon;
+  const text = validityText(k, now);
+  return (
+    <div className={cx("flex min-w-0 items-start gap-1.5 text-[12px] leading-snug text-muted", className)} title={clamp ? text : undefined}>
+      <I className={cx("mt-[2px] h-3.5 w-3.5 shrink-0", VALIDITY_ICON[k.validity ?? "unknown"] ?? VALIDITY_ICON.unknown)} aria-hidden="true" />
+      <span className={cx("min-w-0", clamp ? "line-clamp-2 break-words" : "wrap-anywhere")}>
+        <span className="sr-only">{v.label}: </span>
+        {text}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Replays a short entrance when `id` changes after the first render, so a pill
+ * that flips from available to cooling catches the eye without the whole list
+ * animating on load. Reduced motion turns it into a fade (see .fade-up).
+ */
+export function OnChange({ id, children, className }: { id: string; children: ReactNode; className?: string }) {
+  const last = useRef(id);
+  const changed = useRef(false);
+  if (last.current !== id) {
+    last.current = id;
+    changed.current = true;
+  }
+  return (
+    <span key={id} className={cx("inline-flex max-w-full", changed.current && "fade-up", className)}>
+      {children}
+    </span>
+  );
 }
 
 /** The one account field worth showing in a list: email, else name, else phone, else the other identifier. */
@@ -85,6 +148,8 @@ export function TimeAgo({ iso, now, never = "never", className }: { iso: string 
 
 export interface QuotaInfo {
   text: string;
+  /** The same, with large numbers shortened (12.4M) for table cells. */
+  short: string;
   /** 0..1 when both numbers are known. */
   frac: number | null;
   low: boolean;
@@ -97,10 +162,10 @@ export function quotaInfo(k: Pick<Key, "quota_limit" | "quota_remaining">, unit?
   if (limit === null && rem === null) return null;
   if (limit !== null && rem !== null && limit > 0) {
     const frac = Math.max(0, Math.min(1, rem / limit));
-    return { text: `${num(rem)} / ${num(limit)}${u}`, frac, low: rem < 0.1 * limit };
+    return { text: `${num(rem)} / ${num(limit)}${u}`, short: `${short(rem)} / ${short(limit)}${u}`, frac, low: rem < 0.1 * limit };
   }
-  if (rem !== null) return { text: `${num(rem)}${u} left`, frac: null, low: rem <= 0 };
-  return { text: `${num(limit)}${u} limit, remaining unknown`, frac: null, low: false };
+  if (rem !== null) return { text: `${num(rem)}${u} left`, short: `${short(rem)}${u} left`, frac: null, low: rem <= 0 };
+  return { text: `${num(limit)}${u} limit, remaining unknown`, short: `${short(limit ?? 0)}${u} limit`, frac: null, low: false };
 }
 
 /** Quota numbers, a bar and the reset time. The words carry the meaning; the bar only adds a glance. */
@@ -128,8 +193,8 @@ export function QuotaMeter({
   const exhausted = k.effective_status === "exhausted" || k.status === "exhausted";
   return (
     <div className={cx("min-w-0", className)}>
-      <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-[12px] tabular-nums text-ink">
-        <span>{q.text}</span>
+      <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-[12px] tabular-nums text-ink" title={compact && q.short !== q.text ? q.text : undefined}>
+        <span className="wrap-anywhere">{compact ? q.short : q.text}</span>
         {q.low && <span className="text-[11px] text-red-700">low</span>}
       </div>
       {pct !== null && (
@@ -141,7 +206,11 @@ export function QuotaMeter({
           aria-valuenow={Math.round(pct)}
           aria-label="Quota left"
         >
-          <div className={cx("h-full rounded-full", bar)} style={{ width: `${pct}%` }} />
+          {/* scaleX instead of width, so a quota update animates without layout. */}
+          <div
+            className={cx("h-full w-full origin-left transition-[transform,background-color] duration-500 ease-out", bar)}
+            style={{ transform: `scaleX(${pct / 100})` }}
+          />
         </div>
       )}
       {!Number.isNaN(reset) && (

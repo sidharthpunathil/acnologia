@@ -234,12 +234,12 @@ export function EgressPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[15px] font-medium text-ink">{p.name}</span>
+                      <span className="wrap-anywhere min-w-0 text-[15px] font-medium text-ink">{p.name}</span>
                       {p.region && <Badge tone="blue">{p.region}</Badge>}
                       {used === 0 && <Badge>unused</Badge>}
                     </div>
                     <div className="wrap-anywhere mt-1 font-mono text-xs text-muted">{p.url_hint}</div>
-                    {p.notes && <div className="mt-1 text-[13px] text-muted">{p.notes}</div>}
+                    {p.notes && <div className="wrap-anywhere mt-1 text-[13px] text-muted">{p.notes}</div>}
                     <div className="wrap-anywhere mt-1.5 font-mono text-xs text-muted">
                       {plural(p.services, "service")} · {plural(p.keys, "key")} ·{" "}
                       {p.last_checked_at ? (
@@ -254,7 +254,7 @@ export function EgressPage() {
                     {p.last_error && <div className="wrap-anywhere mt-1 text-xs text-red-700">{p.last_error}</div>}
                   </div>
                   {manage && (
-                    <div className="flex shrink-0 flex-wrap items-center gap-1">
+                    <div className="-mx-1 flex shrink-0 flex-wrap items-center gap-1 border-t border-line pt-2 sm:mx-0 sm:border-0 sm:pt-0">
                       <Button size="sm" variant="ghost" icon={<Radar className="h-3.5 w-3.5" />} loading={testing === p.id} onClick={() => void test(p)}>
                         Test
                       </Button>

@@ -30,7 +30,7 @@ export function ConfirmButton({
 
   if (armed) {
     return (
-      <span className="inline-flex items-center gap-1">
+      <span className="swap-in inline-flex origin-right items-center gap-1">
         <Button
           size="sm"
           variant="danger"

@@ -213,30 +213,38 @@ export function ServicePage() {
         </p>
       )}
 
-      <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7">
-        <Stat label="Available" value={num(counts.available)} tone={counts.available > 0 ? "green" : counts.busy > 0 ? undefined : "red"} />
-        <Stat label="Busy" value={num(counts.busy)} tone={counts.busy ? "violet" : undefined} sub="at their limit" />
-        <Stat label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "amber" : undefined} />
-        <Stat label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "amber" : undefined} />
+      {/* Phones: one swipeable row, so the keys start on the first screen instead of after four rows of tiles. */}
+      <div
+        className="-mx-4 mt-6 grid snap-x snap-mandatory auto-cols-[minmax(132px,40%)] grid-flow-col gap-2.5 overflow-x-auto scroll-px-4 px-4 pb-1 [scrollbar-width:none] pt-px sm:mx-0 sm:mt-8 sm:snap-none sm:pt-0 sm:auto-cols-auto sm:grid-flow-row sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-7 [&::-webkit-scrollbar]:hidden"
+        role="group"
+        aria-label="Key pool summary"
+      >
+        <Stat className="snap-start" label="Available" value={num(counts.available)} tone={counts.available > 0 ? "green" : counts.busy > 0 ? undefined : "red"} />
+        <Stat className="snap-start" label="Busy" value={num(counts.busy)} tone={counts.busy ? "violet" : undefined} sub="at their limit" />
+        <Stat className="snap-start" label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "amber" : undefined} />
+        <Stat className="snap-start" label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "amber" : undefined} />
         {/* Banned keys count as invalid here; the sub line splits them out. */}
         <Stat
+          className="snap-start"
           label="Invalid"
           value={num(counts.invalid + counts.banned)}
           tone={counts.invalid + counts.banned ? "red" : undefined}
           sub={counts.banned ? `${counts.banned} banned` : undefined}
         />
         <Stat
+          className="snap-start"
           label="In use"
           value={num(counts.inUse)}
           tone={counts.inUse > 0 ? "violet" : undefined}
           sub={service.max_concurrency > 0 ? `up to ${service.max_concurrency} per key` : "no limit per key"}
         />
-        <Stat label="Requests, 24h" value={compact(service.requests_24h)} sub={counts.backup ? `${counts.backup} backup` : undefined} />
+        <Stat className="snap-start" label="Requests, 24h" value={compact(service.requests_24h)} sub={counts.backup ? `${counts.backup} backup` : undefined} />
       </div>
 
       <Tabs className="mt-10" items={tabs} value={tab} onChange={setTab} />
 
-      <div className="mt-6">
+      {/* Keyed on the tab so the new panel settles in instead of swapping in place. */}
+      <div key={tab} className="fade-up mt-6">
         {tab === "keys" &&
           (!keysLoaded ? (
             <div className="space-y-2" role="status" aria-label="Loading keys">

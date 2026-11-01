@@ -8,7 +8,7 @@ const styles: Record<string, { dot: string; pill: string; label: string }> = {
   cooling: { dot: "bg-amber-500", pill: "bg-amber-50 text-amber-700", label: "cooling" },
   exhausted: { dot: "bg-orange-500", pill: "bg-orange-50 text-orange-700", label: "out of quota" },
   invalid: { dot: "bg-red-500", pill: "bg-red-50 text-red-700", label: "invalid" },
-  banned: { dot: "bg-red-500", pill: "bg-red-50 text-red-700", label: "Banned" },
+  banned: { dot: "bg-red-500", pill: "bg-red-50 text-red-700", label: "banned" },
   disabled: { dot: "bg-stone-400", pill: "bg-well text-muted", label: "disabled" },
 };
 

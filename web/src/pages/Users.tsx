@@ -146,7 +146,7 @@ export function UsersPage() {
                   {u.email} · <span title={dateTime(u.last_login_at)}>last login {relTime(u.last_login_at, now)}</span>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Select
                   value={u.role}
                   disabled={self}

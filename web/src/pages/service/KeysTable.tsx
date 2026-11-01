@@ -5,10 +5,10 @@ import { num } from "../../lib/format";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
 import { ApiError, errorMessage } from "../../lib/api";
-import { StatusPill } from "../../components/StatusPill";
+import { StatusPill, isBusy } from "../../components/StatusPill";
 import { ConfirmButton } from "../../components/ConfirmButton";
 import { Badge, IconButton, Spinner, cx } from "../../components/ui";
-import { AccountLine, QuotaMeter, TimeAgo, ValidityBadge, validityText } from "../../components/KeyBits";
+import { AccountLine, OnChange, QuotaMeter, TimeAgo, ValidityLine, quotaInfo } from "../../components/KeyBits";
 import { withLiveStatus } from "./keyUtil";
 
 export interface KeyPerms {
@@ -98,7 +98,7 @@ function RowActions({
 
   return (
     // Clicks here should not also open the key drawer behind the row.
-    <div className="flex flex-wrap items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+    <div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
       {canTouch && (
         <>
           <IconButton label="Check this key now" onClick={() => run("check")} disabled={busy !== null}>
@@ -132,6 +132,30 @@ function RowActions({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** The state the pill shows, so a change of state (not a ticking countdown) can replay its entrance. */
+export function pillState(k: Key, serviceMax: number): string {
+  return k.effective_status === "active" && isBusy(k, serviceMax) ? "busy" : k.effective_status;
+}
+
+/**
+ * One column for the key's health: the live state as the only pill, then
+ * whether the key works as a quiet line underneath. Invalid keys used to show
+ * "invalid" twice in a row; the line now carries the reason instead.
+ */
+export function KeyHealth({ k, now, serviceMax, clamp = true }: { k: Key; now: number; serviceMax: number; clamp?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <OnChange id={pillState(k, serviceMax)}>
+          <StatusPill k={k} now={now} serviceMax={serviceMax} />
+        </OnChange>
+        <InUse k={k} serviceMax={serviceMax} />
+      </div>
+      <ValidityLine k={k} now={now} clamp={clamp} className="mt-1.5" />
     </div>
   );
 }
@@ -170,6 +194,7 @@ export function KeysTable({
   onReveal: (k: Key) => void;
 }) {
   const rows = keys.map((k) => withLiveStatus(k, now));
+  const hasActions = perms.manage || perms.reveal;
   const open = (k: Key) => (e?: MouseEvent) => {
     // Let people select text in a row without opening the drawer.
     if (e && window.getSelection()?.toString()) return;
@@ -181,23 +206,23 @@ export function KeysTable({
       <div className="hidden overflow-hidden rounded-card bg-surface shadow-card lg:block">
         <table className="w-full table-fixed text-left text-[13px]">
           <colgroup>
-            <col className="w-[23%]" />
-            <col className="w-[15%]" />
-            <col className="w-[17%]" />
+            <col className="w-[27%]" />
+            <col className="w-[28%]" />
             <col className="w-[18%]" />
-            <col className="w-[11%]" />
-            <col className="w-[16%]" />
+            <col />
+            {hasActions && <col className="w-[184px]" />}
           </colgroup>
           <thead>
             <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
               <th className="px-4 py-3 font-normal">Key</th>
-              <th className="px-3 py-3 font-normal">Works?</th>
-              <th className="px-3 py-3 font-normal">Status</th>
+              <th className="px-3 py-3 font-normal">Health</th>
               <th className="px-3 py-3 font-normal">Quota</th>
               <th className="px-3 py-3 font-normal">Last used</th>
-              <th className="px-3 py-3">
-                <span className="sr-only">Actions</span>
-              </th>
+              {hasActions && (
+                <th className="px-3 py-3">
+                  <span className="sr-only">Actions</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -208,42 +233,39 @@ export function KeysTable({
                 aria-label={`Open details for ${k.label || k.hint}`}
                 onClick={open(k)}
                 onKeyDown={(e) => rowKey(e, () => onOpen(k))}
-                className="cursor-pointer align-middle transition-colors hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
+                className="group cursor-pointer align-top transition-colors duration-150 hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
               >
-                <td className="px-4 py-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="min-w-0 truncate font-medium text-ink">{k.label || "Untitled"}</span>
-                    <KeyBadges k={k} apps={apps} />
+                <td className="px-4 py-3.5">
+                  <div className="flex min-w-0 items-center gap-x-2">
+                    <span className="min-w-0 truncate font-medium text-ink" title={k.label || undefined}>
+                      {k.label || "Untitled"}
+                    </span>
+                    <span className="shrink-0">
+                      <KeyBadges k={k} apps={apps} />
+                    </span>
                   </div>
                   <AccountLine k={k} className="mt-0.5" />
                   <div className="mt-0.5 truncate font-mono text-[11px] text-muted">
                     {k.hint}
-                    {k.tier === "primary" && k.priority ? ` · p${k.priority}` : ""}
-                    {k.weight && k.weight !== 1 ? ` · w${k.weight}` : ""}
-                    {` · ${num(k.usage_today)} today`}
+                    {k.tier === "primary" && k.priority ? <span title={`Priority ${k.priority}`}>{` · p${k.priority}`}</span> : ""}
+                    {k.weight && k.weight !== 1 ? <span title={`Weight ${k.weight}`}>{` · w${k.weight}`}</span> : ""}
                   </div>
                 </td>
-                <td className="px-3 py-3">
-                  <ValidityBadge validity={k.validity} reason={validityText(k, now)} />
-                  <div className="mt-1 line-clamp-2 text-[11px] text-muted" title={validityText(k, now)}>
-                    {validityText(k, now)}
-                  </div>
+                <td className="px-3 py-3.5">
+                  <KeyHealth k={k} now={now} serviceMax={serviceMax} />
                 </td>
-                <td className="px-3 py-3">
-                  <div className="flex flex-col items-start gap-1">
-                    <StatusPill k={k} now={now} serviceMax={serviceMax} />
-                    <InUse k={k} serviceMax={serviceMax} />
-                  </div>
-                </td>
-                <td className="px-3 py-3">
+                <td className="px-3 py-3.5">
                   <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />
                 </td>
-                <td className="px-3 py-3 font-mono text-xs text-muted">
-                  <TimeAgo iso={k.last_used_at} now={now} />
+                <td className="px-3 py-3.5 font-mono text-xs">
+                  <TimeAgo iso={k.last_used_at} now={now} className="block truncate text-ink" />
+                  <div className="mt-0.5 truncate text-[11px] tabular-nums text-muted">{num(k.usage_today)} today</div>
                 </td>
-                <td className="px-2 py-2">
-                  <RowActions k={k} perms={perms} onEdit={onEdit} onReveal={onReveal} />
-                </td>
+                {hasActions && (
+                  <td className="px-2 py-2.5">
+                    <RowActions k={k} perms={perms} onEdit={onEdit} onReveal={onReveal} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -253,12 +275,12 @@ export function KeysTable({
       {/* Phones and tablets: cards. */}
       <ul className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:hidden">
         {rows.map((k) => (
-          <li key={k.id} className="flex flex-col rounded-card bg-surface shadow-card">
-            <button type="button" onClick={open(k)} className="flex w-full flex-1 flex-col gap-3 p-4 text-left transition-transform duration-150 ease-out active:scale-[0.99]">
+          <li key={k.id} className="flex min-w-0 flex-col rounded-card bg-surface shadow-card">
+            <button type="button" onClick={open(k)} className="flex w-full min-w-0 flex-1 flex-col gap-3 p-4 text-left transition-transform duration-150 ease-out active:scale-[0.99]">
               <div className="flex w-full items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="min-w-0 break-words font-medium text-ink">{k.label || "Untitled"}</span>
+                    <span className="wrap-anywhere min-w-0 font-medium text-ink">{k.label || "Untitled"}</span>
                     <KeyBadges k={k} apps={apps} />
                   </div>
                   <AccountLine k={k} wrap className="mt-0.5" />
@@ -266,18 +288,13 @@ export function KeysTable({
                 </div>
                 <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-faint" aria-hidden="true" />
               </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <ValidityBadge validity={k.validity} reason={validityText(k, now)} />
-                <StatusPill k={k} now={now} serviceMax={serviceMax} />
-                <InUse k={k} serviceMax={serviceMax} />
-              </div>
-              <div className="wrap-anywhere -mt-1 text-[12px] text-muted">{validityText(k, now)}</div>
-              <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />
+              <KeyHealth k={k} now={now} serviceMax={serviceMax} />
+              {quotaInfo(k, quotaUnit ?? k.quota_unit) && <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />}
               <div className="font-mono text-[11px] text-muted">
                 used <TimeAgo iso={k.last_used_at} now={now} /> · {num(k.usage_today)} today
               </div>
             </button>
-            {(perms.manage || perms.reveal) && (
+            {hasActions && (
               <div className="border-t border-line px-2 py-1">
                 <RowActions k={k} perms={perms} onEdit={onEdit} onReveal={onReveal} />
               </div>

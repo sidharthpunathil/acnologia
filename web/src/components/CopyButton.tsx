@@ -46,8 +46,17 @@ export function CopyButton({ text, label = "Copy", className, dark }: { text: st
         className,
       )}
     >
-      {done ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-      {done ? "Copied" : label}
+      {done ? (
+        <span key="done" className="swap-in inline-flex items-center gap-1.5">
+          <Check className="h-3.5 w-3.5" />
+          Copied
+        </span>
+      ) : (
+        <>
+          <Copy className="h-3.5 w-3.5" />
+          {label}
+        </>
+      )}
     </button>
   );
 }

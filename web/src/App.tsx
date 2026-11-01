@@ -42,7 +42,7 @@ export function App() {
   let body: ReactNode;
   if (status === "loading") {
     body = (
-      <div className="min-h-dvh bg-canvas">
+      <div className="delayed-in flex min-h-dvh items-center justify-center bg-canvas">
         <PageLoading />
       </div>
     );

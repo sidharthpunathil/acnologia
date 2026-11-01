@@ -7,7 +7,7 @@ import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
 import { MIN_PASSWORD } from "../lib/perms";
 import { dateTime } from "../lib/format";
-import { Badge, Button, Card, Field, Input, PageHeader } from "../components/ui";
+import { Badge, Button, Field, Input, PageHeader, Section } from "../components/ui";
 import { ApiTokens } from "../components/ApiTokens";
 
 export function AccountPage() {
@@ -64,7 +64,8 @@ export function AccountPage() {
         title="Account"
         meta={
           <span className="wrap-anywhere inline-flex flex-wrap items-center gap-2">
-            {user.email} <Badge tone="dark">{user.role}</Badge> · joined {dateTime(user.created_at)}
+            {user.email} <Badge tone="dark">{user.role}</Badge>
+            <span className="whitespace-nowrap">joined {dateTime(user.created_at)}</span>
           </span>
         }
         actions={
@@ -81,9 +82,8 @@ export function AccountPage() {
       />
 
       <div className="space-y-5">
-        <Card className="p-5">
-          <h3 className="text-[15px] font-semibold text-ink">Profile</h3>
-          <form onSubmit={saveName} className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Section title="Profile">
+          <form onSubmit={saveName} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Name">
               <Input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
             </Field>
@@ -96,11 +96,10 @@ export function AccountPage() {
               </Button>
             </div>
           </form>
-        </Card>
+        </Section>
 
-        <Card className="p-5">
-          <h3 className="text-[15px] font-semibold text-ink">Password</h3>
-          <form onSubmit={savePassword} className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Section title="Password">
+          <form onSubmit={savePassword} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Current password" className="sm:col-span-2">
               <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required autoComplete="current-password" />
             </Field>
@@ -116,7 +115,7 @@ export function AccountPage() {
               </Button>
             </div>
           </form>
-        </Card>
+        </Section>
       </div>
       <div className="mt-5">
         <ApiTokens />

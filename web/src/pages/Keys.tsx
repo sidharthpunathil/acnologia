@@ -13,11 +13,10 @@ import { toast } from "../stores/toast";
 import { useNow } from "../hooks/useNow";
 import { useTitle } from "../hooks/useTitle";
 import { EntityLogo, ServiceLogo } from "../components/EntityLogo";
-import { StatusPill } from "../components/StatusPill";
-import { AccountLine, QuotaMeter, TimeAgo, ValidityBadge, providerGivesReset, validityText } from "../components/KeyBits";
+import { AccountLine, QuotaMeter, TimeAgo, providerGivesReset, quotaInfo } from "../components/KeyBits";
 import { usePoll } from "../hooks/usePoll";
 import { Button, Callout, Empty, IconButton, PageHeader, PageSkeleton, Select, Spinner, cx } from "../components/ui";
-import { InUse } from "./service/KeysTable";
+import { KeyHealth } from "./service/KeysTable";
 import { KeyDrawer } from "./service/KeyDrawer";
 import { withLiveStatus } from "./service/keyUtil";
 
@@ -350,18 +349,16 @@ export function KeysPage() {
               <div className="mt-3 hidden overflow-hidden rounded-card bg-surface shadow-card lg:block">
                 <table className="w-full table-fixed text-left text-[13px]">
                   <colgroup>
-                    <col className="w-[30%]" />
-                    <col className="w-[17%]" />
-                    <col className="w-[16%]" />
-                    <col className="w-[14%]" />
+                    <col className="w-[31%]" />
+                    <col className="w-[31%]" />
+                    <col className="w-[15%]" />
                     <col className="w-[19%]" />
                     <col className="w-[4%]" />
                   </colgroup>
                   <thead>
                     <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wide text-faint">
                       <th className="px-4 py-3 font-normal">Key</th>
-                      <th className="px-3 py-3 font-normal">Works?</th>
-                      <th className="px-3 py-3 font-normal">Status</th>
+                      <th className="px-3 py-3 font-normal">Health</th>
                       <th className="px-3 py-3 font-normal">Last used</th>
                       <th className="px-3 py-3 font-normal">Quota</th>
                       <th className="py-3">
@@ -382,13 +379,15 @@ export function KeysPage() {
                             setOpenKey(k);
                           }
                         }}
-                        className="cursor-pointer align-middle transition-colors hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
+                        className="group cursor-pointer align-top transition-colors duration-150 hover:bg-soft focus-visible:bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink"
                       >
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3.5">
                           <div className="flex min-w-0 items-center gap-3">
                             <RowLogo k={k} />
                             <div className="min-w-0">
-                              <div className="truncate font-medium text-ink">{k.label || "Untitled"}</div>
+                              <div className="truncate font-medium text-ink" title={k.label || undefined}>
+                                {k.label || "Untitled"}
+                              </div>
                               <AccountLine k={k} />
                               <div className="truncate font-mono text-[11px] text-muted">
                                 {k.hint} · {k.service_name}
@@ -396,29 +395,20 @@ export function KeysPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-3 py-3">
-                          <ValidityBadge validity={k.validity} reason={validityText(k, now)} />
-                          <div className="mt-1 line-clamp-2 text-[11px] text-muted" title={validityText(k, now)}>
-                            {validityText(k, now)}
-                          </div>
+                        <td className="px-3 py-3.5">
+                          <KeyHealth k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
                         </td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-col items-start gap-1">
-                            <StatusPill k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
-                            <InUse k={k} serviceMax={maxBy[k.service_id] ?? 0} />
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 font-mono text-xs">
-                          <TimeAgo iso={k.last_used_at} now={now} className="text-ink" />
+                        <td className="px-3 py-3.5 font-mono text-xs">
+                          <TimeAgo iso={k.last_used_at} now={now} className="block truncate text-ink" />
                           <div className="mt-0.5 truncate text-[11px] text-muted">
                             worked <TimeAgo iso={k.last_ok_at} now={now} />
                           </div>
                         </td>
-                        <td className="px-3 py-3">
+                        <td className="px-3 py-3.5">
                           <QuotaMeter k={k} unit={k.quota_unit} now={now} compact resetExact={resetBy[k.service_id]} />
                         </td>
-                        <td className="py-3 pr-3">
-                          <ChevronRight className="h-4 w-4 text-faint" aria-hidden="true" />
+                        <td className="py-3.5 pr-3">
+                          <ChevronRight className="mt-0.5 h-4 w-4 text-faint transition-transform duration-150 ease-out group-hover:translate-x-0.5" aria-hidden="true" />
                         </td>
                       </tr>
                     ))}
@@ -433,26 +423,21 @@ export function KeysPage() {
                     <button
                       type="button"
                       onClick={() => setOpenKey(k)}
-                      className="flex h-full w-full flex-col gap-3 rounded-card bg-surface p-4 text-left shadow-card transition-transform duration-150 ease-out active:scale-[0.99]"
+                      className="flex h-full w-full min-w-0 flex-col gap-3 rounded-card bg-surface p-4 text-left shadow-card transition-transform duration-150 ease-out active:scale-[0.99]"
                     >
                       <div className="flex w-full items-start gap-3">
                         <RowLogo k={k} />
                         <div className="min-w-0 flex-1">
-                          <div className="break-words font-medium text-ink">{k.label || "Untitled"}</div>
+                          <div className="wrap-anywhere font-medium text-ink">{k.label || "Untitled"}</div>
                           <AccountLine k={k} wrap />
-                          <div className="wrap-anywhere font-mono text-[11px] text-muted">
+                          <div className="wrap-anywhere line-clamp-2 font-mono text-[11px] text-muted">
                             {k.hint} · {k.service_name}
                           </div>
                         </div>
                         <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-faint" aria-hidden="true" />
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <ValidityBadge validity={k.validity} />
-                        <StatusPill k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
-                        <InUse k={k} serviceMax={maxBy[k.service_id] ?? 0} />
-                      </div>
-                      <div className="wrap-anywhere -mt-1 text-[12px] text-muted">{validityText(k, now)}</div>
-                      <QuotaMeter k={k} unit={k.quota_unit} now={now} compact resetExact={resetBy[k.service_id]} />
+                      <KeyHealth k={k} now={now} serviceMax={maxBy[k.service_id] ?? 0} />
+                      {quotaInfo(k, k.quota_unit) && <QuotaMeter k={k} unit={k.quota_unit} now={now} compact resetExact={resetBy[k.service_id]} />}
                       <div className="font-mono text-[11px] text-muted">
                         used <TimeAgo iso={k.last_used_at} now={now} /> · worked <TimeAgo iso={k.last_ok_at} now={now} />
                       </div>

@@ -39,6 +39,14 @@
   }
 }
 
+/* Fields fill their column by default. Kept in the components layer so a
+   width utility passed by a caller (w-36) still wins. */
+@layer components {
+  .field-input {
+    width: 100%;
+  }
+}
+
 @layer utilities {
   .no-scrollbar {
     scrollbar-width: none;
@@ -219,8 +227,14 @@
 .scrim-in {
   animation: scrim-in 180ms ease-out both;
 }
+/* Its own keyframe: reversing scrim-in would turn ease-out into ease-in. */
+@keyframes scrim-out {
+  to {
+    opacity: 0;
+  }
+}
 .scrim-out {
-  animation: scrim-in 150ms ease-out reverse both;
+  animation: scrim-out 150ms var(--ease-out) both;
 }
 .scrim {
   background: var(--scrim);
@@ -236,6 +250,22 @@
 .pop-in {
   transform-origin: top right;
   animation: pop-in 160ms var(--ease-out) both;
+}
+
+/* State swaps in place (Copy to Copied, Delete to Confirm): a short settle instead of a jump. */
+@keyframes swap-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+.swap-in {
+  animation: swap-in 160ms var(--ease-out) both;
+}
+
+/* Boot spinner: only shows if loading takes long enough to notice, so fast loads do not flash. */
+.delayed-in {
+  animation: fade-only 200ms ease-out 400ms both;
 }
 
 .skeleton {
@@ -293,7 +323,8 @@
   .fade-up,
   .modal-in,
   .drawer-in,
-  .pop-in {
+  .pop-in,
+  .swap-in {
     animation: fade-only 180ms ease-out both;
   }
   .toast,
@@ -305,7 +336,7 @@
   }
   .modal-out,
   .drawer-out {
-    animation: scrim-in 150ms ease-out reverse both;
+    animation: scrim-out 150ms ease-out both;
   }
   .skeleton {
     animation: none;

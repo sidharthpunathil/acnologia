@@ -12,7 +12,7 @@ import { toast } from "../stores/toast";
 import { Modal } from "../components/Modal";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { SecretBox } from "../components/CopyButton";
-import { Badge, Button, Callout, PageHeader, PageSkeleton, Skeleton, Spinner, Textarea, cx } from "../components/ui";
+import { Badge, Button, Callout, Empty, PageHeader, PageSkeleton, Skeleton, Spinner, Textarea, cx } from "../components/ui";
 
 const EXAMPLES = [
   "Add these SerpAPI keys: ",
@@ -261,7 +261,10 @@ function Item({ item, busy, onAnswer }: { item: ChatItem; busy: boolean; onAnswe
 
 function ThreadList({ threads, currentId, onPick, onDelete }: { threads: ChatThread[]; currentId: number | null; onPick: (id: number) => void; onDelete: (t: ChatThread) => Promise<void> }) {
   const now = useNow(60_000);
-  if (!threads.length) return <p className="px-3 py-2 text-[13px] text-muted">No chats yet.</p>;
+  if (!threads.length)
+    return (
+      <Empty compact icon={<MessageSquare aria-hidden="true" />} title="No chats yet" body="Each one you start is kept here." />
+    );
   return (
     <ul className="space-y-0.5">
       {threads.map((t) => {
@@ -295,6 +298,20 @@ export function AssistantPage() {
   const box = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const current = threads.find((t) => t.id === currentId) ?? null;
+  // Items already in a thread when it opens render still; items that arrive
+  // after that fade up, staggered when a reply brings several at once.
+  const baseline = useRef<{ id: number | null; ids: Set<string> } | null>(null);
+  const delays = useRef(new Map<string, number>());
+  if (!loadingThread && baseline.current?.id !== currentId) {
+    baseline.current = { id: currentId, ids: new Set(items.map((it) => it.id)) };
+    delays.current = new Map();
+  }
+  // The server copy of your own message replaces the local one, which already animated.
+  const animates = (it: ChatItem) => !baseline.current?.ids.has(it.id) && !(it.kind === "user" && !it.id.startsWith("local-"));
+  let batch = 0;
+  for (const it of items) {
+    if (animates(it) && !delays.current.has(it.id)) delays.current.set(it.id, Math.min(batch++, 5) * 60);
+  }
   const busy = sending !== null;
   const off = !!ai && !ai.enabled;
   useTitle(current?.title && current.title !== "New chat" ? current.title : "Assistant");
@@ -433,7 +450,7 @@ export function AssistantPage() {
             </Callout>
           )}
 
-          <div role="log" aria-live="polite" aria-label="Conversation" className="min-h-[40vh] space-y-4 pb-4">
+          <div role="log" aria-live="polite" aria-label="Conversation" className={cx("space-y-4 pb-4", (items.length > 0 || loadingThread) && "min-h-[40vh]")}>
             {loadingThread ? (
               <div className="space-y-4" aria-busy="true">
                 <Skeleton className="ml-auto h-10 w-1/2 rounded-2xl" />
@@ -441,7 +458,7 @@ export function AssistantPage() {
                 <Skeleton className="ml-auto h-10 w-1/3 rounded-2xl" />
               </div>
             ) : items.length === 0 ? (
-              <div className="rounded-card border border-dashed border-line-strong px-5 py-8 text-center">
+              <div className="fade-up rounded-card border border-dashed border-line-strong px-4 py-6 text-center sm:px-5 sm:py-10">
                 <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-surface text-muted shadow-card">
                   <Sparkles className="h-5 w-5" aria-hidden="true" />
                 </div>
@@ -458,10 +475,17 @@ export function AssistantPage() {
                 </div>
               </div>
             ) : (
-              items.map((it) => <Item key={it.id} item={it} busy={busy} onAnswer={answer} />)
+              items.map((it) => {
+                const delay = animates(it) ? delays.current.get(it.id) : undefined;
+                return (
+                  <div key={it.id} className={delay !== undefined ? "fade-up" : undefined} style={delay ? { animationDelay: `${delay}ms` } : undefined}>
+                    <Item item={it} busy={busy} onAnswer={answer} />
+                  </div>
+                );
+              })
             )}
             {busy && sending === currentId && (
-              <div role="status" className="flex items-center gap-2 pl-[34px] text-[13px] text-muted">
+              <div role="status" className="fade-up flex items-center gap-2 pl-[34px] text-[13px] text-muted">
                 <Spinner />
                 Working
               </div>

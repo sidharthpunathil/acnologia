@@ -162,7 +162,7 @@ function MoreSheet({ open, onClose, items }: { open: boolean; onClose: () => voi
                 to={l.to}
                 onClick={onClose}
                 className={({ isActive }) =>
-                  cx("flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px]", isActive ? "bg-ink/[0.06] font-medium text-ink" : "text-ink")
+                  cx("flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] transition-colors duration-100 active:bg-ink/[0.06]", isActive ? "bg-ink/[0.06] font-medium text-ink" : "text-ink")
                 }
               >
                 <l.icon className="h-[18px] w-[18px] text-muted" aria-hidden="true" />
@@ -182,7 +182,7 @@ function MoreSheet({ open, onClose, items }: { open: boolean; onClose: () => voi
           onClose();
           void signOut();
         }}
-        className="tap mt-4 flex min-h-[48px] w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] text-red-700 hover:bg-red-50"
+        className="tap mt-4 flex min-h-[48px] w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] text-red-700 transition-colors duration-100 hover:bg-red-50 active:bg-red-50"
       >
         <LogOut className="h-[18px] w-[18px]" aria-hidden="true" /> Sign out
       </button>
@@ -271,7 +271,8 @@ export function Layout() {
         Skip to content
       </a>
       <header className="sticky top-0 z-40 border-b border-line bg-canvas/90 pt-[env(safe-area-inset-top)] backdrop-blur supports-[backdrop-filter]:bg-canvas/75">
-        <div className="mx-auto flex h-14 max-w-[1240px] items-center justify-between gap-4 px-4 sm:px-6">
+        {/* Same width as main, so the logo and account pill line up with the page column. */}
+        <div className="mx-auto flex h-14 max-w-[1076px] items-center justify-between gap-4 px-4 sm:px-6">
           <Logo />
           <nav aria-label="Main" className="hidden items-center gap-1 lg:flex">
             {primary.map((l) => (
@@ -283,7 +284,7 @@ export function Layout() {
           </nav>
           <Link
             to="/account"
-            className="tap inline-flex h-9 max-w-[45vw] items-center truncate rounded-full bg-ink/[0.06] px-3.5 text-[13px] font-medium text-ink lg:hidden"
+            className="tap inline-flex h-9 max-w-[45vw] items-center truncate rounded-full bg-ink/[0.06] px-3.5 text-[13px] font-medium text-ink transition-transform duration-150 ease-out active:scale-[0.97] lg:hidden"
             aria-label={`Your account: ${user?.name || user?.email || ""}`}
           >
             <span className="truncate">{user?.name || "Account"}</span>

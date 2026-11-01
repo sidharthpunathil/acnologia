@@ -71,44 +71,66 @@ export function TestReportList({ report }: { report: TestReport }) {
   );
 }
 
+type DoneValidation = Extract<Validation, { state: "done" }>;
+
 function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void }) {
+  // Every edit re-checks the spec. Keep the last result on screen while that
+  // runs, so the panel (and on phones, the form below it) does not jump.
+  const [last, setLast] = useState<DoneValidation | null>(null);
+  useEffect(() => {
+    if (v.state === "done") setLast(v);
+    else if (v.state === "idle") setLast(null);
+  }, [v]);
+  const shown: DoneValidation | null = v.state === "done" ? v : v.state === "checking" ? last : null;
+  const checking = v.state === "checking";
+  const failed = shown?.report?.failed ?? 0;
+  const ok = !!shown && shown.errors.length === 0 && failed === 0;
+
   let head: JSX.Element;
   if (v.state === "idle")
     head = (
       <span className="flex items-center gap-2 text-muted">
-        <CircleDashed className="h-4 w-4" /> Not checked yet
-      </span>
-    );
-  else if (v.state === "checking")
-    head = (
-      <span className="flex items-center gap-2 text-muted">
-        <Loader2 className="h-4 w-4 animate-spin" /> Checking the spec and running tests
+        <CircleDashed className="h-4 w-4 shrink-0" /> Not checked yet
       </span>
     );
   else if (v.state === "error")
     head = (
       <span className="flex items-center gap-2 text-amber-800">
-        <AlertTriangle className="h-4 w-4" /> Could not check the spec
+        <AlertTriangle className="h-4 w-4 shrink-0" /> Could not check the spec
       </span>
     );
-  else {
-    const failed = v.report?.failed ?? 0;
-    const ok = v.errors.length === 0 && failed === 0;
-    head = ok ? (
-      <span className="flex items-center gap-2 text-emerald-700">
-        <CheckCircle2 className="h-4 w-4" /> Valid · {plural(v.report?.passed ?? 0, "test")} passing
-      </span>
-    ) : (
-      <span className="flex items-center gap-2 text-red-700">
-        <XCircle className="h-4 w-4" />
-        {v.errors.length ? plural(v.errors.length, "problem") : ""}
-        {v.errors.length && failed ? " · " : ""}
-        {failed ? `${failed} failing` : ""}
+  else if (!shown)
+    head = (
+      <span className="flex items-center gap-2 text-muted">
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> Checking the spec and running tests
       </span>
     );
-  }
+  else
+    head = (
+      <span className={cx("flex items-center gap-2", ok ? "text-emerald-700" : "text-red-700")}>
+        {checking ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted" aria-hidden="true" />
+        ) : ok ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+        ) : (
+          <XCircle className="h-4 w-4 shrink-0" />
+        )}
+        <span className="min-w-0">
+          {ok ? (
+            <>Valid · {plural(shown.report?.passed ?? 0, "test")} passing</>
+          ) : (
+            <>
+              {shown.errors.length ? plural(shown.errors.length, "problem") : ""}
+              {shown.errors.length && failed ? " · " : ""}
+              {failed ? `${failed} failing` : ""}
+            </>
+          )}
+        </span>
+        {checking && <span className="ml-auto shrink-0 font-mono text-[11px] font-normal text-faint">checking</span>}
+      </span>
+    );
   return (
-    <section aria-label="Validation" aria-live="polite" className="rounded-card bg-surface p-4 shadow-card">
+    <section aria-label="Validation" aria-live="polite" aria-busy={checking} className="rounded-card bg-surface p-4 shadow-card">
       <div className="text-[13px] font-medium">{head}</div>
       {v.state === "error" && (
         <p className="mt-2 text-xs text-muted">
@@ -118,19 +140,24 @@ function ValidationPanel({ v, onRetry }: { v: Validation; onRetry: () => void })
           </button>
         </p>
       )}
-      {v.state === "done" && v.errors.length > 0 && (
-        <ul className="mt-3 space-y-1.5 border-t border-line pt-3">
-          {v.errors.map((e, i) => (
-            <li key={i} className="flex items-start gap-2 text-[13px] text-red-800">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
-              <span className="min-w-0 break-words">{e}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {v.state === "done" && v.report && (
-        <div className="mt-3 border-t border-line pt-3">
-          <TestReportList report={v.report} />
+      {shown && (
+        <div className={cx("transition-opacity duration-200 ease-out", checking && "opacity-60")}>
+          {shown.errors.length > 0 && (
+            <ul className="mt-3 space-y-1.5 border-t border-line pt-3">
+              {shown.errors.map((e, i) => (
+                <li key={i} className="flex items-start gap-2 text-[13px] text-red-800">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
+                  <span className="min-w-0 break-words">{e}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* Phones show the editor right under this panel: list tests only when one fails. */}
+          {shown.report && (
+            <div className={cx("mt-3 border-t border-line pt-3", ok && "hidden lg:block")}>
+              <TestReportList report={shown.report} />
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -628,12 +655,15 @@ export function ProviderEditorPage() {
                   <SourceBadge source={detail.source} />
                   <Badge>v{detail.version}</Badge>
                   {detail.status === "disabled" && <Badge tone="amber">disabled</Badge>}
-                  <span>· {plural(detail.services_count, "service")}</span>
-                  {safeHref(detail.docs_url) && (
-                    <a href={safeHref(detail.docs_url)} target="_blank" rel="noreferrer" className="tap-inline inline-flex items-center gap-1 hover:text-ink">
-                      · docs <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
+                  {/* Kept on one line so a narrow screen never strands "docs" on its own row. */}
+                  <span className="ml-1 inline-flex items-center gap-1.5 whitespace-nowrap">
+                    <span>{plural(detail.services_count, "service")}</span>
+                    {safeHref(detail.docs_url) && (
+                      <a href={safeHref(detail.docs_url)} target="_blank" rel="noreferrer" className="tap-inline inline-flex items-center gap-1 hover:text-ink">
+                        · docs <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                      </a>
+                    )}
+                  </span>
                 </>
               ) : (
                 <span>Write the rules by hand, or let the AI builder write them from a docs URL.</span>
@@ -693,7 +723,7 @@ export function ProviderEditorPage() {
       </div>
 
       {!readOnly && (dirty || isNew) && (
-        <div className="fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 backdrop-blur">
+        <div className="fade-up fixed inset-x-0 bottom-[var(--tabbar-h)] z-30 border-t border-line bg-surface/95 backdrop-blur">
           <div className="mx-auto flex max-w-[1076px] flex-col gap-2 px-4 py-2.5 sm:px-6 sm:py-3 lg:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {/* Phones: the version note opens on demand so the bar stays one row above the keyboard. */}
             {!isNew && noteOpen && (

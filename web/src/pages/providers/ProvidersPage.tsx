@@ -5,7 +5,7 @@ import { Blocks, Plus, Search, Sparkles } from "lucide-react";
 import { useProviders } from "../../stores/providers";
 import { useAuth } from "../../stores/auth";
 import { can } from "../../lib/perms";
-import { plural, relTime } from "../../lib/format";
+import { dateTime, plural, relTime } from "../../lib/format";
 import type { Provider } from "../../lib/types";
 import { ProviderLogo } from "../../components/EntityLogo";
 import { Tabs } from "../../components/Tabs";
@@ -50,11 +50,18 @@ function ProviderCard({ p }: { p: Provider }) {
         </div>
       </div>
       {p.description && <p className="line-clamp-2 text-[13px] leading-relaxed text-muted">{p.description}</p>}
-      <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
-        <SourceBadge source={p.source} />
-        <Badge tone={p.services_count > 0 ? "green" : "neutral"}>{plural(p.services_count, "service")}</Badge>
-        {idle ? <Badge>No keys</Badge> : <Badge tone="green">{plural(p.keys_count, "key")}</Badge>}
-        <span className="ml-auto font-mono text-[11px] text-faint">{p.updated_at ? `updated ${relTime(p.updated_at)}` : ""}</span>
+      <div className="mt-auto flex items-center gap-2 border-t border-line pt-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          <SourceBadge source={p.source} />
+          <Badge tone={p.services_count > 0 ? "green" : "neutral"}>{plural(p.services_count, "service")}</Badge>
+          {idle ? <Badge>No keys</Badge> : <Badge tone="green">{plural(p.keys_count, "key")}</Badge>}
+        </div>
+        {/* Short, so it stays on the badge row instead of wrapping to a line of its own. */}
+        {p.updated_at && (
+          <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-faint" title={`Updated ${dateTime(p.updated_at)}`}>
+            {relTime(p.updated_at)}
+          </span>
+        )}
       </div>
     </Link>
   );

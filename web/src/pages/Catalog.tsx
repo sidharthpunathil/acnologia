@@ -17,18 +17,36 @@ import { AddServiceModal } from "./AddServiceModal";
 
 const ALL = "__all";
 
-export function serviceMeta(s: Service): string {
+type MetaPart = { text: string; tone?: "red" | "amber" | "violet" };
+
+function metaParts(s: Service): MetaPart[] {
   const c = s.key_counts;
-  // Problems first, so a narrow card never hides them behind the totals.
-  const parts: string[] = [];
-  if (c.invalid) parts.push(`${c.invalid} invalid`);
-  if (c.exhausted) parts.push(`${c.exhausted} out of quota`);
-  if (c.busy) parts.push(`${c.busy} busy`);
-  if (c.cooling) parts.push(`${c.cooling} cooling`);
-  parts.push(plural(c.total, "key"));
-  if (c.total > 0) parts.push(`${Math.max(0, c.available - (c.busy ?? 0))} available`);
-  parts.push(STRATEGY_LABEL[s.strategy] ?? s.strategy);
-  return parts.join(" · ");
+  // Problems first and in color, so a narrow card never hides them behind the totals.
+  const parts: MetaPart[] = [];
+  if (c.invalid) parts.push({ text: `${c.invalid} invalid`, tone: "red" });
+  if (c.banned) parts.push({ text: `${c.banned} banned`, tone: "red" });
+  if (c.exhausted) parts.push({ text: `${c.exhausted} out of quota`, tone: "amber" });
+  if (c.cooling) parts.push({ text: `${c.cooling} cooling`, tone: "amber" });
+  if (c.busy) parts.push({ text: `${c.busy} busy`, tone: "violet" });
+  if (c.total > 0) parts.push({ text: `${Math.max(0, c.available - (c.busy ?? 0))} of ${plural(c.total, "key")} available` });
+  else parts.push({ text: "No keys yet" });
+  return parts;
+}
+
+/** The card line plus the rotation strategy, for the tooltip and anywhere text is enough. */
+export function serviceMeta(s: Service): string {
+  return [...metaParts(s).map((p) => p.text), STRATEGY_LABEL[s.strategy] ?? s.strategy].join(" · ");
+}
+
+const TONE = { red: "text-red-700", amber: "text-amber-700", violet: "text-violet-700" } as const;
+
+/** Green when a key is free, red when every key is broken, amber while keys only rest, gray with no keys. */
+function healthDot(s: Service): { cls: string; label: string } {
+  const c = s.key_counts;
+  if (c.total === 0) return { cls: "bg-line-strong", label: "No keys yet" };
+  if (c.available > 0) return { cls: "bg-emerald-500", label: "Keys available" };
+  if (c.cooling || c.exhausted || c.busy) return { cls: "bg-amber-500", label: "Keys resting, none free right now" };
+  return { cls: "bg-red-500", label: "No working keys" };
 }
 
 function categoryOf(s: Service): string {
@@ -47,8 +65,8 @@ function FreeTierLine({ provider }: { provider: string }) {
 }
 
 function ServiceCard({ s }: { s: Service }) {
-  const healthy = s.key_counts.available > 0;
-  const meta = serviceMeta(s);
+  const dot = healthDot(s);
+  const parts = metaParts(s);
   // No keys yet: keep the card quiet until it is hovered or focused.
   const idle = s.key_counts.total === 0;
   return (
@@ -65,14 +83,16 @@ function ServiceCard({ s }: { s: Service }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className={cx("min-w-0 truncate text-[15px] font-medium", idle ? "text-muted" : "text-ink")}>{s.name}</span>
-          <span
-            className={healthy ? "h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" : "h-1.5 w-1.5 shrink-0 rounded-full bg-line-strong"}
-            aria-hidden="true"
-          />
-          <span className="sr-only">{healthy ? "Keys available" : "No key available"}</span>
+          <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", dot.cls)} title={dot.label} aria-hidden="true" />
+          <span className="sr-only">{dot.label}</span>
         </div>
-        <div className="mt-1 line-clamp-2 font-mono text-xs text-muted" title={meta}>
-          {meta}
+        <div className="mt-1 line-clamp-2 font-mono text-xs text-muted" title={serviceMeta(s)}>
+          {parts.map((p, i) => (
+            <span key={p.text}>
+              {i > 0 && <span className="text-faint"> · </span>}
+              <span className={cx("whitespace-nowrap", p.tone && TONE[p.tone])}>{p.text}</span>
+            </span>
+          ))}
         </div>
         <FreeTierLine provider={s.provider} />
       </div>

@@ -351,7 +351,7 @@ export function WebhooksPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[15px] font-medium text-ink">{h.name}</span>
+                    <span className={cx("wrap-anywhere min-w-0 text-[15px] font-medium", h.active ? "text-ink" : "text-muted")}>{h.name}</span>
                     <Badge tone={h.format === "json" ? "violet" : "blue"}>{h.format}</Badge>
                     {!h.active && <Badge>paused</Badge>}
                   </div>
@@ -371,8 +371,8 @@ export function WebhooksPage() {
                   </div>
                   {h.last_error && <div className="wrap-anywhere mt-1 text-xs text-red-700">{h.last_error}</div>}
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-1">
-                  <Toggle checked={h.active} onChange={(v) => void toggleActive(h, v)} disabled={!manage} ariaLabel={h.active ? `${h.name} is active` : `${h.name} is paused`} />
+                <div className="-mx-1 flex shrink-0 flex-wrap items-center gap-1 border-t border-line pt-2 sm:mx-0 sm:border-0 sm:pt-0">
+                  <Toggle checked={h.active} onChange={(v) => void toggleActive(h, v)} disabled={!manage} caption={h.active ? "Active" : "Paused"} ariaLabel={h.active ? `${h.name} is active` : `${h.name} is paused`} />
                   {manage && (
                     <>
                       <span className="mx-1 h-5 w-px bg-line" />

@@ -56,7 +56,8 @@ export function Modal({
       setMounted(true);
       return;
     }
-    const t = window.setTimeout(() => setMounted(false), 180);
+    // A little longer than the longest exit (sheet-out, 180ms) so its last frame is not cut.
+    const t = window.setTimeout(() => setMounted(false), 200);
     return () => window.clearTimeout(t);
   }, [open]);
   const closing = !open && mounted;
@@ -153,12 +154,23 @@ export function Modal({
       el.style.transform = "";
     }
   };
+  // A drag leaves inline styles that block the exit keyframes, so a sheet that was
+  // dragged and let go, then closed another way, slides out with a transition instead.
+  useEffect(() => {
+    const el = panel.current;
+    if (!closing || !el || el.style.animationName !== "none" || el.style.transform === "translateY(100%)") return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.style.transition = reduce ? "opacity 150ms ease-out" : "transform 180ms var(--ease-out)";
+    if (reduce) el.style.opacity = "0";
+    else el.style.transform = "translateY(100%)";
+  }, [closing]);
   // Clear inline drag styles when the panel opens again.
   useEffect(() => {
     if (open && panel.current) {
       panel.current.style.transform = "";
       panel.current.style.transition = "";
       panel.current.style.animation = "";
+      panel.current.style.opacity = "";
     }
   }, [open]);
 

@@ -14,13 +14,13 @@ import { useNow } from "../../hooks/useNow";
 import { Modal } from "../../components/Modal";
 import { EntityLogo, ServiceLogo } from "../../components/EntityLogo";
 import { StatusPill } from "../../components/StatusPill";
-import { ActivityChart, QuotaMeter, ValidityBadge, accountLabel, providerGivesReset, validityText } from "../../components/KeyBits";
+import { ActivityChart, OnChange, QuotaMeter, ValidityBadge, accountLabel, providerGivesReset, validityRepeatsStatus, validityText } from "../../components/KeyBits";
 import { usePoll } from "../../hooks/usePoll";
 import { useProviders } from "../../stores/providers";
 import { KindBadge } from "../../components/EventsList";
 import { Badge, Button, Callout, Skeleton, Spinner, cx } from "../../components/ui";
 import { useServices } from "../../stores/services";
-import { InUse } from "./KeysTable";
+import { InUse, pillState } from "./KeysTable";
 import { KeyEditModal } from "./KeyEditModal";
 import { RevealModal } from "./RevealModal";
 import { withLiveStatus } from "./keyUtil";
@@ -149,8 +149,10 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
           )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <ValidityBadge validity={k.validity} />
-          <StatusPill k={k} now={now} serviceMax={serviceMax} />
+          <OnChange id={pillState(k, serviceMax)}>
+            <StatusPill k={k} now={now} serviceMax={serviceMax} />
+          </OnChange>
+          {!validityRepeatsStatus(k) && <ValidityBadge validity={k.validity} />}
           <InUse k={k} serviceMax={serviceMax} />
           {k.tier === "backup" && <Badge tone="blue">backup</Badge>}
           {k.hidden && (
@@ -293,7 +295,8 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
                     <Fact label="Other identifier">{k.account_ref ? <span className="wrap-anywhere">{k.account_ref}</span> : <span className="text-muted">Not set</span>}</Fact>
                   </>
                 )}
-                {k.last_error && (
+                {/* For an invalid key the line above already quotes this error. */}
+                {k.last_error && !(k.validity === "invalid" && validityText(k, now) === k.last_error) && (
                   <Fact label="Last error" wide>
                     <span className="wrap-anywhere text-red-700">{k.last_error}</span>
                   </Fact>

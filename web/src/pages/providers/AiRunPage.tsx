@@ -75,13 +75,13 @@ function elapsed(from: string, to: number): string {
   return m ? `${m}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`;
 }
 
-function StepRow({ step, last, live }: { step: AgentStep; last: boolean; live: boolean }) {
+function StepRow({ step, last, live, enter }: { step: AgentStep; last: boolean; live: boolean; enter: boolean }) {
   const [open, setOpen] = useState(false);
   const meta = STEP_ICON[step.type] ?? STEP_ICON.info;
   const I = meta.icon;
   const hasDetail = !!step.detail?.trim();
   return (
-    <li className="fade-up relative flex gap-3 pb-4">
+    <li className={cx("relative flex gap-3 pb-4", enter && "fade-up")}>
       {!last && <span className="absolute left-[15px] top-8 h-[calc(100%-24px)] w-px bg-line" aria-hidden="true" />}
       <span className={cx("relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full", meta.cls)}>
         {live && last ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <I className="h-4 w-4" aria-hidden="true" />}
@@ -175,6 +175,9 @@ export function AiRunPage() {
   const run = state?.run;
   const active = !!run && ACTIVE_STATUSES.has(run.status);
   const prevStatus = useRef<string | null>(null);
+  // Steps already recorded when the page opens render still; new ones fade up as they stream in.
+  const firstSeq = useRef<{ run: number; seq: number } | null>(null);
+  if (state && firstSeq.current?.run !== id) firstSeq.current = { run: id, seq: state.steps.reduce((m, s) => Math.max(m, s.seq), -1) };
   useTitle(run ? `${run.title || run.draft?.name || "Run"} #${run.id}` : "AI run");
 
   // Poll every 1.5s while the run is active; fetch once otherwise.
@@ -214,7 +217,10 @@ export function AiRunPage() {
   useEffect(() => {
     if (!active || !endRef.current) return;
     const r = endRef.current.getBoundingClientRect();
-    if (r.top < window.innerHeight + 200) endRef.current.scrollIntoView({ block: "end", behavior: "smooth" });
+    if (r.top < window.innerHeight + 200) {
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      endRef.current.scrollIntoView({ block: "end", behavior: reduce ? "auto" : "smooth" });
+    }
   }, [stepCount, active]);
 
   if (notFound)
@@ -338,7 +344,7 @@ export function AiRunPage() {
           ) : (
             <ol className="rounded-card bg-surface p-4 shadow-card sm:p-5" aria-live="polite" aria-relevant="additions">
               {state.steps.map((s, i) => (
-                <StepRow key={s.seq} step={s} last={i === state.steps.length - 1} live={active} />
+                <StepRow key={s.seq} step={s} last={i === state.steps.length - 1} live={active} enter={s.seq > (firstSeq.current?.seq ?? -1)} />
               ))}
             </ol>
           )}

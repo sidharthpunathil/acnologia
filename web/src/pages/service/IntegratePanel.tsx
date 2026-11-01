@@ -247,9 +247,10 @@ export function IntegratePanel({ service }: { service: Service }) {
         </Card>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Phones: the language picker drops to its own full width row. */}
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
         <Segmented label="Mode" size="sm" items={[{ id: "proxy" as Mode, label: "Proxy" }, { id: "lease" as Mode, label: "Lease" }]} value={mode} onChange={setMode} />
-        <Segmented label="Language" size="sm" items={LANGS} value={lang} onChange={setLang} />
+        <Segmented label="Language" size="sm" block className="sm:inline-flex sm:w-auto" items={LANGS} value={lang} onChange={setLang} />
       </div>
 
       <CodeBlock code={code} label={`${mode} · ${LANGS.find((l) => l.id === lang)?.label}`} />

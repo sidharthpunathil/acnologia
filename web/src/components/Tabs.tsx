@@ -41,20 +41,31 @@ export function Tabs<T extends string>({
     measure();
     const el = scroller.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    // Watch the row too: late web fonts or count changes widen it without resizing the scroller.
     const ro = new ResizeObserver(measure);
     ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => ro.disconnect();
   }, [measure, items.length]);
 
-  // Keep the active tab in view, for deep links and keyboard moves.
+  // Keep the active tab in view, for deep links and keyboard moves. The first
+  // pass jumps (nothing to follow on load); later changes glide.
+  const mounted = useRef(false);
   useEffect(() => {
     const i = items.findIndex((it) => it.id === value);
     const btn = refs.current[i];
     const el = scroller.current;
+    const first = !mounted.current;
+    mounted.current = true;
     if (!btn || !el || el.scrollWidth <= el.clientWidth) return;
+    // Skip when the tab is already clear of the 32px edge fades, so clicking a visible tab does not shove the row.
+    const fade = 32;
+    const start = el.scrollLeft > 2 ? fade : 0;
+    const clear = btn.offsetLeft >= el.scrollLeft + start && btn.offsetLeft + btn.offsetWidth <= el.scrollLeft + el.clientWidth - fade;
+    if (clear) return;
     const left = btn.offsetLeft - el.clientWidth / 2 + btn.offsetWidth / 2;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    el.scrollTo({ left: Math.max(0, left), behavior: reduce ? "auto" : "smooth" });
+    el.scrollTo({ left: Math.max(0, left), behavior: first || reduce ? "auto" : "smooth" });
     // Only when the selection changes; parents re-render often with a fresh items array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, items.length]);
@@ -93,7 +104,7 @@ export function Tabs<T extends string>({
               onClick={() => onChange(it.id)}
               onKeyDown={(e) => onKey(e, i)}
               className={cx(
-                "tap relative -mb-px whitespace-nowrap px-2.5 pb-3 pt-1 text-[13px] transition-colors",
+                "tap relative -mb-px whitespace-nowrap px-2.5 pb-3 pt-1 text-[13px] transition-colors md:px-2",
                 active ? "font-medium text-ink" : "text-muted hover:text-ink",
               )}
             >

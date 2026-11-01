@@ -73,7 +73,7 @@ export function IconButton({
 }
 
 const fieldBase =
-  "field-input w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20 disabled:bg-canvas disabled:text-muted";
+  "field-input rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-ink/60 focus:outline-none focus:ring-2 focus:ring-ink/20 disabled:bg-canvas disabled:text-muted";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...rest },
@@ -164,6 +164,7 @@ export function Toggle({
   description,
   disabled,
   ariaLabel,
+  caption,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
@@ -172,6 +173,12 @@ export function Toggle({
   disabled?: boolean;
   /** Accessible name when there is no visible label. */
   ariaLabel?: string;
+  /**
+   * Short state text shown beside a bare switch, such as "Active" or "Paused".
+   * Clicking it toggles. With an ariaLabel it is hidden from assistive tech so
+   * the name is not read twice; without one it names the switch.
+   */
+  caption?: ReactNode;
 }) {
   const sw = (
     <button
@@ -182,13 +189,13 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
-        "switch-hit relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "switch-hit relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50",
         checked ? "bg-ink" : "bg-line-strong ring-1 ring-inset ring-faint",
       )}
     >
       <span
         className={cx(
-          "inline-block h-4 w-4 rounded-full shadow transition-transform",
+          "inline-block h-4 w-4 rounded-full shadow transition-transform duration-200 ease-out",
           // The knob contrasts with the track in both themes: surface on ink when on, white on gray when off.
           checked ? "bg-surface" : "bg-white",
           checked ? "translate-x-[18px]" : "translate-x-0.5",
@@ -196,6 +203,15 @@ export function Toggle({
       />
     </button>
   );
+  if (!label && caption != null)
+    return (
+      <label className={cx("inline-flex select-none items-center gap-2", disabled ? "cursor-not-allowed" : "cursor-pointer")}>
+        <span aria-hidden={ariaLabel ? true : undefined} className={cx("text-xs transition-colors duration-150", disabled ? "text-faint" : "text-muted")}>
+          {caption}
+        </span>
+        {sw}
+      </label>
+    );
   if (!label) return sw;
   return (
     <div className="flex items-start justify-between gap-4">
@@ -259,19 +275,37 @@ export function Empty({
   body,
   action,
   className,
+  compact,
 }: {
   icon?: ReactNode;
   title: string;
   body?: ReactNode;
   action?: ReactNode;
   className?: string;
+  /** Smaller padding, icon and type, for sidebars and narrow panels. */
+  compact?: boolean;
 }) {
   return (
-    <div className={cx("flex flex-col items-center rounded-card border border-dashed border-line-strong px-6 py-12 text-center", className)}>
-      {icon && <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-surface text-muted shadow-card">{icon}</div>}
-      <div className="text-[15px] font-medium text-ink">{title}</div>
-      {body && <div className="mt-1 max-w-md text-sm text-muted">{body}</div>}
-      {action && <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div>}
+    <div
+      className={cx(
+        "flex flex-col items-center border border-dashed border-line-strong text-center",
+        compact ? "rounded-xl px-3 py-4" : "rounded-card px-6 py-12",
+        className,
+      )}
+    >
+      {icon && (
+        <div
+          className={cx(
+            "flex items-center justify-center bg-surface text-muted shadow-card",
+            compact ? "mb-2 h-7 w-7 rounded-lg [&>svg]:h-3.5 [&>svg]:w-3.5" : "mb-3 h-10 w-10 rounded-xl",
+          )}
+        >
+          {icon}
+        </div>
+      )}
+      <div className={cx("font-medium text-ink", compact ? "text-[13px]" : "text-[15px]")}>{title}</div>
+      {body && <div className={cx("mt-1 max-w-md text-muted", compact ? "text-xs leading-relaxed" : "text-sm")}>{body}</div>}
+      {action && <div className={cx("flex flex-wrap justify-center gap-2", compact ? "mt-3" : "mt-5")}>{action}</div>}
     </div>
   );
 }
@@ -415,11 +449,13 @@ export function Stat({
   value,
   tone,
   sub,
+  className,
 }: {
   label: string;
   value: ReactNode;
   tone?: "green" | "amber" | "red" | "neutral" | "violet";
   sub?: ReactNode;
+  className?: string;
 }) {
   const color =
     tone === "green"
@@ -432,7 +468,7 @@ export function Stat({
             ? "text-violet-700"
             : "text-ink";
   return (
-    <div className="min-w-0 rounded-card bg-surface px-4 py-3 shadow-card">
+    <div className={cx("min-w-0 rounded-card bg-surface px-4 py-3 shadow-card", className)}>
       <div className="truncate font-mono text-[11px] uppercase tracking-wide text-faint">{label}</div>
       <div className={cx("mt-1 font-mono text-xl tabular-nums", color)}>{value}</div>
       {sub && <div className="mt-0.5 truncate font-mono text-[11px] text-faint">{sub}</div>}
@@ -454,6 +490,7 @@ export function Segmented<T extends string>({
   label,
   className,
   size = "md",
+  block,
 }: {
   items: SegmentItem<T>[];
   value: T;
@@ -461,6 +498,8 @@ export function Segmented<T extends string>({
   label: string;
   className?: string;
   size?: "sm" | "md";
+  /** Fill the row: segments share the full width. Pair with a breakpoint class such as `sm:inline-flex sm:w-auto` to fill only on phones. */
+  block?: boolean;
 }) {
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
     let j = -1;
@@ -473,7 +512,7 @@ export function Segmented<T extends string>({
     (group?.children[j] as HTMLElement | undefined)?.focus();
   };
   return (
-    <div role="radiogroup" aria-label={label} className={cx("inline-flex max-w-full rounded-full bg-well p-0.5", className)}>
+    <div role="radiogroup" aria-label={label} className={cx(block ? "flex w-full" : "inline-flex", "max-w-full rounded-full bg-well p-0.5", className)}>
       {items.map((it, i) => {
         const on = it.id === value;
         return (

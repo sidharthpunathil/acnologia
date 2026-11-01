@@ -6,7 +6,7 @@ export function AuthShell({ title, meta, children }: { title: string; meta: stri
   useTitle(null);
   return (
     <div className="flex min-h-dvh flex-col bg-canvas">
-      <main className="mx-auto w-full max-w-[420px] flex-1 px-4 pb-16 pt-[calc(4rem+env(safe-area-inset-top))] sm:pt-24">
+      <main className="fade-up mx-auto w-full max-w-[420px] flex-1 px-4 pb-16 pt-[calc(4rem+env(safe-area-inset-top))] sm:pt-24">
         <div className="text-center">
           <Mark size={72} className="mx-auto rounded-[22%] shadow-[0_10px_30px_-8px_rgb(var(--brand)/0.45),0_2px_6px_rgba(0,0,0,0.12)]" />
           <p className="mt-5 font-mono text-2xl font-medium tracking-tight text-ink">{BRAND_NAME}</p>
