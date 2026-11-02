@@ -49,6 +49,9 @@ type Server struct {
 	WebFS   fs.FS
 	LLMsTxt []byte
 	limiter *loginLimiter
+	// gate is the site-wide access password lock (gate.go); off when
+	// ACNOLOGIA_ACCESS_PASSWORD is unset.
+	gate *accessGate
 	// userMu serializes check-then-write user changes (first setup, keeping
 	// one superadmin) so concurrent requests cannot both pass the check.
 	userMu sync.Mutex
@@ -82,6 +85,7 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 	if st.Redactor() == nil {
 		st.SetRedactor(NewRedactor(st, p.Box))
 	}
+	s.setAccessPassword(cfg.AccessPassword)
 	return s
 }
 
@@ -111,7 +115,8 @@ func (s *Server) Router() http.Handler {
 	if s.Cfg.TrustProxyHeaders {
 		r.Use(middleware.RealIP)
 	}
-	r.Use(middleware.Recoverer, requestLog, s.privateSite)
+	// privateSite runs before the gate so a locked answer is no-index too.
+	r.Use(middleware.Recoverer, requestLog, s.privateSite, s.gateRequests)
 
 	r.Get("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -124,6 +129,15 @@ func (s *Server) Router() http.Handler {
 	r.Get("/llms.txt", s.serveLLMs)
 	r.Get("/llms-full.txt", s.serveLLMsFull)
 	s.mountDocs(r)
+
+	// The access gate's own routes: the lock screen must reach them before
+	// it holds the cookie (gateRequests lets them through).
+	r.Route("/api/gate", func(r chi.Router) {
+		r.Use(jsonOnly)
+		r.Get("/", s.gateState)
+		r.Post("/unlock", s.gateUnlock)
+		r.Post("/lock", s.gateLock)
+	})
 
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(jsonOnly)

@@ -30,6 +30,8 @@ GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
 ```
 
+When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz and /robots.txt stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp) are not affected.
+
 ## GET /api/v1/services
 
 Lists the services the token may use.

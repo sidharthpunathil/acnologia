@@ -105,6 +105,7 @@ provider and Claude spend, and a dashboard that works on a phone.
 
 - [Request flows](docs/flows.md): the proxy, leases, key states and outcomes, MCP, the AI builder and the Assistant
 - [Configuration](docs/configuration.md): every setting, self-hosting, backups, upgrading
+- [Deploying on Railway](docs/deploy-railway.md): a public deploy behind the access password
 - [HTTP API](docs/api.md): consumer error codes and every dashboard route with its role
 - [Security model](docs/security.md): roles, hidden keys, what the model can see, limits
 - [Provider specs](docs/providers.md): built in providers, the spec format, building one with AI

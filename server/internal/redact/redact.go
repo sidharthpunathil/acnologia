@@ -50,6 +50,9 @@ type Redactor struct {
 	mu    sync.Mutex // serializes reloads
 	stale atomic.Bool
 	set   atomic.Pointer[known]
+	// static are secrets from the configuration (the access password), known
+	// for the life of the process on top of what load returns.
+	static []string
 }
 
 type known struct {
@@ -64,6 +67,22 @@ func New(load Loader) *Redactor {
 	return r
 }
 
+// AlsoKnow adds fixed secrets, such as the access password from the
+// environment, to every known set this Redactor loads from now on.
+func (r *Redactor) AlsoKnow(secrets ...string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	for _, s := range secrets {
+		if strings.TrimSpace(s) != "" {
+			r.static = append(r.static, s)
+		}
+	}
+	r.mu.Unlock()
+	r.stale.Store(true)
+}
+
 // Invalidate marks the known set out of date; the next use reloads it.
 func (r *Redactor) Invalidate() {
 	if r != nil {
@@ -73,17 +92,22 @@ func (r *Redactor) Invalidate() {
 
 // Refresh reloads the known secrets now.
 func (r *Redactor) Refresh(ctx context.Context) error {
-	if r == nil || r.load == nil {
+	if r == nil {
 		return nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stale.Store(false)
-	secrets, err := r.load(context.WithoutCancel(ctx))
-	if err != nil {
-		r.stale.Store(true)
-		return err
+	var secrets []string
+	if r.load != nil {
+		var err error
+		secrets, err = r.load(context.WithoutCancel(ctx))
+		if err != nil {
+			r.stale.Store(true)
+			return err
+		}
 	}
+	secrets = append(secrets, r.static...)
 	r.set.Store(&known{r: replacer(secrets), n: len(secrets)})
 	return nil
 }

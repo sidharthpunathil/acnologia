@@ -1,7 +1,8 @@
 import { NavLink } from "react-router-dom";
-import { RiLogoutBoxRLine } from "@remixicon/react";
+import { RiLockLine, RiLogoutBoxRLine } from "@remixicon/react";
 import { Drawer, DrawerBody, DrawerHeader } from "@/components/base/drawer/drawer";
 import { useAuth } from "@/stores/auth";
+import { useGate } from "@/stores/gate";
 import { cx } from "@/utils/cx";
 import { ACCOUNT_ITEM, SIGN_OUT_ROW, grouped, menuRowKeys, useSignOut, type NavItem } from "./nav";
 import { ThemePicker } from "./theme-picker";
@@ -38,6 +39,8 @@ function SheetLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
 export function MoreSheet({ open, onClose, items }: { open: boolean; onClose: () => void; items: NavItem[] }) {
   const user = useAuth((s) => s.user);
   const signOut = useSignOut();
+  const gateOn = useGate((s) => s.required);
+  const lockBrowser = useGate((s) => s.lock);
   return (
     <Drawer placement="bottom" isOpen={open} onOpenChange={(o) => !o && onClose()} className="pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       <DrawerHeader title="More" description={user ? `${user.name || user.email} · ${user.role}` : undefined} />
@@ -77,6 +80,19 @@ export function MoreSheet({ open, onClose, items }: { open: boolean; onClose: ()
             <RiLogoutBoxRLine className="size-5 text-foreground-icon-secondary" aria-hidden />
             Sign out
           </button>
+          {gateOn && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                void lockBrowser();
+              }}
+              className={cx(ROW, SIGN_OUT_ROW, "-mx-2 w-[calc(100%+1rem)] text-start hover:bg-background-tertiary-default")}
+            >
+              <RiLockLine className="size-5 text-foreground-icon-secondary" aria-hidden />
+              Lock this browser
+            </button>
+          )}
         </div>
       </DrawerBody>
     </Drawer>

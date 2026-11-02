@@ -187,6 +187,15 @@ any client you would not hand a key to.
 
 ## Web protections
 
+- **Access password** (optional, for an instance on the internet): with
+  `ACNOLOGIA_ACCESS_PASSWORD` set, a lock screen comes before setup, sign in
+  and every dashboard route, and only the app shell, `/healthz`,
+  `/robots.txt` and the app token routes stay open. The `acnologia_gate`
+  cookie is an issue time plus an HMAC keyed by the master key and the
+  password, refused after 30 days; wrong guesses are limited to 5 a minute
+  and 50 a day globally. See [configuration](configuration.md#access-password).
+- **No indexing**: every response carries `X-Robots-Tag: noindex, nofollow,
+  noarchive, nosnippet` and `/robots.txt` disallows everything.
 - **CSRF**: every mutating dashboard call must send `Content-Type:
   application/json` or `X-Requested-With`, both of which force a CORS
   preflight. This holds for bodyless calls too. The session cookie is

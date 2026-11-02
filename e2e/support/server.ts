@@ -29,8 +29,12 @@ export interface Started {
   baseURL: string;
 }
 
-/** Starts bin/acnologia on a free port with an empty data dir and waits for /healthz. */
-export async function startServer(): Promise<Started> {
+/**
+ * Starts bin/acnologia on a free port with an empty data dir and waits for
+ * /healthz. extraEnv adds variables, such as the access password for the
+ * gate spec's own server; the main suite passes none.
+ */
+export async function startServer(extraEnv: Record<string, string> = {}): Promise<Started> {
   if (!fs.existsSync(BIN)) throw new Error(`${BIN} is missing. Run \`make build\` first.`);
   const masterKey = execFileSync(BIN, ["gen-master-key"], { encoding: "utf8" }).trim().split("\n")[0].trim();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "acnologia-e2e-"));
@@ -47,6 +51,7 @@ export async function startServer(): Promise<Started> {
     ACNOLOGIA_DATA_DIR: dataDir,
     ACNOLOGIA_MASTER_KEY: masterKey,
     ACNOLOGIA_HEALTH_INTERVAL: "off",
+    ...extraEnv,
   };
   const child = spawn(BIN, [], { env, stdio: ["ignore", log, log], detached: true });
   child.unref();

@@ -75,6 +75,12 @@ func run() error {
 	config.LoadDotEnv(".env")
 	cfg := config.Load(version)
 	config.LogDeprecatedEnv()
+	if err := cfg.CheckAccess(); err != nil {
+		return err
+	}
+	if cfg.AccessPassword != "" {
+		slog.Info("access gate on: the dashboard needs the access password")
+	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return err
 	}

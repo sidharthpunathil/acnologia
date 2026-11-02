@@ -65,6 +65,12 @@ export function setUnauthorizedHandler(fn: UnauthorizedHandler) {
   onUnauthorized = fn;
 }
 
+/**
+ * Fired when the server answers 401 {"error":{"code":"locked"}}: the access
+ * gate's cookie is gone or expired. The AccessGate shows the lock screen.
+ */
+export const GATE_LOCKED_EVENT = "acn:gate-locked";
+
 type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
@@ -112,8 +118,12 @@ export async function request<T>(method: Method, path: string, body?: unknown): 
       (payload.errors && payload.errors.length ? payload.errors[0] : "") ||
       res.statusText ||
       `Request failed (${res.status})`;
-    // Auth endpoints answer 401 for bad credentials; that is not a session expiry.
-    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    // The access gate closed (cookie expired, password changed): show the
+    // lock screen rather than the sign-in page.
+    if (res.status === 401 && code === "locked") {
+      window.dispatchEvent(new Event(GATE_LOCKED_EVENT));
+    } else if (res.status === 401 && !path.startsWith("/api/auth/") && !path.startsWith("/api/gate")) {
+      // Auth endpoints answer 401 for bad credentials; that is not a session expiry.
       onUnauthorized?.();
     }
     throw new ApiError(res.status, code, message, payload.retry_after_sec, data);
@@ -131,7 +141,19 @@ function qs(params: Record<string, string | number | undefined | null>): string 
   return s ? `?${s}` : "";
 }
 
+export interface GateState {
+  /** An access password is configured on the server. */
+  required: boolean;
+  /** This browser has not passed the gate yet. */
+  locked: boolean;
+}
+
 export const api = {
+  // Access gate (site-wide password, before any account)
+  gateState: () => request<GateState>("GET", "/api/gate"),
+  gateUnlock: (password: string) => request<GateState>("POST", "/api/gate/unlock", { password }),
+  gateLock: () => request<GateState>("POST", "/api/gate/lock"),
+
   // Auth
   authState: () => request<AuthState>("GET", "/api/auth/state"),
   setup: (body: { email: string; name: string; password: string }) =>

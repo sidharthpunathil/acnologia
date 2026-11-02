@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-aria-components";
 import { useLocation } from "react-router-dom";
-import { RiArrowDownSLine, RiLogoutBoxRLine } from "@remixicon/react";
+import { RiArrowDownSLine, RiLockLine, RiLogoutBoxRLine } from "@remixicon/react";
 import { Dropdown, DropdownPopover, DropdownTrigger } from "@/components/base/dropdown/dropdown";
 import { MENU_ITEM, MENU_ITEM_ACTIVE, MENU_ITEM_INTERACTIVE } from "@/components/base/dropdown/menu-styles";
 import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/scroll-fade";
 import { useAuth } from "@/stores/auth";
+import { useGate } from "@/stores/gate";
 import { cx } from "@/utils/cx";
 import { ACCOUNT_ITEM, SIGN_OUT_ROW, grouped, isActivePath, menuRowKeys, useSignOut, type NavItem } from "./nav";
 import { ThemePicker } from "./theme-picker";
@@ -40,6 +41,8 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
   const current = [...items, ACCOUNT_ITEM].find((l) => isActivePath(pathname, l.to));
   const who = user?.name || user?.email || "Account";
   const signOut = useSignOut();
+  const gateOn = useGate((s) => s.required);
+  const lockBrowser = useGate((s) => s.lock);
   const [open, setOpen] = useState(false);
   const fade = useScrollFade();
 
@@ -125,6 +128,20 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
                 <RiLogoutBoxRLine className={cx(ROW_ICON, "text-foreground-icon-secondary")} aria-hidden />
                 Sign out
               </button>
+              {gateOn && (
+                <button
+                  type="button"
+                  data-menu-row=""
+                  onClick={() => {
+                    setOpen(false);
+                    void lockBrowser();
+                  }}
+                  className={cx(ROW, MENU_ITEM_INTERACTIVE, SIGN_OUT_ROW, "focus-visible:ring-2 focus-visible:ring-border-focus-ring")}
+                >
+                  <RiLockLine className={cx(ROW_ICON, "text-foreground-icon-secondary")} aria-hidden />
+                  Lock this browser
+                </button>
+              )}
             </div>
           </div>
           <ScrollFade progress={fade.progress} />

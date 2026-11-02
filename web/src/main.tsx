@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, useHref, useNavigate, type NavigateOptions } from "react-router-dom";
 import { RouterProvider } from "react-aria-components";
 import { App } from "./App";
+import { AccessGate } from "./pages/Lock";
 import "./index.css";
 // Applies the saved theme and follows the OS setting while it is "system".
 import "./stores/theme";
@@ -27,7 +28,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AriaRouter>
-        <App />
+        <AccessGate>
+          <App />
+        </AccessGate>
       </AriaRouter>
     </BrowserRouter>
   </StrictMode>,

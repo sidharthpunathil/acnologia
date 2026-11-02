@@ -208,6 +208,11 @@ func (c *cli) callWith(ctx context, method, path string, body, out any) error {
 	req.Header.Set("Authorization", "Bearer "+ctx.Token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "acnologia-ctl")
+	// A server behind the access gate wants its password on every
+	// dashboard call; it is read from the environment, never saved.
+	if pw := config.Getenv("ACNOLOGIA_ACCESS_PASSWORD"); pw != "" {
+		req.Header.Set("X-Acnologia-Access", pw)
+	}
 	hc := c.http
 	if hc == nil {
 		hc = &http.Client{Timeout: 2 * time.Minute}

@@ -36,7 +36,7 @@ func (f *fakeSerp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	q := r.URL.Query()
 	auth := r.Header.Get("Authorization")
-	if q.Get("acn_token") != "" || q.Get("cogito_token") != "" || r.Header.Get("X-Acnologia-Token") != "" || r.Header.Get("X-Cogito-Token") != "" ||
+	if q.Get("acn_token") != "" || q.Get("cogito_token") != "" || r.Header.Get("X-Acnologia-Token") != "" || r.Header.Get("X-Cogito-Token") != "" || r.Header.Get("X-Acnologia-Access") != "" ||
 		strings.HasPrefix(auth, "Bearer acn_") || strings.HasPrefix(auth, "Bearer cog_") {
 		w.WriteHeader(500)
 		_, _ = w.Write([]byte(`{"error":"acnologia token leaked upstream"}`))

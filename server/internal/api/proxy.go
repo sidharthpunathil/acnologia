@@ -117,7 +117,7 @@ func newUpstreamClient() *http.Client {
 
 var hopHeaders = []string{
 	"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
-	"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Host", "Cookie", "X-Acnologia-Token", "X-Cogito-Token",
+	"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Host", "Cookie", "X-Acnologia-Token", "X-Cogito-Token", "X-Acnologia-Access",
 	"X-Forwarded-For", "X-Real-Ip", "Content-Length",
 	// Let the Go transport negotiate gzip so error bodies can be classified.
 	"Accept-Encoding",

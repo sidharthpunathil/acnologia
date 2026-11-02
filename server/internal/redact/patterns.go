@@ -37,8 +37,11 @@ var rules = []rule{
 	{name: "openai", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])(sk-[A-Za-z0-9_\-]{16,})`), group: 1, ok: hasDigit},
 	{name: "prefixed", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])((?:hf|gsk|r8|acn|acnadm|cog|cogadm|whsec)_[A-Za-z0-9_\-]{20,}|(?:pplx|xai|fc)-[A-Za-z0-9_\-]{20,})`), group: 1},
 	// Credentials by position.
+	// The access gate's cookie (acnologia_gate=<issued>.<mac>) is hex after
+	// a timestamp, which the entropy rule leaves alone, so it gets its own.
+	{name: "gate_cookie", re: regexp.MustCompile(`acnologia_gate=([^\s;,"'\\]{8,})`), group: 1},
 	{name: "bearer", re: regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+([A-Za-z0-9_\-.~+/=:]{8,})`), group: 1, ok: secretish},
-	{name: "header", re: regexp.MustCompile(`(?i)(?:x-api-key|x-goog-api-key|api-key|x-auth-token|x-access-token|authorization)["']?\s*[:=]\s*["']?([A-Za-z0-9_\-.~+/=]{8,})`), group: 1, ok: notPlaceholder},
+	{name: "header", re: regexp.MustCompile(`(?i)(?:x-api-key|x-goog-api-key|api-key|x-auth-token|x-access-token|x-acnologia-access|authorization)["']?\s*[:=]\s*["']?([A-Za-z0-9_\-.~+/=]{8,})`), group: 1, ok: notPlaceholder},
 	{name: "assign", re: regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_\-])["']?(api[_\-]?key|apikey|access[_\-]?token|auth[_\-]?token|refresh[_\-]?token|client[_\-]?secret|api[_\-]?secret|secret[_\-]?key|access[_\-]?key|private[_\-]?key|token|secret|password|passwd|key)["']?\s*[:=]\s*["']?([^\s"'\\&,;}\]<>()]{6,})`), group: 2},
 	// Anything long and random looking.
 	{name: "entropy", re: regexp.MustCompile(`[A-Za-z0-9_\-+/=]{24,}`), ok: entropic},

@@ -26,8 +26,11 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=server /acnologia /acnologia
 # distroless nonroot is uid 65532; the data dir must be writable by it.
 COPY --from=server --chown=65532:65532 /data-empty /data
-ENV ACNOLOGIA_ADDR=:8080 ACNOLOGIA_DATA_DIR=/data
-VOLUME /data
+# No ACNOLOGIA_ADDR here: unset, the server binds 0.0.0.0:$PORT when the
+# host injects PORT (Railway does) and :8080 otherwise. No VOLUME either:
+# Railway refuses images that declare one and mounts its own at /data, and
+# docker compose names its volume itself.
+ENV ACNOLOGIA_DATA_DIR=/data
 EXPOSE 8080
 USER nonroot:nonroot
 ENTRYPOINT ["/acnologia"]
