@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Acnologia</RootNamespace>
+    <AssemblyName>Acnologia</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <PackageId>Acnologia</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Acnologia</Authors>
+    <Description>Client for Acnologia, a self-hosted API key pool: lease keys with automatic rotation, or call providers through the Acnologia proxy.</Description>
+    <PackageTags>api-keys;key-pool;rate-limit;proxy</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="Acnologia.Tests" />
+  </ItemGroup>
+
+</Project>

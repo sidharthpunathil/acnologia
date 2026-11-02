@@ -1,0 +1,33 @@
+[package]
+name = "acnologia"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Rust client for Acnologia, a self-hosted API key pool"
+license = "MIT"
+repository = "https://github.com/sidharthpunathil/acnologia"
+homepage = "https://github.com/sidharthpunathil/acnologia"
+readme = "README.md"
+keywords = ["api-keys", "rate-limit", "key-rotation", "proxy"]
+categories = ["api-bindings", "web-programming::http-client"]
+
+[features]
+default = []
+# Synchronous client in `acnologia::blocking`, built on reqwest's blocking client.
+blocking = ["reqwest/blocking"]
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt"] }
+url = "2"
+percent-encoding = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+wiremock = "0.6"
+
+[package.metadata.docs.rs]
+all-features = true

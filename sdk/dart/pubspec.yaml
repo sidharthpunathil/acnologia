@@ -1,0 +1,18 @@
+name: acnologia
+description: Dart and Flutter client for Acnologia, a self-hosted API key pool. Lease keys with automatic rotation, or call providers through the Acnologia proxy.
+version: 0.1.0
+repository: https://github.com/sidharthpunathil/acnologia/tree/main/sdk/dart
+topics:
+  - api
+  - http
+  - api-keys
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  http: ">=1.1.0 <2.0.0"
+
+dev_dependencies:
+  lints: ">=3.0.0 <7.0.0"
+  test: ^1.24.0
