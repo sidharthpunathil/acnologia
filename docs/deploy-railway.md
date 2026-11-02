@@ -41,8 +41,8 @@ failure up to 10 times).
    provider and wait for the certificate. (Generate Domain gives a
    `*.up.railway.app` address meanwhile.)
 6. **Open the site.** The lock screen asks for the access password, and that
-   is the whole login: you land in the dashboard as the owner. The browser stays unlocked for 30
-   days; "Lock this browser" in the account menu ends that early.
+   is the whole login: you land in the dashboard as the owner. The browser
+   stays unlocked for 30 days; "Sign out" in the account menu locks it early.
 
 ## If you did not set the access password
 
