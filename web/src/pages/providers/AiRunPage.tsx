@@ -16,7 +16,6 @@ import {
   RiStopLine,
   RiToolsLine,
 } from "@remixicon/react";
-import { AcnAiBuilder } from "@/components/foundations/icons/acn";
 import { useTitle } from "../../hooks/useTitle";
 import { FadeText, plainText } from "../../components/FadeText";
 import { ApiError, errorMessage } from "../../lib/api";
@@ -44,6 +43,7 @@ import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, EmptyState, PageSkeleton, Section, StatTile } from "@/components/acn";
 import { LiveReportView, TestReportList } from "./ProviderEditor";
 import { OutcomeBadge } from "./SpecTabs";
+import { RunNotes } from "./RunNotes";
 import { LostPathArt } from "@/components/foundations/illustrations";
 
 type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
@@ -206,7 +206,7 @@ function DraftPreview({ run }: { run: AgentRun }) {
           </div>
         </div>
       </div>
-      {d.description && <p className="mt-3 text-body-2-regular text-text-secondary">{d.description}</p>}
+      {d.description && <p className="mt-3 max-w-prose text-body-2-regular text-text-secondary">{d.description}</p>}
       <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
           ["auth", `${spec.auth.type} · ${spec.auth.name}`],
@@ -424,11 +424,6 @@ export function AiRunPage() {
           The draft passed its tests and is waiting for you. Review it below, then publish.
         </Callout>
       )}
-      {run.summary && (
-        <Callout tone={run.status === "published" ? "success" : "neutral"} icon={AcnAiBuilder} className="mt-6">
-          {run.summary}
-        </Callout>
-      )}
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section aria-labelledby="steps-h" className="min-w-0">
@@ -471,6 +466,7 @@ export function AiRunPage() {
         </section>
 
         <div className="flex min-w-0 flex-col gap-5">
+          {run.summary && <RunNotes summary={run.summary} />}
           <Section title="Input">
             <dl className="flex flex-col gap-3 text-body-2-regular">
               {run.input.context && (
