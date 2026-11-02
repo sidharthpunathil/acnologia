@@ -156,7 +156,6 @@ func TestCLIDeviceFlowEndToEnd(t *testing.T) {
 	e.do(http.DefaultClient, "GET", "/api/admin/me", nil, 401, nil, "Authorization", "Bearer "+g.Token)
 }
 
-
 func TestCLIDeviceDeny(t *testing.T) {
 	e := newEnv(t)
 	st := e.deviceStart()

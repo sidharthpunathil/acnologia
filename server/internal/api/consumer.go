@@ -291,7 +291,10 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	if !in.Rotate || out == providers.OK {
 		return nil, 200, nil
 	}
-	next, err := s.issueLease(ctx, a, sv, []int64{k.ID}, 0, 0)
+	// A rotated exclusive lease hands over an exclusive key too, so the caller
+	// keeps owning its key outright across rotations.
+	exclusive, _ := s.Store.IsLeaseExclusive(ctx, l.ID)
+	next, err := s.issueLeaseOpts(ctx, a, sv, []int64{k.ID}, 0, 0, exclusive)
 	if err != nil {
 		var nk *pool.NoKeyError
 		if errors.As(err, &nk) {

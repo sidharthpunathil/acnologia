@@ -100,6 +100,16 @@ func (s *Store) MarkLeaseExclusive(ctx context.Context, leaseID string) error {
 	return err
 }
 
+// IsLeaseExclusive reports whether a lease was issued with exclusive use of its key.
+func (s *Store) IsLeaseExclusive(ctx context.Context, leaseID string) (bool, error) {
+	if err := s.mcpSchema(ctx); err != nil {
+		return false, err
+	}
+	var n int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM lease_exclusive WHERE lease_id=?`, leaseID).Scan(&n)
+	return n > 0, err
+}
+
 func (s *Store) ExclusiveLeaseIDs(ctx context.Context) (map[string]bool, error) {
 	out := map[string]bool{}
 	if err := s.mcpSchema(ctx); err != nil {

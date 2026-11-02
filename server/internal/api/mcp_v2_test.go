@@ -187,3 +187,38 @@ func TestExclusiveLeases(t *testing.T) {
 		t.Fatalf("released key should be available again: %v", c)
 	}
 }
+
+// Rotating an exclusive lease hands over an exclusive key, so the caller keeps
+// owning its key outright across rotations.
+func TestRotatedExclusiveLeaseStaysExclusive(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "rotkey001"}, map[string]any{"secret": "rotkey002"}, map[string]any{"secret": "rotkey003"})
+	_, tok := e.app(map[string]any{"name": "agent"})
+	auth := []string{"Authorization", "Bearer " + tok}
+
+	var first leaseDTO
+	e.do(http.DefaultClient, "POST", "/api/v1/lease", map[string]any{"service": "serpapi", "exclusive": true}, 200, &first, auth...)
+	if !first.Exclusive {
+		t.Fatalf("first lease is not exclusive: %+v", first)
+	}
+	var rep struct {
+		Next *leaseDTO `json:"next"`
+	}
+	e.do(http.DefaultClient, "POST", "/api/v1/leases/"+first.LeaseID+"/report",
+		map[string]any{"outcome": "rate_limited", "retry_after_sec": 60, "rotate": true}, 200, &rep, auth...)
+	if rep.Next == nil {
+		t.Fatal("rotate returned no next lease")
+	}
+	if !rep.Next.Exclusive {
+		t.Fatalf("the rotated lease lost exclusivity: %+v", rep.Next)
+	}
+	held := rep.Next.KeyID
+	for i := 0; i < 4; i++ {
+		var l leaseDTO
+		e.do(http.DefaultClient, "POST", "/api/v1/lease", map[string]any{"service": "serpapi"}, 200, &l, auth...)
+		if l.KeyID == held {
+			t.Fatal("the rotated exclusive key was leased to someone else")
+		}
+		e.do(http.DefaultClient, "POST", "/api/v1/leases/"+l.LeaseID+"/report", map[string]any{"outcome": "ok"}, 200, nil, auth...)
+	}
+}
