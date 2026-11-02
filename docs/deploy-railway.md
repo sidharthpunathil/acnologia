@@ -22,7 +22,7 @@ failure up to 10 times).
    | Variable | Value |
    |---|---|
    | `ACNOLOGIA_ACCESS_PASSWORD` | A long random password, 12 characters at least. `openssl rand -base64 24` makes one. |
-   | `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `true`: the server refuses to start without the password, so it can never come up unlocked. |
+   | `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `true`: the site can never come up unlocked. If `ACNOLOGIA_ACCESS_PASSWORD` is missing, the server generates a random one into `/data/access-password` and uses it (see below). |
    | `ACNOLOGIA_PUBLIC_URL` | `https://key.sidharth.co` (your domain, no trailing slash). |
    | `ACNOLOGIA_SECURE_COOKIES` | `true`: Railway serves HTTPS, so every cookie is `Secure`. |
    | `ACNOLOGIA_TRUST_PROXY_HEADERS` | `true`: Railway's proxy sets `X-Forwarded-For`, which the sign in limiter uses. |
@@ -42,6 +42,20 @@ failure up to 10 times).
 6. **Open the site.** The lock screen asks for the access password, then the
    first visit creates the superadmin. The browser stays unlocked for 30
    days; "Lock this browser" in the account menu ends that early.
+
+## If you did not set the access password
+
+With `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD=true` and no `ACNOLOGIA_ACCESS_PASSWORD`,
+the first start writes a random password to `/data/access-password` and the
+site comes up locked with it. The log names the file, never the password.
+Read it with:
+
+```
+railway volume files download /access-password access-password.txt --service acnologia
+```
+
+Setting `ACNOLOGIA_ACCESS_PASSWORD` later replaces it. Delete the file to get
+a new random one on the next start.
 
 ## Move an existing install onto Railway
 

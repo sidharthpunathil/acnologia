@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -75,12 +76,6 @@ func run() error {
 	config.LoadDotEnv(".env")
 	cfg := config.Load(version)
 	config.LogDeprecatedEnv()
-	if err := cfg.CheckAccess(); err != nil {
-		return err
-	}
-	if cfg.AccessPassword != "" {
-		slog.Info("access gate on: the dashboard needs the access password")
-	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return err
 	}
@@ -88,6 +83,27 @@ func run() error {
 	// database and possibly master.key, so keep it private.
 	if err := os.Chmod(cfg.DataDir, 0o700); err != nil {
 		slog.Warn("could not restrict data dir permissions", "path", cfg.DataDir, "err", err)
+	}
+	// Required but not given: use (or generate) the password stored on the
+	// data volume, so the site comes up locked rather than not at all.
+	if cfg.RequireAccessPassword && cfg.AccessPassword == "" {
+		p, created, err := config.LoadOrCreateAccessPassword(cfg.DataDir)
+		if err != nil {
+			return err
+		}
+		cfg.AccessPassword = p
+		path := filepath.Join(cfg.DataDir, config.AccessPasswordFile)
+		if created {
+			slog.Warn("ACNOLOGIA_ACCESS_PASSWORD is not set, so a random access password was generated; read it from the data volume or set the variable to replace it", "file", path)
+		} else {
+			slog.Info("access password read from the data volume", "file", path)
+		}
+	}
+	if err := cfg.CheckAccess(); err != nil {
+		return err
+	}
+	if cfg.AccessPassword != "" {
+		slog.Info("access gate on: the dashboard needs the access password")
 	}
 	key, err := crypto.LoadOrCreateKey(cfg.MasterKey, cfg.DataDir)
 	if err != nil {
