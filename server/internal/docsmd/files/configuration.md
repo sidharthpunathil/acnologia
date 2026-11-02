@@ -15,7 +15,8 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_SECURE_COOKIES` | `false` | Mark the session cookie `Secure`. Set `true` behind HTTPS. It is also set automatically for direct TLS. |
 | `ACNOLOGIA_TRUST_PROXY_HEADERS` | `false` | Take the client IP from `X-Forwarded-For` / `X-Real-IP`. Enable only behind a proxy that overwrites them; otherwise clients could spoof their address to dodge the login limiter. |
 | `ACNOLOGIA_ACCESS_PASSWORD` | empty | Locks the whole site behind one shared password, in front of the user accounts. At least 12 characters. Unset, nothing changes. See [Access password](#access-password). |
-| `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `false` | When `true`, the server refuses to start unless `ACNOLOGIA_ACCESS_PASSWORD` is set (and at least 12 characters), so a public deploy can never come up unlocked. |
+| `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `false` | When `true`, a public deploy can never come up unlocked: a set password must be at least 12 characters, and a missing one is generated into `access-password` in the data dir. |
+| `ACNOLOGIA_ACCESS_SIGNS_IN` | `true` | With an access password, that password is the whole login: unlocking signs the browser in as the owner (the first superadmin), with no email form, and signing out locks it again. Set `false` to keep separate accounts behind the lock. |
 | `ACNOLOGIA_BOOTSTRAP_EMAIL`, `ACNOLOGIA_BOOTSTRAP_PASSWORD` | empty | Create the first superadmin on boot instead of the setup screen. Used only while there are no users. |
 | `ACNOLOGIA_HEALTH_INTERVAL` | `6h` | How often each key is re-checked with the provider. `0` or `off` disables background checks. Exhausted keys are re-checked hourly. |
 | `ACNOLOGIA_EVENT_RETENTION_DAYS` | `30` | How long request events are kept. `0` or less keeps them forever. |
@@ -82,8 +83,10 @@ framed. This holds whether or not the access password is set.
 
 An instance reachable from the internet should set `ACNOLOGIA_ACCESS_PASSWORD`
 (and `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD=true`). Every visitor then sees a lock
-screen before setup, sign in or any data. It is one shared password, not an
-account: the user accounts still apply behind it.
+screen before setup, sign in or any data. By default that password is the
+whole login: unlocking signs you in as the owner. Set
+`ACNOLOGIA_ACCESS_SIGNS_IN=false` to keep separate user accounts behind it, so
+each person still signs in with an email and password after unlocking.
 
 - **Locked:** the dashboard API (`/api/*`, including `/api/auth/*` setup and
   sign in), the docs markdown and images (`/docs/*.md`, `/docs/assets/*`),

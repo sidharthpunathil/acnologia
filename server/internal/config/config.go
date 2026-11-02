@@ -39,6 +39,9 @@ type Config struct {
 	// one a startup error, so a public deploy can never come up unlocked.
 	AccessPassword        string
 	RequireAccessPassword bool
+	// AccessSignsIn makes the access password the whole login: a browser
+	// past the lock screen is signed in as the owner. On by default.
+	AccessSignsIn bool
 }
 
 // MinAccessPasswordLen is the shortest ACNOLOGIA_ACCESS_PASSWORD accepted.
@@ -91,6 +94,7 @@ func Load(version string) Config {
 		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
 		AccessPassword:        Getenv("ACNOLOGIA_ACCESS_PASSWORD"),
 		RequireAccessPassword: envBool("ACNOLOGIA_REQUIRE_ACCESS_PASSWORD", false),
+		AccessSignsIn:         envBool("ACNOLOGIA_ACCESS_SIGNS_IN", true),
 	}
 }
 

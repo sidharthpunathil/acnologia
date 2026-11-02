@@ -59,6 +59,7 @@ function formatWait(sec: number): string {
 /** The lock screen: one password, in the same shell as the sign-in page. */
 export function LockScreen() {
   const unlock = useGate((s) => s.unlock);
+  const passwordOnly = useGate((s) => s.passwordOnly);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [wrong, setWrong] = useState(false);
@@ -123,7 +124,7 @@ export function LockScreen() {
             This instance is private
           </h1>
           <p className="text-body-regular text-text-secondary">
-            Enter the access password to continue. You sign in to your account after this.
+            {passwordOnly ? "Enter the access password to open Acnologia." : "Enter the access password to continue. You sign in to your account after this."}
           </p>
         </div>
         <form onSubmit={(e) => void submit(e)} className="mt-6 flex flex-col gap-4">

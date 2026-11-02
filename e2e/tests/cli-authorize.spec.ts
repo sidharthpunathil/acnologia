@@ -108,6 +108,7 @@ test.describe("cli authorize behind the access password", () => {
     if (info.project.name !== "desktop-light") return;
     server = await startServer({
       ACNOLOGIA_ACCESS_PASSWORD: PASSWORD,
+      ACNOLOGIA_ACCESS_SIGNS_IN: "false",
       ACNOLOGIA_BOOTSTRAP_EMAIL: ADMIN.email,
       ACNOLOGIA_BOOTSTRAP_PASSWORD: ADMIN.password,
     });

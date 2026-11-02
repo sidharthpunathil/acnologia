@@ -276,8 +276,9 @@ func (s *Server) gateRequests(next http.Handler) http.Handler {
 func (s *Server) gateState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"required": s.gate.on(),
-		"locked":   !s.gatePasses(r),
+		"required":      s.gate.on(),
+		"locked":        !s.gatePasses(r),
+		"password_only": s.soloMode(),
 	})
 }
 

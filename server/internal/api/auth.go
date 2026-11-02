@@ -50,14 +50,21 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			return
 		}
 		sess := sessionFrom(r)
-		if sess == "" {
-			writeErr(w, 401, "unauthenticated", "sign in first")
-			return
+		var u *store.User
+		var h string
+		if sess != "" {
+			h = crypto.SHA256(sess)
+			u, _ = s.Store.SessionUser(r.Context(), h)
 		}
-		h := crypto.SHA256(sess)
-		u, err := s.Store.SessionUser(r.Context(), h)
-		if err != nil {
-			writeErr(w, 401, "unauthenticated", "session expired")
+		if u == nil {
+			u, h = s.soloSignIn(w, r)
+		}
+		if u == nil {
+			if sess == "" {
+				writeErr(w, 401, "unauthenticated", "sign in first")
+			} else {
+				writeErr(w, 401, "unauthenticated", "session expired")
+			}
 			return
 		}
 		ctx := context.WithValue(r.Context(), userKey, u)
@@ -145,7 +152,12 @@ func (s *Server) authState(w http.ResponseWriter, r *http.Request) {
 	if sess := sessionFrom(r); sess != "" {
 		user, _ = s.Store.SessionUser(r.Context(), crypto.SHA256(sess))
 	}
-	writeJSON(w, 200, map[string]any{"setup_required": n == 0, "user": user})
+	if user == nil {
+		if u, _ := s.soloSignIn(w, r); u != nil {
+			user, n = u, 1
+		}
+	}
+	writeJSON(w, 200, map[string]any{"setup_required": n == 0, "user": user, "password_only": s.soloMode()})
 }
 
 type credentials struct {
@@ -292,7 +304,12 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if sess := sessionFrom(r); sess != "" {
 		_ = s.Store.DeleteSession(r.Context(), crypto.SHA256(sess))
 	}
-	for _, name := range []string{sessionCookie, legacySessionCookie} {
+	names := []string{sessionCookie, legacySessionCookie}
+	if s.soloMode() {
+		// The access password is the login, so signing out locks the browser.
+		names = append(names, gateCookie)
+	}
+	for _, name := range names {
 		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 			SameSite: http.SameSiteLaxMode, Secure: s.secureCookie(r)})
 	}

@@ -40,6 +40,7 @@ export function MoreSheet({ open, onClose, items }: { open: boolean; onClose: ()
   const user = useAuth((s) => s.user);
   const signOut = useSignOut();
   const gateOn = useGate((s) => s.required);
+  const passwordOnly = useGate((s) => s.passwordOnly);
   const lockBrowser = useGate((s) => s.lock);
   return (
     <Drawer placement="bottom" isOpen={open} onOpenChange={(o) => !o && onClose()} className="pb-[max(1.5rem,env(safe-area-inset-bottom))]">
@@ -80,7 +81,7 @@ export function MoreSheet({ open, onClose, items }: { open: boolean; onClose: ()
             <RiLogoutBoxRLine className="size-5 text-foreground-icon-secondary" aria-hidden />
             Sign out
           </button>
-          {gateOn && (
+          {gateOn && !passwordOnly && (
             <button
               type="button"
               onClick={() => {

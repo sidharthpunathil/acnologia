@@ -147,6 +147,8 @@ export interface GateState {
   required: boolean;
   /** This browser has not passed the gate yet. */
   locked: boolean;
+  /** The access password is the whole login: no email form behind it. */
+  password_only?: boolean;
 }
 
 export const api = {

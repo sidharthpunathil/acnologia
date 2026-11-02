@@ -13,6 +13,8 @@ interface GateStore {
   status: GateStatus;
   /** The server has a password set, so "Lock this browser" means something. */
   required: boolean;
+  /** Unlocking signs in as the owner; signing out locks the browser. */
+  passwordOnly: boolean;
   load: () => Promise<void>;
   unlock: (password: string) => Promise<void>;
   lock: () => Promise<void>;
@@ -21,11 +23,12 @@ interface GateStore {
 export const useGate = create<GateStore>((set) => ({
   status: "loading",
   required: false,
+  passwordOnly: false,
 
   load: async () => {
     try {
       const s = await api.gateState();
-      set({ status: s.locked ? "locked" : "open", required: s.required });
+      set({ status: s.locked ? "locked" : "open", required: s.required, passwordOnly: !!s.password_only });
     } catch {
       // A server that cannot say whether there is a lock must not be read as
       // "no lock": show that it is unreachable, with a retry.

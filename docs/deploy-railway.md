@@ -23,7 +23,8 @@ failure up to 10 times).
    |---|---|
    | `ACNOLOGIA_ACCESS_PASSWORD` | A long random password, 12 characters at least. `openssl rand -base64 24` makes one. |
    | `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `true`: the site can never come up unlocked. If `ACNOLOGIA_ACCESS_PASSWORD` is missing, the server generates a random one into `/data/access-password` and uses it (see below). |
-   | `ACNOLOGIA_PUBLIC_URL` | `https://key.sidharth.co` (your domain, no trailing slash). |
+   | `ACNOLOGIA_ACCESS_SIGNS_IN` | Leave unset (`true`): the access password is the only login. `false` keeps email accounts behind the lock. |
+| `ACNOLOGIA_PUBLIC_URL` | `https://key.sidharth.co` (your domain, no trailing slash). |
    | `ACNOLOGIA_SECURE_COOKIES` | `true`: Railway serves HTTPS, so every cookie is `Secure`. |
    | `ACNOLOGIA_TRUST_PROXY_HEADERS` | `true`: Railway's proxy sets `X-Forwarded-For`, which the sign in limiter uses. |
    | `ACNOLOGIA_DATA_DIR` | `/data` (the image sets it already; keep it matching the volume). |
@@ -39,8 +40,8 @@ failure up to 10 times).
    `key.sidharth.co`. Create the CNAME record Railway shows at your DNS
    provider and wait for the certificate. (Generate Domain gives a
    `*.up.railway.app` address meanwhile.)
-6. **Open the site.** The lock screen asks for the access password, then the
-   first visit creates the superadmin. The browser stays unlocked for 30
+6. **Open the site.** The lock screen asks for the access password, and that
+   is the whole login: you land in the dashboard as the owner. The browser stays unlocked for 30
    days; "Lock this browser" in the account menu ends that early.
 
 ## If you did not set the access password

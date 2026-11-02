@@ -42,6 +42,7 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
   const who = user?.name || user?.email || "Account";
   const signOut = useSignOut();
   const gateOn = useGate((s) => s.required);
+  const passwordOnly = useGate((s) => s.passwordOnly);
   const lockBrowser = useGate((s) => s.lock);
   const [open, setOpen] = useState(false);
   const fade = useScrollFade();
@@ -128,7 +129,7 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
                 <RiLogoutBoxRLine className={cx(ROW_ICON, "text-foreground-icon-secondary")} aria-hidden />
                 Sign out
               </button>
-              {gateOn && (
+              {gateOn && !passwordOnly && (
                 <button
                   type="button"
                   data-menu-row=""

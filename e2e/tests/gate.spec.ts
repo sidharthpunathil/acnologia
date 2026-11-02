@@ -17,6 +17,7 @@ test.beforeAll(async ({}, info) => {
   server = await startServer({
     ACNOLOGIA_ACCESS_PASSWORD: PASSWORD,
     ACNOLOGIA_REQUIRE_ACCESS_PASSWORD: "true",
+    ACNOLOGIA_ACCESS_SIGNS_IN: "false",
     ACNOLOGIA_BOOTSTRAP_EMAIL: ADMIN.email,
     ACNOLOGIA_BOOTSTRAP_PASSWORD: ADMIN.password,
   });
