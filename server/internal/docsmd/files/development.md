@@ -5,7 +5,7 @@ Go 1.26, Node 22 and pnpm 10.
 ```sh
 make dev    # Go on :8080 and Vite on :5173 with hot reload
 make test   # server tests with the race detector, plus the Go SDK
-make build  # bin/cogito with the dashboard and llms.txt embedded
+make build  # bin/acnologia with the dashboard and llms.txt embedded
 make docker # local image
 ```
 
@@ -18,17 +18,20 @@ mixing keys.
 
 | Path | What |
 |---|---|
-| `server/cmd/cogito` | Entry point and boot sequence. |
+| `server/cmd/acnologia` | Entry point and boot sequence. |
 | `server/internal/api` | HTTP handlers, middleware, proxy, MCP. |
 | `server/internal/pool` | Key selection, concurrency slots, outcomes, health checks. |
 | `server/internal/providers` | Provider spec format and engine, built in specs. |
 | `server/internal/catalog` | Provider publishing, versions, logos, live checks, SSRF safe client. |
-| `server/internal/agent` | AI provider builder. |
+| `server/internal/agent` | AI provider builder and the shared Claude client. |
 | `server/internal/store` | SQLite schema, migrations, queries. |
 | `server/internal/crypto` | Master key, encryption, hashing, scrubbing. |
+| `server/internal/redact` | Keeps secrets out of requests to Claude, stored text and logs. |
+| `server/internal/ctl` | The `acnologia ctl` client. |
 | `server/internal/worker` | Housekeeping and background health checks. |
 | `web/` | React, Vite, Zustand and Tailwind dashboard. Built into `server/internal/webui/dist`. |
 | `sdk/` | Go, Python, TypeScript, PHP and Ruby clients. |
+| `e2e/` | Playwright screenshot suite for the dashboard. |
 | `docs/` | These docs, `llms.txt` (embedded and served at `/llms.txt`), design specs. |
 | `reference/` | Third party code used as reference only. Not built. |
 
@@ -57,13 +60,13 @@ own `package.json`, so it never touches the dashboard's dependencies, and it
 uses the installed Google Chrome (no browser download).
 
 ```sh
-make build                   # the suite tests bin/cogito as built
+make build                   # the suite tests bin/acnologia as built
 make test-screens            # compare against the baselines
 make test-screens UPDATE=1   # write new baselines after an intended change
 cd e2e && npm run report     # open the HTML report with diffs
 ```
 
-Global setup starts `bin/cogito` on a free port with an empty temp data dir,
+Global setup starts `bin/acnologia` on a free port with an empty temp data dir,
 a fresh master key and health checks off, then seeds a fixed demo workspace
 through the API: five services with keys (one invalid, one out of quota, two
 backups), a group, a webhook, an egress proxy, two apps, a second admin and an
@@ -85,7 +88,9 @@ before committing new baselines.
 ## Conventions
 
 - Store secrets only through `crypto.Box`; never log a request query string,
-  a secret, or an unscrubbed upstream error (`crypto.Scrub`).
+  a secret, or an unscrubbed upstream error (`crypto.Scrub`). Text that is
+  stored or sent to Claude goes through `Store.Scrub` or the agent client,
+  which both use `internal/redact`.
 - New dashboard routes go under `/api/admin` with the right `requireRole`
   group; anything that can reveal or route a hidden key checks `isSuper` or the
   `lease_hidden` / `target_trusted` flags.
@@ -93,4 +98,8 @@ before committing new baselines.
   upgrade on start.
 - Links built from server data use `safeHref` in the dashboard.
 - Update [`llms.txt`](llms.txt) and [`llms-full.txt`](llms-full.txt) when the
-  consumer API changes, then `make llms`.
+  consumer API changes, then `make llms`. That target also copies `README.md`
+  (as the Overview page), `docs/*.md` and `docs/screenshots/*.png` into the
+  binary.
+- Refresh `docs/screenshots/` from a seeded server, not from the e2e
+  baselines, which carry mask bars over dynamic values.

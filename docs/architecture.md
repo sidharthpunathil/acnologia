@@ -13,7 +13,7 @@ flowchart LR
         Agent["AI agents<br/>(MCP clients)"]
     end
 
-    subgraph Acnologia["cogito (one process)"]
+    subgraph Acnologia["acnologia (one process)"]
         Router["chi router<br/>+ middleware"]
         Auth["auth<br/>sessions, app tokens"]
         Admin["dashboard API<br/>/api/admin, /api/auth"]
@@ -26,7 +26,7 @@ flowchart LR
         AIB["AI provider builder<br/>(agent runs)"]
         Chat["assistant chat<br/>tools call the dashboard API"]
         Worker["worker<br/>housekeeping, health"]
-        Store[("SQLite<br/>cogito.db")]
+        Store[("SQLite<br/>acnologia.db")]
         Box["crypto box<br/>AES-256-GCM"]
     end
 
@@ -34,8 +34,8 @@ flowchart LR
     Claude["Claude API"]
 
     UI -->|session cookie| Router
-    App -->|cog_ token| Router
-    Agent -->|cog_ token| Router
+    App -->|acn_ token| Router
+    Agent -->|acn_ token| Router
     Router --> Auth
     Auth --> Admin & Consumer & Proxy & MCP
     Admin --> Catalog & Pool & Store & AIB
@@ -60,17 +60,24 @@ All server code lives under `server/`.
 
 | Package | Responsibility |
 |---|---|
-| `cmd/cogito` | Entry point. Loads config, opens the store, verifies the master key, seeds providers, restores lease slots, starts the worker and the HTTP server. Also `cogito version` and `cogito gen-master-key`. |
-| `internal/config` | Reads `COGITO_*` environment variables and an optional `.env` file. See [configuration](configuration.md). |
-| `internal/api` | Every HTTP handler: routing and middleware (`server.go`), sessions and login (`auth.go`), dashboard API (`admin.go`, `providers.go`, `insights.go`, `ai.go`), the assistant chat and its tools (`assistant.go`, `assistant_tools.go`), consumer API (`consumer.go`), proxy (`proxy.go`) and MCP (`mcp.go`). |
+| `cmd/acnologia` | Entry point. Loads config, opens the store, verifies the master key, seeds providers, restores lease slots, starts the worker and the HTTP server. Also `acnologia version`, `acnologia gen-master-key`, `acnologia mcp` (a stdio bridge to `/mcp`) and `acnologia ctl`. |
+| `internal/config` | Reads `ACNOLOGIA_*` environment variables and an optional `.env` file. See [configuration](configuration.md). |
+| `internal/api` | Every HTTP handler: routing and middleware (`server.go`), sessions, login and admin API tokens (`auth.go`, `tokens_auth.go`), dashboard API (`admin.go`, `admin_v2.go`, `providers.go`, `insights.go`, `usage.go`, `ai.go`), the Assistant chat, its tools and key vault (`assistant*.go`), consumer API (`consumer.go`), proxy (`proxy.go`, `proxy_extras.go`), MCP (`mcp.go`, `mcp_v2.go`, `mcp_admin.go`) and the Markdown docs (`docs.go`). |
 | `internal/pool` | Picks a key for a request, holds per key concurrency slots, applies outcomes (cooldown, exhausted, invalid) and runs health checks. |
-| `internal/providers` | The provider spec format and engine: classifying upstream responses into outcomes, running health checks, auth placement, fixture tests, and the built in SerpAPI, ElevenLabs and generic specs. |
+| `internal/providers` | The provider spec format and engine: classifying upstream responses into outcomes, running health checks, auth placement, fixture tests, and the built in specs (`builtin*.go`). |
 | `internal/catalog` | Provider records on top of the store: validation, publishing with version history, service defaults, live checks, logo discovery and the SSRF safe HTTP client. |
 | `internal/agent` | The AI provider builder: a background run that drives Claude with tools to research a provider and produce a spec. Also the shared Claude client used by "Fill with AI" and the assistant. |
 | `internal/store` | SQLite persistence. Schema, migrations and one file per entity. |
 | `internal/crypto` | The master key, AES-256-GCM encryption of secrets, keyed fingerprints for duplicate detection, token hashing, secret scrubbing. |
+| `internal/redact` | Keeps secrets out of everything that is not the key store: requests to Claude, agent steps, events, the audit log, webhook payloads and log lines. See [security](security.md#what-the-model-can-and-cannot-see). |
+| `internal/keyparse` | Pulls keys out of pasted or dropped text: JSON arrays, CSV with a header row, `.env` files and free form lists. |
+| `internal/breaker` | The per service circuit breaker that pauses traffic to a provider that keeps failing. |
+| `internal/respcache` | The in-memory response cache and idempotent replays, a byte bounded LRU with per entry expiry. |
+| `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. |
+| `internal/notify` | Delivers pool events to webhooks: Slack, Discord, Telegram or signed JSON. |
 | `internal/worker` | Periodic housekeeping and background health checks. |
-| `internal/webui`, `internal/llmstxt` | Embedded assets: the built dashboard and `llms.txt`. |
+| `internal/ctl` | The `acnologia ctl` command line client for the admin API. |
+| `internal/webui`, `internal/llmstxt`, `internal/docsmd` | Embedded assets: the built dashboard, `llms.txt` and `llms-full.txt`, and the Markdown docs with their images. |
 
 ## Request pipeline
 
@@ -78,7 +85,7 @@ Every request passes the same middleware before reaching a handler.
 
 ```mermaid
 flowchart TD
-    Req([HTTP request]) --> RealIP{"COGITO_TRUST_PROXY_HEADERS?"}
+    Req([HTTP request]) --> RealIP{"ACNOLOGIA_TRUST_PROXY_HEADERS?"}
     RealIP -->|yes| SetIP["RealIP: client IP from<br/>X-Forwarded-For / X-Real-IP"]
     RealIP -->|no| Keep["keep socket address"]
     SetIP --> Rec[Recoverer]
@@ -90,7 +97,7 @@ flowchart TD
     JSON --> User["requireUser<br/>session cookie"]
     User --> Role["requireRole<br/>admin / superadmin"]
     Role --> H1[dashboard handler]
-    Route -->|/api/v1, /proxy| App["requireApp<br/>cog_ token"]
+    Route -->|/api/v1, /proxy| App["requireApp<br/>acn_ token"]
     App --> H2[consumer or proxy handler]
     Route -->|/mcp| H3["MCP handler<br/>(authenticates the token itself)"]
     Route -->|/api/logos| User2[requireUser] --> H4[logo handler]
@@ -226,9 +233,9 @@ sequenceDiagram
 
     M->>C: load env (+ .env)
     M->>M: create data dir, chmod 0700
-    M->>K: master key from COGITO_MASTER_KEY or data/master.key
+    M->>K: master key from ACNOLOGIA_MASTER_KEY or data/master.key
     Note over K: generated only if the file does not exist
-    M->>S: open cogito.db, apply schema and migrations, chmod 0600
+    M->>S: open acnologia.db, apply schema and migrations, chmod 0600
     M->>S: compare meta.master_key_check
     alt key does not match the database
         M-->>M: refuse to start
@@ -238,7 +245,7 @@ sequenceDiagram
     M->>M: start AI builder (fail runs left over from a crash)
     M->>P: restore slots for open leases
     M->>W: start housekeeping and health loops
-    M->>H: listen on COGITO_ADDR
+    M->>H: listen on ACNOLOGIA_ADDR
 ```
 
 ## Background work
@@ -248,7 +255,7 @@ sequenceDiagram
 | Loop | Interval | Does |
 |---|---|---|
 | Housekeeping | 30 s | Resets daily usage at UTC midnight, frees slots of expired leases, reactivates exhausted keys whose quota reset time passed, and every 10 minutes prunes expired sessions, leases older than 7 days and events past retention. |
-| Health | 1 min tick | Re-checks keys whose last check is older than `COGITO_HEALTH_INTERVAL` (exhausted keys hourly). Skips disabled keys, keys at their concurrency cap, providers without a health check, and hidden keys on services whose target is not trusted. |
+| Health | 1 min tick | Re-checks keys whose last check is older than `ACNOLOGIA_HEALTH_INTERVAL` (exhausted keys hourly). Skips disabled keys, keys at their concurrency cap, providers without a health check, and hidden keys on services whose target is not trusted. |
 
 Health checks run in their own loop so a slow provider never delays freeing
 lease slots.
@@ -259,7 +266,7 @@ lease slots.
 flowchart LR
     Web["web/ (Vite build)"] -->|"server/internal/webui/dist"| Embed["go:embed"]
     LLMS["docs/llms.txt"] -->|"make llms"| Embed2["internal/llmstxt"]
-    Embed --> Bin["bin/cogito<br/>(static, CGO off)"]
+    Embed --> Bin["bin/acnologia<br/>(static, CGO off)"]
     Embed2 --> Bin
     Bin --> Img["Docker image<br/>distroless, nonroot"]
 ```
@@ -273,14 +280,14 @@ pure Go SQLite), and copies the result into a distroless nonroot image with a
 ```mermaid
 flowchart LR
     Internet((clients)) --> TLS["reverse proxy<br/>TLS (Caddy, Traefik,<br/>Cloudflare Tunnel)"]
-    TLS --> C["cogito :8080"]
-    C --> V[("/data volume<br/>cogito.db, master.key")]
+    TLS --> C["acnologia :8080"]
+    C --> V[("/data volume<br/>acnologia.db, master.key")]
     C --> Up["provider APIs"]
 ```
 
 One instance per data directory. Put it behind TLS, set
-`COGITO_SECURE_COOKIES=true` and `COGITO_TRUST_PROXY_HEADERS=true`, and keep the
-master key out of the data volume (set `COGITO_MASTER_KEY` from a secret store)
+`ACNOLOGIA_SECURE_COOKIES=true` and `ACNOLOGIA_TRUST_PROXY_HEADERS=true`, and keep the
+master key out of the data volume (set `ACNOLOGIA_MASTER_KEY` from a secret store)
 so a copy of the volume alone does not reveal stored keys.
 
 See also: [request flows](flows.md), [security model](security.md),

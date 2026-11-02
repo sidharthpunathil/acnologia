@@ -7,12 +7,12 @@ There are three ways in:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/api/docs`, `/robots.txt` | none |
-| Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer cog_...`, `X-Cogito-Token`, or `?cogito_token=` |
-| Dashboard | `/api/auth`, `/api/admin`, `/api/logos` | `cogito_session` cookie |
+| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt` | none |
+| Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
+| Dashboard | `/api/auth`, `/api/admin`, `/api/logos` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
 
 The consumer API is documented for app and agent authors in
-[llms-full.txt](llms-full.txt) (also served at `/llms.txt`). This page covers
+[llms-full.txt](llms-full.txt) (served at `/llms-full.txt`, with a summary at `/llms.txt`). This page covers
 the rules that apply to it, then lists the dashboard API.
 
 ## Consumer API
@@ -20,10 +20,11 @@ the rules that apply to it, then lists the dashboard API.
 | Method and path | Purpose |
 |---|---|
 | `GET /api/v1/services` | Services the token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`. |
-| `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec}`. Apps in mode `lease` or `both`. |
+| `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec, exclusive}`. Apps in mode `lease` or `both`. `exclusive: true` keeps the key from every other caller until you report or the lease expires. |
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. |
-| `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Cogito-Key-Id`, `X-Cogito-Attempts`, `X-Cogito-Service` and, when caching applies, `X-Cogito-Cache`. |
-| `POST /mcp` | MCP tools over JSON-RPC: `list_services`, `pool_status`, `get_key`, `report_key`, `proxy_request`. |
+| `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. |
+| `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id`, `X-Acnologia-Attempts`, `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. |
+| `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Tools depend on the app's tool sets: core (`list_services`, `pool_status`, `get_key`, `renew_key`, `report_key`, `proxy_request`), service tools generated from provider examples, insights (`list_keys`, `key_details`, `service_stats`) and manage (`check_keys`, `set_key_status`, `add_keys`). Also resources and prompts. |
 
 Status codes an app should handle:
 
@@ -33,12 +34,13 @@ Status codes an app should handle:
 | 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
 | 400 | `bad_path` | Proxy path with a literal `?`, `#`, or a `.` / `..` segment. |
 | 405 | `method_not_allowed` | Proxy method other than GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. |
-| 413 | `body_too_large` | Proxy body over `COGITO_MAX_BODY_MB`. |
+| 413 | `body_too_large` | Proxy body over `ACNOLOGIA_MAX_BODY_MB`. |
 | 503 | `no_key_available` | Every usable key is cooling down, exhausted or disabled. Wait `retry_after_sec`. |
 | 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit. Retry shortly or lease with `wait_sec`. |
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
 | 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
+| 404 | `lease_not_found` | Renewing a lease that is not open. |
 | 409 | `report_failed` | Lease already reported. |
 | 410 | `report_failed` | Lease expired more than 10 minutes ago. |
 | 502 | `upstream_unreachable` | The provider could not be reached on the first attempt. |
@@ -79,6 +81,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `GET /groups`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}` | m / a | Service groups `{slug, name, description, members}` with 2 to 20 member slugs in fallback order. Slugs share the namespace with services. |
 | `GET /services/{id}/breaker`, `POST /services/{id}/breaker/reset` | m / a | Circuit breaker state and settings; close it by hand. |
 | `POST /services/{id}/cache/purge`, `GET /cache` | a / m | Drop a service's cached responses; cache totals. |
+| `GET /usage?days=30` | m | The Usage page: requests, provider spend and cache hits, plus Claude calls, tokens, web searches and cost, for today, 7 and 30 days and the requested range (1 to 366 days). Hidden key traffic only for superadmins. Also `ai_enabled`, `ai_model`, `ai_price` and `event_retention_days`. |
 | `GET /apps/{id}/usage?days=30` | m | Today's and this month's requests, spend and cache hits, limits, the limit currently hit, and daily history. |
 | `GET /services`, `GET /services/{id}` | m | Services with key counts, request totals, `target_trusted`. |
 | `POST /services` | a | Create from a provider's defaults. |
@@ -97,6 +100,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `GET /events` | m | Request and health events, filters `service_id`, `key_id`, `kind`, `limit` (max 500). |
 | `GET /apps` | m | Apps (token prefix only). |
 | `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the token once. |
+| `GET /apps/{id}/mcp`, `PUT /apps/{id}/mcp` | m / a | An app's MCP settings: `{core, service_tools, insights, manage, resources, prompts, exclusive_default, max_result_kb, instructions, disabled_tools}`, with the tool list. `max_result_kb` defaults to 200, at most 2048; `instructions` under 8,000 characters. |
 | `POST /apps/{id}/rotate-token` | a | New token, shown once. Clears `lease_hidden` unless a superadmin rotates. |
 | `DELETE /apps/{id}` | a | Delete the app and its leases. |
 | `GET /providers`, `GET /providers/{slug}` | m | Provider specs, versions and metadata. |
@@ -112,11 +116,14 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `GET /ai/runs`, `GET /ai/runs/{id}?after=n` | m | Runs and their live steps. |
 | `POST /ai/runs` | a | Start a run: `{kind, provider_slug, context, urls, test_key, auto_publish, create_service}`. |
 | `POST /ai/runs/{id}/cancel`, `POST /ai/runs/{id}/publish` | a | Cancel; publish a run waiting for review. |
+| `DELETE /ai/runs/{id}` | a | Delete a finished run and its steps. 409 `run_busy` while it is queued, running, testing or publishing. Audited. Spend already recorded stays in Usage. |
+| `DELETE /ai/runs` | a | Clear finished runs: deletes every failed, cancelled and published run and returns `{deleted}`. Runs waiting for review are kept. |
 | `POST /ai/assist` | a | "Fill with AI" for dashboard forms. |
 | `GET /chat/threads`, `POST /chat/threads` | m | Your assistant conversations (never other users'), and whether AI is enabled. |
 | `GET /chat/threads/{id}`, `DELETE /chat/threads/{id}` | m | One conversation's transcript; delete it. |
-| `POST /chat/threads/{id}/messages` | m | `{text}`. Runs the assistant until it answers; returns the new transcript items. 409 while a previous message is still running, 503 when AI is off. |
+| `POST /chat/threads/{id}/messages` | m | `{text}`, up to 1 MB. Keys in the text go to the thread's vault before anything reaches Claude. Runs the assistant until it answers; returns the new transcript items. 409 while a previous message is still running, 503 when AI is off. |
 | `POST /chat/threads/{id}/confirm` | m | `{pending_id, approve}`. Runs or cancels an action waiting for confirmation, then lets the assistant reply. |
+| `POST /chat/threads/{id}/answer` | m | `{ask_id, names, choice, auto}`. Answers an `ask` item (label pasted keys, pick a choice, or let the assistant pick names) and continues the turn. |
 | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` | s | User management. A password reset ends that user's sessions; the last active superadmin cannot be removed. |
 | `GET /audit` | s | Audit log (max 1000 rows). |
 
@@ -141,9 +148,14 @@ entries this request created or changed, `all` the full transcript. Each item:
 
 | Field | Meaning |
 |---|---|
-| `kind` | `user`, `assistant`, `tool`, `confirm` or `error` |
-| `text` | message text, or what a confirmation will do |
+| `kind` | `user`, `assistant`, `tool`, `confirm`, `ask`, `build` or `error` |
+| `text` | message text, or what a confirmation will do. For a user message with keys, the prose without the keys |
+| `keys`, `key_list` | for user messages with keys: how many, and `[{label, hint}]` in paste order (hint is the last four characters, never the secret) |
 | `tool`, `input`, `ok`, `summary`, `detail` | for tool calls: name, input (secrets redacted), success, one line summary, result JSON |
 | `pending` | for confirmations: `{id, status}` with status `waiting`, `approved`, `cancelled` or `expired` |
 | `secret` | a new app token, present only in the response that created it |
 | `link` | an in-app path to what the tool touched |
+| `ask` | for `ask` items: `{id, kind: names\|choice, question, rows, choices, status, answer}` |
+| `build` | for `build` items: a provider build the turn follows, `{run_id, title, status, phase, step, ...}` |
+| `card`, `entities` | a rich result (keys added, a service, a provider) and the services, keys, apps and providers a tool named, with ids |
+| `suggestions` | short follow ups proposed at the end of a turn |

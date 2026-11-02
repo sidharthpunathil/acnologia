@@ -18,7 +18,7 @@ flowchart LR
         Adm["admin"]
     end
     Sup["superadmin"]
-    subgraph Server["Acnologia server (cogito binary)"]
+    subgraph Server["Acnologia server (one binary)"]
         Keys[("encrypted keys")]
     end
 
@@ -45,6 +45,21 @@ flowchart LR
 Roles are re-read from the database on every request, so a demotion or a
 disable takes effect immediately. At least one active superadmin always
 remains.
+
+## Apps and key flags
+
+Each app has its own token (stored as a hash), a list of services it may use
+(empty means all) and a mode: `proxy`, `lease` or `both`. An app learns
+whether a service has a key available, never how many keys exist.
+
+Each key can carry flags:
+
+- `hidden`: visible only to superadmins, and handed only to apps a superadmin
+  cleared with `lease_hidden` (below).
+- `restricted`: serves only the apps you name on the key.
+- `disabled`: stays stored but is never handed out.
+- `backup` tier: serves only when every primary key is cooling, busy or out
+  of quota.
 
 ## Hidden keys: admins operate, but never read them
 
@@ -90,7 +105,7 @@ hidden key.
 | AI run test keys | Same encryption, wiped when the run ends |
 | Passwords | bcrypt (10 to 72 characters) |
 | Session and app tokens | SHA-256 of 32 random bytes |
-| Master key | `COGITO_MASTER_KEY`, else `data/master.key` (0600, generated on first boot) |
+| Master key | `ACNOLOGIA_MASTER_KEY`, else `data/master.key` (0600, generated on first boot) |
 
 The server refuses to start when the master key does not match the database
 (checked through `meta.master_key_check`, or by decrypting a stored key on
@@ -140,18 +155,20 @@ that rewrites the request body before it leaves the server:
 
 - Known secrets are replaced by `[key ...c21e]`: every pool key, webhook URL
   and secret, and egress proxy URL (decrypted once into a multi pattern
-  matcher and reloaded when one changes), plus the builder run's test keys
-  and the keys a chat turn handled. Raw, query escaped and path escaped forms
+  matcher and reloaded when one changes), plus `GITHUB_TOKEN`, the builder
+  run's test keys and the keys a chat turn handled. Raw, query escaped and path escaped forms
   are matched. Values shorter than 8 characters are not matched exactly.
 - Unknown secrets are replaced by `[secret ...c21e]` by pattern: common
   prefixes (`sk-ant-`, `sk-`, `AIza`, `ghp_`, `xox`, `tvly-`, `AKIA`,
-  `sk_live_`, JWTs, Acnologia's own `cog_` tokens), `Bearer` and `Basic`
+  `sk_live_`, JWTs, Acnologia's own `acn_` and `acnadm_` tokens and the
+  older `cog_` and `cogadm_` ones), `Bearer` and `Basic`
   credentials, auth headers, `key=`, `api_key=`, `token=`, `secret=` and
   `password=` in URLs, env lines and JSON, and long random looking tokens.
   Hex hashes, UUIDs, words, identifiers and paths are left alone.
-- The system prompt and every tool result get both passes. Replayed model
-  output gets the known pass only; thinking blocks and web search results are
-  not touched, since the API checks their signatures.
+- The system prompt, your messages and every tool result get both passes.
+  Replayed model output gets the known pass only; thinking blocks and web
+  search and fetch results are not touched, since the API checks their
+  signatures. Tool definitions are not changed.
 
 So Claude sees key hints, labels, statuses and quotas, but not a secret,
 including a key an upstream echoes in an error or a live check. The builder's
@@ -165,7 +182,7 @@ and delivery errors, and every log line (a wrapping `slog` handler).
 Limits: a short key with no prefix and no `key=` in front of it (a bare 12
 character token in a sentence) is caught only if it is already a pool key or
 the paste parser finds it. Leasing a key, through the API or the MCP
-`lease_key` tool, returns the secret to the app by design; use proxy mode for
+`get_key` tool, returns the secret to the app by design; use proxy mode for
 any client you would not hand a key to.
 
 ## Web protections
@@ -192,17 +209,17 @@ any client you would not hand a key to.
 |---|---|
 | Failed logins | 10 per 10 minutes per client IP and per existing account |
 | Dashboard JSON body | 4 MB |
-| Proxy request body | `COGITO_MAX_BODY_MB` (default 50) |
+| Proxy request body | `ACNOLOGIA_MAX_BODY_MB` (default 50) |
 | Proxy methods | GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS |
 | Proxy idle stream | 5 minutes without bytes ends the response and frees the slot |
 | Cooldown from a report or `Retry-After` | 24 hours |
 | Lease wait / TTL | 60 s / 24 h |
 | Late lease report | refused 10 minutes after expiry |
-| MCP proxied response | 200 KB |
+| MCP tool result | `max_result_kb` per app, default 200 KB, at most 2048 |
 | AI runs | 2 at a time, 40 turns, 30 minutes, 5 live checks, 3 submits |
-| Assistant | 12 model steps per message, 20,000 character messages, one message at a time per chat |
+| Assistant | 24 model steps and 15 minutes per message, messages up to 1 MB (a dropped file of keys), one message at a time per chat |
 
-The client IP comes from the socket unless `COGITO_TRUST_PROXY_HEADERS=true`.
+The client IP comes from the socket unless `ACNOLOGIA_TRUST_PROXY_HEADERS=true`.
 Behind a reverse proxy, enable it, or every client shares one login limit.
 
 ## Outbound requests
@@ -224,7 +241,7 @@ flowchart LR
 ```
 
 Webhook deliveries carry no key and go through `SafeClient` unless
-`COGITO_WEBHOOK_ALLOW_PRIVATE=true`. Webhook URLs are encrypted at rest (Slack,
+`ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE=true`. Webhook URLs are encrypted at rest (Slack,
 Discord and Telegram URLs are secrets) and only a host hint is ever returned.
 Hidden keys never produce webhook events.
 
@@ -239,7 +256,7 @@ a response made with a hidden or restricted key, a response the upstream marks
 `private` or `no-store`, or a body that contains the key. Idempotent replays
 are stored per app.
 
-Admin API tokens (`cogadm_`) are stored as SHA-256 hashes, carry a scope that
+Admin API tokens (`acnadm_`) are stored as SHA-256 hashes, carry a scope that
 never exceeds their owner's role, stop working when the owner is disabled, and
 cannot create tokens or change the account.
 
@@ -258,13 +275,13 @@ provider's own domain.
 
 ## Operator checklist
 
-1. Serve over TLS and set `COGITO_SECURE_COOKIES=true`.
-2. Behind a reverse proxy, set `COGITO_TRUST_PROXY_HEADERS=true`.
-3. Set `COGITO_MASTER_KEY` from a secret store instead of keeping
+1. Serve over TLS and set `ACNOLOGIA_SECURE_COOKIES=true`.
+2. Behind a reverse proxy, set `ACNOLOGIA_TRUST_PROXY_HEADERS=true`.
+3. Set `ACNOLOGIA_MASTER_KEY` from a secret store instead of keeping
    `master.key` on the data volume, and back it up. Losing it makes stored keys
    unreadable.
-4. Do the first run setup right away, or set `COGITO_BOOTSTRAP_EMAIL` and
-   `COGITO_BOOTSTRAP_PASSWORD`, so nobody else can claim the superadmin.
+4. Do the first run setup right away, or set `ACNOLOGIA_BOOTSTRAP_EMAIL` and
+   `ACNOLOGIA_BOOTSTRAP_PASSWORD`, so nobody else can claim the superadmin.
 5. Mark keys admins must never see as `hidden`, and grant `lease_hidden` only
    to apps that need them.
 6. Use a fine grained, public read only `GITHUB_TOKEN` if you set one.

@@ -121,7 +121,8 @@ export const Markdown = memo(function Markdown({ source, headings, theme }: { so
           role="region"
           aria-label="Table, scrolls sideways when wider than the screen"
         >
-          <table className="bui-table bui-table-sm [&_tr>*:first-child]:ps-3.5! [&_tr>*:last-child]:pe-3.5! [&_th]:border-t-0!">{children}</table>
+          {/* Cells get room to breathe; the first column holds labels (packages, settings, fields), so it keeps them on one line. */}
+          <table className="bui-table bui-table-sm [&_tr>*:first-child]:ps-4! [&_tr>*:last-child]:pe-4! [&_th]:border-t-0! [&_td]:py-3! [&_th]:py-2.5!">{children}</table>
         </div>
       ),
       th: ({ children, style }) => (
@@ -130,13 +131,21 @@ export const Markdown = memo(function Markdown({ source, headings, theme }: { so
         </th>
       ),
       td: ({ children, style }) => (
-        <td style={style} className="min-w-[8rem] align-top! text-body-2-regular! first:min-w-0">
+        <td
+          style={style}
+          className={cx(
+            "min-w-[10rem] align-top! text-body-2-regular! leading-relaxed! sm:min-w-[12rem]",
+            // The first column holds labels: each one stays whole, but a cell listing several can wrap between them.
+            "first:w-[1%] first:min-w-0 first:pe-6! first:[&_code]:whitespace-nowrap first:[&_code]:[overflow-wrap:normal]",
+          )}
+        >
           {children}
         </td>
       ),
       // Only inline code reaches here: `pre` below renders block code itself.
       code: ({ children }) => (
-        <code className="rounded-md bg-background-tertiary-default px-1.5 py-0.5 font-mono text-body-2-regular text-text-primary [overflow-wrap:anywhere]">{children}</code>
+        // Sized to the text around it (prose, table cells, headings), with slim padding so it reads as part of the sentence.
+        <code className="rounded-[0.3em] bg-background-tertiary-default box-decoration-clone px-[0.3em] py-[0.1em] font-mono text-[0.875em] text-text-primary [overflow-wrap:anywhere]">{children}</code>
       ),
       pre: ({ node }) => {
         const codeEl = (node as HastNode | undefined)?.children?.find((c) => c.tagName === "code");

@@ -2,27 +2,32 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
 
+Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, app limits, egress proxies, webhooks, key secrecy and redaction, errors, admin tokens and `acnologia ctl`, docs.
+
 Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code": "string", "message": "string"}}` with a matching HTTP status.
 
 ## Authentication
 
-Every consumer and MCP call carries an app token (`cog_...`) created on the dashboard Apps page. The token is shown once.
+Every consumer and MCP call carries an app token (`acn_...`) created on the dashboard Apps page. The token is shown once and stored only as a hash.
 
 ```
-Authorization: Bearer cog_xxx
-X-Cogito-Token: cog_xxx               (alternative)
-?cogito_token=cog_xxx                  (proxy only, for URL-only tools)
+Authorization: Bearer acn_xxx
+X-Acnologia-Token: acn_xxx            (alternative)
+?acn_token=acn_xxx                    (proxy only, for URL-only tools)
 ```
 
-Acnologia strips all three before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong or inactive gets 401; a service or mode the app may not use gets 403.
+Acnologia strips all of them before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong or inactive gets 401; a service or mode the app may not use gets 403.
 
 ## Public endpoints
 
 ```
-GET /healthz   -> 200 {"ok": true, "version": "1.0.0"}
-GET /llms.txt  -> this summary
-GET /docs/{slug}.md -> one doc as Markdown (see Docs as Markdown)
-GET /api/docs  -> JSON index of the docs
+GET /healthz             -> 200 {"ok": true, "version": "1.0.0"}
+GET /llms.txt            -> the short summary with links
+GET /llms-full.txt       -> this reference
+GET /docs/{slug}.md      -> one doc as Markdown (see Docs as Markdown)
+GET /docs/assets/{name}  -> an image the docs show
+GET /api/docs            -> JSON index of the docs
+GET /robots.txt          -> disallows everything
 ```
 
 ## GET /api/v1/services
@@ -31,7 +36,7 @@ Lists the services the token may use.
 
 ```http
 GET /api/v1/services
-Authorization: Bearer cog_xxx
+Authorization: Bearer acn_xxx
 ```
 
 ```json
@@ -75,13 +80,13 @@ Borrow a key. Only for apps in mode `lease` or `both`.
 
 ```http
 POST /api/v1/lease
-Authorization: Bearer cog_xxx
+Authorization: Bearer acn_xxx
 Content-Type: application/json
 
-{"service": "serpapi", "exclude_key_ids": [12], "ttl_sec": 300, "wait_sec": 10}
+{"service": "serpapi", "exclude_key_ids": [12], "ttl_sec": 300, "wait_sec": 10, "exclusive": false}
 ```
 
-`exclude_key_ids` (optional) skips keys you already tried. `ttl_sec` (optional) is how long the lease stays open; when omitted the server uses 120 seconds on services with a concurrency limit and 300 seconds otherwise. `wait_sec` (optional, 0 to 60, default 0) is how long the server may wait for a free slot when every usable key is at its concurrency limit; keep your HTTP client timeout longer than this. See [Concurrency limits](#concurrency-limits).
+`exclude_key_ids` (optional) skips keys you already tried. `exclusive` (optional) keeps the key from every other caller until you report or the lease expires. `ttl_sec` (optional) is how long the lease stays open; when omitted the server uses 120 seconds on services with a concurrency limit and 300 seconds otherwise. `wait_sec` (optional, 0 to 60, default 0) is how long the server may wait for a free slot when every usable key is at its concurrency limit; keep your HTTP client timeout longer than this. See [Concurrency limits](#concurrency-limits).
 
 200:
 
@@ -119,7 +124,7 @@ Tell Acnologia how the key did. Always report, including on success. On a servic
 
 ```http
 POST /api/v1/leases/lse_7f3a9c/report
-Authorization: Bearer cog_xxx
+Authorization: Bearer acn_xxx
 Content-Type: application/json
 
 {"outcome": "rate_limited", "status_code": 429, "retry_after_sec": 60, "message": "hourly limit", "rotate": true}
@@ -135,25 +140,42 @@ With `rotate: true` the response carries a new lease on a different key in `next
 
 Rules: report within 10 minutes after `expires_at` (later reports get 410), only once per lease (a second report gets 409), and only while the app may still use the service (403 otherwise). `retry_after_sec` is capped at 86400. Do not put the secret in `message`; Acnologia removes it anyway because messages are shown on the dashboard.
 
+## POST /api/v1/leases/{lease_id}/renew
+
+Extend a lease you hold, for long jobs.
+
+```http
+POST /api/v1/leases/lse_7f3a9c/renew
+Authorization: Bearer acn_xxx
+Content-Type: application/json
+
+{"ttl_sec": 600}
+```
+
+200 `{"ok": true, "expires_at": "..."}`. 404 `lease_not_found` when the lease is not yours or no longer open.
+
 ### Outcomes
 
 | outcome | when to send it | effect on the key |
 |---|---|---|
 | `ok` | provider call succeeded | resets consecutive failures |
 | `rate_limited` | provider returned a rate limit (usually 429) | cooldown for `retry_after_sec`, else `cooldown_sec * 2^(fails-1)` capped at 1h |
+| `busy` | the account is at its concurrency cap | steps aside for `retry_after_sec` (default 1s), no backoff |
 | `quota_exhausted` | monthly or daily quota used up | status `exhausted` until quota reset (or 24h), then reactivated automatically |
-| `invalid` | key rejected (revoked, wrong) | status `invalid`, removed from rotation |
-| `error` | provider outage, network error, bad request | not penalized |
+| `invalid` | key rejected (revoked, wrong) | status `invalid`, out of rotation until a health check passes |
+| `banned` | the provider suspended the account | status `banned`; only an admin reset brings it back |
+| `error` | provider outage, network error, bad request | not penalized; counts toward the circuit breaker |
 
 ### Provider error mapping
 
 | provider | response | outcome |
 |---|---|---|
 | SerpAPI | 429 with "run out of searches" | `quota_exhausted` |
-| SerpAPI | other 429 | `rate_limited` (hourly limit, retry 3600s) |
+| SerpAPI | 429 with "past hour" or "hourly" | `rate_limited` until the start of the next hour |
 | SerpAPI | 401 or "Invalid API key" | `invalid` |
-| ElevenLabs | 429 `too_many_concurrent_requests` | `rate_limited` (retry 5s) |
+| ElevenLabs | 429 `too_many_concurrent_requests` | `busy` (retry 1s) |
 | ElevenLabs | 429 `system_busy` | `error` |
+| ElevenLabs | `detected_unusual_activity`, `account_suspended` | `banned` |
 | ElevenLabs | 401 `quota_exceeded` | `quota_exhausted` |
 | ElevenLabs | 401 `invalid_api_key` | `invalid` |
 | generic | 429 (honors `Retry-After`) / 402 / 401 or 403 | `rate_limited` / `quota_exhausted` / `invalid` |
@@ -167,8 +189,10 @@ Call Acnologia instead of the provider. Acnologia forwards to `base_url/{path}` 
 Response: the provider's status, headers and body, plus:
 
 ```
-X-Cogito-Key-Id: 14      which key served the request
-X-Cogito-Attempts: 2     how many keys were tried
+X-Acnologia-Key-Id: 14        which key served the request
+X-Acnologia-Attempts: 2       how many keys were tried
+X-Acnologia-Service: serpapi  which service answered (useful with groups)
+X-Acnologia-Cache: hit        hit, miss or bypass, on services with caching
 ```
 
 Allowed methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS (others get 405). A path containing a literal `?` or `#`, or a `.` or `..` segment, gets 400 `bad_path`; percent encoded characters such as `%2F` are forwarded as sent. Provider redirects are returned to you rather than followed, with the key removed from response headers. Responses carry `Content-Security-Policy: sandbox`, so they cannot run script on the Acnologia origin.
@@ -179,20 +203,20 @@ If no key is available the proxy answers 503 `no_key_available` with `retry_afte
 
 ```bash
 curl -s "http://localhost:8080/proxy/serpapi/search.json?engine=google&q=best+espresso+grinder" \
-  -H "Authorization: Bearer cog_xxx"
+  -H "Authorization: Bearer acn_xxx"
 ```
 
 Equivalent to `https://serpapi.com/search.json?engine=google&q=...&api_key=SECRET`. For URL-only tools:
 
 ```
-http://localhost:8080/proxy/serpapi/search.json?engine=google&q=coffee&cogito_token=cog_xxx
+http://localhost:8080/proxy/serpapi/search.json?engine=google&q=coffee&acn_token=acn_xxx
 ```
 
 ### ElevenLabs
 
 ```bash
 curl -s -X POST "http://localhost:8080/proxy/elevenlabs/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM" \
-  -H "Authorization: Bearer cog_xxx" \
+  -H "Authorization: Bearer acn_xxx" \
   -H "Content-Type: application/json" \
   -H "Accept: audio/mpeg" \
   -d '{"text": "Hello from Acnologia.", "model_id": "eleven_multilingual_v2"}' \
@@ -228,25 +252,42 @@ Never log or persist `secret`.
 
 `POST /mcp` is a Model Context Protocol endpoint (streamable HTTP transport, JSON responses, no SSE needed). Authenticate with the same app token header. Use `initialize`, then `tools/list` for the authoritative input schemas, then `tools/call`.
 
+```sh
+# Claude Code, over HTTP
+claude mcp add --transport http acnologia http://localhost:8080/mcp \
+  --header "Authorization: Bearer acn_xxx"
+
+# Clients that only speak stdio, such as Claude Desktop
+acnologia mcp --url http://localhost:8080 --token acn_xxx
+```
+
 ```json
 {
   "mcpServers": {
-    "cogito": {
+    "acnologia": {
       "type": "http",
       "url": "http://localhost:8080/mcp",
-      "headers": {"Authorization": "Bearer cog_xxx"}
+      "headers": {"Authorization": "Bearer acn_xxx"}
     }
   }
 }
 ```
 
-| tool | purpose | typical arguments |
-|---|---|---|
-| `list_services` | services the token may use, with availability | none |
-| `get_key` | lease a key (lease mode apps only); always follow with `report_key` | `service`, optional `exclude_key_ids`, `ttl_sec`, `wait_sec` (0 to 60, wait for a busy key) |
-| `report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome`, optional `status_code`, `retry_after_sec`, `message`, `rotate` |
-| `pool_status` | how many keys are available or cooling per service | optional `service` |
-| `proxy_request` | make a provider call through the proxy without seeing a key | `service`, `method`, `path`, optional `query`, `headers`, `body` |
+Each app chooses its tool sets on the dashboard Apps page. Core, service tools, resources and prompts are on by default; insights and manage are off.
+
+| set | tool | purpose | typical arguments |
+|---|---|---|---|
+| core | `list_services` | services the token may use, with availability | none |
+| core | `pool_status` | whether a service has a key available now | `service` |
+| core | `get_key` | lease a key (lease mode apps only); always follow with `report_key` | `service`, optional `exclusive`, `exclude_key_ids`, `ttl_sec` (max 86400), `wait_sec` (0 to 60) |
+| core | `renew_key` | extend a lease for a long job | `lease_id`, optional `ttl_sec` |
+| core | `report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome` (`ok`, `rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned`, `error`), optional `retry_after_sec`, `message`, `rotate` |
+| core | `proxy_request` | make a provider call through the proxy without seeing a key | `service`, `path`, optional `method`, `query`, `body` |
+| service tools | one per provider example, named after the service and the example | ready to call endpoints, such as a SerpAPI search | the example's path and query parameters, `extra_query`, `body` |
+| insights | `list_keys`, `key_details`, `service_stats` | read only key health, quota and recent events, never a secret | `service`, `validity`, `key_id` |
+| manage | `check_keys`, `set_key_status`, `add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
+
+Resources: `acnologia://services`, `acnologia://services/{slug}` and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `get_key` exclusive by default, add instructions and hide single tools.
 
 Example call:
 
@@ -257,7 +298,7 @@ Example call:
                           "query": {"engine": "google", "q": "coffee"}}}}
 ```
 
-Prefer `proxy_request` over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
+Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
 
 ## SDKs
 
@@ -269,23 +310,23 @@ Concurrency support is the same everywhere: `lease` and `with_key` take a wait o
 |---|---|---|
 | Python | `lease(..., wait_sec=20)`, `with_key(..., wait_sec=20)` | `AllKeysBusy` (subclass of `NoKeyAvailable`), `.busy` |
 | TypeScript | `lease(s, { waitSec: 20 })`, `withKey(s, fn, { waitSec: 20 })` | `AllKeysBusyError` (extends `NoKeyAvailableError`), `.busy` |
-| Go | `LeaseOptions{Wait: 20 * time.Second}`, `WithWait(20 * time.Second)` | `*ErrNoKeyAvailable` with `Busy: true`, matches `cogito.AllKeysBusy` |
+| Go | `LeaseOptions{Wait: 20 * time.Second}`, `WithWait(20 * time.Second)` | `*ErrNoKeyAvailable` with `Busy: true`, matches `acnologia.AllKeysBusy` |
 | PHP | `lease($s, waitSec: 20)`, `withKey($s, $fn, waitSec: 20)` | `Acnologia\Exception\AllKeysBusy` (extends `NoKeyAvailable`), `->busy` |
 | Ruby | `lease(s, wait_sec: 20)`, `with_key(s, wait_sec: 20)` | `Acnologia::AllKeysBusy` (subclass of `NoKeyAvailable`), `busy?` |
 
 ### Python
 
 ```bash
-pip install cogito-keys
+pip install acnologia
 ```
 
 ```python
 import httpx
-from cogito import Cogito, RateLimited
+from acnologia import Acnologia, RateLimited
 
-cog = Cogito("http://localhost:8080", "cog_xxx")
+acn = Acnologia("http://localhost:8080", "acn_xxx")
 
-r = cog.proxy("serpapi").get("/search.json", params={"engine": "google", "q": "coffee"})
+r = acn.proxy("serpapi").get("/search.json", params={"engine": "google", "q": "coffee"})
 
 def search(lease):
     resp = httpx.get(lease.url("/search.json"), params=lease.apply({"q": "coffee"}))
@@ -293,27 +334,27 @@ def search(lease):
         raise RateLimited(retry_after=3600)
     return resp.json()
 
-data = cog.with_key("serpapi", search)
+data = acn.with_key("serpapi", search)
 ```
 
-Also `AsyncAcnologia`. Exceptions: `CogitoError`, `NoKeyAvailable`, `AllKeysBusy`, `RateLimited`, `QuotaExhausted`, `InvalidKey`.
+Also `AsyncAcnologia`. Exceptions: `AcnologiaError`, `NoKeyAvailable`, `AllKeysBusy`, `RateLimited`, `QuotaExhausted`, `InvalidKey`.
 
 ### TypeScript and JavaScript
 
 ```bash
-npm install @cogito/keys
+npm install @acnologia/keys
 ```
 
 ```ts
-import { Cogito, RateLimitedError } from "@cogito/keys"; // or: const { Cogito } = require("@cogito/keys")
+import { Acnologia, RateLimitedError } from "@acnologia/keys"; // or: const { Acnologia } = require("@acnologia/keys")
 
-const cog = new Cogito({ baseUrl: "http://localhost:8080", token: "cog_xxx" });
+const acn = new Acnologia({ baseUrl: "http://localhost:8080", token: "acn_xxx" });
 
-const res = await cog.proxy("elevenlabs").post("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM", {
+const res = await acn.proxy("elevenlabs").post("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM", {
   text: "Hello", model_id: "eleven_multilingual_v2",
 });
 
-const data = await cog.withKey("serpapi", async (lease) => {
+const data = await acn.withKey("serpapi", async (lease) => {
   const { query } = lease.apply({ query: { engine: "google", q: "coffee" } });
   const r = await fetch(`${lease.baseUrl}/search.json?${new URLSearchParams(query as Record<string, string>)}`);
   if (r.status === 429) throw new RateLimitedError(3600);
@@ -321,19 +362,19 @@ const data = await cog.withKey("serpapi", async (lease) => {
 });
 ```
 
-Errors: `CogitoError`, `NoKeyAvailableError`, `AllKeysBusyError`, `RateLimitedError`, `QuotaExhaustedError`, `InvalidKeyError`.
+Errors: `AcnologiaError`, `NoKeyAvailableError`, `AllKeysBusyError`, `RateLimitedError`, `QuotaExhaustedError`, `InvalidKeyError`.
 
 ### Go
 
 ```bash
-go get github.com/cogito-keys/cogito-go
+go get github.com/sidharthpunathil/acnologia/sdk/go
 ```
 
 ```go
-c := cogito.New("http://localhost:8080", "cog_xxx")
+c := acnologia.New("http://localhost:8080", "acn_xxx")
 resp, err := c.Proxy("serpapi").Get(ctx, "/search.json", url.Values{"q": {"coffee"}})
 
-err = c.WithKey(ctx, "serpapi", func(l *cogito.Lease) error {
+err = c.WithKey(ctx, "serpapi", func(l *acnologia.Lease) error {
 	req, _ := http.NewRequestWithContext(ctx, "GET", l.URL("/search.json", url.Values{"q": {"coffee"}}), nil)
 	l.Apply(req)
 	res, err := http.DefaultClient.Do(req)
@@ -342,38 +383,41 @@ err = c.WithKey(ctx, "serpapi", func(l *cogito.Lease) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode == 429 {
-		return &cogito.ErrRateLimited{RetryAfter: time.Hour}
+		return &acnologia.ErrRateLimited{RetryAfter: time.Hour}
 	}
 	return nil
 })
 ```
 
-Errors match sentinels with `errors.Is`: `cogito.RateLimited`, `cogito.QuotaExhausted`, `cogito.InvalidKey`, `cogito.NoKeyAvailable`, `cogito.AllKeysBusy`.
+Errors match sentinels with `errors.Is`: `acnologia.RateLimited`, `acnologia.QuotaExhausted`, `acnologia.InvalidKey`, `acnologia.NoKeyAvailable`, `acnologia.AllKeysBusy`.
 
 ### PHP
 
 ```bash
-composer require cogito/keys
+composer require acnologia/keys
 ```
 
 ```php
-$cog = new Cogito\Cogito('http://localhost:8080', 'cog_xxx');
-$res = $cog->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
-$data = $cog->withKey('serpapi', function (Cogito\Lease $lease) { /* throw Acnologia\Exception\RateLimited::after(3600) on 429 */ });
+$acn = new Acnologia\Acnologia('http://localhost:8080', 'acn_xxx');
+$res = $acn->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
+$data = $acn->withKey('serpapi', function (Acnologia\Lease $lease) { /* throw Acnologia\Exception\RateLimited::after(3600) on 429 */ });
 ```
 
 ### Ruby
 
 ```bash
-gem install cogito-keys
+gem install acnologia
 ```
 
 ```ruby
-cog = Acnologia::Client.new("http://localhost:8080", "cog_xxx")
-res = cog.proxy("serpapi").get("/search.json", "q" => "coffee")
-data = cog.with_key("serpapi") { |lease| ... } # raise Acnologia::RateLimited.new(retry_after: 3600) on 429
+acn = Acnologia::Client.new("http://localhost:8080", "acn_xxx")
+res = acn.proxy("serpapi").get("/search.json", "q" => "coffee")
+data = acn.with_key("serpapi") { |lease| ... } # raise Acnologia::RateLimited.new(retry_after: 3600) on 429
 ```
 
+### Other languages
+
+Each service's Integrate tab in the dashboard has copy ready snippets for curl, Python, TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart, filled in with the service's slug, base URL and auth placement. Languages without an SDK use the HTTP client most projects already have: proxy mode is one call; lease mode leases, calls the provider with the key where the service expects it, and reports the outcome.
 
 ## Resilience
 
@@ -407,7 +451,7 @@ Each proxied response then updates the key's quota. When the provider reports 0 
 
 ## Response cache and idempotency
 
-A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Cogito-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Acnologia never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `COGITO_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
+A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Acnologia-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Acnologia never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `ACNOLOGIA_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
 
 `Idempotency-Key` works on any method. The first response (below 500) is stored per app for 10 minutes and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice.
 
@@ -417,10 +461,10 @@ A group puts several services behind one slug, for example two SerpAPI accounts 
 
 ```http
 GET /proxy/search/search.json?q=coffee
-Authorization: Bearer cog_...
+Authorization: Bearer acn_...
 ```
 
-Acnologia tries the first member. It moves to the next when the member has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Cogito-Service` names the member that answered. An app allowed to use the group may use its members through it.
+Acnologia tries the first member. It moves to the next when the member has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Acnologia-Service` names the member that answered. An app allowed to use the group may use its members through it.
 
 ## App limits and spend
 
@@ -439,45 +483,73 @@ Operators can route a service's or a single key's traffic through an HTTP, HTTPS
 
 ## Webhooks
 
-Webhooks receive pool events: `key.invalid`, `key.banned`, `key.exhausted`, `key.recovered`, `quota.low` (under 10% left), `pool.empty`, `service.down`, `service.up`, `app.limit`. Formats: `json`, `slack`, `discord`, `telegram` (use `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>`). Repeats of the same event about the same key, service or app are sent at most once per 10 minutes. Hidden keys never produce events. By default webhook URLs may not point at private addresses; set `COGITO_WEBHOOK_ALLOW_PRIVATE=true` for an internal receiver.
+Webhooks receive pool events: `key.invalid`, `key.banned`, `key.exhausted`, `key.recovered`, `quota.low` (under 10% left), `pool.empty`, `service.down`, `service.up`, `app.limit`. Formats: `json`, `slack`, `discord`, `telegram` (use `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>`). Repeats of the same event about the same key, service or app are sent at most once per 10 minutes. Hidden keys never produce events. By default webhook URLs may not point at private addresses; set `ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE=true` for an internal receiver.
 
 JSON deliveries carry:
 
 ```http
-X-Cogito-Event: key.exhausted
-X-Cogito-Timestamp: 1793577600
-X-Cogito-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>" with the signing secret>
+X-Acnologia-Event: key.exhausted
+X-Acnologia-Timestamp: 1793577600
+X-Acnologia-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>" with the signing secret>
 
 {"type": "key.exhausted", "ts": "2026-11-01T22:00:00Z", "message": "SerpAPI key \"acct-3\" is out of quota", "service_id": 1, "service": "serpapi", "key_id": 3, "key": "acct-3"}
 ```
 
-The signing secret (`whsec_...`) is shown once when the webhook is created. Reject deliveries whose timestamp is more than a few minutes old.
+The signing secret (`whsec_...`) is shown once when the webhook is created. Reject deliveries whose timestamp is more than a few minutes old. Payloads pass the redactor, so they never carry a key.
 
-## Admin API tokens and cogito ctl
+## Key secrecy and redaction
 
-Create tokens in the dashboard (Settings, API tokens) or with `POST /api/admin/tokens {"name": "ci", "scope": "write", "expires_in_days": 90}`. Scopes: `read` (member), `write` (admin), `admin` (superadmin), capped at the creator's role. Tokens cannot manage tokens or change the account. Send them as `Authorization: Bearer cogadm_...` to any `/api/admin/` endpoint.
+- Proxy mode and MCP `proxy_request` never show a key to the caller. Response headers are scrubbed of the key, and redirects are returned, not followed.
+- Leasing (`/api/v1/lease`, MCP `get_key`) returns the secret by design. Use proxy mode for any client you would not hand a key to.
+- Every request Acnologia sends to Claude (the Assistant, the provider builder, Fill with AI, run naming) passes a redactor first. Known secrets (every pool key, webhook URLs and secrets, egress proxy URLs, `GITHUB_TOKEN`, a builder run's test keys, keys pasted in a chat) become `[key ...c21e]`. Unknown secrets found by pattern (prefixes such as `sk-`, `AIza`, `ghp_`, `tvly-`, `AKIA`, `acn_`, JWTs, `Bearer` and `Basic` values, `key=` and `token=` fields, long random tokens) become `[secret ...c21e]`.
+- Keys pasted into the Assistant go to an encrypted per thread vault; the model sees placeholders such as `[key k3 ...c21e]` and tools resolve them on the server. The stored user message keeps only the prose and a list of label plus last four characters.
+- The same scrub runs on events, the audit log, key `last_error`, agent steps and run errors, webhook payloads and every log line.
+- Limit: a short key with no prefix and no `key=` in front of it is caught only if it is already a pool key or the paste parser finds it.
+
+## Errors
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `bad_path` | Proxy path with a literal `?`, `#`, or a `.` / `..` segment. |
+| 401 | `unauthenticated` | Token missing or wrong. |
+| 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
+| 404 | `lease_not_found` | Renewing a lease that is not open. |
+| 405 | `method_not_allowed` | Proxy method other than GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. |
+| 409 | `report_failed` | Lease already reported. |
+| 410 | `report_failed` | Lease expired more than 10 minutes ago. |
+| 413 | `body_too_large` | Proxy body over `ACNOLOGIA_MAX_BODY_MB` (default 50). |
+| 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
+| 502 | `upstream_unreachable` | The provider could not be reached on the first attempt. |
+| 503 | `no_key_available` | Every usable key is cooling down, exhausted or disabled. Wait `retry_after_sec`. |
+| 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit. Retry shortly or lease with `wait_sec`. |
+| 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
+| 503 | `empty_group` | The group has no services left. |
+
+## Admin API tokens and acnologia ctl
+
+Create tokens in the dashboard (Account, API tokens) or with `POST /api/admin/tokens {"name": "ci", "scope": "write", "expires_in_days": 90}`. Scopes: `read` (member), `write` (admin), `admin` (superadmin), capped at the creator's role. Tokens cannot manage tokens or change the account. Send them as `Authorization: Bearer acnadm_...` to any `/api/admin/` endpoint.
 
 ```sh
-cogito ctl login https://cogito.example --token cogadm_... --name prod
-cogito ctl status
-cogito ctl keys add serpapi < keys.txt      # one per line: secret, or label,secret
-cogito ctl keys check serpapi
-cogito ctl events --service serpapi --kind rate_limited
-cogito ctl breaker serpapi --reset
-cogito ctl usage 3
+acnologia ctl login https://keys.example.com --token acnadm_... --name prod
+acnologia ctl status
+acnologia ctl keys add serpapi < keys.txt      # one per line: secret, or label,secret
+acnologia ctl keys check serpapi
+acnologia ctl events --service serpapi --kind rate_limited
+acnologia ctl breaker serpapi --reset
+acnologia ctl usage 3
 ```
 
-The CLI stores servers in `~/.config/cogito/ctl.json` (mode 0600). `COGITO_URL` and `COGITO_TOKEN` override it for one command.
+The CLI stores servers in `~/.config/acnologia/ctl.json` (mode 0600). `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` override it for one command. `acnologia ctl contexts` lists saved servers and `acnologia ctl use <name>` switches; `services`, `keys <service>` and `cache purge <service>` round out the commands.
 
 ## Docs as Markdown
 
 This reference covers the consumer API. The rest of the docs are served as raw Markdown (`text/markdown`, no auth) at `/docs/{slug}.md`, and rendered for people at `/docs/{slug}`. `GET /api/docs` lists them as JSON: `{"docs": [{"slug", "title", "description", "size"}]}`.
 
-- [/docs/overview.md](/docs/overview.md): what Acnologia does, quick start, features and self-hosting.
+- [/docs/overview.md](/docs/overview.md): what Acnologia does, quick start and features.
 - [/docs/api.md](/docs/api.md): consumer error codes and the dashboard API with required roles.
-- [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, backups and upgrading.
+- [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, self-hosting, backups and upgrading.
 - [/docs/architecture.md](/docs/architecture.md): components, packages, request pipeline, data model and background work.
 - [/docs/flows.md](/docs/flows.md): diagrams of the proxy, key selection, leases, key states, health checks, sign in, MCP and the AI builder.
-- [/docs/security.md](/docs/security.md): roles, hidden keys, secrets at rest, web protections and outbound requests.
-- [/docs/providers.md](/docs/providers.md): provider specs and how to add one.
+- [/docs/security.md](/docs/security.md): roles, key flags, hidden keys, what the model can see, secrets at rest, web protections and outbound requests.
+- [/docs/providers.md](/docs/providers.md): built in providers, the spec format, and adding one by hand or with AI.
 - [/docs/development.md](/docs/development.md): setup, layout, tests and conventions.

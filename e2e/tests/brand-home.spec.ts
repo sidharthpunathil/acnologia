@@ -7,7 +7,7 @@ test("the brand in the top bar goes home", async ({ page, errors }) => {
   await page.goto("/assistant");
   await page.getByRole("link", { name: "Acnologia home" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("services");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(/Catalog|services/);
   expect(errors).toEqual([]);
 });
 

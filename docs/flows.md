@@ -28,10 +28,10 @@ sequenceDiagram
     participant U as Provider API
     participant DB as SQLite
 
-    A->>P: GET /proxy/serpapi/search.json?q=x<br/>Authorization: Bearer cog_...
+    A->>P: GET /proxy/serpapi/search.json?q=x<br/>Authorization: Bearer acn_...
     P->>DB: look up app by token hash, check active
     P->>P: mode allows proxy? service allowed? method allowed?
-    P->>P: read body (max COGITO_MAX_BODY_MB), validate path
+    P->>P: read body (max ACNOLOGIA_MAX_BODY_MB), validate path
     loop up to max_attempts keys
         P->>Pool: PickWait(service, app, exclude tried)
         alt every usable key at its concurrency cap
@@ -42,18 +42,18 @@ sequenceDiagram
             P-->>A: 503 no_key_available / all_keys_busy + retry_after_sec
         end
         Pool-->>P: key + decrypted secret, slot held
-        P->>P: build URL from parsed base_url + path,<br/>strip cog_ token, cookies, hop headers,<br/>inject key (query / header / bearer)
+        P->>P: build URL from parsed base_url + path,<br/>strip acn_ token, cookies, hop headers,<br/>inject key (query / header / bearer)
         P->>U: forward request (redirects not followed)
         U-->>P: response
         P->>DB: event (proxy, status, latency)
         alt status < 400
             P->>Pool: Apply(ok)
-            P-->>A: stream response, key scrubbed from headers,<br/>sandbox CSP, X-Cogito-Key-Id, X-Cogito-Attempts
+            P-->>A: stream response, key scrubbed from headers,<br/>sandbox CSP, X-Acnologia-Key-Id, X-Acnologia-Attempts
             Note over P: slot released when the body ends<br/>or the upstream is idle for 5 minutes
         else 4xx or 5xx
             P->>P: classify with the provider spec
             P->>Pool: Apply(outcome), release slot
-            alt outcome rotates (rate_limited, quota_exhausted, invalid)
+            alt outcome rotates (rate_limited, busy, quota_exhausted, invalid, banned)
                 Note over P: try the next key
             else ok or error
                 P-->>A: relay this response
@@ -156,11 +156,25 @@ stateDiagram-v2
     exhausted --> active: quota_reset_at passes (worker),<br/>or a good health check
     active --> invalid: invalid (401/403 class)
     invalid --> active: good health check,<br/>admin reset, or secret replaced
+    active --> banned: banned (account suspended)
+    banned --> active: admin reset
     active --> disabled: admin disables
     disabled --> active: admin enables
     exhausted --> disabled: admin disables
     invalid --> disabled: admin disables
 ```
+
+Each provider's rules sort an error response into an outcome, and each outcome
+has its own recovery:
+
+| Outcome | Typical cause | What happens to the key |
+|---|---|---|
+| `rate_limited` | 429, an hourly cap, `Retry-After` | Rests for as long as the provider asked, or the service cooldown doubled per consecutive failure up to an hour. The next key takes the request. |
+| `busy` | the account is at its concurrency cap | Steps aside for about a second, without backoff or a failure count. |
+| `quota_exhausted` | out of searches, characters or credits | Parked as `exhausted` until its quota resets (or 24 hours), then back on its own. |
+| `invalid` | the provider rejects the key | Out of rotation until a health check passes. |
+| `banned` | the provider suspended the account | Out until an admin resets it. Health checks skip it. |
+| `error` | 5xx, timeouts, refused connections | Not penalized. Errors count toward the service's circuit breaker: 10 in 60 seconds open it, requests then get 503 `service_unavailable` at once, and one probe goes through every 30 seconds until the provider recovers. |
 
 An `error` outcome (5xx, network) records the error but does not change state.
 Separately, each key reports **validity**: `invalid`, `valid` (it worked at
@@ -234,7 +248,7 @@ sequenceDiagram
         S->>DB: load user, bcrypt compare<br/>(dummy hash when the user does not exist)
     end
     S->>DB: insert session (SHA-256 of a 32 byte token, 14 day TTL)
-    S-->>B: Set-Cookie cogito_session (HttpOnly, SameSite=Lax, Secure on TLS)
+    S-->>B: Set-Cookie acnologia_session (HttpOnly, SameSite=Lax, Secure on TLS)
     B->>S: later: POST /api/admin/... with Content-Type: application/json<br/>and X-Requested-With
     S->>S: jsonOnly (CSRF) then requireUser then requireRole
 ```
@@ -246,7 +260,14 @@ password is changed (other sessions) or reset by a superadmin (all sessions).
 
 `POST /mcp` speaks JSON-RPC over the MCP streamable HTTP transport with JSON
 responses. Tools map onto the consumer API and the proxy, with the same app
-token rules.
+token rules. Each app picks its tool sets in the dashboard (`GET`/`PUT
+/api/admin/apps/{id}/mcp`): **core** (`list_services`, `pool_status`,
+`get_key`, `renew_key`, `report_key`, `proxy_request`), **service tools**
+generated from each provider's examples, read only **insights**
+(`list_keys`, `key_details`, `service_stats`) and **manage** (`check_keys`,
+`set_key_status`, `add_keys`). Core, service tools, resources and prompts are
+on by default. Clients that only speak stdio can use `acnologia mcp --url ...
+--token acn_...` as a bridge.
 
 ```mermaid
 sequenceDiagram
@@ -255,15 +276,15 @@ sequenceDiagram
     participant C as Consumer API
     participant P as Proxy
 
-    Ag->>M: initialize (Authorization: Bearer cog_...)
+    Ag->>M: initialize (Authorization: Bearer acn_...)
     M-->>Ag: server info, capabilities
     Ag->>M: tools/list
-    M-->>Ag: list_services, pool_status, get_key, report_key, proxy_request
+    M-->>Ag: the tools this app's settings allow
     Ag->>M: tools/call get_key {service}
     M->>C: issue lease (same checks as /api/v1/lease)
     M-->>Ag: lease JSON
     Ag->>M: tools/call proxy_request {service, method, path}
-    M->>P: run the proxy handler in process<br/>(response capped at 200 KB)
+    M->>P: run the proxy handler in process<br/>(response capped at max_result_kb, default 200)
     M-->>Ag: status, headers, body
 ```
 
@@ -325,6 +346,14 @@ stateDiagram-v2
 
 Auto publish defaults to on for new providers and off for updates of existing
 ones. The test key is encrypted while the run is active and wiped when it ends.
+Every request to Claude passes the redactor first, so the model sees the test
+key only as a placeholder such as `[key ...c21e]` (see
+[security](security.md#what-the-model-can-and-cannot-see)).
+
+Finished runs can be deleted by an admin: `DELETE /api/admin/ai/runs/{id}`
+for one run (409 `run_busy` while it is queued, running, testing or
+publishing), or `DELETE /api/admin/ai/runs` to clear every failed, cancelled
+and published run. Runs waiting for review are kept by the bulk clear.
 
 ## Assistant chat
 
@@ -344,20 +373,20 @@ sequenceDiagram
 
     U->>C: POST /threads/{id}/messages<br/>"add these serpapi keys: sk_1 (alice@x.io), sk_2"
     C->>DB: load thread (yours only), decrypt
-    loop until Claude answers (max 12 steps)
+    C->>C: find the keys (paste parser, then patterns),<br/>encrypt them into the thread vault,<br/>put [key k1 ...c21e] placeholders in the text
+    loop until Claude answers (max 24 turns)
         C->>Cl: history + tools allowed for your role
         Cl-->>C: text and tool calls
         alt read or change tool
             C->>D: e.g. GET /services, POST /services/1/keys<br/>with your session cookie
             D-->>C: result (role checks, validation, audit)
-            C->>C: trim the result for the model,<br/>keep app tokens for you only
+            C->>C: trim and redact the result for the model,<br/>keep app tokens for you only
         else delete or rotate tool
             C->>C: record a pending action,<br/>show a Confirm card, do nothing yet
         end
-        C->>Cl: tool results
+        C->>Cl: tool results (every request passes the redactor)
     end
-    C->>C: replace pasted key secrets with their last<br/>four characters everywhere in the thread
-    C->>DB: save thread encrypted
+    C->>DB: save thread encrypted (your message stored as prose<br/>plus key_list: label and last four characters)
     C-->>U: new transcript items (and a new app token once, if any)
 ```
 
@@ -390,10 +419,19 @@ Tools by role:
 
 | Role | Tools |
 |---|---|
-| member and up | overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
+| member and up | ask_user, search_providers, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
 | admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), create_webhook, update_webhook, test_webhook, create_egress_proxy, update_egress_proxy, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build |
 | admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, enable_app_mcp_manage |
+
+`ask_user` shows a small form in the chat (name the pasted keys, or pick one
+of 2 to 8 choices); the answer goes to `POST /threads/{id}/answer`.
 
 There is no tool to reveal a stored key, manage users or read the audit log.
 New app tokens and webhook signing secrets are shown to you once and never
 sent to Claude; egress proxy URLs are redacted from the stored chat like keys.
+
+In the dashboard, a message with pasted keys shows its prose first and a
+"keys secured" strip of chips (label and last four characters, never a
+secret). The chat state lives in the page's store: the last open chat comes
+back when you return from another tab, unsent drafts are kept per chat while
+the page is open, and a turn still running is picked up again.

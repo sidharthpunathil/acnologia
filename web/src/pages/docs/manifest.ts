@@ -37,13 +37,13 @@ export const DOC_GROUPS: Array<{ id: DocGroupId; title: string; blurb: string }>
  * waiting on /api/docs.
  */
 export const DOCS: DocEntry[] = [
-  { slug: "overview", title: "Overview", blurb: "What Acnologia does, quick start, features and self-hosting.", icon: RiBookOpenLine, group: "start" },
+  { slug: "overview", title: "Overview", blurb: "What Acnologia does, quick start and features.", icon: RiBookOpenLine, group: "start" },
   { slug: "architecture", title: "Server architecture", blurb: "Components, packages, request pipeline, data model and background work.", icon: RiCpuLine, group: "concepts" },
-  { slug: "flows", title: "Request flows", blurb: "Diagrams of proxy requests, key selection, leases, key states and sign in.", icon: RiGitBranchLine, group: "concepts" },
-  { slug: "security", title: "Security model", blurb: "Roles, hidden keys, secrets at rest, web protections and outbound requests.", icon: RiShieldCheckLine, group: "concepts" },
-  { slug: "configuration", title: "Configuration", blurb: "Environment variables, per service settings, backups and upgrading.", icon: RiSettings3Line, group: "operate" },
-  { slug: "api", title: "HTTP API", blurb: "Consumer error codes and the dashboard API with required roles.", icon: RiCodeSSlashLine, group: "reference" },
-  { slug: "providers", title: "Provider specs", blurb: "How providers are defined, validated, published and added.", icon: RiPuzzle2Line, group: "reference" },
+  { slug: "flows", title: "Request flows", blurb: "Proxy requests, leases, key states and outcomes, MCP, the AI builder and the Assistant.", icon: RiGitBranchLine, group: "concepts" },
+  { slug: "security", title: "Security model", blurb: "Roles, hidden keys, what the model can see, secrets at rest and outbound requests.", icon: RiShieldCheckLine, group: "concepts" },
+  { slug: "configuration", title: "Configuration", blurb: "Environment variables, per service settings, self-hosting, backups and upgrading.", icon: RiSettings3Line, group: "operate" },
+  { slug: "api", title: "HTTP API", blurb: "Consumer error codes and every dashboard route with its required role.", icon: RiCodeSSlashLine, group: "reference" },
+  { slug: "providers", title: "Provider specs", blurb: "Built in providers, the spec format, and adding one by hand or with AI.", icon: RiPuzzle2Line, group: "reference" },
   { slug: "development", title: "Development", blurb: "Setup, repository layout, tests and conventions.", icon: RiToolsLine, group: "contribute" },
 ];
 

@@ -1,41 +1,36 @@
 # Acnologia
 
-> Acnologia is a self-hosted API key pool. It stores many API keys per provider (SerpAPI, ElevenLabs, or any API key based HTTP service), hands out a working key on demand, detects rate limits and quota exhaustion, cools keys down and rotates to the next one. Agents use it either as a proxy (Acnologia injects the key, the secret is never exposed) or by leasing a key and reporting the outcome.
+> Acnologia is a self-hosted API key pool. It stores many API keys per provider (SerpAPI, ElevenLabs, Brave Search, Gemini, or any API key based HTTP service), hands out a working key on demand, detects rate limits, quota exhaustion and suspended accounts, cools keys down and rotates to the next one. Agents use it either as a proxy (Acnologia injects the key and the secret is never exposed) or by leasing a key and reporting the outcome.
 
-Base URL is wherever Acnologia is deployed, for example `http://localhost:8080`. All consumer calls need an app token (`cog_...`) created in the dashboard. All bodies are JSON. Errors look like `{"error": {"code": "string", "message": "string"}}`.
+Base URL is wherever Acnologia is deployed, for example `http://localhost:8080`. All consumer calls need an app token (`acn_...`) created in the dashboard. All bodies are JSON. Errors look like `{"error": {"code": "string", "message": "string"}}`.
 
 Key facts for agents:
 
 - Prefer proxy mode. Call `/proxy/{service}/{provider path}` exactly as you would call the provider, minus the provider key. Acnologia retries with the next key on rate limits.
-- Use lease mode only when you must hold the raw key (for example a provider SDK). Always report the outcome so bad keys cool down, and so the key's concurrency slot is released (see below).
-- HTTP 503 with code `no_key_available` means every key is cooling down or exhausted. Wait `retry_after_sec` seconds.
-- HTTP 503 with code `all_keys_busy` means usable keys exist but every one is at its concurrency limit. It clears as soon as another caller reports; retry after `retry_after_sec` (usually 1) or lease with `wait_sec`.
+- Use lease mode only when you must hold the raw key (for example a provider SDK). Always report the outcome so bad keys cool down and the key's concurrency slot is released.
 - An app may be limited to some services and to mode `proxy`, `lease` or `both`. Call `GET /api/v1/services` to see what you can use.
+- HTTP 503 `no_key_available`: every key is cooling down or exhausted. Wait `retry_after_sec` seconds.
+- HTTP 503 `all_keys_busy`: usable keys exist but every one is at its concurrency limit. Retry after `retry_after_sec` (usually 1) or lease with `wait_sec`.
+- HTTP 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`.
+- HTTP 429 `app_limit_reached`: your app used up its daily or monthly request or budget limit. `reset_at` says when it lifts.
 - Report every lease within 10 minutes of `expires_at`. A second report gets 409, a late one 410.
-- HTTP 503 with code `service_unavailable` means the provider itself keeps failing and Acnologia paused traffic to it (circuit breaker). Wait `retry_after_sec`.
-- HTTP 429 with code `app_limit_reached` means your app used up its daily or monthly request or budget limit. `reset_at` says when it lifts.
-- `{service}` can also be a service group: Acnologia tries each member service in order and moves on when one has no usable key, is down, or runs out of keys. `X-Cogito-Service` says which member answered.
+- `{service}` can also be a service group: Acnologia tries each member in order. `X-Acnologia-Service` says which member answered.
+- Acnologia never sends a key to Claude: requests from its own AI features pass a redactor, and keys pasted into its Assistant are vaulted.
 
 ## Auth
 
-- `Authorization: Bearer cog_...` (preferred), or `X-Cogito-Token: cog_...`.
-- Proxy only: query parameter `?cogito_token=cog_...` for tools that only accept a URL.
-- Acnologia strips all three before forwarding upstream.
-
-## Concurrency limits
-
-- A key can have a concurrency limit: how many requests may use it at once. Each service has a default (`max_concurrency`, 0 means unlimited) that a key can override. ElevenLabs defaults to 2 per key.
-- On a service with a limit, a lease is exclusive: it holds one of the key's slots until it is reported (`POST /api/v1/leases/{lease_id}/report`) or expires (`ttl_sec`, default 120s on limited services, 300s otherwise). An unreported lease blocks the slot until then, so always report, on success and on failure.
-- `POST /api/v1/lease` accepts `wait_sec` (0 to 60): wait up to that long for a slot when every usable key is busy, instead of failing at once with `all_keys_busy`.
-- Proxy mode handles this for you: requests queue for up to the service `queue_timeout_sec` (ElevenLabs default 30s) and never exceed the limit in parallel on one key. When the queue wait runs out the proxy answers 503 `all_keys_busy`.
+- `Authorization: Bearer acn_...` (preferred), or `X-Acnologia-Token: acn_...`.
+- Proxy only: query parameter `?acn_token=acn_...` for tools that only accept a URL.
+- Acnologia strips these before forwarding upstream.
 
 ## Consumer API
 
-- [GET /api/v1/services](/llms-full.txt#get-apiv1services): services this token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`.
-- [POST /api/v1/lease](/llms-full.txt#post-apiv1lease): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300, "wait_sec": 0}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name", "prefix"}, "base_url", "expires_at"}` (put `prefix` before the secret when present), or 503 `{"error": {"code": "no_key_available"}, "retry_after_sec": n}` or 503 `{"error": {"code": "all_keys_busy"}, "retry_after_sec": 1}`.
-- [POST /api/v1/leases/{lease_id}/report](/llms-full.txt#post-apiv1leaseslease_idreport): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
-- [ANY /proxy/{service}/{path}](/llms-full.txt#any-proxyservicepath): forwards to `base_url/{path}` with query string and body, injecting a key. Methods GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. Response headers add `X-Cogito-Key-Id`, `X-Cogito-Attempts` and `X-Cogito-Service`. Redirects are returned to you, not followed. On services with caching, identical GETs are answered from cache (`X-Cogito-Cache: hit`, no quota spent); send `Cache-Control: no-cache` to skip it. Send `Idempotency-Key: <id>` to make retries safe: a repeat within 10 minutes replays the first response (`Idempotent-Replayed: true`).
-- [GET /healthz](/llms-full.txt#public-endpoints): `{"ok": true, "version": "..."}`, no auth.
+- [GET /api/v1/services](/llms-full.txt): services this token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`.
+- [POST /api/v1/lease](/llms-full.txt): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300, "wait_sec": 0, "exclusive": false}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name", "prefix"}, "base_url", "expires_at"}` (put `prefix` before the secret when present), or 503 `no_key_available` / `all_keys_busy` with `retry_after_sec`.
+- [POST /api/v1/leases/{lease_id}/report](/llms-full.txt): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
+- [POST /api/v1/leases/{lease_id}/renew](/llms-full.txt): body `{"ttl_sec"}`, returns `{"ok": true, "expires_at"}`.
+- [ANY /proxy/{service}/{path}](/llms-full.txt): forwards to `base_url/{path}` with query string and body, injecting a key. Response headers add `X-Acnologia-Key-Id`, `X-Acnologia-Attempts`, `X-Acnologia-Service` and, with caching, `X-Acnologia-Cache`. Redirects are returned, not followed. Send `Cache-Control: no-cache` to skip the cache and `Idempotency-Key: <id>` to make retries safe for 10 minutes.
+- [GET /healthz](/llms-full.txt): `{"ok": true, "version": "..."}`, no auth.
 
 ## Outcomes
 
@@ -43,47 +38,48 @@ Key facts for agents:
 - `rate_limited`: key cools down for `retry_after_sec` (at most 24h), or exponential backoff from the service cooldown, capped at 1h.
 - `busy`: the account is at its concurrency limit. The key steps aside for `retry_after_sec` (default 1s) without backoff.
 - `quota_exhausted`: key parked as `exhausted` until its quota resets (or 24h).
-- `invalid`: key marked `invalid` and removed from rotation.
-- `banned`: the provider suspended the account. Key marked `banned`; only an operator reset brings it back.
-- `error`: provider or network failure that is not the key's fault. Key is not penalized.
+- `invalid`: key marked `invalid` and removed from rotation until a health check passes.
+- `banned`: the provider suspended the account. Only an admin reset brings it back.
+- `error`: provider or network failure that is not the key's fault. The key is not penalized.
 
-## Proxy examples
+## Examples
 
-- [SerpAPI search](/llms-full.txt#serpapi): `GET /proxy/serpapi/search.json?engine=google&q=coffee` with `Authorization: Bearer cog_...`. Do not send `api_key`.
-- [ElevenLabs text to speech](/llms-full.txt#elevenlabs): `POST /proxy/elevenlabs/v1/text-to-speech/{voice_id}` with JSON `{"text": "Hello", "model_id": "eleven_multilingual_v2"}` and `Accept: audio/mpeg`. Do not send `xi-api-key`.
+- SerpAPI search: `GET /proxy/serpapi/search.json?engine=google&q=coffee` with `Authorization: Bearer acn_...`. Do not send `api_key`.
+- ElevenLabs text to speech: `POST /proxy/elevenlabs/v1/text-to-speech/{voice_id}` with JSON `{"text": "Hello", "model_id": "eleven_multilingual_v2"}` and `Accept: audio/mpeg`. Do not send `xi-api-key`.
+- The dashboard's Integrate tab has the same calls in curl, Python, TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 
 ## MCP
 
-- [POST /mcp](/llms-full.txt#mcp): MCP streamable HTTP endpoint (JSON responses), same app token auth. Tools: `list_services`, `get_key` (accepts `ttl_sec` and `wait_sec`), `report_key`, `pool_status`, `proxy_request`.
+- [POST /mcp](/llms-full.txt): MCP streamable HTTP endpoint (JSON responses), same app token. Core tools: `list_services`, `pool_status`, `get_key`, `renew_key`, `report_key`, `proxy_request`. Apps can also enable service tools generated from provider examples, read only insights (`list_keys`, `key_details`, `service_stats`) and key management (`check_keys`, `set_key_status`, `add_keys`). Stdio clients can run `acnologia mcp --url <base> --token acn_...`.
 
 ## SDKs
 
-Every SDK's lease call and `with_key` helper accept the wait option (`wait_sec` in Python, PHP and Ruby, `waitSec` in TypeScript, `LeaseOptions.Wait` / `WithWait` in Go) and raise a distinct busy error that still counts as "no key available" (`AllKeysBusy`, `AllKeysBusyError`, or `ErrNoKeyAvailable` with `Busy` in Go). `with_key` always reports its leases.
+Every SDK's lease call and `with_key` helper accept a wait option and raise a distinct busy error that still counts as "no key available". `with_key` always reports its leases.
 
-- [Python](/llms-full.txt#python): `pip install cogito-keys`, then `from cogito import Cogito`.
-- [TypeScript and JavaScript](/llms-full.txt#typescript-and-javascript): `npm install @cogito/keys`, then `import { Cogito } from "@cogito/keys"`. Node 18+, Bun, Deno, browsers.
-- [Go](/llms-full.txt#go): `go get github.com/cogito-keys/cogito-go`, package `cogito`.
-- [PHP](/llms-full.txt#php): `composer require cogito/keys`, class `Acnologia\Acnologia`.
-- [Ruby](/llms-full.txt#ruby): `gem install cogito-keys`, then `require "cogito"`.
+- [Python](/llms-full.txt): `pip install acnologia`, then `from acnologia import Acnologia`.
+- [TypeScript and JavaScript](/llms-full.txt): `npm install @acnologia/keys`, then `import { Acnologia } from "@acnologia/keys"`. Node 18+, Bun, Deno, browsers.
+- [Go](/llms-full.txt): `go get github.com/sidharthpunathil/acnologia/sdk/go`, package `acnologia`.
+- [PHP](/llms-full.txt): `composer require acnologia/keys`, class `Acnologia\Acnologia`.
+- [Ruby](/llms-full.txt): `gem install acnologia`, then `require "acnologia"` and `Acnologia::Client.new`.
 
 ## Admin API and CLI
 
-Operators can script the admin API with a token from Settings, API tokens (`Authorization: Bearer cogadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The same binary ships a client: `cogito ctl login https://cogito.example --token cogadm_...`, then `cogito ctl status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`.
+Operators can script the admin API with a token from Account, API tokens (`Authorization: Bearer acnadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The same binary ships a client: `acnologia ctl login https://keys.example.com --token acnadm_...`, then `acnologia ctl status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`.
 
 ## Docs
 
 Every page of the docs is also served as raw Markdown. Fetch these when you need detail beyond the consumer API.
 
-- [Overview](/docs/overview.md): what Acnologia does, quick start, calling it, failure handling, features and self-hosting.
-- [HTTP API](/docs/api.md): consumer error codes and the full dashboard API with required roles.
-- [Configuration](/docs/configuration.md): every environment variable, per service settings, running, backups and upgrading.
+- [Overview](/docs/overview.md): what Acnologia does, quick start and features.
+- [HTTP API](/docs/api.md): consumer error codes and every dashboard route with its required role.
+- [Configuration](/docs/configuration.md): environment variables, per service settings, self-hosting, backups and upgrading.
 
 ## Optional
 
-- [Full reference](/llms-full.txt): every endpoint with request and response examples, provider error mapping, MCP tool arguments and SDK snippets.
+- [Full reference](/llms-full.txt): every consumer endpoint with request and response examples, provider error mapping, MCP tools, SDK snippets, redaction guarantees and the error table.
+- [Request flows](/docs/flows.md): proxy requests, key selection, leases, key states and outcomes, health checks, sign in, MCP, the AI builder and the Assistant.
+- [Security model](/docs/security.md): roles, key flags, hidden keys, what the model can see, secrets at rest, limits and outbound requests.
+- [Provider specs](/docs/providers.md): built in providers, the spec format, and adding one by hand or with AI.
 - [Server architecture](/docs/architecture.md): components, packages, middleware pipeline, data model, boot and background work.
-- [Request flows](/docs/flows.md): sequence and state diagrams for proxy requests, key selection, leases, key states, health checks, sign in, MCP and the AI builder.
-- [Security model](/docs/security.md): roles, hidden keys, secrets at rest, web protections, limits and outbound requests.
-- [Provider specs](/docs/providers.md): how providers are defined, validated, published, versioned and added.
 - [Development](/docs/development.md): setup, repository layout, tests and conventions.
 - [Docs index](/api/docs): JSON list of every doc with slug, title, description and size.
