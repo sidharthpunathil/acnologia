@@ -101,7 +101,7 @@
   --color-text-primary: #18181a; /* ink */
   --color-text-secondary: #6b6b66; /* muted */
   /* faint. Darker than BoardUI's tertiary so small print keeps 4.5:1 on the canvas. */
-  --color-text-tertiary: #75756f;
+  --color-text-tertiary: #686862;
   --color-foreground-icon-primary: var(--color-text-primary);
   --color-foreground-icon-hover: #000000; /* ink-strong */
   --color-foreground-icon-secondary: var(--color-text-secondary);
@@ -477,4 +477,20 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+}
+
+/* Composer loader band (components/application/composer-loader): deeper
+ * stops on the light surface so the light reads on a white pill. */
+:root {
+  --loader-c0: var(--color-accent-400);
+  --loader-c1: var(--color-accent-600);
+  --loader-c2: var(--color-chart-2);
+  --loader-c3: var(--color-accent-500);
+}
+
+.dark {
+  --loader-c0: var(--color-accent-300);
+  --loader-c1: var(--color-accent-500);
+  --loader-c2: var(--color-chart-2);
+  --loader-c3: var(--color-accent-400);
 }

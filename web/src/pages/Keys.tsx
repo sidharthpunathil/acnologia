@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
+import { ToggleButton } from "react-aria-components";
 import { RiArrowRightSLine, RiCloseLine, RiPulseLine, RiRefreshLine } from "@remixicon/react";
 import { AcnApiKey } from "@/components/foundations/icons/acn";
 import type { KeyRow, KeySummary, Validity } from "../lib/types";
@@ -50,6 +51,13 @@ const t = (iso: string | null) => (iso ? Date.parse(iso) || 0 : 0);
 const frac = (k: KeyRow) => (k.quota_remaining === null || k.quota_limit === null || k.quota_limit === 0 ? 2 : k.quota_remaining / k.quota_limit);
 const isLow = (k: KeyRow) => k.quota_remaining !== null && k.quota_limit !== null && k.quota_limit > 0 && k.quota_remaining < 0.1 * k.quota_limit;
 const isUnused = (k: KeyRow, now: number) => !k.last_used_at || t(k.last_used_at) < now - WEEK;
+const CHIP_TONE: Record<StatTone, string> = {
+  neutral: "text-text-primary",
+  success: "text-status-lime-text",
+  warning: "text-status-yellow-text",
+  error: "text-status-rose-text",
+  accent: "text-accent-fg",
+};
 const RANK: Record<string, number> = { invalid: 0, unknown: 1, valid: 2 };
 
 /** Same rules as the server summary, computed from the live rows so tiles never lag behind a check. */
@@ -222,7 +230,12 @@ export function KeysPage() {
     <div>
       <PageHeader
         title="Keys"
-        meta={`${plural(rows.length, "key")} across ${plural(serviceOptions.length, "service")} · ${allInvalid ? `${allInvalid} rejected` : "none rejected"}`}
+        meta={
+          // A failed load has nothing true to count; the callout below says what went wrong.
+          error && rows.length === 0
+            ? undefined
+            : `${plural(rows.length, "key")} across ${plural(serviceOptions.length, "service")} · ${allInvalid ? `${num(allInvalid)} invalid` : "all valid"}`
+        }
         actions={
           <>
             <ActionIcon icon={RiRefreshLine} label="Refresh" size="medium" busy={refreshing} disabled={refreshing} onClick={() => void load(false)} />
@@ -270,7 +283,7 @@ export function KeysPage() {
             </Button>
           }
         >
-          Could not load keys: {error}.
+          Could not load your keys. The server said: {error.replace(/\.$/, "")}.
         </Callout>
       ) : rows.length === 0 ? (
         <EmptyState
@@ -290,7 +303,35 @@ export function KeysPage() {
         />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6" role="group" aria-label="Filter by health">
+          {/* Phones: one compact row of chips, so the list starts on the first screen. */}
+          <div
+            className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden"
+            role="group"
+            aria-label="Filter by health"
+          >
+            {tiles.map((tl) => (
+              <ToggleButton
+                key={tl.key}
+                isSelected={tl.active}
+                onChange={tl.apply}
+                aria-label={`${tl.label}: ${num(tl.value)}. ${tl.hint}`}
+                className={({ isSelected, isFocusVisible }) =>
+                  cx(
+                    "inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-body-2-medium outline-none transition-colors duration-150 ease-out",
+                    isSelected
+                      ? "border-accent-line bg-accent-subtle text-text-primary"
+                      : "border-border-button-default bg-background-primary-default text-text-secondary active:bg-background-primary-active",
+                    isFocusVisible && "ring-2 ring-border-focus-ring",
+                  )
+                }
+              >
+                {tl.label}
+                <span className={cx("font-mono tabular-nums", tl.value > 0 && tl.tone ? CHIP_TONE[tl.tone] : "text-text-primary")}>{num(tl.value)}</span>
+              </ToggleButton>
+            ))}
+          </div>
+
+          <div className="hidden grid-cols-2 gap-2.5 sm:grid sm:grid-cols-3 lg:grid-cols-6" role="group" aria-label="Filter by health">
             {tiles.map((tl) => (
               <Tip key={tl.key} label={tl.hint} aria>
                 <StatTile
@@ -304,11 +345,11 @@ export function KeysPage() {
             ))}
           </div>
 
-          <div className="mt-6 flex flex-col gap-2 lg:flex-row lg:items-center">
+          <div className="mt-4 flex flex-col gap-2 sm:mt-6 lg:flex-row lg:items-center">
             <SearchField
               value={q}
               onChange={(v) => setParam({ q: v })}
-              placeholder="Search by label, account, service or note"
+              placeholder="Search keys"
               aria-label="Search keys"
               enterKeyHint="search"
               className="min-w-0 lg:flex-1"
@@ -500,7 +541,12 @@ function KeysSkeleton() {
     <div role="status" aria-label="Loading keys">
       <Skeleton shape="text" className="h-7 w-24" />
       <Skeleton shape="text" className="mt-2 h-3.5 w-64" />
-      <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="mt-8 flex gap-1.5 overflow-hidden sm:hidden">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-9 w-24 shrink-0 rounded-full" />
+        ))}
+      </div>
+      <div className="mt-8 hidden grid-cols-2 gap-2.5 sm:grid sm:grid-cols-3 lg:grid-cols-6">
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <Skeleton key={i} className="h-[74px] rounded-3xl" />
         ))}

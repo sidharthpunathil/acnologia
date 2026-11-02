@@ -7,7 +7,7 @@ import { MENU_ITEM, MENU_ITEM_ACTIVE, MENU_ITEM_INTERACTIVE } from "@/components
 import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/scroll-fade";
 import { useAuth } from "@/stores/auth";
 import { cx } from "@/utils/cx";
-import { ACCOUNT_ITEM, grouped, isActivePath, menuRowKeys, useSignOut, type NavItem } from "./nav";
+import { ACCOUNT_ITEM, SIGN_OUT_ROW, grouped, isActivePath, menuRowKeys, useSignOut, type NavItem } from "./nav";
 import { ThemePicker } from "./theme-picker";
 
 const ROW = cx(MENU_ITEM, "text-body-medium");
@@ -31,13 +31,14 @@ function MenuLink({ item, active }: { item: NavItem; active: boolean }) {
 
 /**
  * Desktop account menu: who you are, the secondary pages grouped, theme,
- * your account and sign out. The pill shows a violet dot while one of its
- * pages is open.
+ * your account and sign out. While one of its pages is open, the pill names
+ * that page before your name, since the top bar has no tab for it.
  */
 export function AccountMenu({ items }: { items: NavItem[] }) {
   const user = useAuth((s) => s.user);
   const { pathname } = useLocation();
-  const insideMenu = [...items, ACCOUNT_ITEM].some((l) => isActivePath(pathname, l.to));
+  const current = [...items, ACCOUNT_ITEM].find((l) => isActivePath(pathname, l.to));
+  const who = user?.name || user?.email || "Account";
   const signOut = useSignOut();
   const [open, setOpen] = useState(false);
   const fade = useScrollFade();
@@ -57,16 +58,23 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
   return (
     <Dropdown isOpen={open} onOpenChange={setOpen}>
       <DropdownTrigger
-        aria-label={`Account menu: ${user?.name || user?.email || "Account"}${insideMenu ? ", current page is in this menu" : ""}`}
+        aria-label={`Account menu: ${who}${current ? `, current page ${current.label}` : ""}`}
         className={cx(
-          "ms-2 inline-flex h-9 max-w-[220px] items-center gap-1.5 rounded-full ps-4 pe-3 text-body-2-medium",
+          "ms-2 inline-flex h-9 max-w-[320px] items-center gap-1.5 rounded-full pe-3 text-body-2-medium",
+          current ? "ps-3" : "ps-4",
           "bg-text-primary text-background-full transition-colors duration-150 ease-out hover:bg-foreground-icon-hover",
           "focus-visible:ring-offset-2 focus-visible:ring-offset-background-full",
         )}
       >
-        <span className="truncate">{user?.name || "Account"}</span>
-        {/* A page from this menu is open: hint where it went. */}
-        {insideMenu && <span className="size-1.5 shrink-0 rounded-full bg-accent-fill" aria-hidden />}
+        {/* A page from this menu is open: name it, since no top bar tab does. */}
+        {current && (
+          <>
+            <current.icon className="size-4 shrink-0" aria-hidden />
+            <span className="shrink-0 whitespace-nowrap">{current.label}</span>
+            <span className="mx-1 h-4 w-px shrink-0 bg-background-full/35" aria-hidden />
+          </>
+        )}
+        <span className={cx("truncate", current && "opacity-80")}>{user?.name || "Account"}</span>
         <RiArrowDownSLine
           className={cx("size-4 shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none", open && "rotate-180")}
           aria-hidden
@@ -103,6 +111,8 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
             </div>
             <div className="mt-1 flex flex-col gap-0.5 border-t border-separator-border pt-2">
               <MenuLink item={ACCOUNT_ITEM} active={isActivePath(pathname, ACCOUNT_ITEM.to)} />
+            </div>
+            <div className="mt-2 flex flex-col gap-0.5 border-t border-separator-border pt-2">
               <button
                 type="button"
                 data-menu-row=""
@@ -110,7 +120,7 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
                   setOpen(false);
                   void signOut();
                 }}
-                className={cx(ROW, MENU_ITEM_INTERACTIVE, "focus-visible:ring-2 focus-visible:ring-border-focus-ring")}
+                className={cx(ROW, MENU_ITEM_INTERACTIVE, SIGN_OUT_ROW, "focus-visible:ring-2 focus-visible:ring-border-focus-ring")}
               >
                 <RiLogoutBoxRLine className={cx(ROW_ICON, "text-foreground-icon-secondary")} aria-hidden />
                 Sign out

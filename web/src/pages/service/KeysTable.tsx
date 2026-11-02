@@ -10,7 +10,7 @@ import {
   RiPulseLine,
   RiRestartLine,
 } from "@remixicon/react";
-import type { App, Key } from "../../lib/types";
+import type { App, Key, Strategy } from "../../lib/types";
 import { num } from "../../lib/format";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
@@ -25,7 +25,6 @@ import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
 import { cx } from "@/utils/cx";
 import { withLiveStatus } from "./keyUtil";
-import { ConfirmButton } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
 
 export interface KeyPerms {
@@ -136,43 +135,46 @@ function StopRow({ className, children }: { className?: string; children: ReactN
   );
 }
 
-function RowActions({ k, perms, onEdit, onReveal }: { k: Key; perms: KeyPerms; onEdit: (k: Key) => void; onReveal: (k: Key) => void }) {
-  const { busy, run, del, needsReset } = useKeyActions(k);
+type RowProps = { k: Key; perms: KeyPerms; onEdit: (k: Key) => void; onReveal: (k: Key) => void };
+
+/** Large screens: Check and Edit stay one click away; the rarer and riskier actions sit in the menu. */
+function RowActions({ k, perms, onEdit, onReveal }: RowProps) {
+  const actions = useKeyActions(k);
   const canTouch = perms.manage && (!k.hidden || perms.hidden);
   if (!canTouch && !perms.reveal) return null;
-  const name = k.label || k.hint;
   return (
     <StopRow className="flex items-center justify-end gap-1">
       {canTouch && (
         <>
-          <ActionIcon icon={RiPulseLine} label="Check this key now" busy={busy === "check"} disabled={busy !== null} onClick={() => void run("check")} />
           <ActionIcon
-            icon={RiRestartLine}
-            label="Reset: clear cooldown and errors"
-            busy={busy === "reset"}
-            disabled={busy !== null || !needsReset}
-            onClick={() => void run("reset")}
+            icon={RiPulseLine}
+            label="Check this key now"
+            busy={actions.busy === "check"}
+            disabled={actions.busy !== null}
+            onClick={() => void actions.run("check")}
           />
           <ActionIcon icon={RiEditLine} label="Edit key" onClick={() => onEdit(k)} />
         </>
       )}
-      {perms.reveal && <ActionIcon icon={RiEyeLine} label="Reveal secret" onClick={() => onReveal(k)} />}
-      {canTouch && <ConfirmButton
-          iconOnly
-          label="Delete key"
-          confirmLabel="Delete"
-          description={`${name} leaves rotation right away. This cannot be undone.`}
-          onConfirm={del}
-          // Same outlined square as the icon actions beside it.
-          className="rounded-2lg border border-border-button-default bg-background-primary-default text-foreground-icon-primary shadow-xs hover:bg-background-primary-hover"
-        />}
+      <RowMenu k={k} perms={perms} onEdit={onEdit} onReveal={onReveal} actions={actions} extrasOnly />
     </StopRow>
   );
 }
 
-/** Phones: the same actions behind one menu button, so the card keeps its room. */
-function RowMenu({ k, perms, onEdit, onReveal }: { k: Key; perms: KeyPerms; onEdit: (k: Key) => void; onReveal: (k: Key) => void }) {
-  const { busy, run, del, needsReset } = useKeyActions(k);
+/**
+ * The key's actions behind one menu button. Phones get all of them so the card
+ * keeps its room; large screens pass `extrasOnly` for Reset, Reveal and Delete.
+ */
+function RowMenu({
+  k,
+  perms,
+  onEdit,
+  onReveal,
+  actions,
+  extrasOnly = false,
+}: RowProps & { actions?: ReturnType<typeof useKeyActions>; extrasOnly?: boolean }) {
+  const own = useKeyActions(k);
+  const { busy, run, del, needsReset } = actions ?? own;
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const canTouch = perms.manage && (!k.hidden || perms.hidden);
@@ -182,31 +184,40 @@ function RowMenu({ k, perms, onEdit, onReveal }: { k: Key; perms: KeyPerms; onEd
     setOpen(false);
     fn();
   };
-  const row = "gap-2.5 min-h-11";
-  return (
-    <StopRow>
+  const row = extrasOnly ? "gap-2.5" : "gap-2.5 min-h-11";
+  const menu = (
+    <>
       <Dropdown isOpen={open} onOpenChange={setOpen}>
         <DropdownTrigger
           aria-label={`Actions for ${name}`}
-          className="inline-flex size-11 items-center justify-center rounded-2lg text-foreground-icon-secondary transition-colors duration-150 hover:bg-background-secondary-default"
+          className={cx(
+            "inline-flex items-center justify-center rounded-2lg outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+            extrasOnly
+              ? "size-8 border border-border-button-default bg-background-primary-default text-foreground-icon-primary shadow-xs hover:bg-background-primary-hover"
+              : "size-11 text-foreground-icon-secondary hover:bg-background-secondary-default",
+          )}
         >
-          {busy ? <ButtonSpinner className="size-4" /> : <RiMore2Line className="size-5" aria-hidden />}
+          {busy && (!extrasOnly || busy === "reset") ? (
+            <ButtonSpinner className="size-4" />
+          ) : (
+            <RiMore2Line className={extrasOnly ? "size-4" : "size-5"} aria-hidden />
+          )}
         </DropdownTrigger>
         <DropdownPopover aria-label={`Actions for ${name}`} placement="bottom end" className="w-56">
-          {canTouch && (
-            <>
-              <DropdownItem className={row} onSelect={pick(() => void run("check"))}>
-                <RiPulseLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Check now
-              </DropdownItem>
-              {needsReset && (
-                <DropdownItem className={row} onSelect={pick(() => void run("reset"))}>
-                  <RiRestartLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Reset
-                </DropdownItem>
-              )}
-              <DropdownItem className={row} onSelect={pick(() => onEdit(k))}>
-                <RiEditLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Edit
-              </DropdownItem>
-            </>
+          {canTouch && !extrasOnly && (
+            <DropdownItem className={row} onSelect={pick(() => void run("check"))}>
+              <RiPulseLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Check now
+            </DropdownItem>
+          )}
+          {canTouch && needsReset && (
+            <DropdownItem className={row} onSelect={pick(() => void run("reset"))}>
+              <RiRestartLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Reset cooldown and errors
+            </DropdownItem>
+          )}
+          {canTouch && !extrasOnly && (
+            <DropdownItem className={row} onSelect={pick(() => onEdit(k))}>
+              <RiEditLine className="size-4 text-foreground-icon-secondary" aria-hidden /> Edit
+            </DropdownItem>
           )}
           {perms.reveal && (
             <DropdownItem className={row} onSelect={pick(() => onReveal(k))}>
@@ -215,9 +226,9 @@ function RowMenu({ k, perms, onEdit, onReveal }: { k: Key; perms: KeyPerms; onEd
           )}
           {canTouch && (
             <>
-              <DropdownDivider />
+              {(perms.reveal || needsReset || !extrasOnly) && <DropdownDivider />}
               <DropdownItem className={cx(row, "text-text-error-primary")} onSelect={pick(() => setConfirming(true))}>
-                <RiDeleteBinLine className="size-4" aria-hidden /> Delete
+                <RiDeleteBinLine className="size-4" aria-hidden /> Delete key
               </DropdownItem>
             </>
           )}
@@ -232,8 +243,10 @@ function RowMenu({ k, perms, onEdit, onReveal }: { k: Key; perms: KeyPerms; onEd
         pendingLabel="Deleting"
         onConfirm={del}
       />
-    </StopRow>
+    </>
   );
+  // Inside RowActions the StopRow wrapper is already there.
+  return extrasOnly ? menu : <StopRow>{menu}</StopRow>;
 }
 
 /** The state the pill shows, so a change of state (not a ticking countdown) can replay its entrance. */
@@ -271,6 +284,7 @@ export function KeysTable({
   serviceMax = 0,
   quotaUnit,
   resetExact,
+  strategy,
   onOpen,
   onEdit,
   onReveal,
@@ -283,6 +297,8 @@ export function KeysTable({
   quotaUnit?: string;
   /** Whether the provider reports quota reset times; see QuotaMeter. */
   resetExact?: boolean;
+  /** The service's rotation strategy; key priority only shows under fill first. */
+  strategy?: Strategy;
   onOpen: (k: Key) => void;
   onEdit: (k: Key) => void;
   onReveal: (k: Key) => void;
@@ -300,6 +316,7 @@ export function KeysTable({
     if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start" });
   };
   const hasActions = perms.manage || perms.reveal;
+  const fillFirst = strategy === "fill_first";
   const open = (k: Key) => {
     // Let people select text in a row without opening the drawer.
     if (window.getSelection()?.toString()) return;
@@ -327,7 +344,7 @@ export function KeysTable({
             <TableColumn className="w-[18%]">Quota</TableColumn>
             <TableColumn>Last used</TableColumn>
             {hasActions ? (
-              <TableColumn className="w-[196px]">
+              <TableColumn className="w-[124px]">
                 <span className="sr-only">Actions</span>
               </TableColumn>
             ) : (
@@ -351,7 +368,8 @@ export function KeysTable({
                   <AccountLine k={k} className="mt-0.5" />
                   <div className="mt-0.5 truncate font-mono text-caption-1-regular text-text-secondary">
                     {k.hint}
-                    {k.tier === "primary" && k.priority ? <span title={`Priority ${k.priority}`}>{` · p${k.priority}`}</span> : ""}
+                    {/* Priority only steers fill first, so it stays out of sight under the other strategies. */}
+                    {fillFirst && k.tier === "primary" ? ` · priority ${k.priority}` : ""}
                     {k.weight && k.weight !== 1 ? <span title={`Weight ${k.weight}`}>{` · w${k.weight}`}</span> : ""}
                   </div>
                 </TableCell>
@@ -394,7 +412,10 @@ export function KeysTable({
                   <KeyBadges k={k} apps={apps} />
                 </div>
                 <AccountLine k={k} wrap className="mt-0.5" />
-                <div className="mt-0.5 font-mono text-caption-1-regular text-text-secondary">{k.hint}</div>
+                <div className="mt-0.5 font-mono text-caption-1-regular text-text-secondary">
+                  {k.hint}
+                  {fillFirst && k.tier === "primary" ? ` · priority ${k.priority}` : ""}
+                </div>
               </div>
               <KeyHealth k={k} now={now} serviceMax={serviceMax} />
               {quotaInfo(k, quotaUnit ?? k.quota_unit) && <QuotaMeter k={k} unit={quotaUnit ?? k.quota_unit} now={now} compact resetExact={resetExact} />}

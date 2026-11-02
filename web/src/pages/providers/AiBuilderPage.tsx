@@ -78,9 +78,22 @@ function UrlList({ value, onChange }: { value: string[]; onChange: (v: string[])
 }
 
 /** A switch row: label and description on the start side, the switch on the end. */
-function SwitchRow({ label, description, isSelected, onChange }: { label: string; description: ReactNode; isSelected: boolean; onChange: (v: boolean) => void }) {
+function SwitchRow({
+  label,
+  description,
+  isSelected,
+  onChange,
+  isDisabled,
+}: {
+  label: string;
+  description: ReactNode;
+  isSelected: boolean;
+  onChange: (v: boolean) => void;
+  isDisabled?: boolean;
+}) {
   return (
-    <Switch isSelected={isSelected} onChange={onChange} className="w-full flex-row-reverse items-start justify-between gap-4">
+    // A fieldset disables the native input but not React Aria's look, so the state is passed down too.
+    <Switch isSelected={isSelected} onChange={onChange} isDisabled={isDisabled} className="w-full flex-row-reverse items-start justify-between gap-4">
       <span className="flex flex-col gap-0.5">
         <span className="text-body-medium text-text-primary">{label}</span>
         <span className="text-caption-1-regular text-text-secondary">{description}</span>
@@ -92,6 +105,9 @@ function SwitchRow({ label, description, isSelected, onChange }: { label: string
 const PLACEHOLDER = `An API name, a docs URL, or as much detail as you like. For example:
 
 "Acme Mail email API. The free plan allows 100 emails a day and 2 requests a second. A 429 with daily_quota_exceeded means the quota is gone until midnight UTC. Any other 429 is a short rate limit. GET /domains is a cheap way to check a key."`;
+
+/** Beside the build button while AI is off: what to do, in one line. */
+const AI_OFF_NOTE = "Turn on AI to build. Set ANTHROPIC_API_KEY and restart.";
 
 export function AiBuilderPage() {
   useTitle("Build with AI");
@@ -236,41 +252,49 @@ export function AiBuilderPage() {
       {!manage ? (
         <Callout>Only admins can start an AI build. Recent runs are below.</Callout>
       ) : (
-        <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-5 pb-16 lg:grid-cols-[minmax(0,1fr)_340px] lg:pb-0">
-          <div className="flex min-w-0 flex-col gap-5">
-            <Section title="What should it build?" description="A provider name or a docs URL is enough. Add anything you know about limits, plans or quirks, and the agent will follow it.">
-              {provider && (
-                <div className="mb-4 flex items-center gap-3 rounded-2xl bg-background-secondary-default px-3 py-2.5">
-                  <ProviderLogo provider={provider} size="sm" />
-                  <span className="font-mono text-caption-1-regular text-text-secondary">
-                    updating <span className="text-text-primary">{provider.slug}</span> · v{provider.version}
-                  </span>
-                </div>
-              )}
-              <Textarea
-                id="ai-context"
-                label={updateSlug ? "What to change" : "Context"}
-                rows={9}
-                value={context}
-                onChange={(v) => {
-                  setContext(v);
-                  if (contextErr) setContextErr(null);
-                }}
-                isInvalid={!!contextErr}
-                hint={contextErr ?? undefined}
-                placeholder={updateSlug ? "A 429 with code too_many_requests should be a 10 second rate limit, not out of quota. Add a test for it." : PLACEHOLDER}
-                fieldClassName="min-h-[200px]"
-              />
-            </Section>
+        <form onSubmit={submit} noValidate>
+          {/* With AI off nothing here can run, so the whole form reads as disabled instead of inviting input. */}
+          <fieldset
+            disabled={!enabled}
+            className={cx(
+              "m-0 grid min-w-0 grid-cols-1 gap-5 border-0 p-0 lg:grid-cols-[minmax(0,1fr)_340px] lg:pb-0",
+              enabled ? "pb-16" : "pb-24",
+            )}
+          >
+            <div className="flex min-w-0 flex-col gap-5">
+              <Section title="What should it build?" description="A provider name or a docs URL is enough. Add anything you know about limits, plans or quirks, and the agent will follow it.">
+                {provider && (
+                  <div className="mb-4 flex items-center gap-3 rounded-2xl bg-background-secondary-default px-3 py-2.5">
+                    <ProviderLogo provider={provider} size="sm" />
+                    <span className="font-mono text-caption-1-regular text-text-secondary">
+                      updating <span className="text-text-primary">{provider.slug}</span> · v{provider.version}
+                    </span>
+                  </div>
+                )}
+                <Textarea
+                  id="ai-context"
+                  label={updateSlug ? "What to change" : "Context"}
+                  rows={9}
+                  value={context}
+                  onChange={(v) => {
+                    setContext(v);
+                    if (contextErr) setContextErr(null);
+                  }}
+                  isInvalid={!!contextErr}
+                  hint={contextErr ?? undefined}
+                  placeholder={updateSlug ? "A 429 with code too_many_requests should be a 10 second rate limit, not out of quota. Add a test for it." : PLACEHOLDER}
+                  fieldClassName="min-h-[200px]"
+                />
+              </Section>
 
-            <Section title="Sources" description="Optional. Without them, the agent searches the web itself.">
-              <div className="flex flex-col gap-5">
-                <fieldset className="flex flex-col gap-1.5">
-                  <legend className="mb-1.5 flex items-center gap-1.5 text-body-medium text-text-primary">
-                    <RiLink className="size-4 text-foreground-icon-secondary" aria-hidden /> Docs URLs
-                  </legend>
-                  <UrlList value={urls} onChange={setUrls} />
-                </fieldset>
+              <Section title="Sources" description="Optional. Without them, the agent searches the web itself.">
+                <div className="flex flex-col gap-5">
+                  <fieldset className="flex flex-col gap-1.5">
+                    <legend className="mb-1.5 flex items-center gap-1.5 text-body-medium text-text-primary">
+                      <RiLink className="size-4 text-foreground-icon-secondary" aria-hidden /> Docs URLs
+                    </legend>
+                    <UrlList value={urls} onChange={setUrls} />
+                  </fieldset>
                 <Input
                   label="GitHub repo"
                   hint="An official SDK or API repo, as owner/repo or a URL. The agent reads how it handles errors."
@@ -306,6 +330,7 @@ export function AiBuilderPage() {
                   description="Goes live once the spec is valid and every test passes. Turn off to review it first."
                   isSelected={autoPublish}
                   onChange={setAutoPublish}
+                  isDisabled={!enabled}
                 />
                 {!updateSlug && (
                   <SwitchRow
@@ -313,6 +338,7 @@ export function AiBuilderPage() {
                     description="Adds it to the catalog right away, ready for keys."
                     isSelected={createService}
                     onChange={setCreateService}
+                    isDisabled={!enabled}
                   />
                 )}
               </div>
@@ -322,16 +348,20 @@ export function AiBuilderPage() {
               </p>
             </Section>
 
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={!enabled || busy}
-              aria-busy={busy || undefined}
-              leadingIcon={busy ? ButtonSpinner : AcnAiBuilder}
-              className="hidden w-full lg:inline-flex"
-            >
-              {submitLabel}
-            </Button>
+            <div className="hidden flex-col gap-2 lg:flex">
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={!enabled || busy}
+                aria-busy={busy || undefined}
+                aria-describedby={enabled ? undefined : "ai-off-note"}
+                leadingIcon={busy ? ButtonSpinner : AcnAiBuilder}
+                className="w-full"
+              >
+                {submitLabel}
+              </Button>
+              {!enabled && <p id="ai-off-note" className="text-center text-caption-1-regular text-text-secondary">{AI_OFF_NOTE}</p>}
+            </div>
           </div>
 
           {/* Phones and tablets: the submit bar is pinned to the bottom (above the tab bar), so it stays in reach anywhere in the form. */}
@@ -342,13 +372,20 @@ export function AiBuilderPage() {
                 variant="primary"
                 disabled={!enabled || busy}
                 aria-busy={busy || undefined}
+                aria-describedby={enabled ? undefined : "ai-off-note-bar"}
                 leadingIcon={busy ? ButtonSpinner : AcnAiBuilder}
                 className="h-11 w-full"
               >
                 {submitLabel}
               </Button>
+              {!enabled && (
+                <p id="ai-off-note-bar" className="mt-1.5 text-center text-caption-1-regular text-text-secondary">
+                  {AI_OFF_NOTE}
+                </p>
+              )}
             </div>
           </div>
+          </fieldset>
         </form>
       )}
 

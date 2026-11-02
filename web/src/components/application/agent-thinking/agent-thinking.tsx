@@ -39,6 +39,8 @@ export interface AgentThinkingProps {
    * this mounted (a reload mid build) shows its real age. Defaults to mount.
    */
   since?: number;
+  /** Acnologia: classes for the label, such as a size or color that overrides the tone. */
+  labelClassName?: string;
   className?: string;
 }
 
@@ -255,6 +257,7 @@ export function AgentThinking({
   shimmer = true,
   showTimer = true,
   since,
+  labelClassName,
   className,
 }: AgentThinkingProps) {
   const localize = useTemplateCopy();
@@ -271,7 +274,7 @@ export function AgentThinking({
       {variant === "infinity" && <InfinityIndicator />}
       <span
         aria-label={label}
-        className={cx("text-body-medium", shimmer && "bui-agent-thinking-label")}
+        className={cx("text-body-medium", shimmer && "bui-agent-thinking-label", labelClassName)}
       >
         {label}
       </span>

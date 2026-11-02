@@ -5,7 +5,8 @@ import { Link } from "react-router-dom";
 import type { ProviderSpec, Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
 import { CodeBlock } from "@/components/acn";
-import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
+import { RadioGroup } from "@/components/base/radio/radio";
+import { RadioCard } from "@/components/base/radio/radio-card";
 import { Select, SelectItem } from "@/components/base/select/select";
 import { cx } from "@/utils/cx";
 
@@ -276,62 +277,62 @@ export function IntegratePanel({ service }: { service: Service }) {
   const spec = useProviders((st) => st.providers.find((p) => p.slug === service.provider)?.spec);
   const code = snippets(service, host, spec)[mode][lang];
 
-  const modeCard = (on: boolean) =>
-    cx(
-      "rounded-3xl border bg-background-primary-default p-4 transition-[border-color,box-shadow] duration-150 ease sm:p-5",
-      on ? "border-accent-line ring-1 ring-accent-line" : "border-border-button-default",
-    );
+  const modes: { id: Mode; title: string; icon: typeof AcnProxy; body: string }[] = [
+    {
+      id: "proxy",
+      title: "Proxy mode",
+      icon: AcnProxy,
+      body: `Call Acnologia instead of the provider. It adds a key, retries a rate limit with the next key up to ${service.max_attempts} times, and your app never sees a secret.`,
+    },
+    {
+      id: "lease",
+      title: "Lease mode",
+      icon: AcnKeyLease,
+      body: "Lease a key, call the provider yourself, then report how it went so Acnologia can rest the key and rotate.",
+    },
+  ];
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className={modeCard(mode === "proxy")}>
-          <h3 className="flex items-center gap-2 text-body-medium text-text-primary">
-            <AcnProxy className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
-            Proxy mode
-          </h3>
-          <p className="mt-1 text-body-2-regular text-text-secondary">
-            Call Acnologia instead of the provider. It adds a key, retries a rate limit with the next key up to {service.max_attempts} times, and your app never sees a secret.
-          </p>
-        </div>
-        <div className={modeCard(mode === "lease")}>
-          <h3 className="flex items-center gap-2 text-body-medium text-text-primary">
-            <AcnKeyLease className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
-            Lease mode
-          </h3>
-          <p className="mt-1 text-body-2-regular text-text-secondary">
-            Lease a key, call the provider yourself, then report how it went so Acnologia can rest the key and rotate.
-          </p>
-        </div>
-      </div>
+      {/* The cards are the mode choice: the whole card selects, arrow keys move between them. */}
+      <RadioGroup
+        aria-label={`How your app calls ${service.name}`}
+        value={mode}
+        onChange={(v) => setMode(v as Mode)}
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+      >
+        {modes.map((m) => (
+          <RadioCard
+            key={m.id}
+            value={m.id}
+            title={
+              <span className="flex items-center gap-2">
+                <m.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+                {m.title}
+              </span>
+            }
+            // RadioCard truncates its description; this inner span lets it wrap instead.
+            description={<span className="mt-0.5 block whitespace-normal text-body-2-regular">{m.body}</span>}
+            className={({ isSelected }) =>
+              cx("items-start rounded-3xl p-4 sm:p-5", isSelected && "border-accent-line ring-1 ring-accent-line")
+            }
+          />
+        ))}
+      </RadioGroup>
 
-      {/* Phones: the language picker drops to its own full width row. */}
-      <div className="flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
-        <SegmentedControl
-          aria-label="Mode"
-          selectedKeys={[mode]}
-          onSelectionChange={(keys) => {
-            const next = [...keys][0];
-            if (next) setMode(next as Mode);
-          }}
-        >
-          <SegmentedControlItem id="proxy">Proxy</SegmentedControlItem>
-          <SegmentedControlItem id="lease">Lease</SegmentedControlItem>
-        </SegmentedControl>
-        {/* Thirteen languages: a select reads better than a segmented row that wraps. */}
-        <Select
-          aria-label="Language"
-          selectedKey={lang}
-          onSelectionChange={(k) => k && setLang(k as Lang)}
-          className="w-full sm:w-48"
-        >
-          {LANGS.map((l) => (
-            <SelectItem key={l.id} id={l.id} textValue={l.label}>
-              {l.label}
-            </SelectItem>
-          ))}
-        </Select>
-      </div>
+      {/* Thirteen languages: a select reads better than a segmented row that wraps. */}
+      <Select
+        aria-label="Language"
+        selectedKey={lang}
+        onSelectionChange={(k) => k && setLang(k as Lang)}
+        className="w-full sm:ms-auto sm:w-48"
+      >
+        {LANGS.map((l) => (
+          <SelectItem key={l.id} id={l.id} textValue={l.label}>
+            {l.label}
+          </SelectItem>
+        ))}
+      </Select>
 
       <CodeBlock code={code} label={`${mode} · ${LANGS.find((l) => l.id === lang)?.label}`} />
 

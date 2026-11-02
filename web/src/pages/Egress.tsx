@@ -309,6 +309,8 @@ export function EgressPage() {
                       </TooltipTrigger>
                       <ConfirmButton
                         iconOnly
+                        variant="outline"
+                        size="medium"
                         label="Delete proxy"
                         confirmLabel={used ? "Delete, go direct" : "Delete"}
                         onConfirm={async () => {

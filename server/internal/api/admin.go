@@ -784,13 +784,14 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "key_banned", err.Error())
 		return
 	}
-	detail := "ok"
-	if err != nil {
-		detail = err.Error()
+	latency := time.Since(start).Milliseconds()
+	nk, gerr := s.Store.GetKey(r.Context(), k.ID)
+	logged := nk
+	if gerr != nil {
+		logged = nil
 	}
 	s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "health", ServiceID: sv.ID, KeyID: k.ID,
-		LatencyMS: time.Since(start).Milliseconds(), Detail: detail})
-	nk, gerr := s.Store.GetKey(r.Context(), k.ID)
+		LatencyMS: latency, Detail: healthDetail(err, logged)})
 	if gerr != nil {
 		writeStoreErr(w, gerr)
 		return

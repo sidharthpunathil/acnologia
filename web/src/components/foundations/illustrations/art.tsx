@@ -6,18 +6,19 @@
  */
 import { Frame, dashed, paint, type IllustrationProps } from "./frame";
 
-/** No keys yet: a split key ring with a blank tag and the dashed outline of a missing key. */
+/** No keys yet: a flat split ring with one key hanging from it and the dashed slot of a missing one. */
 export function KeyRingArt({ className }: IllustrationProps) {
   return (
     <Frame className={className}>
-      <circle cx="60" cy="30" r="18" style={paint("ink")} />
-      <path d="M45.5 24 A15.5 15.5 0 0 1 68 16.5" style={paint("soft")} />
-      <path d="M51 45.5 L48.5 50.5" style={paint("ink")} />
-      <rect x="40" y="50" width="15" height="21" rx="4" transform="rotate(12 47.5 60)" style={paint("accent", "tint")} />
-      <circle cx="47.5" cy="54.5" r="1.6" style={paint("accent")} />
-      <path d="M69 45.5 L71 49" style={paint("soft", "none", dashed)} />
-      <circle cx="72" cy="55" r="6" style={paint("soft", "none", dashed)} />
-      <path d="M72 61 V81 M72 74 H76 M72 78 H75" style={paint("soft", "none", dashed)} />
+      <ellipse cx="60" cy="24" rx="17" ry="10" style={paint("ink")} />
+      <path d="M44.5 27.5 A17 10 0 0 0 66 33.6" style={paint("soft")} />
+      <path d="M50 32.3 V37" style={paint("ink")} />
+      <circle cx="50" cy="44" r="7" style={paint("accent", "tint")} />
+      <circle cx="50" cy="44" r="2" style={paint("accent")} />
+      <path d="M50 51 V76 M50 68 H55 M50 73 H54" style={paint("accent")} />
+      <path d="M71 31.7 V37" style={paint("soft", "none", dashed)} />
+      <circle cx="71" cy="44" r="7" style={paint("soft", "none", dashed)} />
+      <path d="M71 51 V76 M71 68 H76 M71 73 H75" style={paint("soft", "none", dashed)} />
     </Frame>
   );
 }

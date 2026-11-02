@@ -7,10 +7,8 @@ import { useTitle } from "../hooks/useTitle";
 import { useServices } from "../stores/services";
 import { useProviders } from "../stores/providers";
 import { useAuth } from "../stores/auth";
-import { toast } from "../stores/toast";
-import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
-import { STRATEGY_LABEL, compact, plural } from "../lib/format";
+import { STRATEGY_LABEL, compact, num, plural } from "../lib/format";
 import type { Service } from "../lib/types";
 import { ServiceLogo } from "../components/EntityLogo";
 import { Button } from "@/components/base/buttons/button";
@@ -124,8 +122,8 @@ function ServiceCard({ s }: { s: Service }) {
 function CatalogSkeleton() {
   return (
     <div role="status" aria-label="Loading services">
-      <Skeleton shape="text" className="h-8 w-80 max-w-full" />
-      <Skeleton shape="text" className="mt-3 h-3.5 w-56" />
+      <Skeleton shape="text" className="h-8 w-40 max-w-full" />
+      <Skeleton shape="text" className="mt-3 h-3.5 w-96 max-w-full" />
       <Skeleton className="mt-8 h-12 w-full max-w-[760px] rounded-full" />
       <div className="mt-12 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {[0, 1, 2, 3, 4, 5].map((i) => (
@@ -152,7 +150,8 @@ export function CatalogPage() {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    fetch().catch((e) => toast.error(errorMessage(e)));
+    // A failed load shows as the callout below; a toast on top would say it twice.
+    fetch().catch(() => undefined);
     // Provider colors and logos back the service tiles.
     ensureProviders().catch(() => undefined);
   }, [fetch, ensureProviders]);
@@ -186,21 +185,17 @@ export function CatalogPage() {
 
   if (!loaded) return <CatalogSkeleton />;
 
-  return (
-    <div>
-      <PageHeader
-        title={`${compact(totalKeys)} ${totalKeys === 1 ? "key" : "keys"} across ${plural(services.length, "service")}`}
-        meta={`${available} available now · ${compact(req24)} requests in 24h`}
-        actions={
-          can.manage(role) && (
-            <Button variant="primary" leadingIcon={RiAddLine} onClick={() => setAdding(true)}>
-              Add service
-            </Button>
-          )
-        }
-        className="mb-0"
-      />
-      {error && services.length === 0 && (
+  const addButton = can.manage(role) && (
+    <Button variant="primary" leadingIcon={RiAddLine} onClick={() => setAdding(true)}>
+      Add service
+    </Button>
+  );
+
+  // Nothing loaded and the server said why: show only that, not an empty workspace with counts of zero.
+  if (error && services.length === 0)
+    return (
+      <div>
+        <PageHeader title="Catalog" className="mb-0" />
         <Callout
           tone="error"
           className="mt-6"
@@ -210,9 +205,19 @@ export function CatalogPage() {
             </Button>
           }
         >
-          Could not load services: {error}.
+          Could not load your services. The server said: {error.replace(/\.$/, "")}.
         </Callout>
-      )}
+      </div>
+    );
+
+  return (
+    <div>
+      <PageHeader
+        title="Catalog"
+        meta={`${compact(totalKeys)} ${totalKeys === 1 ? "key" : "keys"} across ${plural(services.length, "service")} · ${num(available)} available now · ${compact(req24)} requests in 24h`}
+        actions={addButton}
+        className="mb-0"
+      />
 
       <SearchField
         value={q}

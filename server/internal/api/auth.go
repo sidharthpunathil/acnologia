@@ -251,7 +251,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			// size bounded by the user count.
 			s.limiter.fail("email:" + email)
 		}
-		writeErr(w, 401, "bad_credentials", "wrong email or password")
+		writeErr(w, 401, "bad_credentials", "That email and password do not match. Check both and try again.")
 		return
 	}
 	s.limiter.reset(ip)

@@ -420,8 +420,8 @@ export function GroupsPage() {
         }
       />
       <Callout tone="neutral" className="mb-6">
-        Requests go to the first member and fall through to the next when it has no usable key, its circuit breaker is open, it cannot be reached, or every key it
-        tried was rate limited, busy, exhausted, invalid or banned. A 400 or 422 is returned as is. Members should accept the same request shape.
+        A request tries the first service in the group. If that service has no working key or does not answer, the next one gets the same request. Client
+        errors (400, 422) come back as they are, so every member should accept the same request.
       </Callout>
 
       {error && groups.length === 0 ? (
@@ -497,6 +497,8 @@ export function GroupsPage() {
                     </TooltipTrigger>
                     <ConfirmButton
                       iconOnly
+                      variant="outline"
+                      size="medium"
                       label="Delete group"
                       confirmLabel="Delete"
                       onConfirm={async () => {

@@ -196,13 +196,13 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 			start := time.Now()
 			err := s.Pool.Check(cctx, sv, k)
 			cancel()
-			detail := "ok"
-			if err != nil {
-				detail = err.Error()
+			latency := time.Since(start).Milliseconds()
+			nk, gerr := s.Store.GetKey(context.Background(), k.ID)
+			if gerr != nil {
+				nk = nil
 			}
 			s.Store.AddEvent(context.Background(), store.NewEvent{Kind: "health", ServiceID: sv.ID, KeyID: k.ID,
-				LatencyMS: time.Since(start).Milliseconds(), Detail: detail})
-			nk, gerr := s.Store.GetKey(context.Background(), k.ID)
+				LatencyMS: latency, Detail: healthDetail(err, nk)})
 			mu.Lock()
 			defer mu.Unlock()
 			sum.Checked++
@@ -279,8 +279,32 @@ func (s *Server) checkAllKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, total)
 }
 
+// healthDetail is the text a health event records: what the check found,
+// read from the key after the check, or the error when it could not run.
+func healthDetail(err error, k *store.Key) string {
+	switch {
+	case err != nil:
+		return err.Error()
+	case k == nil:
+		return "checked"
+	case k.Status == store.StatusInvalid:
+		if why := strings.TrimPrefix(k.LastError, "invalid key: "); why != "" {
+			return "invalid: " + why
+		}
+		return "invalid"
+	case k.Status == store.StatusExhausted || (k.QuotaRemaining != nil && *k.QuotaRemaining <= 0):
+		return "out of quota"
+	default:
+		return "valid"
+	}
+}
+
 func checkMessage(s checkSummary) string {
-	msg := fmt.Sprintf("Checked %d keys: %d working, %d out of quota, %d invalid", s.Checked, s.Valid, s.Exhausted, s.Invalid)
+	noun := "keys"
+	if s.Checked == 1 {
+		noun = "key"
+	}
+	msg := fmt.Sprintf("Checked %d %s: %d working, %d out of quota, %d invalid", s.Checked, noun, s.Valid, s.Exhausted, s.Invalid)
 	if s.Failed > 0 {
 		msg += fmt.Sprintf(", %d could not be reached", s.Failed)
 	}

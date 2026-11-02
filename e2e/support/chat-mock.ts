@@ -26,7 +26,15 @@ export async function mockChat(page: Page, now: number): Promise<void> {
       ],
     },
     { id: "a0", kind: "assistant", ok: true, ts: t(8), text: "Added both keys to `tavily`. Both work." },
-    { id: "u1", kind: "user", ok: true, ts: t(6), text: "Add these SerpAPI keys:\nacct-7, 3f9a...c21e\nacct-8, 77b2...0aa4\nacct-9, d01c...91fe" },
+    // An older message: its keys sit inline as placeholder lines, with no key_list.
+    {
+      id: "u1",
+      kind: "user",
+      ok: true,
+      ts: t(6),
+      keys: 3,
+      text: "Add these SerpAPI keys:\nacct-7, [key k1 ...c21e]\nacct-8, [key k2 ...0aa4]\nacct-9 [key k3 ...91fe]",
+    },
     { id: "a1", kind: "assistant", ok: true, ts: t(6), text: "I'll add the three keys to your `serpapi` service and check each one." },
     {
       id: "t1",

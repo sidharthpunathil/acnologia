@@ -14,7 +14,7 @@ interface AuthStore {
   login: (email: string, password: string) => Promise<void>;
   setup: (email: string, name: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  updateMe: (patch: { name?: string; current_password: string; password?: string }) => Promise<void>;
+  updateMe: (patch: { name?: string; current_password?: string; password?: string }) => Promise<void>;
   expire: () => void;
 }
 

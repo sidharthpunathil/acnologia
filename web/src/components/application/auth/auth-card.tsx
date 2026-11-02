@@ -330,6 +330,7 @@ export function AuthCard({
             placeholder={signup ? "At least 8 characters" : "Enter your password"}
             autoComplete={signup ? "new-password" : "current-password"}
             isRequired
+            revealable
           />
         )}
 

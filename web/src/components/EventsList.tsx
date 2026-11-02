@@ -21,10 +21,26 @@ const kindColor: Record<EventKind, ChipColor> = {
   service_up: "lime",
 };
 
+/**
+ * A health event is tinted by what the check found, which the server writes
+ * as its detail: "valid", "out of quota", "invalid: why", or the error when
+ * the check could not run. Older events said "ok" whatever the result, so
+ * they stay neutral.
+ */
+function healthColor(detail: string | undefined): ChipColor {
+  const d = (detail ?? "").toLowerCase();
+  if (d === "valid") return "lime";
+  if (d === "out of quota") return "orange";
+  if (d.startsWith("invalid")) return "rose";
+  if (d === "" || d === "ok" || d === "checked") return "neutral";
+  return "yellow";
+}
+
 /** The event kind as a tinted chip; the word always carries the meaning. */
-export function KindBadge({ kind, className }: { kind: EventKind; className?: string }) {
+export function KindBadge({ kind, detail, className }: { kind: EventKind; detail?: string; className?: string }) {
+  const color = kind === "health" ? healthColor(detail) : (kindColor[kind] ?? "neutral");
   return (
-    <Chip variant="caption" color={kindColor[kind] ?? "neutral"} className={cx("rounded-full px-2 py-0.5 font-mono", className)}>
+    <Chip variant="caption" color={color} className={cx("rounded-full px-2 py-0.5 font-mono", className)}>
       {kind.replace(/_/g, " ")}
     </Chip>
   );
@@ -66,7 +82,7 @@ export function EventsList({
             )}
           >
             <div className="flex min-w-0 items-center gap-2 sm:w-[156px] sm:shrink-0">
-              <KindBadge kind={e.kind} />
+              <KindBadge kind={e.kind} detail={e.detail} />
               {e.status_code > 0 && (
                 <span
                   className={cx(

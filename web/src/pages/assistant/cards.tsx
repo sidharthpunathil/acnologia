@@ -21,6 +21,7 @@ import { Input } from "@/components/base/input/input";
 import { ProgressTrack } from "@/components/base/progress/progress";
 import { ButtonSpinner, SpinnerGlyph } from "@/components/base/spinner/spinner";
 import { cx } from "@/utils/cx";
+import { formatHint } from "./keyhint";
 
 /** The card surface every tool result in the transcript shares. */
 const CARD = "rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs";
@@ -334,7 +335,7 @@ export function AskCard({
   return (
     <div role="group" aria-label="Question" className={CARD}>
       <div className="px-4 pt-3.5 pb-2">
-        <div className="text-caption-2-semibold text-text-tertiary uppercase">Your call</div>
+        <div className="text-caption-2-semibold text-text-tertiary uppercase">Needs your answer</div>
         <div className="mt-1.5 text-body-regular text-text-primary">{a.question}</div>
       </div>
       {a.kind === "names" ? (
@@ -344,7 +345,7 @@ export function AskCard({
               <li key={r.ref} className="flex items-center gap-2.5">
                 <RiKey2Line className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
                 <span className="w-16 shrink-0 font-mono text-caption-1-regular text-text-secondary" title={`Key ${r.ref}`}>
-                  {r.hint.replace(/^\.\.\./, "…")}
+                  {formatHint(r.hint)}
                 </span>
                 <Input
                   size="small"
@@ -486,7 +487,7 @@ function KeysCard({ card, ts }: { card: ChatCard; ts: string }) {
                 >
                   {k.label}
                 </Link>
-                <span className="shrink-0 font-mono text-caption-1-regular text-text-secondary">{k.hint.replace(/^\.\.\./, "…")}</span>
+                <span className="shrink-0 font-mono text-caption-1-regular text-text-secondary">{formatHint(k.hint)}</span>
                 <span className="flex w-28 shrink-0 justify-end" aria-live="polite">
                   {lk ? (
                     <span key={`${lk.effective_status}-${lk.validity}`} className="chat-swap inline-flex">

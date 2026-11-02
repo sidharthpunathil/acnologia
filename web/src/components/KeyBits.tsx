@@ -30,7 +30,11 @@ export function ValidityBadge({ validity, reason, className }: { validity: Valid
  * ticking ("Last worked 18s ago"). The server text is used only for invalid keys.
  */
 export function validityText(k: Pick<Key, "validity" | "validity_reason" | "last_ok_at" | "last_error">, now: number): string {
-  if (k.validity === "invalid") return k.last_error || k.validity_reason || "The provider rejected this key";
+  if (k.validity === "invalid") {
+    // The pill and icon already say invalid, so a server "invalid key:" prefix would only repeat it.
+    const raw = (k.last_error || k.validity_reason || "").replace(/^\s*invalid (api )?key\s*:\s*/i, "").trim();
+    return raw ? raw[0].toUpperCase() + raw.slice(1) : "The provider rejected this key";
+  }
   if (k.last_ok_at) {
     const r = relTime(k.last_ok_at, now);
     return r === "just now" ? "Worked just now" : `Last worked ${r}`;

@@ -30,6 +30,9 @@ export interface NavItem {
   group?: NavGroup;
 }
 
+/** Sign out reads the same on the account menu and the phone More sheet. */
+export const SIGN_OUT_ROW = "text-text-primary";
+
 export const ACCOUNT_ITEM: NavItem = { to: "/account", label: "Your account", icon: RiUser3Line };
 
 /** Every destination this role can open, in display order. */

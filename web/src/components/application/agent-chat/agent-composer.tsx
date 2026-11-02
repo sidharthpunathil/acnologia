@@ -31,6 +31,18 @@ import { cx } from "@/utils/cx";
  * instead of a travelling band.
  */
 
+/**
+ * Acnologia: the band rides the --loader-c* tokens (deeper stops in light
+ * mode), at full intensity with a stronger bloom and a thicker line, so the
+ * working state reads on a white pill.
+ */
+const LOADER_COLORS: [string, string, string, string] = [
+  "var(--loader-c0)",
+  "var(--loader-c1)",
+  "var(--loader-c2)",
+  "var(--loader-c3)",
+];
+
 export interface AgentComposerProps {
   id?: string;
   value: string;
@@ -101,7 +113,7 @@ export function AgentComposer({
 
   return (
     <div className={cx("flex w-full flex-col gap-1.5", className)}>
-      <ComposerLoader active={working} radius={24}>
+      <ComposerLoader active={working} radius={24} colors={LOADER_COLORS} intensity={1} bloomStrength={0.45} line={3}>
         <form
           onSubmit={(event) => {
             event.preventDefault();

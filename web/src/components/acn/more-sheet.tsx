@@ -3,10 +3,38 @@ import { RiLogoutBoxRLine } from "@remixicon/react";
 import { Drawer, DrawerBody, DrawerHeader } from "@/components/base/drawer/drawer";
 import { useAuth } from "@/stores/auth";
 import { cx } from "@/utils/cx";
-import { grouped, menuRowKeys, useSignOut, type NavItem } from "./nav";
+import { ACCOUNT_ITEM, SIGN_OUT_ROW, grouped, menuRowKeys, useSignOut, type NavItem } from "./nav";
 import { ThemePicker } from "./theme-picker";
 
-/** Phone overflow sheet: the rest of the nav, theme, account and sign out, within thumb reach. */
+const ROW = cx(
+  "flex min-h-12 items-center gap-3 rounded-xl px-3 text-body-medium outline-none transition-colors duration-150",
+  "focus-visible:ring-2 focus-visible:ring-border-focus-ring active:bg-background-tertiary-default",
+);
+
+/** One page row in the sheet. */
+function SheetLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      data-menu-row=""
+      onClick={onClose}
+      className={({ isActive }) => cx(ROW, "text-text-primary", isActive && "bg-background-tertiary-default")}
+    >
+      {({ isActive }) => (
+        <>
+          <item.icon className={cx("size-5", isActive ? "text-accent-fg" : "text-foreground-icon-secondary")} aria-hidden />
+          {item.label}
+        </>
+      )}
+    </NavLink>
+  );
+}
+
+/**
+ * Phone overflow sheet, in the account menu's order: the rest of the nav,
+ * theme, your account, then sign out, within thumb reach.
+ */
 export function MoreSheet({ open, onClose, items }: { open: boolean; onClose: () => void; items: NavItem[] }) {
   const user = useAuth((s) => s.user);
   const signOut = useSignOut();
@@ -21,26 +49,7 @@ export function MoreSheet({ open, onClose, items }: { open: boolean; onClose: ()
               <ul className="-mx-2 flex flex-col">
                 {list.map((l) => (
                   <li key={l.to}>
-                    <NavLink
-                      to={l.to}
-                      end={l.end}
-                      data-menu-row=""
-                      onClick={onClose}
-                      className={({ isActive }) =>
-                        cx(
-                          "flex min-h-12 items-center gap-3 rounded-xl px-3 text-body-medium outline-none transition-colors duration-150",
-                          "focus-visible:ring-2 focus-visible:ring-border-focus-ring active:bg-background-tertiary-default",
-                          isActive ? "bg-background-tertiary-default text-text-primary" : "text-text-primary",
-                        )
-                      }
-                    >
-                      {({ isActive }) => (
-                        <>
-                          <l.icon className={cx("size-5", isActive ? "text-accent-fg" : "text-foreground-icon-secondary")} aria-hidden />
-                          {l.label}
-                        </>
-                      )}
-                    </NavLink>
+                    <SheetLink item={l} onClose={onClose} />
                   </li>
                 ))}
               </ul>
@@ -51,20 +60,24 @@ export function MoreSheet({ open, onClose, items }: { open: boolean; onClose: ()
           <div className="mb-2 text-caption-1-medium text-text-secondary">Theme</div>
           <ThemePicker />
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            onClose();
-            void signOut();
-          }}
-          className={cx(
-            "mt-4 -mx-2 flex min-h-12 w-[calc(100%+1rem)] items-center gap-3 rounded-xl px-3 text-start text-body-medium text-text-error-primary",
-            "outline-none transition-colors duration-150 hover:bg-status-rose-background focus-visible:ring-2 focus-visible:ring-border-focus-ring active:bg-status-rose-background",
-          )}
-        >
-          <RiLogoutBoxRLine className="size-5" aria-hidden />
-          Sign out
-        </button>
+        <div className="mt-4 border-t border-separator-border pt-2">
+          <div className="-mx-2">
+            <SheetLink item={ACCOUNT_ITEM} onClose={onClose} />
+          </div>
+        </div>
+        <div className="mt-2 border-t border-separator-border pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              void signOut();
+            }}
+            className={cx(ROW, SIGN_OUT_ROW, "-mx-2 w-[calc(100%+1rem)] text-start hover:bg-background-tertiary-default")}
+          >
+            <RiLogoutBoxRLine className="size-5 text-foreground-icon-secondary" aria-hidden />
+            Sign out
+          </button>
+        </div>
       </DrawerBody>
     </Drawer>
   );

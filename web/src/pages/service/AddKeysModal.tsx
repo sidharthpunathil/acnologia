@@ -16,6 +16,7 @@ import { ProgressTrack } from "@/components/base/progress/progress";
 import { Select, SelectItem } from "@/components/base/select/select";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { SwitchCard } from "@/components/base/switch/switch-card";
+import { Accordion, AccordionItem } from "@/components/base/accordion/accordion";
 import { cx } from "@/utils/cx";
 import { Callout } from "@/components/acn";
 
@@ -56,7 +57,8 @@ export function AddKeysModal({
   const [restricted, setRestricted] = useState(false);
   const [appIds, setAppIds] = useState<number[]>([]);
   const [weight, setWeight] = useState(1);
-  const [priority, setPriority] = useState(0);
+  // Same default as the API (server/internal/api/admin.go), so leaving it alone changes nothing.
+  const [priority, setPriority] = useState(100);
   const [notes, setNotes] = useState("");
   const [account, setAccount] = useState({ name: "", email: "", phone: "", ref: "" });
   const [phase, setPhase] = useState<Phase>({ kind: "edit" });
@@ -69,7 +71,7 @@ export function AddKeysModal({
     setRestricted(false);
     setAppIds([]);
     setWeight(1);
-    setPriority(0);
+    setPriority(100);
     setNotes("");
     setAccount({ name: "", email: "", phone: "", ref: "" });
     setPhase({ kind: "edit" });
@@ -78,6 +80,17 @@ export function AddKeysModal({
   const fallbackLabel = (i: number) => `${service.slug} ${existingCount + i + 1}`;
   const busy = phase.kind === "adding";
   const count = parsed.keys.length;
+  const accountName = account.name.trim() || account.email.trim();
+  const optionsSummary = [
+    `${tier === "backup" ? "Backup" : "Primary"} tier`,
+    `weight ${num(weight)}`,
+    priority !== 100 && `priority ${num(priority)}`,
+    restricted ? `only ${plural(appIds.length, "app")}` : "visible to all apps",
+    canHidden && hidden && "hidden",
+    accountName && `account ${accountName}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -203,52 +216,59 @@ export function AddKeysModal({
               <KeyPreview parsed={parsed} stale={input.stale} fallbackLabel={fallbackLabel} />
             </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Select label="Tier" selectedKey={tier} onSelectionChange={(v) => setTier(v as Tier)} className="w-full">
-                <SelectItem id="primary">primary</SelectItem>
-                <SelectItem id="backup">backup</SelectItem>
-              </Select>
-              <NumberField label="Weight" minValue={0} value={weight} onChange={(n) => setWeight(Number.isNaN(n) ? 0 : n)} />
-              <NumberField label="Priority" value={priority} onChange={(n) => setPriority(Number.isNaN(n) ? 0 : n)} />
-            </div>
+            {/* Most batches keep the defaults, so the options stay folded under a summary of what applies. */}
+            <Accordion variant="separated">
+              <AccordionItem id="options" title="Options for this batch" description={optionsSummary}>
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Select label="Tier" selectedKey={tier} onSelectionChange={(v) => setTier(v as Tier)} className="w-full">
+                      <SelectItem id="primary">primary</SelectItem>
+                      <SelectItem id="backup">backup</SelectItem>
+                    </Select>
+                    <NumberField label="Weight" minValue={0} value={weight} onChange={(n) => setWeight(Number.isNaN(n) ? 0 : n)} />
+                    <NumberField label="Priority" value={priority} onChange={(n) => setPriority(Number.isNaN(n) ? 0 : n)} />
+                  </div>
 
-            <div role="group" aria-labelledby="add-keys-access" className="space-y-3">
-              <h3 id="add-keys-access" className="text-body-2-semibold text-text-primary">
-                Access
-              </h3>
-              {canHidden && <SwitchCard title="Hidden" description="Only superadmins can see or count these keys." isSelected={hidden} onChange={setHidden} />}
-              <SwitchCard title="Restricted" description="Only the apps you pick can use these keys." isSelected={restricted} onChange={setRestricted} />
-              {restricted && (
-                <MultiSelect
-                  options={apps.map((a) => ({ value: a.id, label: a.name, meta: a.token_prefix }))}
-                  value={appIds}
-                  onChange={setAppIds}
-                  empty="No apps yet. Create an app first, then allow it here."
-                />
-              )}
-            </div>
+                  <div role="group" aria-labelledby="add-keys-access" className="space-y-3">
+                    <h3 id="add-keys-access" className="text-body-2-semibold text-text-primary">
+                      Access
+                    </h3>
+                    {canHidden && <SwitchCard title="Hidden" description="Only superadmins can see or count these keys." isSelected={hidden} onChange={setHidden} />}
+                    <SwitchCard title="Restricted" description="Only the apps you pick can use these keys." isSelected={restricted} onChange={setRestricted} />
+                    {restricted && (
+                      <MultiSelect
+                        options={apps.map((a) => ({ value: a.id, label: a.name, meta: a.token_prefix }))}
+                        value={appIds}
+                        onChange={setAppIds}
+                        empty="No apps yet. Create an app first, then allow it here."
+                      />
+                    )}
+                  </div>
 
-            <div role="group" aria-labelledby="add-keys-account" className="space-y-3">
-              <div>
-                <h3 id="add-keys-account" className="text-body-2-semibold text-text-primary">
-                  Account (optional)
-                </h3>
-                <p className="mt-0.5 text-caption-1-regular text-text-secondary">Applied to every key in this batch. Only admins can see these details.</p>
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input label="Name" value={account.name} maxLength={200} autoComplete="off" onChange={(v) => setAccount({ ...account, name: v })} />
-                <Input label="Email" type="email" value={account.email} maxLength={254} autoComplete="off" onChange={(v) => setAccount({ ...account, email: v })} />
-                <Input label="Phone" type="tel" value={account.phone} maxLength={40} autoComplete="off" onChange={(v) => setAccount({ ...account, phone: v })} />
-                <Input
-                  label="Other"
-                  hint="Username, account ID or anything else that identifies the account"
-                  value={account.ref}
-                  maxLength={200}
-                  autoComplete="off"
-                  onChange={(v) => setAccount({ ...account, ref: v })}
-                />
-              </div>
-            </div>
+                  <div role="group" aria-labelledby="add-keys-account" className="space-y-3">
+                    <div>
+                      <h3 id="add-keys-account" className="text-body-2-semibold text-text-primary">
+                        Account (optional)
+                      </h3>
+                      <p className="mt-0.5 text-caption-1-regular text-text-secondary">Applied to every key in this batch. Only admins can see these details.</p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Input label="Name" value={account.name} maxLength={200} autoComplete="off" onChange={(v) => setAccount({ ...account, name: v })} />
+                      <Input label="Email" type="email" value={account.email} maxLength={254} autoComplete="off" onChange={(v) => setAccount({ ...account, email: v })} />
+                      <Input label="Phone" type="tel" value={account.phone} maxLength={40} autoComplete="off" onChange={(v) => setAccount({ ...account, phone: v })} />
+                      <Input
+                        label="Other"
+                        hint="Username, account ID or anything else that identifies the account"
+                        value={account.ref}
+                        maxLength={200}
+                        autoComplete="off"
+                        onChange={(v) => setAccount({ ...account, ref: v })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </AccordionItem>
+            </Accordion>
 
             <Input label="Notes" hint="Applied to every key in this batch." value={notes} onChange={setNotes} />
           </fieldset>

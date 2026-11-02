@@ -260,7 +260,7 @@ export function KeyPreview({
   return (
     <div className={cx("transition-opacity duration-150", stale && "opacity-60")}>
       <p aria-live="polite" aria-atomic="true" className="font-mono text-caption-1-regular text-text-secondary">
-        <span className={n ? "text-caption-1-medium text-text-primary" : ""}>{n ? `${num(n)} ${n === 1 ? "key" : "keys"} found` : "No keys found yet"}</span>
+        <span className={n ? "text-caption-1-medium text-text-primary" : ""}>{n ? `${num(n)} ${n === 1 ? "key" : "keys"} found` : "Paste keys above to see what will be added."}</span>
         {parts.map((p) => (
           <span key={p}> · {p}</span>
         ))}

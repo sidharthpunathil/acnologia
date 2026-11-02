@@ -1,6 +1,4 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { RiLogoutBoxRLine } from "@remixicon/react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAuth } from "@/stores/auth";
 import { toast } from "@/stores/toast";
@@ -17,10 +15,8 @@ import { ApiTokens } from "@/components/ApiTokens";
 
 export function AccountPage() {
   useTitle("Account");
-  const { user, updateMe, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user, updateMe } = useAuth();
   const [name, setName] = useState(user?.name ?? "");
-  const [nameCurrent, setNameCurrent] = useState("");
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -35,8 +31,7 @@ export function AccountPage() {
     e.preventDefault();
     setBusyName(true);
     try {
-      await updateMe({ name: name.trim(), current_password: nameCurrent });
-      setNameCurrent("");
+      await updateMe({ name: name.trim() });
       toast.success("Name saved");
     } catch (err) {
       toast.error(errorMessage(err));
@@ -76,34 +71,13 @@ export function AccountPage() {
             <span className="whitespace-nowrap">joined {dateTime(user.created_at)}</span>
           </span>
         }
-        actions={
-          <Button
-            variant="secondary"
-            leadingIcon={RiLogoutBoxRLine}
-            onClick={async () => {
-              await logout();
-              navigate("/login", { replace: true });
-            }}
-          >
-            Sign out
-          </Button>
-        }
       />
 
       <div className="flex flex-col gap-5">
         <Section title="Profile" description="The name people see in the audit log and on keys you add.">
           <form onSubmit={saveName} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input label="Name" value={name} onChange={setName} isRequired autoComplete="name" />
-            <Input
-              label="Current password"
-              hint="Confirms it is you."
-              type="password"
-              value={nameCurrent}
-              onChange={setNameCurrent}
-              isRequired
-              autoComplete="current-password"
-            />
-            <div className="flex justify-end sm:col-span-2">
+            <div className="flex items-end justify-end">
               <Button
                 type="submit"
                 variant="primary"

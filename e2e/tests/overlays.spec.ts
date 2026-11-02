@@ -11,8 +11,8 @@ test("assistant conversation", async ({ page, run, snap }) => {
 test("account menu open", async ({ page, snap }, info) => {
   test.skip(info.project.name.startsWith("phone"), "phones use the More sheet");
   await page.goto("/");
-  // The BoardUI shell names it "Account menu: Demo"; older builds used "Demo".
-  const trigger = page.getByRole("button", { name: /^(Account menu: )?Demo/ });
+  // Named "Account menu: Demo", plus ", current page Usage" while one of its pages is open.
+  const trigger = page.getByRole("button", { name: /^Account menu: Demo/ });
   await trigger.click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
   await snap("account-menu", { viewportOnly: true });

@@ -22,7 +22,7 @@ export function Layout() {
   const primary = links.filter((l) => !l.group);
   const secondary = links.filter((l) => l.group);
   // Phones: the same three in the tab bar, the rest under More with the same groups.
-  const overflow: NavItem[] = [...secondary, { ...ACCOUNT_ITEM, group: "Help" }];
+  const overflow: NavItem[] = [...secondary, ACCOUNT_ITEM];
   const moreActive = overflow.some((l) => isActivePath(location.pathname, l.to));
 
   // While a text field has focus the keyboard is up: hide the tab bar so it does not
@@ -82,7 +82,7 @@ export function Layout() {
         </div>
       </footer>
       <TabBar tabs={primary} moreActive={moreActive} onMore={() => setMore(true)} />
-      <MoreSheet open={more} onClose={() => setMore(false)} items={overflow} />
+      <MoreSheet open={more} onClose={() => setMore(false)} items={secondary} />
     </div>
   );
 }

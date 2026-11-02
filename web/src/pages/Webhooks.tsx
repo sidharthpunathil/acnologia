@@ -479,6 +479,8 @@ export function WebhooksPage() {
                         </TooltipTrigger>
                         <ConfirmButton
                           iconOnly
+                          variant="outline"
+                          size="medium"
                           label="Delete webhook"
                           confirmLabel="Delete"
                           onConfirm={async () => {

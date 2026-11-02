@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -42,6 +42,7 @@ import {
 import { LogRow, ShimmerText } from "@/components/application/agent-log/agent-log";
 import { cx } from "@/utils/cx";
 import { linkify } from "./cards";
+import { formatHint, legacyKeys, type KeyRef } from "./keyhint";
 
 /** "add_keys" becomes "Add keys". */
 function humanize(tool: string): string {
@@ -219,27 +220,31 @@ function autolink(text: string): ReactNode {
 /** Keys shown before "+N more". */
 const KEYS_SHOWN = 8;
 
-/** "...Qus6" or "…Qus6" from the server, shown as "···Qus6". */
-function hintTail(hint: string): string {
-  const tail = hint.replace(/^[.\u2026\u00b7\s]+/, "");
-  return tail ? `\u00b7\u00b7\u00b7${tail}` : "";
-}
-
 /**
  * The keys a message carried, under its prose: a shield, how many are in the
  * vault, an explainer, and one chip per key with its label and last
  * characters. The secrets themselves never reach the browser.
  */
-function SecuredKeys({ keys, divided }: { keys: { label: string; hint: string }[]; divided: boolean }) {
+const WIDE = "(min-width: 640px)";
+function subscribeWide(on: () => void) {
+  const mq = window.matchMedia(WIDE);
+  mq.addEventListener("change", on);
+  return () => mq.removeEventListener("change", on);
+}
+
+function SecuredKeys({ keys, count, divided }: { keys: KeyRef[]; count?: number; divided: boolean }) {
   const [all, setAll] = useState(false);
+  const block = useRef<HTMLDivElement>(null);
+  const wide = useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE).matches, () => true);
   const shown = all ? keys : keys.slice(0, KEYS_SHOWN);
   const more = keys.length - KEYS_SHOWN;
+  const n = count ?? keys.length;
   return (
-    <div className={cx("whitespace-normal", divided && "mt-2.5 border-t border-separator-border pt-2.5")}>
+    <div ref={block} className={cx("whitespace-normal", divided && "mt-2.5 border-t border-separator-border pt-2.5")}>
       <div className="flex items-center gap-1.5 text-caption-1-medium text-text-secondary">
         <RiShieldKeyholeLine className="size-3.5 shrink-0 text-status-purple-text" aria-hidden />
         <span>
-          {keys.length} {keys.length === 1 ? "key" : "keys"} secured
+          {n} {n === 1 ? "key" : "keys"} secured
         </span>
         <PopoverTrigger>
           <button
@@ -249,37 +254,58 @@ function SecuredKeys({ keys, divided }: { keys: { label: string; hint: string }[
           >
             <RiInformationLine className="size-3.5" aria-hidden />
           </button>
-          <Popover placement="bottom" showArrow aria-label="How keys are kept" className="w-64" dialogClassName="px-2.5 py-2">
+          {/*
+            User bubbles sit on the right, so the explainer opens into the empty
+            space on their left, beside the whole keys block rather than the
+            icon, and never over the chips. Phones have no room there: it opens
+            under the block instead.
+          */}
+          <Popover
+            triggerRef={block}
+            placement={wide ? "start" : "bottom end"}
+            offset={wide ? 22 : 8}
+            aria-label="How keys are kept"
+            className="w-64"
+            dialogClassName="px-2.5 py-2"
+          >
             <p className="text-caption-1-regular text-text-secondary">
-              Encrypted in the vault. Claude only sees placeholders like{" "}
-              <span className="font-mono text-text-primary">[key k3 ...c21e]</span>, never the key.
+              Stored encrypted. Claude sees a placeholder such as{" "}
+              <span className="whitespace-nowrap font-mono text-text-primary">[key k3 ...c21e]</span>, never the key.
             </p>
           </Popover>
         </PopoverTrigger>
       </div>
-      <ul className="mt-1.5 flex flex-wrap gap-1" aria-label="Secured keys">
-        {shown.map((k, i) => (
-          <li key={i} className="min-w-0 max-w-full">
-            <Chip variant="caption" color="soft" className="max-w-full gap-1.5 justify-start">
-              <RiKey2Line className="size-3 shrink-0 text-status-purple-text" aria-hidden />
-              <span className="min-w-0 truncate text-text-primary">{k.label.trim() || "Key"}</span>
-              {hintTail(k.hint) && <span className="shrink-0 font-mono text-text-tertiary">{hintTail(k.hint)}</span>}
-            </Chip>
-          </li>
-        ))}
-        {more > 0 && (
-          <li>
-            <button
-              type="button"
-              onClick={() => setAll(!all)}
-              aria-expanded={all}
-              className="inline-flex cursor-pointer items-center rounded-md px-1.5 py-1 text-caption-1-medium text-text-secondary outline-none transition-colors duration-150 hover:bg-background-secondary-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-            >
-              {all ? "Show less" : `+${more} more`}
-            </button>
-          </li>
-        )}
-      </ul>
+      {shown.length > 0 && (
+        <ul className="mt-1.5 flex flex-wrap gap-1" aria-label="Secured keys">
+          {shown.map((k, i) => (
+            <li key={i} className="min-w-0 max-w-full">
+              <Chip variant="caption" color="soft" className="max-w-full gap-1.5 justify-start">
+                <RiKey2Line className="size-3 shrink-0 text-status-purple-text" aria-hidden />
+                {k.label.trim() ? (
+                  <>
+                    <span className="min-w-0 truncate text-text-primary">{k.label.trim()}</span>
+                    {formatHint(k.hint) && <span className="shrink-0 font-mono text-text-tertiary">{formatHint(k.hint)}</span>}
+                  </>
+                ) : (
+                  <span className="shrink-0 font-mono text-text-primary">{formatHint(k.hint) || "Key"}</span>
+                )}
+              </Chip>
+            </li>
+          ))}
+          {more > 0 && (
+            <li>
+              <button
+                type="button"
+                onClick={() => setAll(!all)}
+                aria-expanded={all}
+                className="inline-flex cursor-pointer items-center rounded-md px-1.5 py-1 text-caption-1-medium text-text-secondary outline-none transition-colors duration-150 hover:bg-background-secondary-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+              >
+                {all ? "Show less" : `+${more} more`}
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
     </div>
   );
 }
@@ -292,26 +318,23 @@ export function UserBubble({
 }: {
   text: string;
   keys?: number;
-  keyList?: { label: string; hint: string }[];
+  keyList?: KeyRef[];
   onEdit?: () => void;
 }) {
-  const prose = collapseBlank(text);
+  // Older messages carry their keys inline as placeholder lines; newer ones list them in key_list.
+  const legacy = !keyList?.length && !!keys;
+  const parsed = legacy ? legacyKeys(text) : null;
+  const prose = collapseBlank(parsed ? parsed.prose : text);
   // A message with many keys stays compact: the server keeps only their hints anyway.
   const long = prose.length > 600;
   const [open, setOpen] = useState(false);
-  const secured = !!keyList?.length;
+  const secured = !!keyList?.length || legacy;
+  const list = keyList?.length ? keyList : (parsed?.keys ?? []);
   return (
     <AgentMessage
       role="user"
       actions={onEdit ? <MessageAction icon={RiPencilLine} label="Edit" aria-label="Edit your last message" onClick={onEdit} /> : null}
     >
-      {/* Older messages carry their key hints inline; newer ones list them below. */}
-      {keys && !secured ? (
-        <span className="mb-1 flex items-center gap-1.5 font-mono text-caption-1-regular text-text-secondary">
-          <RiKey2Line className="size-3 shrink-0" aria-hidden />
-          {keys} {keys === 1 ? "key" : "keys"}, sent to Claude as placeholders
-        </span>
-      ) : null}
       {prose && autolink(long && !open ? `${prose.slice(0, 600)}\u2026` : prose)}
       {long && (
         <button
@@ -323,7 +346,7 @@ export function UserBubble({
           {open ? "Show less" : "Show all"}
         </button>
       )}
-      {secured && <SecuredKeys keys={keyList} divided={!!prose} />}
+      {secured && <SecuredKeys keys={list} count={legacy ? Math.max(keys ?? 0, list.length) : undefined} divided={!!prose} />}
     </AgentMessage>
   );
 }
@@ -581,13 +604,43 @@ export function ConfirmCard({
   );
 }
 
+/** Known failures from the model API, in plain words. Null when the error is not one of them. */
+function knownError(raw: string): string | null {
+  const t = raw.toLowerCase();
+  if (/\b529\b|overloaded/.test(t)) return "Claude is overloaded right now. Nothing was changed. Try again in a minute.";
+  if (/\b429\b|rate[ _-]?limit/.test(t)) return "Claude's rate limit was hit. Nothing was changed. Try again in a minute.";
+  if (/\b401\b|authentication_error|invalid x-api-key|unauthorized/.test(t))
+    return "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY and restart Acnologia.";
+  if (/timeout|timed out|deadline exceeded/.test(t)) return "Claude took too long to answer. Nothing was changed. Try again.";
+  return null;
+}
+
+/**
+ * The server writes some errors as finished sentences ("That question is no
+ * longer open. Send a message instead."). Raw errors from Go or the API start
+ * lowercase or carry JSON, status lines or addresses.
+ */
+function isPlain(raw: string): boolean {
+  return /^[A-Z][^{}<>]*[.!?]$/.test(raw) && !/https?:\/\/|\b[45]\d\d\b|_error\b/.test(raw);
+}
+
 export function ErrorItem({ text, onRetry }: { text?: string; onRetry?: () => void }) {
+  const raw = text?.trim() ?? "";
+  const known = raw ? (knownError(raw) ?? (isPlain(raw) ? raw : null)) : null;
   return (
     <Callout
       tone="error"
       action={onRetry ? <Button size="xs" variant="ghost" className={QUIET_BUTTON} leadingIcon={RiRefreshLine} onClick={onRetry}>Retry</Button> : undefined}
     >
-      <span className="wrap-anywhere">{text || "Something went wrong."}</span>
+      <span className="wrap-anywhere">{known ?? "Something went wrong before Claude answered. Nothing was changed."}</span>
+      {!known && raw && (
+        <details className="mt-1.5">
+          <summary className="w-fit cursor-pointer rounded-sm text-caption-1-medium underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring">
+            Error details
+          </summary>
+          <p className="mt-1 wrap-anywhere font-mono text-caption-1-regular opacity-80">{raw}</p>
+        </details>
+      )}
     </Callout>
   );
 }

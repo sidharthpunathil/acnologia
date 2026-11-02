@@ -7,7 +7,6 @@ import {
 } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
-  RiAlertLine,
   RiArrowDownLine,
   RiChatHistoryLine,
   RiEditBoxLine,
@@ -50,6 +49,7 @@ import {
   toAttachment,
   type Attachment,
 } from "./assistant/parts";
+import { legacyKeys } from "./assistant/keyhint";
 import "./assistant/assistant.css";
 
 /** Rows of the transcript: a run of tool calls folds into one "Worked for Ns" line. */
@@ -430,12 +430,7 @@ export function AssistantPage() {
       // brings back the words alone. Older messages hold key hints inline:
       // drop those lines too.
       const prose = collapseBlank(
-        lastUser.key_list?.length
-          ? (lastUser.text ?? "")
-          : (lastUser.text ?? "")
-              .split("\n")
-              .filter((l) => !/(?:\.\.\.|\u2026)[A-Za-z0-9_-]{2,8}\b/.test(l))
-              .join("\n"),
+        lastUser.key_list?.length ? (lastUser.text ?? "") : legacyKeys(lastUser.text ?? "").prose,
       );
       setText(prose);
       setVaultNote(true);
@@ -690,8 +685,8 @@ export function AssistantPage() {
             id="chat-title"
             className="min-w-0 flex-1 truncate text-center text-body-2-medium text-text-secondary"
           >
-            <span className="sr-only">Assistant{title ? ": " : ""}</span>
-            {title}
+            <span className="sr-only">Assistant: </span>
+            {title ?? <span className="text-text-tertiary">New chat</span>}
           </h1>
           <TooltipTrigger delay={500}>
             <IconButton
@@ -744,7 +739,7 @@ export function AssistantPage() {
                   <Skeleton className="ms-auto h-10 w-1/3 rounded-2xl" />
                 </div>
               ) : items.length === 0 && !working ? (
-                <EmptyState off={off} onPick={fillExample} />
+                <EmptyState off={off} onPick={fillExample} onSettings={() => navigate("/settings")} />
               ) : (
                 <div
                   role="log"
@@ -764,24 +759,29 @@ export function AssistantPage() {
           </div>
           <ScrollFade progress={fade.progress} surfaceClassName="from-background-full" />
           {!atBottom && items.length > 0 && (
-            <IconButton
-              icon={RiArrowDownLine}
+            // Off to the side, so it never sits on the text it scrolls to.
+            <Button
+              size="small"
+              variant="secondary"
+              leadingIcon={RiArrowDownLine}
               aria-label="Jump to latest message"
-              title="Jump to latest"
               onClick={() => {
                 stick.current = true;
                 toBottom(true);
               }}
-              className="swap-in absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm"
-            />
+              className="swap-in absolute right-4 bottom-3 z-10 shadow-sm sm:right-6"
+            >
+              Latest
+            </Button>
           )}
         </div>
 
         <div className="shrink-0 pb-2">
           <div className="mx-auto w-full max-w-[728px] px-3 sm:px-6">
-            {off && (
-              <Callout tone="warning" icon={RiAlertLine} className="mb-2">
-                The assistant is off. {ai?.reason}
+            {/* A new chat explains this in its empty state; an existing chat needs the line here. */}
+            {off && items.length > 0 && (
+              <Callout tone="warning" className="mb-2">
+                The Assistant needs an Anthropic API key. Set ANTHROPIC_API_KEY, then restart Acnologia.
               </Callout>
             )}
             <Composer

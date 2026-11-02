@@ -229,7 +229,7 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
                 <span className="text-body-2-medium text-text-primary">
                   {k.validity === "valid" ? "Works. " : k.validity === "invalid" ? "Not working. " : "Not known yet. "}
                 </span>
-                <span className="wrap-anywhere">{validityText(k, now)}.</span>
+                <span className="wrap-anywhere">{validityText(k, now).replace(/\.$/, "")}.</span>
               </p>
 
               <section aria-labelledby="key-facts">
@@ -272,7 +272,7 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
                     </>
                   )}
                   {/* For an invalid key the line above already quotes this error. */}
-                  {k.last_error && !(k.validity === "invalid" && validityText(k, now) === k.last_error) && (
+                  {k.last_error && k.validity !== "invalid" && (
                     <Fact label="Last error" wide>
                       <span className="wrap-anywhere text-text-error-primary">{k.last_error}</span>
                     </Fact>
@@ -303,7 +303,7 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
                       {shownEvents.map((e) => (
                         <li key={e.id} className="flex items-start gap-2.5 border-b border-separator-border px-3 py-2.5 last:border-b-0">
                           <div className="shrink-0 pt-0.5">
-                            <KindBadge kind={e.kind} />
+                            <KindBadge kind={e.kind} detail={e.detail} />
                           </div>
                           <div className="min-w-0 flex-1">
                             {e.detail ? (

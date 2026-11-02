@@ -39,6 +39,7 @@ import { AddKeysModal } from "./AddKeysModal";
 import { RevealModal } from "./RevealModal";
 import { KeyDrawer } from "./KeyDrawer";
 import { IntegratePanel } from "./IntegratePanel";
+import { LlmBriefButton } from "./LlmBrief";
 import { ServiceSettings } from "./ServiceSettings";
 import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
@@ -229,6 +230,7 @@ export function ServicePage() {
         actions={
           <>
             <ActionIcon icon={RiRefreshLine} label="Refresh" size="medium" busy={refreshing} disabled={refreshing} onClick={() => void refresh()} />
+            <LlmBriefButton service={service} />
             {perms.manage && keys.length > 0 && provider?.spec?.health && (
               <Button
                 variant="secondary"
@@ -257,32 +259,43 @@ export function ServicePage() {
         </p>
       )}
 
-      {/* Phones: one swipeable row, so the keys start on the first screen instead of after four rows of tiles. */}
-      <div
-        className="-mx-4 mt-6 grid snap-x snap-mandatory auto-cols-[minmax(132px,40%)] grid-flow-col gap-2.5 overflow-x-auto scroll-px-4 px-4 pb-1 pt-px [scrollbar-width:none] sm:mx-0 sm:mt-8 sm:snap-none sm:auto-cols-auto sm:grid-flow-row sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 sm:pt-0 lg:grid-cols-7 [&::-webkit-scrollbar]:hidden"
-        role="group"
-        aria-label="Key pool summary"
-      >
-        <StatTile className="snap-start" label="Available" value={num(counts.available)} tone={counts.available > 0 ? "success" : counts.busy > 0 ? undefined : "error"} />
-        <StatTile className="snap-start" label="Busy" value={num(counts.busy)} tone={counts.busy ? "accent" : undefined} sub="at their limit" />
-        <StatTile className="snap-start" label="Cooling" value={num(counts.cooling)} tone={counts.cooling ? "warning" : undefined} />
-        <StatTile className="snap-start" label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "warning" : undefined} />
+      {/* Phones: two columns, and the tiles that read 0 for momentary states drop out to keep the keys close. */}
+      <div className="mt-6 grid grid-cols-2 gap-2.5 sm:mt-8 sm:grid-cols-4 lg:grid-cols-7" role="group" aria-label="Key pool summary">
+        <StatTile
+          label="Available"
+          value={num(counts.available)}
+          tone={counts.available > 0 ? "success" : counts.busy > 0 ? undefined : "error"}
+          sub={counts.backup ? `${counts.backup} backup` : undefined}
+        />
+        <StatTile
+          className={cx(!counts.busy && "max-sm:hidden")}
+          label="Busy"
+          value={num(counts.busy)}
+          tone={counts.busy ? "accent" : undefined}
+          sub="at their concurrency limit"
+        />
+        <StatTile
+          className={cx(!counts.cooling && "max-sm:hidden")}
+          label="Cooling"
+          value={num(counts.cooling)}
+          tone={counts.cooling ? "warning" : undefined}
+        />
+        <StatTile label="Out of quota" value={num(counts.exhausted)} tone={counts.exhausted ? "warning" : undefined} />
         {/* Banned keys count as invalid here; the sub line splits them out. */}
         <StatTile
-          className="snap-start"
           label="Invalid"
           value={num(counts.invalid + counts.banned)}
           tone={counts.invalid + counts.banned ? "error" : undefined}
           sub={counts.banned ? `${counts.banned} banned` : undefined}
         />
         <StatTile
-          className="snap-start"
+          className={cx(!counts.inUse && "max-sm:hidden")}
           label="In use"
           value={num(counts.inUse)}
           tone={counts.inUse > 0 ? "accent" : undefined}
-          sub={service.max_concurrency > 0 ? `up to ${service.max_concurrency} per key` : "no limit per key"}
+          sub="requests running now"
         />
-        <StatTile className="snap-start" label="Requests, 24h" value={compact(service.requests_24h)} sub={counts.backup ? `${counts.backup} backup` : undefined} />
+        <StatTile label="Requests, 24h" value={compact(service.requests_24h)} />
       </div>
 
       <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="mt-10 gap-6">
@@ -328,6 +341,7 @@ export function ServicePage() {
               serviceMax={service.max_concurrency ?? 0}
               quotaUnit={provider?.spec?.quota?.unit}
               resetExact={providerGivesReset(provider)}
+              strategy={service.strategy}
               onOpen={setOpenKey}
               onEdit={setEditing}
               onReveal={setRevealing}

@@ -59,3 +59,31 @@ test("New chat gives a blank chat, and coming back keeps it blank", async ({ pag
   await expect(page.getByText("What can I help with?")).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("an older message shows its inline keys as chips, not placeholder text", async ({ page, run, errors }) => {
+  await mockChat(page, run.now);
+  await page.goto("/assistant/7");
+  await expect(page.getByText("Delete key", { exact: false }).first()).toBeVisible();
+
+  await expect(page.getByText("3 keys secured")).toBeVisible();
+  await expect(page.getByText("[key k1", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("sent to Claude as placeholders", { exact: false })).toHaveCount(0);
+  const chips = page.getByRole("list", { name: "Secured keys" }).last();
+  await expect(chips.getByText("acct-9")).toBeVisible();
+  await expect(chips.getByText("…0aa4")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("with AI off, a new chat says how to turn it on", async ({ page, run, errors }) => {
+  await mockChat(page, run.now);
+  await page.route("**/api/admin/chat/threads", (r) =>
+    r.fulfill({ json: { threads: [], ai: { enabled: false, model: "", reason: "Set ANTHROPIC_API_KEY and restart Acnologia." } } }),
+  );
+  await page.goto("/assistant");
+
+  await expect(page.getByRole("heading", { name: "The Assistant needs an Anthropic API key" })).toBeVisible();
+  await expect(page.getByText("Enter to send", { exact: false })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open Settings" }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  expect(errors).toEqual([]);
+});

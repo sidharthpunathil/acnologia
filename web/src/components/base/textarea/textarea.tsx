@@ -94,7 +94,6 @@ const textareaStyles = sortCx({
     "focus:placeholder:text-text-primary",
     "disabled:text-input-disabled-text disabled:placeholder:text-input-disabled-text",
     "disabled:cursor-not-allowed",
-    "aria-invalid:placeholder:text-text-error-placeholder",
   ].join(" "),
 
   resize: {

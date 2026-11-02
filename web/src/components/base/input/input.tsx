@@ -3,6 +3,7 @@
 import {
   createContext,
   useContext,
+  useState,
   type ComponentType,
   type ReactNode,
   type Ref,
@@ -19,6 +20,7 @@ import type {
   InputProps as AriaInputProps,
   TextFieldProps as AriaTextFieldProps,
 } from "react-aria-components";
+import { RiEyeLine, RiEyeOffLine } from "@remixicon/react";
 import { Label } from "./label";
 import { HintText, hintTextClassName } from "./hint-text";
 import { cx, sortCx } from "@/utils/cx";
@@ -162,7 +164,6 @@ const inputStyles = sortCx({
     "focus:placeholder:text-text-primary",
     "disabled:text-input-disabled-text disabled:placeholder:text-input-disabled-text",
     "disabled:cursor-not-allowed",
-    "aria-invalid:placeholder:text-text-error-placeholder",
   ].join(" "),
 
   icon: "size-5 shrink-0",
@@ -276,6 +277,24 @@ export interface InputProps
   /** Direction of the editable value, independent of the label and adornments.
    * Email, URL and telephone inputs default to LTR inside RTL forms. */
   inputDir?: "ltr" | "rtl" | "auto";
+  /** With type="password": adds a button that shows or hides the value. */
+  revealable?: boolean;
+}
+
+/** The show or hide button a revealable password field carries. */
+function RevealToggle({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
+  const Icon = shown ? RiEyeOffLine : RiEyeLine;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={shown ? "Hide password" : "Show password"}
+      aria-pressed={shown}
+      className="-my-1 -me-1 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-foreground-icon-tertiary transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-border-button-active"
+    >
+      <Icon className="size-4.5" aria-hidden />
+    </button>
+  );
 }
 
 export function Input({
@@ -293,11 +312,15 @@ export function Input({
   ref,
   groupRef,
   className,
+  revealable,
   ...textFieldProps
 }: InputProps) {
+  const [shown, setShown] = useState(false);
+  const reveal = revealable && textFieldProps.type === "password";
   return (
     <TextField
       {...textFieldProps}
+      type={reveal && shown ? "text" : textFieldProps.type}
       className={className}
       // Don't clobber an explicit aria-label; fall back to the placeholder
       // only for unlabelled fields that don't provide one.
@@ -325,7 +348,7 @@ export function Input({
             leadingIcon={leadingIcon}
             trailingIcon={trailingIcon}
             leadingAddon={leadingAddon}
-            trailingAddon={trailingAddon}
+            trailingAddon={reveal ? <RevealToggle shown={shown} onToggle={() => setShown((v) => !v)} /> : trailingAddon}
             fieldClassName={fieldClassName}
           />
           {isInvalid && errorMessage != null ? (

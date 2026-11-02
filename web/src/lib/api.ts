@@ -141,7 +141,7 @@ export const api = {
 
   // Me
   me: () => request<User>("GET", "/api/admin/me"),
-  updateMe: (body: { name?: string; current_password: string; password?: string }) => request<User>("PATCH", "/api/admin/me", body),
+  updateMe: (body: { name?: string; current_password?: string; password?: string }) => request<User>("PATCH", "/api/admin/me", body),
 
   // Overview
   overview: () => request<Overview>("GET", "/api/admin/overview"),

@@ -3,6 +3,7 @@ import {
   RiDashboard3Line,
   RiFlowChart,
   RiKey2Line,
+  RiSettings3Line,
   RiShieldCheckLine,
   RiShieldKeyholeLine,
 } from "@remixicon/react";
@@ -10,6 +11,7 @@ import { maskSecret, parseKeys } from "@/lib/keyparse";
 import { useNow } from "@/hooks/useNow";
 import type { ChatThread } from "@/lib/types";
 import type { DraftAttachment } from "@/stores/assistant";
+import { Button } from "@/components/base/buttons/button";
 import { CloseButton } from "@/components/base/buttons/close-button";
 import { Kbd } from "@/components/base/kbd/kbd";
 import { AgentChatHistory, compactAge } from "@/components/application/agent-chat/agent-chat-history";
@@ -58,8 +60,32 @@ export function ThreadList({
   );
 }
 
-/** A new chat: the mark, one line on what the assistant does, and four starters. */
-export function EmptyState({ off, onPick }: { off: boolean; onPick: (text: string) => void }) {
+/**
+ * A new chat: the mark, one line on what the assistant does, and four starters.
+ * With no Anthropic API key it says how to turn the Assistant on instead.
+ */
+export function EmptyState({
+  off,
+  onPick,
+  onSettings,
+}: {
+  off: boolean;
+  onPick: (text: string) => void;
+  onSettings: () => void;
+}) {
+  if (off)
+    return (
+      <div className="fade-up flex min-h-full flex-col items-center justify-center py-8 text-center">
+        <Mark size={44} />
+        <h2 className="mt-4 text-title-2-medium text-text-primary [text-wrap:balance]">The Assistant needs an Anthropic API key</h2>
+        <p className="mt-1.5 max-w-sm text-body-regular text-text-secondary [text-wrap:pretty]">
+          Set ANTHROPIC_API_KEY in .env or the environment, then restart Acnologia. Everything else works without it.
+        </p>
+        <Button variant="secondary" size="small" leadingIcon={RiSettings3Line} className="mt-5" onClick={onSettings}>
+          Open Settings
+        </Button>
+      </div>
+    );
   return (
     <div className="fade-up flex min-h-full flex-col items-center justify-center py-8 text-center">
       <Mark size={44} />
@@ -101,6 +127,7 @@ export function EmptyState({ off, onPick }: { off: boolean; onPick: (text: strin
  * ring is gone and the label is plain text.
  */
 export function LiveStatus({ step, startedAt }: { step?: string; startedAt?: string }) {
+  // The label stays solid (no shimmer) so the step is readable; the dot wave and ring carry the motion.
   const label = step?.trim() || "Working";
   const from = Date.parse(startedAt ?? "");
   return (
@@ -109,7 +136,14 @@ export function LiveStatus({ step, startedAt }: { step?: string; startedAt?: str
         <Mark />
       </span>
       <span key={label} className="chat-swap min-w-0">
-        <AgentThinking variant="wave" tone="default" label={label} since={Number.isNaN(from) ? undefined : from} />
+        <AgentThinking
+          variant="wave"
+          tone="default"
+          label={label}
+          shimmer={false}
+          labelClassName="text-text-secondary text-body-2-medium"
+          since={Number.isNaN(from) ? undefined : from}
+        />
       </span>
       <span className="sr-only" aria-live="polite">
         Claude is working: {label}
@@ -260,11 +294,18 @@ export function Composer({
       working={working}
       disabled={off}
       hasContent={!!attachment}
-      placeholder={off ? "The assistant is off" : "Ask anything, or paste or drop keys to add"}
+      placeholder={
+        off
+          ? "The Assistant is off"
+          : working
+            ? "Type your next message. It sends when this step finishes."
+            : "Ask anything, or paste or drop keys to add"
+      }
       onPaste={onPaste}
       attachment={attachment ? <AttachmentPreview att={attachment} onClear={onClearAttachment} /> : null}
       statusId="assistant-hint"
       status={
+        off ? null : (
         <p className="text-caption-1-regular text-text-tertiary [text-wrap:balance]">
           {note ? (
             <span className="text-text-secondary">
@@ -273,6 +314,18 @@ export function Composer({
             </span>
           ) : keyish ? (
             <span className="text-text-secondary">Claude sees keys only as placeholders. This chat keeps their last 4 characters.</span>
+          ) : working ? (
+            <>
+              <span className="text-text-secondary">Working on it. You can keep typing.</span>
+              {model && (
+                <>
+                  <span className="mx-2" aria-hidden>
+                    ·
+                  </span>
+                  <ComposerModel model={model} />
+                </>
+              )}
+            </>
           ) : (
             <>
               <span className="hidden [@media(hover:hover)]:inline">Enter to send, Shift+Enter for a new line, / to focus</span>
@@ -287,6 +340,7 @@ export function Composer({
             </>
           )}
         </p>
+        )
       }
     />
   );

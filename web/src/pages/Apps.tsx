@@ -44,7 +44,7 @@ function TipButton({ icon, label, onClick, disabled }: { icon: IconComponent; la
     <TooltipTrigger delay={300}>
       <Focusable>
         {/* aria-disabled rather than disabled, so focus stays put and returns here after a dialog it opened. */}
-        <IconButton icon={icon} size="small" aria-label={label} onClick={disabled ? undefined : onClick} aria-disabled={disabled || undefined} />
+        <IconButton icon={icon} size="small" className="pointer-coarse:size-11" aria-label={label} onClick={disabled ? undefined : onClick} aria-disabled={disabled || undefined} />
       </Focusable>
       <Tooltip>{label}</Tooltip>
     </TooltipTrigger>
@@ -280,7 +280,7 @@ function AppFormModal({
             />
           </div>
           <HintText>
-            {form.allowed_services.length ? `Limited to ${plural(form.allowed_services.length, "service")}.` : "Pick none to allow every service."}
+            {form.allowed_services.length ? `Limited to ${plural(form.allowed_services.length, "service")}.` : "Leave all unselected to allow every service, including ones you add later."}
           </HintText>
         </div>
         <fieldset className="flex flex-col gap-3">
@@ -582,6 +582,7 @@ export function AppsPage() {
                         />
                         <ConfirmButton
                           iconOnly
+                          variant="outline"
                           label="Delete app"
                           confirmLabel="Delete"
                           onConfirm={async () => {
