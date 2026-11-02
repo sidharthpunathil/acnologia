@@ -3,6 +3,7 @@ export {
   AcnologiaError,
   NoKeyAvailableError,
   AllKeysBusyError,
+  ServiceUnavailableError,
   KeyRotationError,
   RateLimitedError,
   QuotaExhaustedError,

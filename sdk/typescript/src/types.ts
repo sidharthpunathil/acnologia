@@ -32,6 +32,11 @@ export interface LeaseOptions {
    * concurrency limit. Omit or 0 to fail fast with `AllKeysBusyError`.
    */
   waitSec?: number;
+  /**
+   * Reserve the key for this lease only: no other lease or proxy call gets it until the lease
+   * is reported or expires. Sent only when true.
+   */
+  exclusive?: boolean;
 }
 
 export interface ReportOptions {
@@ -49,6 +54,8 @@ export interface WithKeyOptions {
   ttlSec?: number;
   /** Passed to every lease call. See `LeaseOptions.waitSec`. */
   waitSec?: number;
+  /** Passed to every lease call. See `LeaseOptions.exclusive`. */
+  exclusive?: boolean;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -79,6 +86,8 @@ export interface LeaseJSON {
   auth: AuthSpec;
   base_url: string;
   expires_at: string;
+  /** True when the key is reserved for this lease only. */
+  exclusive?: boolean;
 }
 
 export type QueryInit =

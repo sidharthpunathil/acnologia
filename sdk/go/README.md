@@ -215,6 +215,30 @@ Proxy mode needs none of this: Acnologia queues proxied requests for up to the
 service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
 than the limit in parallel on one key.
 
+## Long jobs: renew and exclusive leases
+
+`lease.Renew(ctx, ttl)` extends an open lease so a long job keeps its key, and
+updates `lease.ExpiresAt` (`c.Renew(ctx, lease, ttl)` does the same). A zero
+`ttl` uses the server default (120 seconds); the server caps it at 24 hours.
+When the lease is no longer open it returns an `*acnologia.APIError` with
+`Code: "lease_not_found"` (HTTP 404).
+
+`LeaseOptions{Exclusive: true}` reserves the key for your lease only: no other
+lease or proxy call gets it until you report or the lease expires.
+`lease.Exclusive` says whether you got it. With `WithKey`, pass it through
+`WithLeaseOptions`; it applies to every lease `WithKey` takes itself.
+
+```go
+lease, err := c.Lease(ctx, "serpapi", &acnologia.LeaseOptions{TTL: 10 * time.Minute, Exclusive: true})
+if err != nil {
+	return err
+}
+// ... halfway through a long job:
+if _, err := lease.Renew(ctx, 10*time.Minute); err != nil {
+	return err
+}
+```
+
 ## Services
 
 ```go
@@ -233,7 +257,8 @@ for _, s := range svcs {
 | `*acnologia.ErrRateLimited{RetryAfter}` | `acnologia.RateLimited` | you return it from `WithKey` |
 | `*acnologia.ErrQuotaExhausted` | `acnologia.QuotaExhausted` | you return it from `WithKey` |
 | `*acnologia.ErrInvalidKey` | `acnologia.InvalidKey` | you return it from `WithKey` |
-| `*acnologia.APIError{StatusCode, Code, Message}` | | any other non-2xx from the consumer API |
+| `*acnologia.ErrServiceUnavailable{RetryAfter}` (embeds `APIError`) | `acnologia.ServiceUnavailable` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Not a `NoKeyAvailable`. |
+| `*acnologia.APIError{StatusCode, Code, Message}` | | any other non-2xx from the consumer API, such as 404 `lease_not_found` from `Renew` |
 
 Each typed error matches its sentinel, so both styles work:
 

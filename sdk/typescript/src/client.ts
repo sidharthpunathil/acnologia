@@ -3,6 +3,7 @@ import {
   AcnologiaError,
   KeyRotationError,
   NoKeyAvailableError,
+  ServiceUnavailableError,
 } from "./errors.js";
 import type {
   AuthSpec,
@@ -88,8 +89,10 @@ export class Lease {
   readonly secret: string;
   readonly auth: AuthSpec;
   readonly baseUrl: string;
-  readonly expiresAt: string;
+  /** True when the key is reserved for this lease only. */
+  readonly exclusive: boolean;
   readonly raw: LeaseJSON;
+  private _expiresAt: string;
   private _reported = false;
 
   constructor(
@@ -103,7 +106,32 @@ export class Lease {
     this.secret = raw.secret;
     this.auth = raw.auth ?? { type: "header", name: "" };
     this.baseUrl = (raw.base_url ?? "").replace(/\/+$/, "");
-    this.expiresAt = raw.expires_at;
+    this._expiresAt = raw.expires_at;
+    this.exclusive = raw.exclusive === true;
+  }
+
+  /** When the lease expires (RFC 3339). Updated by `renew()`. */
+  get expiresAt(): string {
+    return this._expiresAt;
+  }
+
+  /**
+   * Extend this open lease so a long job keeps its key. Omit `ttlSec` for the server default
+   * (120 seconds); the server caps it at 24 hours. Returns the new expiry and updates
+   * `expiresAt`. Throws `AcnologiaError` with code `lease_not_found` when the lease is no
+   * longer open.
+   */
+  async renew(ttlSec?: number): Promise<string> {
+    const body: Record<string, unknown> = {};
+    if (ttlSec !== undefined && ttlSec > 0) body.ttl_sec = Math.ceil(ttlSec);
+    const res = await this.client._json<{ ok: boolean; expires_at?: string }>(
+      "POST",
+      `/api/v1/leases/${encodeURIComponent(this.leaseId)}/renew`,
+      body,
+    );
+    if (!res?.expires_at) throw new AcnologiaError("renew response has no expires_at", 200, "bad_response", res);
+    this._expiresAt = res.expires_at;
+    return res.expires_at;
   }
 
   /** True once `report()` has been called for this lease. */
@@ -177,7 +205,8 @@ export class Lease {
       secret: "***",
       auth: this.auth,
       baseUrl: this.baseUrl,
-      expiresAt: this.expiresAt,
+      expiresAt: this._expiresAt,
+      exclusive: this.exclusive,
       reported: this._reported,
     };
   }
@@ -308,6 +337,11 @@ export class Acnologia {
       const message: string = data?.error?.message ?? (text || res.statusText || `HTTP ${res.status}`);
       const ra = data?.retry_after_sec;
       const retryAfter = typeof ra === "number" ? ra : null;
+      if (code === "service_unavailable") {
+        const header = Number(res.headers?.get?.("retry-after") ?? "");
+        const fallback = Number.isFinite(header) && header > 0 ? header : null;
+        throw new ServiceUnavailableError(message, retryAfter && retryAfter > 0 ? retryAfter : fallback, data, res.status);
+      }
       if (code === "all_keys_busy") {
         throw new AllKeysBusyError(message, retryAfter, data);
       }
@@ -351,6 +385,7 @@ export class Acnologia {
       }
       body.wait_sec = Math.ceil(opts.waitSec);
     }
+    if (opts.exclusive === true) body.exclusive = true;
     const raw = await this._json<LeaseJSON>("POST", "/api/v1/lease", body);
     return new Lease(this, raw);
   }
@@ -361,13 +396,13 @@ export class Acnologia {
    * Returns whatever `fn` returns. Reports `ok` on success and `error` on any other throw.
    *
    * Every lease is reported, whatever `fn` does. On services with a concurrency limit an
-   * unreported lease keeps one of the key's slots busy until its TTL expires. `waitSec` is
-   * passed to every lease call.
+   * unreported lease keeps one of the key's slots busy until its TTL expires. `ttlSec`,
+   * `waitSec` and `exclusive` are passed to every lease call.
    */
   async withKey<T>(service: string, fn: (lease: Lease) => T | Promise<T>, opts: WithKeyOptions = {}): Promise<T> {
     const maxAttempts = Math.max(1, opts.maxAttempts ?? 5);
     const tried: number[] = [];
-    let lease = await this.lease(service, { ttlSec: opts.ttlSec, waitSec: opts.waitSec });
+    let lease = await this.lease(service, { ttlSec: opts.ttlSec, waitSec: opts.waitSec, exclusive: opts.exclusive });
     let lastErr: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -393,7 +428,7 @@ export class Acnologia {
             throw reportErr;
           }
           if (!rotate) break;
-          lease = next ?? (await this.lease(service, { excludeKeyIds: [...tried], ttlSec: opts.ttlSec, waitSec: opts.waitSec }));
+          lease = next ?? (await this.lease(service, { excludeKeyIds: [...tried], ttlSec: opts.ttlSec, waitSec: opts.waitSec, exclusive: opts.exclusive }));
           continue;
         }
         try {
@@ -410,6 +445,13 @@ export class Acnologia {
       return result;
     }
     throw lastErr;
+  }
+
+  /**
+   * Extend an open lease and update its `expiresAt`. The same as `lease.renew(ttlSec)`.
+   */
+  renew(lease: Lease, ttlSec?: number): Promise<string> {
+    return lease.renew(ttlSec);
   }
 
   /** Proxy helper: requests go through Acnologia, which injects a key and rotates for you. */

@@ -594,3 +594,126 @@ func TestStringRedactsSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestRenew(t *testing.T) {
+	var paths []string
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		paths = append(paths, r.URL.EscapedPath())
+		bodies = append(bodies, body)
+		if strings.Contains(r.URL.Path, "gone") {
+			w.WriteHeader(404)
+			_, _ = io.WriteString(w, `{"error":{"code":"lease_not_found","message":"lease not found"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"expires_at":"2026-11-01T13:00:00Z"}`)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "acn_test")
+	l := &Lease{LeaseID: "a/b c", client: c}
+	exp, err := l.Renew(context.Background(), 1500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 11, 1, 13, 0, 0, 0, time.UTC)
+	if !exp.Equal(want) || !l.ExpiresAt.Equal(want) {
+		t.Fatalf("expires %v, lease %v", exp, l.ExpiresAt)
+	}
+	if paths[0] != "/api/v1/leases/a%2Fb%20c/renew" {
+		t.Fatalf("path %q", paths[0])
+	}
+	if bodies[0]["ttl_sec"] != float64(2) {
+		t.Fatalf("body %v", bodies[0])
+	}
+	if _, err := c.Renew(context.Background(), l, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies[1]) != 0 {
+		t.Fatalf("zero ttl should send {}, got %v", bodies[1])
+	}
+	gone := &Lease{LeaseID: "gone", client: c}
+	_, err = gone.Renew(context.Background(), 0)
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.StatusCode != 404 || ae.Code != "lease_not_found" {
+		t.Fatalf("want 404 lease_not_found, got %v", err)
+	}
+}
+
+func TestLeaseExclusive(t *testing.T) {
+	var leases []map[string]any
+	var reports []map[string]any
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if strings.HasSuffix(r.URL.Path, "/report") {
+			reports = append(reports, body)
+			_, _ = io.WriteString(w, `{"ok":true,"next":null}`)
+			return
+		}
+		leases = append(leases, body)
+		n++
+		l := leaseJSON(int64(n))
+		l["exclusive"] = body["exclusive"] == true
+		_ = json.NewEncoder(w).Encode(l)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "acn_test")
+	plain, err := c.Lease(context.Background(), "serpapi", &LeaseOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := leases[0]["exclusive"]; ok || plain.Exclusive {
+		t.Fatalf("exclusive should be omitted by default: %v", leases[0])
+	}
+	calls := 0
+	err = c.WithKey(context.Background(), "serpapi", func(l *Lease) error {
+		calls++
+		if !l.Exclusive {
+			t.Errorf("lease %d not exclusive", calls)
+		}
+		if calls == 1 {
+			return &ErrRateLimited{StatusCode: 429}
+		}
+		return nil
+	}, WithLeaseOptions(LeaseOptions{Exclusive: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(leases) != 3 || leases[1]["exclusive"] != true || leases[2]["exclusive"] != true {
+		t.Fatalf("calls %d, leases %v", calls, leases)
+	}
+}
+
+func TestServiceUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("h") != "" {
+			w.Header().Set("Retry-After", "9")
+			w.WriteHeader(503)
+			_, _ = io.WriteString(w, `{"error":{"code":"service_unavailable","message":"circuit open"}}`)
+			return
+		}
+		w.WriteHeader(503)
+		_, _ = io.WriteString(w, `{"error":{"code":"service_unavailable","message":"circuit open"},"retry_after_sec":30}`)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "acn_test")
+	_, err := c.Lease(context.Background(), "serpapi", nil)
+	var su *ErrServiceUnavailable
+	if !errors.As(err, &su) || su.RetryAfter != 30*time.Second || su.StatusCode != 503 || su.Code != "service_unavailable" {
+		t.Fatalf("got %v", err)
+	}
+	if !errors.Is(err, ServiceUnavailable) || errors.Is(err, NoKeyAvailable) {
+		t.Fatal("should match ServiceUnavailable and not NoKeyAvailable")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Code != "service_unavailable" {
+		t.Fatal("should match *APIError")
+	}
+	err = c.do(context.Background(), http.MethodGet, "/x?h=1", nil, nil)
+	if !errors.As(err, &su) || su.RetryAfter != 9*time.Second {
+		t.Fatalf("header fallback: %v", err)
+	}
+}

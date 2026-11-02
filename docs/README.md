@@ -8,6 +8,7 @@
 | [Configuration](configuration.md) | operators | Environment variables, service settings, self-hosting, backups, upgrading. |
 | [HTTP API](api.md) | integrators | Consumer error codes and every dashboard route with its required role. |
 | [Command line](cli.md) | operators, CI | Installing `acn`, browser sign in, every command, CI variables, the device flow. |
+| [SDKs](sdks.md) | app authors | The twelve client libraries, installing each today, the shared surface, running their tests. |
 | [Provider specs](providers.md) | admins, contributors | Built in providers, the spec format, publishing, versions, the AI builder. |
 | [Development](development.md) | contributors | Setup, layout, tests, conventions. |
 | [llms.txt](llms.txt) / [llms-full.txt](llms-full.txt) | app and agent authors | Consumer API, proxy, MCP, SDKs, redaction guarantees and errors. |

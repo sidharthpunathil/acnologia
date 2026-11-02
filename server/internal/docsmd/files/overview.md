@@ -98,10 +98,10 @@ TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 - **An [Assistant](docs/flows.md#assistant-chat)** that manages the pool in
   chat with your own permissions. Pasted keys go to an encrypted vault and the
   model only sees placeholders.
-- **Speaks to agents and scripts**: MCP at `/mcp`, `/llms.txt`, SDKs for
-  [Python](sdk/python), [TypeScript](sdk/typescript), [Go](sdk/go),
-  [PHP](sdk/php) and [Ruby](sdk/ruby), and the [`acn` CLI](docs/cli.md)
-  with browser sign in.
+- **Speaks to agents and scripts**: MCP at `/mcp`, `/llms.txt`,
+  [SDKs](sdk/README.md) for Python, TypeScript, Go, Rust, Java, Kotlin, C#,
+  Swift, Dart, C++, PHP and Ruby, and the [`acn` CLI](docs/cli.md) with
+  browser sign in.
 
 | Apps | Assistant |
 |---|---|
@@ -118,6 +118,7 @@ provider and Claude spend, and a dashboard that works on a phone.
 - [Deploying on Railway](docs/deploy-railway.md): a public deploy behind the access password
 - [HTTP API](docs/api.md): consumer error codes and every dashboard route with its role
 - [Command line](docs/cli.md): install `acn`, sign in through the browser, commands, CI
+- [SDKs](docs/sdks.md): the twelve client libraries, how to install each today, running their tests
 - [Security model](docs/security.md): roles, hidden keys, what the model can see, limits
 - [Provider specs](docs/providers.md): built in providers, the spec format, building one with AI
 - [Architecture](docs/architecture.md) and [Development](docs/development.md)

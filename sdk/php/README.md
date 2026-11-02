@@ -55,10 +55,12 @@ Array bodies are sent as JSON; strings are sent as is.
 
 ## Lease mode
 
-`$acn->lease($service, $excludeKeyIds = [], $ttlSec = null, $waitSec = null)` returns a
+`$acn->lease($service, $excludeKeyIds = [], $ttlSec = null, $waitSec = null, $exclusive = false)` returns a
 `Acnologia\Lease` with `leaseId`, `keyId`, `service`, `secret`, `auth`
-(`['type' => ..., 'name' => ..., 'prefix' => ...]`), `baseUrl` and `expiresAt`. It throws
+(`['type' => ..., 'name' => ..., 'prefix' => ...]`), `baseUrl`, `expiresAt` and `exclusive`. It throws
 `Acnologia\Exception\NoKeyAvailable` (with `retryAfter`) when the pool is drained.
+`exclusive: true` keeps the key from every other caller until you report or the
+lease expires.
 
 `$lease->apply($query, $headers)` returns `['query' => ..., 'headers' => ...]`
 with the secret placed where `auth.type` says: `query` adds a query param
@@ -71,9 +73,16 @@ secret for every type; for `bearer` it replaces `Bearer ` (so `'Token '` gives
 reports `ok`, `rate_limited`, `quota_exhausted`, `invalid` or `error`, and
 returns the next `Lease` (or null) when `$rotate` is true.
 
+`$lease->renew($ttlSec = null)` extends an open lease so a long job keeps its
+key (null uses the server default of 120 seconds; the server caps it at 24
+hours). It returns the new expiry and updates `$lease->expiresAt`.
+`$acn->renew($lease, $ttlSec = null)` does the same without updating the lease.
+A lease that is no longer open throws `AcnologiaException` with `errorCode`
+`lease_not_found`.
+
 ### withKey
 
-`$acn->withKey($service, $fn, $maxAttempts = 5, $ttlSec = null, $waitSec = null)` leases a key, calls `$fn($lease)`,
+`$acn->withKey($service, $fn, $maxAttempts = 5, $ttlSec = null, $waitSec = null, $exclusive = false)` leases a key, calls `$fn($lease)`,
 reports and returns the result. Throw `RateLimited`, `QuotaExhausted` or
 `InvalidKey` from `$fn` to cool the key down and retry with the next one. Any
 other exception is reported as `error` and rethrown.
@@ -182,6 +191,7 @@ than the limit in parallel on one key.
 | `Acnologia\Exception\AcnologiaException` | non 2xx from Acnologia (`statusCode`, `errorCode`), or curl failure |
 | `Acnologia\Exception\NoKeyAvailable` | 503 `no_key_available`, `retryAfter` in seconds, `busy` |
 | `Acnologia\Exception\AllKeysBusy` | 503 `all_keys_busy`: every usable key is at its concurrency limit (extends `NoKeyAvailable`, `busy` is true) |
+| `Acnologia\Exception\ServiceUnavailable` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open; `retryAfter` in seconds (not a `NoKeyAvailable`) |
 | `RateLimited`, `QuotaExhausted`, `InvalidKey` | thrown by you inside `withKey` (all extend `KeyProblem`) |
 
 ## Tests

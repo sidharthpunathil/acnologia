@@ -10,7 +10,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/docsmd"
 )
 
-var docSlugs = []string{"overview", "architecture", "flows", "security", "configuration", "api", "cli", "providers", "development"}
+var docSlugs = []string{"overview", "architecture", "flows", "security", "configuration", "api", "cli", "sdks", "providers", "development"}
 
 func getDoc(t *testing.T, url string) (*http.Response, string) {
 	t.Helper()
@@ -51,7 +51,7 @@ func TestDocsLinksAreRewritten(t *testing.T) {
 		"(/docs/flows#assistant-chat)",
 		"(/docs/assets/catalog.png)",
 		`src="/docs/assets/logo.png"`,
-		"(" + docsmd.RepoURL + "/blob/main/sdk/python)",
+		"(/docs/sdks)",
 		"(" + docsmd.RepoURL + "/blob/main/.env.example)",
 	} {
 		if !strings.Contains(overview, want) {
@@ -70,6 +70,12 @@ func TestDocsLinksAreRewritten(t *testing.T) {
 	_, dev := getDoc(t, e.srv.URL+"/docs/development.md")
 	if !strings.Contains(dev, "(/llms.txt)") || !strings.Contains(dev, "(/llms-full.txt)") {
 		t.Error("development: llms links not rewritten")
+	}
+	_, sdks := getDoc(t, e.srv.URL+"/docs/sdks.md")
+	for _, want := range []string{"(" + docsmd.RepoURL + "/blob/main/sdk/go/README.md)", "(" + docsmd.RepoURL + "/blob/main/sdk/cpp)"} {
+		if !strings.Contains(sdks, want) {
+			t.Errorf("sdks: missing %s", want)
+		}
 	}
 	// In page anchors stay as they are.
 	_, flows := getDoc(t, e.srv.URL+"/docs/flows.md")

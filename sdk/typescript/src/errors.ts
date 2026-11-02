@@ -46,6 +46,22 @@ export class AllKeysBusyError extends NoKeyAvailableError {
   }
 }
 
+/**
+ * The provider keeps failing and its circuit breaker is open (HTTP 503, code
+ * `service_unavailable`). Acnologia paused traffic to it; wait `retryAfter` seconds before
+ * retrying. This is not a `NoKeyAvailableError`.
+ */
+export class ServiceUnavailableError extends AcnologiaError {
+  /** Seconds to wait before retrying, when the server knows it. */
+  readonly retryAfter: number | null;
+
+  constructor(message: string, retryAfter: number | null, body?: unknown, status: number = 503) {
+    super(message, status, "service_unavailable", body);
+    this.name = "ServiceUnavailableError";
+    this.retryAfter = retryAfter;
+  }
+}
+
 export interface RotationErrorOptions {
   statusCode?: number;
   message?: string;

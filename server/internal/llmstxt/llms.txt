@@ -54,13 +54,20 @@ Key facts for agents:
 
 ## SDKs
 
-Every SDK's lease call and `with_key` helper accept a wait option and raise a distinct busy error that still counts as "no key available". `with_key` always reports its leases.
+Twelve SDKs share one surface: proxy, lease, report with rotate, renew, an `exclusive` lease option, `with_key` (or `withKey`), typed errors including a busy error that still counts as "no key available" and a service unavailable error for an open circuit breaker, and `ACNOLOGIA_URL` / `ACNOLOGIA_TOKEN`. `with_key` always reports its leases. None is on a package registry yet: [SDKs](/docs/sdks.md) shows how to install each today.
 
 - [Python](/llms-full.txt): `pip install acnologia`, then `from acnologia import Acnologia`.
 - [TypeScript and JavaScript](/llms-full.txt): `npm install @acnologia/keys`, then `import { Acnologia } from "@acnologia/keys"`. Node 18+, Bun, Deno, browsers.
 - [Go](/llms-full.txt): `go get github.com/sidharthpunathil/acnologia/sdk/go`, package `acnologia`.
 - [PHP](/llms-full.txt): `composer require acnologia/keys`, class `Acnologia\Acnologia`.
 - [Ruby](/llms-full.txt): `gem install acnologia`, then `require "acnologia"` and `Acnologia::Client.new`.
+- [Rust](/llms-full.txt): git dependency on crate `acnologia`, then `acnologia::Client::new`.
+- [Java](/llms-full.txt): `dev.acnologia:acnologia`, class `dev.acnologia.Acnologia`. Java 17+.
+- [Kotlin](/llms-full.txt): `dev.acnologia:acnologia-kotlin`, class `dev.acnologia.kotlin.Acnologia`, coroutines.
+- [C#](/llms-full.txt): project `sdk/csharp/src/Acnologia`, class `Acnologia.AcnologiaClient`. .NET 8.
+- [Swift](/llms-full.txt): `.package(url: "https://github.com/sidharthpunathil/acnologia", branch: "main")`, `import Acnologia`.
+- [Dart and Flutter](/llms-full.txt): git dependency with `path: sdk/dart`, `import 'package:acnologia/acnologia.dart'`.
+- [C++](/llms-full.txt): CMake target `acnologia::acnologia`, `#include <acnologia/acnologia.hpp>`. C++17 and libcurl.
 
 ## Admin API and CLI
 
@@ -73,6 +80,7 @@ Every page of the docs is also served as raw Markdown. Fetch these when you need
 - [Overview](/docs/overview.md): what Acnologia does, quick start and features.
 - [HTTP API](/docs/api.md): consumer error codes and every dashboard route with its required role.
 - [Command line](/docs/cli.md): install the acn CLI, sign in through the browser, commands and CI variables.
+- [SDKs](/docs/sdks.md): the twelve client libraries, how to install each today, the shared surface and running their tests.
 - [Configuration](/docs/configuration.md): environment variables, per service settings, self-hosting, backups and upgrading.
 
 ## Optional

@@ -6,8 +6,8 @@ require "uri"
 require_relative "../lib/acnologia"
 
 class FakeServer
-  attr_reader :log, :reports, :lease_bodies
-  attr_accessor :keys, :busy
+  attr_reader :log, :reports, :lease_bodies, :renew_bodies
+  attr_accessor :keys, :busy, :breaker
 
   def initialize
     @keys = [1, 2, 3]
@@ -16,10 +16,11 @@ class FakeServer
     @log = []
     @reports = []
     @lease_bodies = []
+    @renew_bodies = []
     @n = 0
   end
 
-  def lease_json(exclude)
+  def lease_json(exclude, exclusive = false)
     k = @keys.find { |x| !exclude.include?(x) && !@bad.include?(x) }
     return nil unless k
 
@@ -28,7 +29,7 @@ class FakeServer
     @leases[id] = k
     { "lease_id" => id, "key_id" => k, "service" => "serpapi", "secret" => "s#{k}",
       "auth" => { "type" => "query", "name" => "api_key" }, "base_url" => "https://serpapi.com",
-      "expires_at" => "2026-11-01T00:00:00Z" }
+      "expires_at" => "2026-11-01T00:00:00Z", "exclusive" => exclusive }
   end
 
   def call(method, url, headers, body)
@@ -39,11 +40,14 @@ class FakeServer
 
     if path == "/api/v1/lease"
       @lease_bodies << json
+      if @breaker
+        return Acnologia::Response.new(503, { "retry-after" => "9" }, @breaker)
+      end
       if @busy
         return Acnologia::Response.new(503, {}, '{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}')
       end
 
-      l = lease_json(json["exclude_key_ids"] || [])
+      l = lease_json(json["exclude_key_ids"] || [], json["exclusive"] == true)
       return Acnologia::Response.new(503, {}, '{"error":{"code":"no_key_available","message":"drained"},"retry_after_sec":7}') unless l
 
       Acnologia::Response.new(200, {}, JSON.generate(l))
@@ -54,6 +58,14 @@ class FakeServer
       @bad << key unless json["outcome"] == "ok"
       nxt = json["rotate"] ? lease_json([key]) : nil
       Acnologia::Response.new(200, {}, JSON.generate("ok" => true, "next" => nxt))
+    elsif (m = path.match(%r{\A/api/v1/leases/(.+)/renew\z}))
+      id = URI.decode_www_form_component(m[1])
+      @renew_bodies << json.merge("_id" => id, "_raw" => body)
+      unless @leases.key?(id)
+        return Acnologia::Response.new(404, {}, '{"error":{"code":"lease_not_found","message":"lease is not open"}}')
+      end
+
+      Acnologia::Response.new(200, {}, JSON.generate("ok" => true, "expires_at" => "2026-11-02T00:00:#{json['ttl_sec'] || 0}Z"))
     elsif path == "/api/v1/services"
       Acnologia::Response.new(200, {}, '{"services":[{"slug":"serpapi","available":true}]}')
     else
@@ -231,6 +243,58 @@ class AcnologiaTest < Minitest::Test
     acn = Acnologia::Client.new("http://acnologia.test", "acn_bad", transport: @srv.method(:call))
     err = assert_raises(Acnologia::Error) { acn.services }
     assert_equal 401, err.status
+  end
+
+  def test_renew
+    l = @acn.lease("serpapi")
+    refute l.exclusive?
+    assert_equal "2026-11-02T00:00:90Z", l.renew(ttl_sec: 89.2)
+    assert_equal "2026-11-02T00:00:90Z", l.expires_at
+    assert_equal({ "ttl_sec" => 90 }, @srv.renew_bodies.last.slice("ttl_sec"))
+    assert_includes @srv.log.last[1], "/api/v1/leases/l%2F1/renew"
+    assert_equal "2026-11-02T00:00:0Z", l.renew
+    assert_equal "{}", @srv.renew_bodies.last["_raw"]
+    assert_equal "2026-11-02T00:00:5Z", @acn.renew(l, ttl_sec: 5)
+  end
+
+  def test_renew_not_found
+    gone = Acnologia::Lease.new(@acn, "lease_id" => "nope")
+    err = assert_raises(Acnologia::Error) { gone.renew(ttl_sec: 60) }
+    assert_equal 404, err.status
+    assert_equal "lease_not_found", err.code
+    assert_nil gone.expires_at
+  end
+
+  def test_lease_exclusive
+    l = @acn.lease("serpapi", exclusive: true)
+    assert_equal({ "service" => "serpapi", "exclusive" => true }, @srv.lease_bodies.last)
+    assert l.exclusive
+    assert l.exclusive?
+    @acn.lease("serpapi", exclusive: false)
+    assert_equal({ "service" => "serpapi" }, @srv.lease_bodies.last)
+  end
+
+  def test_with_key_forwards_exclusive
+    @srv.keys = [1]
+    assert_raises(Acnologia::NoKeyAvailable) do
+      @acn.with_key("serpapi", exclusive: true, ttl_sec: 30) { raise Acnologia::RateLimited }
+    end
+    assert_equal [[true, 30], [true, 30]], @srv.lease_bodies.map { |b| [b["exclusive"], b["ttl_sec"]] }
+  end
+
+  def test_service_unavailable
+    @srv.breaker = '{"error":{"code":"service_unavailable","message":"circuit open"},"retry_after_sec":42}'
+    err = assert_raises(Acnologia::ServiceUnavailable) { @acn.lease("serpapi") }
+    refute_kind_of Acnologia::NoKeyAvailable, err
+    assert_kind_of Acnologia::Error, err
+    assert_equal 503, err.status
+    assert_equal "service_unavailable", err.code
+    assert_equal 42, err.retry_after
+    assert_equal "circuit open", err.message
+    @srv.breaker = '{"error":{"code":"service_unavailable","message":"circuit open"}}'
+    assert_equal 9, assert_raises(Acnologia::ServiceUnavailable) { @acn.lease("serpapi") }.retry_after
+    @srv.breaker = ""
+    assert_raises(Acnologia::NoKeyAvailable) { @acn.lease("serpapi") }
   end
 
   def test_proxy

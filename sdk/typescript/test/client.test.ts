@@ -8,6 +8,7 @@ import {
   NoKeyAvailableError,
   QuotaExhaustedError,
   RateLimitedError,
+  ServiceUnavailableError,
   type LeaseJSON,
 } from "../src/index.js";
 
@@ -555,5 +556,99 @@ describe("secret hygiene", () => {
     const view = (o: object) => JSON.stringify((o as any)[Symbol.for("nodejs.util.inspect.custom")]());
     expect(view(lease)).not.toContain("secret-1");
     expect(view(client)).not.toContain("acn_test");
+  });
+});
+
+describe("renew, exclusive and service_unavailable", () => {
+  it("renew posts ttl_sec to the escaped lease path and updates expiresAt", async () => {
+    const { client, calls } = mock((c) =>
+      c.url.endsWith("/api/v1/lease")
+        ? json(leaseJSON(1, { lease_id: "a/b c" }))
+        : json({ ok: true, expires_at: "2026-11-01T13:00:00Z" }),
+    );
+    const lease = await client.lease("serpapi");
+    expect(lease.expiresAt).toBe("2026-11-01T12:00:00Z");
+    const exp = await lease.renew(1.5);
+    expect(exp).toBe("2026-11-01T13:00:00Z");
+    expect(lease.expiresAt).toBe(exp);
+    expect(calls[1].url).toBe("http://acnologia.test/api/v1/leases/a%2Fb%20c/renew");
+    expect(calls[1].method).toBe("POST");
+    expect(calls[1].body).toEqual({ ttl_sec: 2 });
+    await client.renew(lease);
+    expect(calls[2].body).toEqual({});
+  });
+
+  it("renew surfaces 404 lease_not_found as AcnologiaError", async () => {
+    const { client } = mock((c) =>
+      c.url.endsWith("/api/v1/lease")
+        ? json(leaseJSON(1))
+        : json({ error: { code: "lease_not_found", message: "lease not found" } }, 404),
+    );
+    const lease = await client.lease("serpapi");
+    const err = await lease.renew(60).catch((e) => e);
+    expect(err).toBeInstanceOf(AcnologiaError);
+    expect(err).not.toBeInstanceOf(ServiceUnavailableError);
+    expect(err.status).toBe(404);
+    expect(err.code).toBe("lease_not_found");
+  });
+
+  it("sends exclusive only when true and exposes it on the lease", async () => {
+    const { client, calls } = mock((c) => json(leaseJSON(1, { exclusive: (c.body as any).exclusive === true })));
+    const plain = await client.lease("serpapi", { exclusive: false });
+    expect(calls[0].body).toEqual({ service: "serpapi" });
+    expect(plain.exclusive).toBe(false);
+    const held = await client.lease("serpapi", { exclusive: true });
+    expect(calls[1].body).toEqual({ service: "serpapi", exclusive: true });
+    expect(held.exclusive).toBe(true);
+  });
+
+  it("withKey passes exclusive to every lease it takes", async () => {
+    let n = 0;
+    const { client, calls } = mock((c) => {
+      if (c.url.endsWith("/api/v1/lease")) {
+        n++;
+        return json(leaseJSON(n, { exclusive: (c.body as any).exclusive === true }));
+      }
+      return json({ ok: true, next: null });
+    });
+    const seen: boolean[] = [];
+    await client.withKey(
+      "serpapi",
+      (lease) => {
+        seen.push(lease.exclusive);
+        if (lease.keyId === 1) throw new RateLimitedError();
+        return lease.keyId;
+      },
+      { exclusive: true },
+    );
+    expect(seen).toEqual([true, true]);
+    const leases = calls.filter((c) => c.url.endsWith("/api/v1/lease"));
+    expect(leases.map((c) => (c.body as any).exclusive)).toEqual([true, true]);
+  });
+
+  it("throws ServiceUnavailableError with retryAfter, not a NoKeyAvailableError", async () => {
+    const { client } = mock(() =>
+      json({ error: { code: "service_unavailable", message: "circuit open" }, retry_after_sec: 30 }, 503),
+    );
+    const err = await client.lease("serpapi").catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableError);
+    expect(err).toBeInstanceOf(AcnologiaError);
+    expect(err).not.toBeInstanceOf(NoKeyAvailableError);
+    expect(err.status).toBe(503);
+    expect(err.code).toBe("service_unavailable");
+    expect(err.retryAfter).toBe(30);
+  });
+
+  it("ServiceUnavailableError falls back to the Retry-After header", async () => {
+    const { client } = mock(
+      () =>
+        new Response(JSON.stringify({ error: { code: "service_unavailable", message: "circuit open" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json", "Retry-After": "9" },
+        }),
+    );
+    const err = await client.lease("serpapi").catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableError);
+    expect(err.retryAfter).toBe(9);
   });
 });

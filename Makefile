@@ -13,7 +13,7 @@ llms:
 	mkdir -p server/internal/docsmd/files server/internal/docsmd/assets
 	cp README.md server/internal/docsmd/files/overview.md
 	cp docs/architecture.md docs/flows.md docs/security.md docs/configuration.md \
-		docs/api.md docs/providers.md docs/cli.md docs/development.md server/internal/docsmd/files/
+		docs/api.md docs/providers.md docs/cli.md docs/sdks.md docs/development.md server/internal/docsmd/files/
 	cp docs/screenshots/*.png docs/brand/logo.png server/internal/docsmd/assets/
 
 build: web llms

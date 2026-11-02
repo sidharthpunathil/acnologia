@@ -49,10 +49,11 @@ Hash and Array bodies are sent as JSON.
 
 ## Lease mode
 
-`acn.lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil)` returns a
+`acn.lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil, exclusive: false)` returns a
 `Acnologia::Lease` (`lease_id`, `key_id`, `service`, `secret`, `auth`, `base_url`,
-`expires_at`). It raises `Acnologia::NoKeyAvailable` (`retry_after`) when the pool
-is drained.
+`expires_at`, `exclusive`). It raises `Acnologia::NoKeyAvailable` (`retry_after`) when the pool
+is drained. `exclusive: true` keeps the key from every other caller until you
+report or the lease expires.
 
 `lease.apply(query: {}, headers: {})` returns `[query, headers]` with the secret
 placed where `auth["type"]` says: `query` (SerpAPI `api_key`), `header`
@@ -66,9 +67,15 @@ placed where `auth["type"]` says: `query` (SerpAPI `api_key`), `header`
 reports `ok`, `rate_limited`, `quota_exhausted`, `invalid` or `error` and
 returns the next lease (or nil) when `rotate: true`.
 
+`lease.renew(ttl_sec: nil)` extends an open lease so a long job keeps its key
+(nil uses the server default of 120 seconds; the server caps it at 24 hours).
+It returns the new `expires_at` and updates `lease.expires_at`.
+`acn.renew(lease, ttl_sec: nil)` does the same without updating the lease. A
+lease that is no longer open raises `Acnologia::Error` with code `lease_not_found`.
+
 ### with_key
 
-`acn.with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil) { |lease| ... }` leases a key, yields
+`acn.with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil, exclusive: false) { |lease| ... }` leases a key, yields
 it, reports the outcome and returns the block's value. Raise
 `Acnologia::RateLimited`, `Acnologia::QuotaExhausted` or `Acnologia::InvalidKey` to cool
 the key down and retry with the next one. Other exceptions are reported as
@@ -166,6 +173,7 @@ than the limit in parallel on one key.
 | `Acnologia::Error` | non 2xx from Acnologia (`status`, `code`), or a transport failure |
 | `Acnologia::NoKeyAvailable` | 503 `no_key_available`, `retry_after` in seconds, `busy?` |
 | `Acnologia::AllKeysBusy` | 503 `all_keys_busy`: every usable key is at its concurrency limit (subclass of `NoKeyAvailable`, `busy?` is true) |
+| `Acnologia::ServiceUnavailable` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open; `retry_after` in seconds (not a `NoKeyAvailable`) |
 | `Acnologia::RateLimited`, `QuotaExhausted`, `InvalidKey` | raised by you inside `with_key` (all `Acnologia::KeyProblem`) |
 
 ## Tests

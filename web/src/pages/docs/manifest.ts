@@ -1,6 +1,7 @@
 import {
   RiBookOpenLine,
   RiCodeSSlashLine,
+  RiCodeBoxLine,
   RiCpuLine,
   RiGitBranchLine,
   RiPuzzle2Line,
@@ -45,6 +46,7 @@ export const DOCS: DocEntry[] = [
   { slug: "configuration", title: "Configuration", blurb: "Environment variables, per service settings, self-hosting, backups and upgrading.", icon: RiSettings3Line, group: "operate" },
   { slug: "api", title: "HTTP API", blurb: "Consumer error codes and every dashboard route with its required role.", icon: RiCodeSSlashLine, group: "reference" },
   { slug: "cli", title: "Command line", blurb: "Install acn, sign in through the browser, every command and CI variables.", icon: RiTerminalBoxLine, group: "reference" },
+  { slug: "sdks", title: "SDKs", blurb: "The twelve client libraries, how to install each today and how to run their tests.", icon: RiCodeBoxLine, group: "reference" },
   { slug: "providers", title: "Provider specs", blurb: "Built in providers, the spec format, and adding one by hand or with AI.", icon: RiPuzzle2Line, group: "reference" },
   { slug: "development", title: "Development", blurb: "Setup, repository layout, tests and conventions.", icon: RiToolsLine, group: "contribute" },
 ];

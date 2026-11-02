@@ -8,6 +8,7 @@ use Acnologia\Exception\AllKeysBusy;
 use Acnologia\Exception\AcnologiaException;
 use Acnologia\Exception\KeyProblem;
 use Acnologia\Exception\NoKeyAvailable;
+use Acnologia\Exception\ServiceUnavailable;
 
 /**
  * Client for the Acnologia consumer API.
@@ -66,10 +67,18 @@ final class Acnologia
      * Always report the lease: on services with a concurrency limit it holds one of
      * the key's slots until it is reported or its TTL expires.
      *
+     * $exclusive = true keeps the key from every other caller until the lease is
+     * reported or expires.
+     *
      * @param list<int> $excludeKeyIds
      */
-    public function lease(string $service, array $excludeKeyIds = [], ?int $ttlSec = null, ?int $waitSec = null): Lease
-    {
+    public function lease(
+        string $service,
+        array $excludeKeyIds = [],
+        ?int $ttlSec = null,
+        ?int $waitSec = null,
+        bool $exclusive = false,
+    ): Lease {
         $body = ['service' => $service];
         if ($excludeKeyIds) {
             $body['exclude_key_ids'] = array_values($excludeKeyIds);
@@ -83,6 +92,9 @@ final class Acnologia
             }
             $body['wait_sec'] = $waitSec;
             $this->callTimeout = max($this->timeout, $waitSec + 10);
+        }
+        if ($exclusive) {
+            $body['exclusive'] = true;
         }
         try {
             return Lease::fromArray($this, $this->call('POST', '/api/v1/lease', $body));
@@ -115,13 +127,35 @@ final class Acnologia
     }
 
     /**
+     * Extend an open lease so a long job keeps its key. A null (or non positive)
+     * $ttlSec uses the server default (120 seconds); the server caps it at 24 hours.
+     * Returns the new expires_at. Prefer Lease::renew(), which also updates
+     * $lease->expiresAt. Throws AcnologiaException with errorCode lease_not_found
+     * when the lease is no longer open.
+     */
+    public function renew(Lease|string $lease, ?int $ttlSec = null): string
+    {
+        $id = $lease instanceof Lease ? $lease->leaseId : $lease;
+        $body = [];
+        if ($ttlSec !== null && $ttlSec > 0) {
+            $body['ttl_sec'] = $ttlSec;
+        }
+        $data = $this->call('POST', '/api/v1/leases/' . rawurlencode($id) . '/renew', $body);
+        $exp = $data['expires_at'] ?? null;
+        if (!is_string($exp) || $exp === '') {
+            throw new AcnologiaException('renew response has no expires_at');
+        }
+        return $exp;
+    }
+
+    /**
      * Lease a key, call $fn($lease), report the result and return what $fn returned.
      * Throw RateLimited, QuotaExhausted or InvalidKey from $fn to rotate to the next key.
      * Any other exception is reported as error and rethrown.
      *
      * Every lease is reported, whatever $fn does. On services with a concurrency limit an
-     * unreported lease keeps one of the key's slots busy until its TTL expires. $waitSec is
-     * passed to every lease call.
+     * unreported lease keeps one of the key's slots busy until its TTL expires. $ttlSec,
+     * $waitSec and $exclusive are passed to every lease call.
      *
      * @template T
      * @param callable(Lease): T $fn
@@ -133,13 +167,14 @@ final class Acnologia
         int $maxAttempts = 5,
         ?int $ttlSec = null,
         ?int $waitSec = null,
+        bool $exclusive = false,
     ): mixed
     {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException('maxAttempts must be at least 1');
         }
         $tried = [];
-        $lease = $this->lease($service, [], $ttlSec, $waitSec);
+        $lease = $this->lease($service, [], $ttlSec, $waitSec, $exclusive);
         for ($attempt = 1; ; $attempt++) {
             $tried[] = $lease->keyId;
             try {
@@ -151,7 +186,7 @@ final class Acnologia
                 if ($last) {
                     throw $e;
                 }
-                $lease = $next ?? $this->lease($service, $tried, $ttlSec, $waitSec);
+                $lease = $next ?? $this->lease($service, $tried, $ttlSec, $waitSec, $exclusive);
                 continue;
             } catch (\Throwable $e) {
                 try {
@@ -204,7 +239,8 @@ final class Acnologia
         $body = null;
         if ($json !== null) {
             $headers['Content-Type'] = 'application/json';
-            $body = json_encode($json, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+            // an empty body is a JSON object, not []
+            $body = $json === [] ? '{}' : json_encode($json, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         }
         $res = $this->send($method, $this->baseUrl . $path, $headers, $body);
         $data = null;
@@ -216,6 +252,13 @@ final class Acnologia
             $code = (string) ($err['code'] ?? '');
             $message = (string) ($err['message'] ?? ('HTTP ' . $res->status));
             $retry = is_array($data) && isset($data['retry_after_sec']) ? (int) $data['retry_after_sec'] : null;
+            if ($code === 'service_unavailable') {
+                if ($retry === null) {
+                    $h = trim((string) $res->header('Retry-After'));
+                    $retry = ctype_digit($h) && (int) $h > 0 ? (int) $h : null;
+                }
+                throw new ServiceUnavailable($message, $retry, $res->status);
+            }
             if ($code === 'all_keys_busy') {
                 throw new AllKeysBusy($message, $retry);
             }

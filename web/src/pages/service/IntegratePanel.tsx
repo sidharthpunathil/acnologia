@@ -132,16 +132,7 @@ function snippets(s: Service, host: string, spec?: ProviderSpec): Record<Mode, R
 
   const leaseBody = `{"service": ${lit(slug)}, "ttl_sec": 300}`;
 
-  const more = moreSnippets({
-    host,
-    slug,
-    proxyUrl,
-    pathQ: `${ex.path}${q}`,
-    authType: s.auth_type,
-    authName: a.name,
-    queryKey: a.queryKey,
-    sep: q ? "&" : "?",
-  });
+  const more = moreSnippets({ host, slug, path: ex.path, params: ex.params, authType: s.auth_type });
 
   return {
     proxy: {

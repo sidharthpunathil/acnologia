@@ -20,7 +20,10 @@ final class Lease
         public readonly string $secret,
         public readonly array $auth,
         public readonly string $baseUrl,
-        public readonly ?string $expiresAt,
+        /** When the lease expires. Updated by renew(). */
+        public ?string $expiresAt,
+        /** True when the key is reserved for this lease only. */
+        public readonly bool $exclusive = false,
     ) {
     }
 
@@ -41,7 +44,19 @@ final class Lease
             ],
             (string) ($data['base_url'] ?? ''),
             isset($data['expires_at']) ? (string) $data['expires_at'] : null,
+            ($data['exclusive'] ?? false) === true,
         );
+    }
+
+    /**
+     * Extend this open lease so a long job keeps its key. Null uses the server default
+     * (120 seconds); the server caps it at 24 hours. Returns the new expires_at and
+     * updates $expiresAt. Throws AcnologiaException with errorCode lease_not_found when
+     * the lease is no longer open.
+     */
+    public function renew(?int $ttlSec = null): string
+    {
+        return $this->expiresAt = $this->client->renew($this, $ttlSec);
     }
 
     /**

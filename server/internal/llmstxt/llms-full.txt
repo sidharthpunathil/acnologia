@@ -304,7 +304,11 @@ Prefer `proxy_request` or a service tool over `get_key` so secrets never enter t
 
 ## SDKs
 
-All SDKs share the same shape: `services`, `lease` (returns a lease with `report` and `apply`), `with_key` (calls your function, reports, and rotates when you raise a rate limit, quota or invalid key error), and `proxy(service)` returning raw responses. On the last allowed attempt `with_key` reports without rotating and re-raises.
+There are SDKs for Python, TypeScript, Go, PHP, Ruby, Rust, Java, Kotlin, C#, Swift, Dart and C++. None is on a package registry yet; [the SDK index](/docs/sdks.md) shows how to install each one today and how to run its tests.
+
+All SDKs share the same shape: `services`, `lease` (returns a lease with `report`, `renew` and `apply`), `with_key` or `withKey` (calls your function, reports, and rotates when you raise a rate limit, quota or invalid key error), and `proxy(service)` returning raw responses. On the last allowed attempt `with_key` reports without rotating and re-raises. Every client also reads `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN`, and never prints a secret or token.
+
+Every SDK also takes an `exclusive` lease option (sent as `exclusive: true`; `with_key` passes it to the leases it takes itself), renews an open lease (`POST /api/v1/leases/{id}/renew`, which updates the lease's expiry; 404 `lease_not_found` is the generic API error), and raises a dedicated error for 503 `service_unavailable` (the circuit breaker is open) that carries the retry after and is not a no key error.
 
 Concurrency support is the same everywhere: `lease` and `with_key` take a wait option that is sent as `wait_sec`, a 503 `all_keys_busy` raises a busy error that is a subtype of (or, in Go, the same type as) the no key error so existing handlers keep working, and `with_key` reports every lease it takes, whatever the callback does, so slots are released at once.
 
@@ -315,6 +319,28 @@ Concurrency support is the same everywhere: `lease` and `with_key` take a wait o
 | Go | `LeaseOptions{Wait: 20 * time.Second}`, `WithWait(20 * time.Second)` | `*ErrNoKeyAvailable` with `Busy: true`, matches `acnologia.AllKeysBusy` |
 | PHP | `lease($s, waitSec: 20)`, `withKey($s, $fn, waitSec: 20)` | `Acnologia\Exception\AllKeysBusy` (extends `NoKeyAvailable`), `->busy` |
 | Ruby | `lease(s, wait_sec: 20)`, `with_key(s, wait_sec: 20)` | `Acnologia::AllKeysBusy` (subclass of `NoKeyAvailable`), `busy?` |
+| Rust | `LeaseOptions::new().wait(..)`, `WithKeyOptions::new().wait(..)` | `Error::AllKeysBusy`, `is_no_key_available()` covers both |
+| Java | `LeaseOptions.builder().waitFor(..)`, `WithKeyOptions.builder().waitFor(..)` | `AllKeysBusyException` (extends `NoKeyAvailableException`) |
+| Kotlin | `LeaseOptions(wait = 20.seconds)` | `AllKeysBusyException` (extends `NoKeyAvailableException`) |
+| C# | `new LeaseOptions { Wait = TimeSpan.FromSeconds(20) }` | `AllKeysBusyException` (extends `NoKeyAvailableException`) |
+| Swift | `LeaseOptions(wait: 20)` | `AcnologiaError.allKeysBusy`, `isNoKeyAvailable` covers both |
+| Dart | `lease(s, wait: Duration(seconds: 20))`, `withKey(s, fn, wait: ..)` | `AllKeysBusyException` (extends `NoKeyAvailableException`) |
+| C++ | `LeaseOptions::wait` | `AllKeysBusy` (derives from `NoKeyAvailable`) |
+
+| SDK | renew | exclusive | circuit breaker open |
+|---|---|---|---|
+| Python | `lease.renew(ttl_sec=600)` | `lease(s, exclusive=True)` | `ServiceUnavailable` |
+| TypeScript | `await lease.renew(600)` | `lease(s, { exclusive: true })` | `ServiceUnavailableError` |
+| Go | `l.Renew(ctx, 10*time.Minute)` | `LeaseOptions{Exclusive: true}` | `*ErrServiceUnavailable`, matches `acnologia.ServiceUnavailable` |
+| PHP | `$lease->renew(600)` | `lease($s, exclusive: true)` | `Acnologia\Exception\ServiceUnavailable` |
+| Ruby | `lease.renew(ttl_sec: 600)` | `lease(s, exclusive: true)` | `Acnologia::ServiceUnavailable` |
+| Rust | `lease.renew(Some(Duration::from_secs(600)))` | `LeaseOptions::new().exclusive(true)` | `Error::ServiceUnavailable` |
+| Java | `lease.renew(Duration.ofMinutes(10))` | `LeaseOptions.builder().exclusive(true)` | `ServiceUnavailableException` |
+| Kotlin | `lease.renew(10.minutes)` | `LeaseOptions(exclusive = true)` | `ServiceUnavailableException` |
+| C# | `await lease.RenewAsync(TimeSpan.FromMinutes(10))` | `new LeaseOptions { Exclusive = true }` | `ServiceUnavailableException` |
+| Swift | `try await lease.renew(ttl: 600)` | `LeaseOptions(exclusive: true)` | `AcnologiaError.serviceUnavailable` |
+| Dart | `await lease.renew(ttl: Duration(minutes: 10))` | `lease(s, exclusive: true)` | `ServiceUnavailableException` |
+| C++ | `lease.renew(std::chrono::minutes(10))` | `LeaseOptions::exclusive` | `acnologia::ServiceUnavailable` |
 
 ### Python
 
@@ -417,9 +443,169 @@ res = acn.proxy("serpapi").get("/search.json", "q" => "coffee")
 data = acn.with_key("serpapi") { |lease| ... } # raise Acnologia::RateLimited.new(retry_after: 3600) on 429
 ```
 
+### Rust
+
+```toml
+acnologia = { git = "https://github.com/sidharthpunathil/acnologia", package = "acnologia" }
+```
+
+```rust
+use acnologia::{check_status, Client};
+
+let acn = Client::new("http://localhost:8080", "acn_xxx")?; // or Client::from_env()
+let resp = acn.proxy("serpapi").get("/search.json", &[("q", "coffee")]).await?;
+
+let http = reqwest::Client::new();
+let body = acn
+    .with_key("serpapi", |lease| {
+        let http = http.clone();
+        async move {
+            let req = http.get(lease.url("/search.json", &[("q", "coffee")]));
+            let resp = check_status(lease.apply(req).send().await?)?; // 429, 402, 401, 403 rotate
+            Ok(resp.text().await?)
+        }
+    })
+    .await?;
+```
+
+Errors: `acnologia::Error` with `NoKeyAvailable`, `AllKeysBusy`, `ServiceUnavailable`, `Unauthenticated`, `Forbidden`, `Api`, `RateLimited`, `QuotaExhausted`, `InvalidKey`. A `blocking` feature adds a synchronous client.
+
+### Java
+
+```sh
+cd sdk/java && mvn install   # dev.acnologia:acnologia:0.1.0, Java 17+
+```
+
+```java
+Acnologia acn = Acnologia.create("http://localhost:8080", "acn_xxx"); // or Acnologia.fromEnv()
+HttpResponse<byte[]> res = acn.proxy("serpapi").get("/search.json", Map.of("q", "coffee"));
+
+HttpClient http = HttpClient.newHttpClient();
+String json = acn.withKey("serpapi", lease -> {
+    HttpRequest req = lease.apply(HttpRequest.newBuilder(URI.create(lease.url("/search.json", Map.of("q", "coffee")))).build());
+    HttpResponse<String> r = http.send(req, HttpResponse.BodyHandlers.ofString());
+    if (r.statusCode() == 429) throw new RateLimitedException(Duration.ofHours(1), 429, null);
+    return r.body();
+});
+```
+
+Exceptions: `NoKeyAvailableException`, `AllKeysBusyException`, `ServiceUnavailableException`, `RateLimitedException`, `QuotaExhaustedException`, `InvalidKeyException`.
+
+### Kotlin
+
+```sh
+cd sdk/kotlin && gradle publishToMavenLocal   # dev.acnologia:acnologia-kotlin:0.1.0
+```
+
+```kotlin
+val acn = Acnologia("http://localhost:8080", "acn_xxx") // or Acnologia.fromEnv()
+acn.proxy("serpapi").get("/search.json", mapOf("q" to "coffee")).use { println(it.code) }
+
+val http = OkHttpClient()
+val json: String = acn.withKey("serpapi") { lease ->
+    http.newCall(lease.request("/search.json", mapOf("q" to "coffee"))).await().use { res ->
+        if (res.code == 429) throw RateLimitedException(1.hours, 429)
+        res.body!!.string()
+    }
+}
+```
+
+Coroutines and OkHttp. Exceptions: `NoKeyAvailableException`, `AllKeysBusyException`, `ServiceUnavailableException`, `RateLimitedException`, `QuotaExhaustedException`, `InvalidKeyException`.
+
+### C#
+
+```sh
+dotnet add YourApp.csproj reference path/to/acnologia/sdk/csharp/src/Acnologia/Acnologia.csproj   # .NET 8
+```
+
+```csharp
+using var acn = new AcnologiaClient("http://localhost:8080", "acn_xxx"); // or AcnologiaClient.FromEnvironment()
+using var resp = await acn.Proxy("serpapi").GetAsync("/search.json", new Dictionary<string, string> { ["q"] = "coffee" });
+
+var http = new HttpClient();
+var json = await acn.WithKeyAsync("serpapi", async (lease, ct) =>
+{
+    using var req = new HttpRequestMessage(HttpMethod.Get, lease.Url("/search.json", new Dictionary<string, string> { ["q"] = "coffee" }));
+    lease.Apply(req);
+    using var r = await http.SendAsync(req, ct);
+    if ((int)r.StatusCode == 429) throw new RateLimitedException(TimeSpan.FromHours(1), 429);
+    return await r.Content.ReadAsStringAsync(ct);
+});
+```
+
+Exceptions: `NoKeyAvailableException`, `AllKeysBusyException`, `ServiceUnavailableException`, `UnauthenticatedException`, `ForbiddenException`, `AcnologiaApiException`, and the rotation exceptions `RateLimitedException`, `QuotaExhaustedException`, `InvalidKeyException`.
+
+### Swift
+
+```swift
+.package(url: "https://github.com/sidharthpunathil/acnologia", branch: "main") // product "Acnologia", package "acnologia"
+```
+
+```swift
+import Acnologia
+
+let acn = try Acnologia(baseURL: "http://localhost:8080", token: "acn_xxx") // or Acnologia.fromEnvironment()
+let resp = try await acn.proxy("serpapi").get("/search.json", query: [URLQueryItem(name: "q", value: "coffee")])
+
+let data: Data = try await acn.withKey("serpapi") { lease in
+    var req = URLRequest(url: try lease.url("/search.json", query: [URLQueryItem(name: "q", value: "coffee")]))
+    lease.apply(to: &req)
+    let (data, r) = try await URLSession.shared.data(for: req)
+    if (r as? HTTPURLResponse)?.statusCode == 429 { throw AcnologiaError.rateLimited(retryAfter: 3600, statusCode: 429) }
+    return data
+}
+```
+
+Errors are cases of `AcnologiaError`: `.noKeyAvailable`, `.allKeysBusy`, `.serviceUnavailable`, `.unauthenticated`, `.forbidden`, `.api`, and the rotation cases `.rateLimited`, `.quotaExhausted`, `.invalidKey`.
+
+### Dart and Flutter
+
+```yaml
+acnologia:
+  git: { url: https://github.com/sidharthpunathil/acnologia.git, path: sdk/dart, ref: main }
+```
+
+```dart
+final acn = Acnologia(baseUrl: 'http://localhost:8080', token: 'acn_xxx'); // or Acnologia.fromEnvironment()
+final res = await acn.proxy('serpapi').get('/search.json', query: {'q': 'coffee'});
+
+final client = http.Client();
+final body = await acn.withKey('serpapi', (lease) async {
+  final resp = await http.Response.fromStream(
+      await client.send(lease.request('GET', '/search.json', query: {'q': 'coffee'})));
+  if (resp.statusCode == 429) throw const RateLimitedException(retryAfter: Duration(hours: 1), statusCode: 429);
+  return resp.body;
+});
+```
+
+Exceptions: `NoKeyAvailableException`, `AllKeysBusyException`, `ServiceUnavailableException`, `RateLimitedException`, `QuotaExhaustedException`, `InvalidKeyException`.
+
+### C++
+
+```cmake
+FetchContent_Declare(acnologia GIT_REPOSITORY https://github.com/sidharthpunathil/acnologia.git GIT_TAG main SOURCE_SUBDIR sdk/cpp)
+FetchContent_MakeAvailable(acnologia)   # then link acnologia::acnologia; C++17 and libcurl
+```
+
+```cpp
+#include <acnologia/acnologia.hpp>
+
+acnologia::Client client("http://localhost:8080", "acn_xxx"); // or acnologia::Client::from_env()
+auto resp = client.proxy("serpapi").get("/search.json", {{"q", "coffee"}});
+
+std::string body = client.with_key("serpapi", [](acnologia::Lease& lease) {
+    std::string url = lease.signed_url("/search.json", {{"q", "coffee"}}); // query auth; lease.apply() for headers
+    auto [status, text] = my_http_get(url);                               // any HTTP library
+    if (status == 429) throw acnologia::RateLimited(std::chrono::hours(1), 429);
+    return text;
+});
+```
+
+Exceptions derive from `acnologia::ApiError`: `NoKeyAvailable`, `AllKeysBusy`, `ServiceUnavailable`, plus the rotation exceptions `RateLimited`, `QuotaExhausted`, `InvalidKey`.
+
 ### Other languages
 
-Each service's Integrate tab in the dashboard has copy ready snippets for curl, Python, TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart, filled in with the service's slug, base URL and auth placement. Languages without an SDK use the HTTP client most projects already have: proxy mode is one call; lease mode leases, calls the provider with the key where the service expects it, and reports the outcome.
+Each service's Integrate tab in the dashboard has copy ready snippets for curl and every SDK above, filled in with the service's slug, base URL and auth placement. For any other language, use the HTTP client your project already has: proxy mode is one call; lease mode leases, calls the provider with the key where the service expects it, and reports the outcome.
 
 ## Resilience
 

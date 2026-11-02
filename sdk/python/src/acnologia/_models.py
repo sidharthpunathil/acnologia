@@ -111,6 +111,7 @@ class _LeaseBase:
     base_url: str
     expires_at: Optional[datetime]
     reported: bool = field(default=False, compare=False)
+    exclusive: bool = False
 
     @classmethod
     def _fields_from_json(cls, data: Mapping[str, Any]) -> Dict[str, Any]:
@@ -122,6 +123,7 @@ class _LeaseBase:
             "auth": Auth.from_json(data.get("auth")),
             "base_url": str(data.get("base_url", "")),
             "expires_at": _parse_time(data.get("expires_at")),
+            "exclusive": bool(data.get("exclusive", False)),
         }
 
     def apply(self, params_or_headers: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
@@ -204,6 +206,15 @@ class Lease(_LeaseBase):
         self.reported = True
         return nxt
 
+    def renew(self, ttl_sec: Optional[float] = None) -> datetime:
+        """Extend this open lease so a long job keeps its key. Updates and returns
+        `expires_at`. None uses the server default (120 seconds); the server caps
+        it at 24 hours. Raises AcnologiaError with code `lease_not_found` when the
+        lease is no longer open."""
+        if self._client is None:
+            raise RuntimeError("lease is not bound to a client")
+        return self._client.renew(self, ttl_sec)
+
     def __enter__(self) -> "Lease":
         return self
 
@@ -252,6 +263,12 @@ class AsyncLease(_LeaseBase):
         )
         self.reported = True
         return nxt
+
+    async def renew(self, ttl_sec: Optional[float] = None) -> datetime:
+        """Async renew. See Lease.renew."""
+        if self._client is None:
+            raise RuntimeError("lease is not bound to a client")
+        return await self._client.renew(self, ttl_sec)
 
     async def __aenter__(self) -> "AsyncLease":
         return self

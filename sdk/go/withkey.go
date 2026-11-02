@@ -30,7 +30,8 @@ func WithMaxAttempts(n int) WithKeyOption {
 }
 
 // WithLeaseOptions sets the options used for the first lease (exclusions,
-// TTL, Wait). TTL and Wait also apply to every later lease.
+// TTL, Wait, Exclusive). TTL, Wait and Exclusive also apply to every later
+// lease WithKey takes itself.
 func WithLeaseOptions(o LeaseOptions) WithKeyOption {
 	return func(c *withKeyConfig) { c.lease = o }
 }
@@ -112,7 +113,7 @@ func (c *Client) WithKey(ctx context.Context, service string, fn func(*Lease) er
 			return rerr
 		}
 		if next == nil {
-			next, err = c.Lease(ctx, service, &LeaseOptions{ExcludeKeyIDs: tried, TTL: cfg.lease.TTL, Wait: cfg.lease.Wait})
+			next, err = c.Lease(ctx, service, &LeaseOptions{ExcludeKeyIDs: tried, TTL: cfg.lease.TTL, Wait: cfg.lease.Wait, Exclusive: cfg.lease.Exclusive})
 			if err != nil {
 				return err
 			}

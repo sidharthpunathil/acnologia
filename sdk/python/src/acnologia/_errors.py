@@ -64,6 +64,25 @@ class AllKeysBusy(NoKeyAvailable):
         super().__init__(message, retry_after=retry_after, status_code=status_code, code=code)
 
 
+class ServiceUnavailable(AcnologiaError):
+    """The provider keeps failing and its circuit breaker is open (HTTP 503 `service_unavailable`).
+
+    Acnologia paused traffic to the service. Wait `retry_after` seconds (when
+    known) before trying again. This is not a NoKeyAvailable.
+    """
+
+    def __init__(
+        self,
+        message: str = "service unavailable",
+        *,
+        retry_after: Optional[float] = None,
+        status_code: int = 503,
+        code: str = "service_unavailable",
+    ) -> None:
+        super().__init__(message, status_code=status_code, code=code)
+        self.retry_after = retry_after
+
+
 class KeyProblem(Exception):
     """Base class for errors you raise from inside `with_key` to make Acnologia rotate the key.
 

@@ -5,47 +5,59 @@ declare(strict_types=1);
 
 spl_autoload_register(static function (string $class): void {
     if (str_starts_with($class, 'Acnologia\\')) {
-        require __DIR__ . '/../src/' . str_replace('\\', '/', substr($class, 7)) . '.php';
+        require __DIR__ . '/../src/' . str_replace('\\', '/', substr($class, strlen('Acnologia\\'))) . '.php';
     }
 });
 
 use Acnologia\Acnologia;
+use Acnologia\Exception\AcnologiaException;
 use Acnologia\Exception\AllKeysBusy;
 use Acnologia\Exception\NoKeyAvailable;
 use Acnologia\Exception\RateLimited;
+use Acnologia\Exception\ServiceUnavailable;
 use Acnologia\Response;
 
 $keys = [1, 2];
 $bad = [];
 $log = [];
 $n = 0;
-$lease = static function (array $exclude) use (&$keys, &$bad, &$n): ?array {
+$lease = static function (array $exclude, bool $exclusive = false) use (&$keys, &$bad, &$n): ?array {
     foreach ($keys as $k) {
         if (!in_array($k, $exclude, true) && !in_array($k, $bad, true)) {
             $n++;
             return ['lease_id' => "l$n", 'key_id' => $k, 'service' => 'serpapi', 'secret' => "s$k",
                 'auth' => ['type' => 'query', 'name' => 'api_key'], 'base_url' => 'https://serpapi.com',
-                'expires_at' => '2026-11-01T00:00:00Z'];
+                'expires_at' => '2026-11-01T00:00:00Z', 'exclusive' => $exclusive];
         }
     }
     return null;
 };
 $leases = [];
 $busy = false;
-$transport = static function (string $method, string $url, array $headers, ?string $body) use (&$log, &$bad, &$leases, &$busy, $lease): Response {
+$breaker = null;
+$transport = static function (string $method, string $url, array $headers, ?string $body) use (&$log, &$bad, &$leases, &$busy, &$breaker, $lease): Response {
     $log[] = [$method, $url, $headers, $body];
     $path = parse_url($url, PHP_URL_PATH);
     $json = $body !== null ? json_decode($body, true) : null;
     if ($path === '/api/v1/lease') {
+        if ($breaker !== null) {
+            return new Response(503, ['retry-after' => '9'], $breaker);
+        }
         if ($busy) {
             return new Response(503, [], '{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}');
         }
-        $l = $lease($json['exclude_key_ids'] ?? []);
+        $l = $lease($json['exclude_key_ids'] ?? [], ($json['exclusive'] ?? false) === true);
         if ($l === null) {
             return new Response(503, [], '{"error":{"code":"no_key_available","message":"drained"},"retry_after_sec":9}');
         }
         $leases[$l['lease_id']] = $l['key_id'];
         return new Response(200, [], json_encode($l));
+    }
+    if (preg_match('#^/api/v1/leases/([^/]+)/renew$#', $path, $m)) {
+        if (!isset($leases[rawurldecode($m[1])])) {
+            return new Response(404, [], '{"error":{"code":"lease_not_found","message":"lease is not open"}}');
+        }
+        return new Response(200, [], json_encode(['ok' => true, 'expires_at' => '2026-11-02T00:00:' . ($json['ttl_sec'] ?? 0) . 'Z']));
     }
     if (preg_match('#^/api/v1/leases/([^/]+)/report$#', $path, $m)) {
         $key = $leases[rawurldecode($m[1])];
@@ -198,5 +210,66 @@ try {
     $check($e->retryAfter === 9, 'no key available');
     $check(!$e->busy && !($e instanceof AllKeysBusy), 'no key available is not busy');
 }
+
+$keys = [1, 2];
+$bad = [];
+$leases['l/x'] = 1;
+$rl = new \Acnologia\Lease($acn, 'l/x', 1, 'serpapi', 's1', ['type' => 'query', 'name' => 'api_key', 'prefix' => ''], 'https://serpapi.com', null);
+$check($rl->exclusive === false, 'lease constructor stays compatible');
+$exp = $rl->renew(90);
+$check($exp === '2026-11-02T00:00:90Z' && $rl->expiresAt === $exp, 'renew updates expiresAt');
+$check(str_ends_with($log[count($log) - 1][1], '/api/v1/leases/l%2Fx/renew'), 'renew escapes lease id');
+$check(json_decode(end($log)[3], true) === ['ttl_sec' => 90], 'renew sends ttl_sec');
+$rl->renew();
+$check(end($log)[3] === '{}', 'renew without ttl sends {}');
+$check($acn->renew('l/x', 5) === '2026-11-02T00:00:5Z', 'client renew by id');
+try {
+    $acn->renew('gone', 60);
+    $check(false, 'renew not found');
+} catch (AcnologiaException $e) {
+    $check($e->statusCode === 404 && $e->errorCode === 'lease_not_found', 'renew not found');
+}
+
+$ex = $acn->lease('serpapi', exclusive: true);
+$check($lastBody() === ['service' => 'serpapi', 'exclusive' => true] && $ex->exclusive, 'lease exclusive');
+$ex->report('ok');
+$plain = $acn->lease('serpapi');
+$check(!array_key_exists('exclusive', $lastBody()) && !$plain->exclusive, 'exclusive omitted by default');
+$plain->report('ok');
+
+$bad = [];
+$keys = [1];
+try {
+    $acn->withKey('serpapi', static function () {
+        throw RateLimited::after(5);
+    }, ttlSec: 30, exclusive: true);
+} catch (NoKeyAvailable) {
+}
+$bodies = array_map(static fn ($r) => json_decode($r[3], true), array_slice(array_values(array_filter($log, static fn ($r) => parse_url($r[1], PHP_URL_PATH) === '/api/v1/lease')), -2));
+$check(count($bodies) === 2 && $bodies[0]['exclusive'] === true && $bodies[1]['exclusive'] === true && $bodies[1]['ttl_sec'] === 30, 'withKey forwards exclusive');
+
+$keys = [1, 2];
+$bad = [];
+$breaker = '{"error":{"code":"service_unavailable","message":"circuit open"},"retry_after_sec":42}';
+try {
+    $acn->lease('serpapi');
+    $check(false, 'service unavailable');
+} catch (AcnologiaException $e) {
+    $check($e instanceof ServiceUnavailable && !($e instanceof NoKeyAvailable), 'service unavailable type');
+    $check($e->retryAfter === 42 && $e->statusCode === 503 && $e->errorCode === 'service_unavailable' && $e->getMessage() === 'circuit open', 'service unavailable fields');
+}
+$breaker = '{"error":{"code":"service_unavailable","message":"circuit open"}}';
+try {
+    $acn->lease('serpapi');
+} catch (ServiceUnavailable $e) {
+    $check($e->retryAfter === 9, 'service unavailable falls back to Retry-After');
+}
+$breaker = '';
+try {
+    $acn->lease('serpapi');
+} catch (AcnologiaException $e) {
+    $check($e instanceof NoKeyAvailable, 'empty 503 is still NoKeyAvailable');
+}
+$breaker = null;
 
 exit($fails ? 1 : 0);

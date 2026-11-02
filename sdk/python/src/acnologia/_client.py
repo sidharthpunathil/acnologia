@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import inspect
 import os
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar, Union
 from urllib.parse import quote
 
 import httpx
 
-from ._errors import AllKeysBusy, AcnologiaError, KeyProblem, NoKeyAvailable
-from ._models import AsyncLease, Lease, Service, outcome_for
+from ._errors import AllKeysBusy, AcnologiaError, KeyProblem, NoKeyAvailable, ServiceUnavailable
+from ._models import AsyncLease, Lease, Service, _parse_time, outcome_for
 
 __version__ = "0.1.0"
 
@@ -36,6 +37,14 @@ def _proxy_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT}
 
 
+def _header_retry_after(resp: httpx.Response) -> Optional[float]:
+    try:
+        value = float(resp.headers.get("retry-after", ""))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def _raise_for(resp: httpx.Response) -> None:
     if resp.is_success:
         return
@@ -58,6 +67,10 @@ def _raise_for(resp: httpx.Response) -> None:
                 retry_after = float(body["retry_after_sec"])
             except (TypeError, ValueError):
                 retry_after = None
+    if code == "service_unavailable":
+        if retry_after is None or retry_after <= 0:
+            retry_after = _header_retry_after(resp)
+        raise ServiceUnavailable(message, retry_after=retry_after, status_code=resp.status_code, code=code)
     if code == "all_keys_busy":
         raise AllKeysBusy(message, retry_after=retry_after, status_code=resp.status_code, code=code)
     if code == "no_key_available" or (resp.status_code == 503 and not code):
@@ -73,6 +86,7 @@ def _lease_body(
     exclude_key_ids: Optional[List[int]],
     ttl_sec: Optional[int],
     wait_sec: Optional[float] = None,
+    exclusive: bool = False,
 ) -> Dict[str, Any]:
     body: Dict[str, Any] = {"service": service}
     if exclude_key_ids:
@@ -83,7 +97,26 @@ def _lease_body(
         if wait_sec < 0 or wait_sec > MAX_WAIT_SEC:
             raise ValueError(f"wait_sec must be between 0 and {MAX_WAIT_SEC}")
         body["wait_sec"] = int(-(-float(wait_sec) // 1))  # ceil
+    if exclusive:
+        body["exclusive"] = True
     return body
+
+
+def _renew_path(lease_id: str) -> str:
+    return f"/api/v1/leases/{quote(lease_id, safe='')}/renew"
+
+
+def _renew_body(ttl_sec: Optional[float]) -> Dict[str, Any]:
+    if ttl_sec is not None and ttl_sec > 0:
+        return {"ttl_sec": int(-(-float(ttl_sec) // 1))}  # ceil
+    return {}
+
+
+def _renew_expiry(data: Any) -> "datetime":
+    expires = _parse_time(data.get("expires_at") if isinstance(data, dict) else None)
+    if expires is None:
+        raise AcnologiaError("renew response has no expires_at")
+    return expires
 
 
 def _lease_timeout(current: httpx.Timeout, wait_sec: Optional[float]) -> Optional[httpx.Timeout]:
@@ -243,6 +276,7 @@ class Acnologia:
         exclude_key_ids: Optional[List[int]] = None,
         ttl_sec: Optional[int] = None,
         wait_sec: Optional[float] = None,
+        exclusive: bool = False,
     ) -> Lease:
         """Borrow a key.
 
@@ -254,8 +288,11 @@ class Acnologia:
         Always report the lease (or use it as a context manager): on services
         with a concurrency limit the lease holds one of the key's slots until it
         is reported or its `ttl_sec` runs out.
+
+        `exclusive=True` reserves the key for this lease only: no other lease
+        or proxy call gets it until the lease is reported or expires.
         """
-        body = _lease_body(service, exclude_key_ids, ttl_sec, wait_sec)
+        body = _lease_body(service, exclude_key_ids, ttl_sec, wait_sec, exclusive)
         data = self._call("POST", "/api/v1/lease", body, timeout=_lease_timeout(self._http.timeout, wait_sec))
         return Lease.from_json(data, self)
 
@@ -266,6 +303,7 @@ class Acnologia:
         max_attempts: int = 5,
         ttl_sec: Optional[int] = None,
         wait_sec: Optional[float] = None,
+        exclusive: bool = False,
     ) -> T:
         """Call `fn(lease)` and report the outcome.
 
@@ -277,12 +315,13 @@ class Acnologia:
         Every lease is reported, whatever happens inside `fn`. That matters on
         services with a concurrency limit, where an unreported lease keeps one
         of the key's slots busy until its TTL expires. `wait_sec` is passed to
-        every lease call, so a busy pool is waited on instead of failing fast.
+        every lease call, so a busy pool is waited on instead of failing fast,
+        and so are `ttl_sec` and `exclusive`.
         """
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
         tried: List[int] = []
-        lease = self.lease(service, ttl_sec=ttl_sec, wait_sec=wait_sec)
+        lease = self.lease(service, ttl_sec=ttl_sec, wait_sec=wait_sec, exclusive=exclusive)
         attempt = 0
         while True:
             attempt += 1
@@ -296,7 +335,7 @@ class Acnologia:
                 nxt = lease.report(**kwargs)
                 if last:
                     raise
-                lease = nxt or self.lease(service, exclude_key_ids=tried, ttl_sec=ttl_sec, wait_sec=wait_sec)
+                lease = nxt or self.lease(service, exclude_key_ids=tried, ttl_sec=ttl_sec, wait_sec=wait_sec, exclusive=exclusive)
                 continue
             except BaseException as exc:
                 try:
@@ -306,6 +345,17 @@ class Acnologia:
                 raise
             lease.report("ok")
             return result
+
+    def renew(self, lease: Lease, ttl_sec: Optional[float] = None) -> datetime:
+        """Extend an open lease so a long job keeps its key, and update `lease.expires_at`.
+
+        `ttl_sec` None uses the server default (120 seconds); the server caps it
+        at 24 hours. Returns the new expiry. Raises AcnologiaError with code
+        `lease_not_found` (HTTP 404) when the lease is no longer open.
+        """
+        data = self._call("POST", _renew_path(lease.lease_id), _renew_body(ttl_sec))
+        lease.expires_at = _renew_expiry(data)
+        return lease.expires_at
 
     def proxy(self, service: str) -> Proxy:
         """Return a helper that sends requests through `/proxy/{service}/`."""
@@ -359,9 +409,10 @@ class AsyncAcnologia:
         exclude_key_ids: Optional[List[int]] = None,
         ttl_sec: Optional[int] = None,
         wait_sec: Optional[float] = None,
+        exclusive: bool = False,
     ) -> AsyncLease:
-        """Async lease. See Acnologia.lease for `wait_sec` and why you must report."""
-        body = _lease_body(service, exclude_key_ids, ttl_sec, wait_sec)
+        """Async lease. See Acnologia.lease for `wait_sec`, `exclusive` and why you must report."""
+        body = _lease_body(service, exclude_key_ids, ttl_sec, wait_sec, exclusive)
         data = await self._call("POST", "/api/v1/lease", body, timeout=_lease_timeout(self._http.timeout, wait_sec))
         return AsyncLease.from_json(data, self)
 
@@ -372,6 +423,7 @@ class AsyncAcnologia:
         max_attempts: int = 5,
         ttl_sec: Optional[int] = None,
         wait_sec: Optional[float] = None,
+        exclusive: bool = False,
     ) -> T:
         """Async with_key. `fn` may be a plain function or a coroutine function.
 
@@ -381,7 +433,7 @@ class AsyncAcnologia:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
         tried: List[int] = []
-        lease = await self.lease(service, ttl_sec=ttl_sec, wait_sec=wait_sec)
+        lease = await self.lease(service, ttl_sec=ttl_sec, wait_sec=wait_sec, exclusive=exclusive)
         attempt = 0
         while True:
             attempt += 1
@@ -397,7 +449,7 @@ class AsyncAcnologia:
                 nxt = await lease.report(**kwargs)
                 if last:
                     raise
-                lease = nxt or await self.lease(service, exclude_key_ids=tried, ttl_sec=ttl_sec, wait_sec=wait_sec)
+                lease = nxt or await self.lease(service, exclude_key_ids=tried, ttl_sec=ttl_sec, wait_sec=wait_sec, exclusive=exclusive)
                 continue
             except BaseException as exc:
                 try:
@@ -407,6 +459,12 @@ class AsyncAcnologia:
                 raise
             await lease.report("ok")
             return result  # type: ignore[return-value]
+
+    async def renew(self, lease: AsyncLease, ttl_sec: Optional[float] = None) -> datetime:
+        """Async renew. See Acnologia.renew."""
+        data = await self._call("POST", _renew_path(lease.lease_id), _renew_body(ttl_sec))
+        lease.expires_at = _renew_expiry(data)
+        return lease.expires_at
 
     def proxy(self, service: str) -> AsyncProxy:
         return AsyncProxy(self, service)

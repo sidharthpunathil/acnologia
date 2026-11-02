@@ -17,6 +17,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -103,14 +104,16 @@ type Lease struct {
 	Auth      Auth      `json:"auth"`
 	BaseURL   string    `json:"base_url"`
 	ExpiresAt time.Time `json:"-"`
+	// Exclusive is true when the key is reserved for this lease only.
+	Exclusive bool `json:"exclusive"`
 
 	client *Client
 }
 
 // String redacts the secret so a logged Lease does not leak the key.
 func (l Lease) String() string {
-	return fmt.Sprintf("acnologia.Lease{LeaseID:%q, KeyID:%d, Service:%q, Secret:\"[redacted]\", Auth:%+v, BaseURL:%q, ExpiresAt:%s}",
-		l.LeaseID, l.KeyID, l.Service, l.Auth, l.BaseURL, l.ExpiresAt.Format(time.RFC3339))
+	return fmt.Sprintf("acnologia.Lease{LeaseID:%q, KeyID:%d, Service:%q, Secret:\"[redacted]\", Auth:%+v, BaseURL:%q, ExpiresAt:%s, Exclusive:%t}",
+		l.LeaseID, l.KeyID, l.Service, l.Auth, l.BaseURL, l.ExpiresAt.Format(time.RFC3339), l.Exclusive)
 }
 
 // GoString redacts the secret for %#v.
@@ -124,6 +127,7 @@ type leaseWire struct {
 	Auth      Auth   `json:"auth"`
 	BaseURL   string `json:"base_url"`
 	ExpiresAt string `json:"expires_at"`
+	Exclusive bool   `json:"exclusive"`
 }
 
 func (c *Client) leaseFromWire(w *leaseWire) *Lease {
@@ -131,7 +135,7 @@ func (c *Client) leaseFromWire(w *leaseWire) *Lease {
 		return nil
 	}
 	l := &Lease{LeaseID: w.LeaseID, KeyID: w.KeyID, Service: w.Service, Secret: w.Secret,
-		Auth: w.Auth, BaseURL: w.BaseURL, client: c}
+		Auth: w.Auth, BaseURL: w.BaseURL, Exclusive: w.Exclusive, client: c}
 	if w.ExpiresAt != "" {
 		if t, err := time.Parse(time.RFC3339Nano, w.ExpiresAt); err == nil {
 			l.ExpiresAt = t
@@ -149,6 +153,9 @@ type LeaseOptions struct {
 	// with a busy *ErrNoKeyAvailable. Sent as wait_sec, rounded up to whole
 	// seconds. If your http.Client has a Timeout, make it longer than Wait.
 	Wait time.Duration
+	// Exclusive reserves the key for this lease only: no other lease or proxy
+	// call gets it until the lease is reported or expires.
+	Exclusive bool
 }
 
 // MaxWait is the longest LeaseOptions.Wait the server accepts.
@@ -211,6 +218,9 @@ func (c *Client) Lease(ctx context.Context, service string, opts *LeaseOptions) 
 		if opts.Wait > 0 {
 			body["wait_sec"] = ceilSeconds(opts.Wait)
 		}
+		if opts.Exclusive {
+			body["exclusive"] = true
+		}
 	}
 	var w leaseWire
 	if err := c.do(ctx, http.MethodPost, "/api/v1/lease", body, &w); err != nil {
@@ -251,6 +261,40 @@ func (l *Lease) Report(ctx context.Context, r Report) (*Lease, error) {
 		return nil, err
 	}
 	return l.client.leaseFromWire(out.Next), nil
+}
+
+// Renew extends an open lease so a long job keeps its key and updates
+// l.ExpiresAt. A zero ttl uses the server default (120 seconds); the server
+// caps it at 24 hours. When the lease is no longer open it returns an *APIError
+// with Code "lease_not_found" (HTTP 404).
+func (l *Lease) Renew(ctx context.Context, ttl time.Duration) (time.Time, error) {
+	if l.client == nil {
+		return time.Time{}, fmt.Errorf("acnologia: lease %q has no client", l.LeaseID)
+	}
+	return l.client.Renew(ctx, l, ttl)
+}
+
+// Renew extends an open lease and updates l.ExpiresAt. It is the same as
+// l.Renew(ctx, ttl).
+func (c *Client) Renew(ctx context.Context, l *Lease, ttl time.Duration) (time.Time, error) {
+	body := map[string]any{}
+	if ttl > 0 {
+		body["ttl_sec"] = ceilSeconds(ttl)
+	}
+	var out struct {
+		OK        bool   `json:"ok"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	path := "/api/v1/leases/" + url.PathEscape(l.LeaseID) + "/renew"
+	if err := c.do(ctx, http.MethodPost, path, body, &out); err != nil {
+		return time.Time{}, err
+	}
+	t, err := time.Parse(time.RFC3339Nano, out.ExpiresAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("acnologia: renew response has no valid expires_at: %w", err)
+	}
+	l.ExpiresAt = t
+	return t, nil
 }
 
 // Apply puts the secret on req where the provider expects it: a query
@@ -332,7 +376,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return parseError(resp.StatusCode, data)
+		return parseError(resp.StatusCode, data, resp.Header.Get("Retry-After"))
 	}
 	if out == nil || len(data) == 0 {
 		return nil
@@ -343,7 +387,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	return nil
 }
 
-func parseError(status int, data []byte) error {
+func parseError(status int, data []byte, retryAfterHeader string) error {
 	var e struct {
 		Error struct {
 			Code    string `json:"code"`
@@ -352,6 +396,18 @@ func parseError(status int, data []byte) error {
 		RetryAfterSec float64 `json:"retry_after_sec"`
 	}
 	_ = json.Unmarshal(data, &e)
+	if e.Error.Code == "service_unavailable" {
+		retry := time.Duration(e.RetryAfterSec * float64(time.Second))
+		if retry <= 0 {
+			if n, err := strconv.ParseFloat(strings.TrimSpace(retryAfterHeader), 64); err == nil && n > 0 {
+				retry = time.Duration(n * float64(time.Second))
+			}
+		}
+		return &ErrServiceUnavailable{
+			APIError:   APIError{StatusCode: status, Code: e.Error.Code, Message: e.Error.Message},
+			RetryAfter: retry,
+		}
+	}
 	if e.Error.Code == "no_key_available" || e.Error.Code == "all_keys_busy" ||
 		(status == http.StatusServiceUnavailable && e.Error.Code == "") {
 		code := e.Error.Code

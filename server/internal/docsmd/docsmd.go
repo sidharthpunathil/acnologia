@@ -51,6 +51,7 @@ var pages = []page{
 	{"configuration", "configuration.md", "docs/configuration.md", ""},
 	{"api", "api.md", "docs/api.md", ""},
 	{"cli", "cli.md", "docs/cli.md", ""},
+	{"sdks", "sdks.md", "docs/sdks.md", ""},
 	{"providers", "providers.md", "docs/providers.md", ""},
 	{"development", "development.md", "docs/development.md", ""},
 }
@@ -61,6 +62,7 @@ var (
 	// bySource maps a repository path to the URL that now serves it.
 	bySource = map[string]string{
 		"docs/README.md":     "/docs",
+		"sdk/README.md":      "/docs/sdks",
 		"docs/llms.txt":      "/llms.txt",
 		"docs/llms-full.txt": "/llms-full.txt",
 	}

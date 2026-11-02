@@ -1,6 +1,9 @@
 /*
- * Integration snippets for languages without an Acnologia SDK. Each one uses
- * the HTTP client most projects in that language already have.
+ * Integration snippets for the languages beyond Python, TypeScript and Go.
+ * Each one uses that language's Acnologia SDK (sdk/<language> in the repo):
+ * proxy mode through its proxy helper, lease mode through its withKey helper,
+ * which reports every lease and rotates to the next key on a rate limit. The
+ * install line sits in a comment at the top.
  *
  * Every value can come from the server (provider spec, service config), so
  * each one is escaped for the literal syntax of the language it lands in.
@@ -12,17 +15,12 @@ export interface SnippetInput {
   /** Acnologia origin, for example https://keys.example.com. */
   host: string;
   slug: string;
-  /** Proxy URL with the example path and query. */
-  proxyUrl: string;
-  /** Example path plus its encoded query string, appended to the lease base_url. */
-  pathQ: string;
+  /** The example path, without its query. */
+  path: string;
+  /** The example query parameters, unencoded. */
+  params: [string, string][];
   /** "bearer", "header" or "query". */
   authType: string;
-  /** Header name, or the URL encoded query parameter name with "=" for query auth. */
-  authName: string;
-  queryKey: string;
-  /** "&" when pathQ already has a query string, otherwise "?". */
-  sep: string;
 }
 
 const code = (c: string) => c.charCodeAt(0);
@@ -62,432 +60,357 @@ export const lits: Record<MoreLang, (v: string) => string> = {
   ruby: sq,
 };
 
-const STATUS_NOTE = "429 means rate limited; any other error is reported as error";
-
 export function moreSnippets(i: SnippetInput): Record<"proxy" | "lease", Record<MoreLang, string>> {
   const q = i.authType === "query";
-  const bearer = i.authType === "bearer";
   const L = (lang: MoreLang) => lits[lang];
-  /** base + pathQ, plus the query parameter for query auth. */
-  const url = (lang: MoreLang, base: string, encoded: string, join = " + ") =>
-    [base, L(lang)(i.pathQ), ...(q ? [L(lang)(i.sep + i.queryKey), encoded] : [])].join(join);
-  /** Header name and value expression for header and bearer auth. */
-  const hName = bearer ? "Authorization" : i.authName;
-  const hValue = (secret: string, concat: (a: string, b: string) => string, lang: MoreLang) =>
-    bearer ? concat(L(lang)("Bearer "), secret) : secret;
-  const plus = (a: string, b: string) => `${a} + ${b}`;
+  const P = i.params;
+  /** Query pairs rendered with `pair` and joined, or "" when there are none. */
+  const pairs = (pair: (k: string, v: string) => string) => P.map(([k, v]) => pair(k, v)).join(", ");
+  const has = P.length > 0;
 
+  const R = L("rust");
+  const rustQ = `&[${pairs((k, v) => `(${R(k)}, ${R(v)})`)}]`;
   const rust = {
-    proxy: `// Cargo.toml: reqwest = { version = "0.12", features = ["blocking"] }
-use std::env;
+    proxy: `// cargo add acnologia --git https://github.com/sidharthpunathil/acnologia
+// cargo add tokio --features macros,rt-multi-thread
+use acnologia::Client;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = env::var("ACNOLOGIA_TOKEN")?;
-    let res = reqwest::blocking::Client::new()
-        .get(${L("rust")(i.proxyUrl)})
-        .bearer_auth(token)
-        .send()?;
-    println!("{}", res.text()?);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let acn = Client::new(${R(i.host)}, std::env::var("ACNOLOGIA_TOKEN")?)?;
+
+    // Acnologia picks a key, retries on rate limits, and never exposes the secret.
+    let res = acn.proxy(${R(i.slug)}).get(${R(i.path)}, ${rustQ}).await?;
+    println!("{}", res.text().await?);
     Ok(())
 }`,
-    lease: `// Cargo.toml: reqwest = { version = "0.12", features = ["blocking", "json"] }, serde_json = "1"
-use serde_json::{json, Value};
-use std::env;
+    lease: `// cargo add acnologia --git https://github.com/sidharthpunathil/acnologia
+// cargo add tokio --features macros,rt-multi-thread
+// cargo add reqwest@0.12
+use acnologia::{check_status, Client};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let host = ${L("rust")(i.host)};
-    let token = env::var("ACNOLOGIA_TOKEN")?;
-    let client = reqwest::blocking::Client::new();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let acn = Client::new(${R(i.host)}, std::env::var("ACNOLOGIA_TOKEN")?)?;
+    let http = reqwest::Client::new();
 
-    // 1. Lease a key
-    let lease: Value = client
-        .post(format!("{host}/api/v1/lease"))
-        .bearer_auth(&token)
-        .json(&json!({ "service": ${L("rust")(i.slug)}, "ttl_sec": 300 }))
-        .send()?
-        .error_for_status()?
-        .json()?;
-    let secret = lease["secret"].as_str().unwrap_or_default();
-    let base_url = lease["base_url"].as_str().unwrap_or_default();
-
-    // 2. Call the provider yourself
-    let res = client
-        .get(format!("{base_url}{}", ${L("rust")(i.pathQ)}))
-        ${q ? `.query(&[(${L("rust")(decodeURIComponent(i.queryKey.slice(0, -1)))}, secret)])` : bearer ? ".bearer_auth(secret)" : `.header(${L("rust")(i.authName)}, secret)`}
-        .send()?;
-    let status = res.status().as_u16();
-    println!("{}", res.text()?);
-
-    // 3. Report the outcome (${STATUS_NOTE})
-    let outcome = match status { 429 => "rate_limited", 200..=399 => "ok", _ => "error" };
-    let lease_id = lease["lease_id"].as_str().unwrap_or_default();
-    client
-        .post(format!("{host}/api/v1/leases/{lease_id}/report"))
-        .bearer_auth(&token)
-        .json(&json!({ "outcome": outcome, "status_code": status }))
-        .send()?;
+    // with_key reports every lease and rotates to the next key on a rate limit.
+    let body = acn
+        .with_key(${R(i.slug)}, |lease| {
+            let http = http.clone();
+            async move {
+                let req = http.get(lease.url(${R(i.path)}, ${rustQ}));
+                // apply puts the key where this service expects it;
+                // check_status turns a 429 into a rate limit.
+                let res = check_status(lease.apply(req).send().await?)?;
+                Ok(res.text().await?)
+            }
+        })
+        .await?;
+    println!("{body}");
     Ok(())
 }`,
   };
 
+  const J = L("java");
+  const javaQ = has ? `, Map.ofEntries(${pairs((k, v) => `Map.entry(${J(k)}, ${J(v)})`)})` : "";
+  const javaInstall = `// Install: cd acnologia/sdk/java && mvn install
+// then depend on dev.acnologia:acnologia:0.1.0`;
   const java = {
-    proxy: `import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-
-public class Main {
-    public static void main(String[] args) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(${L("java")(i.proxyUrl)}))
-            .header("Authorization", "Bearer " + System.getenv("ACNOLOGIA_TOKEN"))
-            .build();
-        HttpResponse<String> res = HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
-        System.out.println(res.body());
-    }
-}`,
-    lease: `// Needs Jackson (com.fasterxml.jackson.core:jackson-databind) for JSON.
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+    proxy: `${javaInstall}
+import dev.acnologia.Acnologia;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 public class Main {
-    static final String HOST = ${L("java")(i.host)};
-    static final String TOKEN = System.getenv("ACNOLOGIA_TOKEN");
-    static final HttpClient HTTP = HttpClient.newHttpClient();
-    static final ObjectMapper JSON = new ObjectMapper();
+    public static void main(String[] args) {
+        Acnologia acn = Acnologia.create(${J(i.host)}, System.getenv("ACNOLOGIA_TOKEN"));
 
-    static String acnologia(String path, Map<String, Object> body) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(HOST + path))
-            .header("Authorization", "Bearer " + TOKEN)
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
-            .build();
-        HttpResponse<String> res = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-        if (res.statusCode() >= 400) throw new IllegalStateException(res.body());
-        return res.body();
+        // Acnologia picks a key, retries on rate limits, and never exposes the secret.
+        HttpResponse<byte[]> res = acn.proxy(${J(i.slug)}).get(${J(i.path)}${javaQ});
+        System.out.println(new String(res.body(), StandardCharsets.UTF_8));
     }
+}`,
+    lease: `${javaInstall}
+import dev.acnologia.Acnologia;
+import dev.acnologia.RateLimitedException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Map;
 
+public class Main {
     public static void main(String[] args) throws Exception {
-        // 1. Lease a key
-        JsonNode lease = JSON.readTree(acnologia("/api/v1/lease", Map.of("service", ${L("java")(i.slug)}, "ttl_sec", 300)));
-        String secret = lease.get("secret").asText();
+        Acnologia acn = Acnologia.create(${J(i.host)}, System.getenv("ACNOLOGIA_TOKEN"));
+        HttpClient http = HttpClient.newHttpClient();
 
-        // 2. Call the provider yourself
-        HttpRequest call = HttpRequest.newBuilder(URI.create(${url("java", 'lease.get("base_url").asText()', "URLEncoder.encode(secret, StandardCharsets.UTF_8)")}))${q ? "" : `\n            .header(${L("java")(hName)}, ${hValue("secret", plus, "java")})`}
-            .build();
-        HttpResponse<String> res = HTTP.send(call, HttpResponse.BodyHandlers.ofString());
-        System.out.println(res.body());
-
-        // 3. Report the outcome (${STATUS_NOTE})
-        int status = res.statusCode();
-        String outcome = status == 429 ? "rate_limited" : status < 400 ? "ok" : "error";
-        acnologia("/api/v1/leases/" + lease.get("lease_id").asText() + "/report", Map.of("outcome", outcome, "status_code", status));
+        // withKey reports every lease and rotates to the next key on a rate limit.
+        String body = acn.withKey(${J(i.slug)}, lease -> {
+            URI uri = URI.create(lease.url(${J(i.path)}${javaQ}));
+            // apply puts the key where this service expects it
+            HttpRequest req = lease.apply(HttpRequest.newBuilder(uri).build());
+            HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() == 429) throw new RateLimitedException(null, 429, null);
+            return res.body();
+        });
+        System.out.println(body);
     }
 }`,
   };
 
+  const C = L("csharp");
+  const csQ = has ? `, new Dictionary<string, string> { ${pairs((k, v) => `[${C(k)}] = ${C(v)}`)} }` : "";
+  const csInstall = "// dotnet add reference path/to/acnologia/sdk/csharp/src/Acnologia/Acnologia.csproj";
   const csharp = {
-    proxy: `using System.Net.Http.Headers;
+    proxy: `${csInstall}
+using Acnologia;
 
-var http = new HttpClient();
-http.DefaultRequestHeaders.Authorization =
-    new AuthenticationHeaderValue("Bearer", Environment.GetEnvironmentVariable("ACNOLOGIA_TOKEN"));
+using var acn = new AcnologiaClient(${C(i.host)}, Environment.GetEnvironmentVariable("ACNOLOGIA_TOKEN")!);
 
-var res = await http.GetAsync(${L("csharp")(i.proxyUrl)});
+// Acnologia picks a key, retries on rate limits, and never exposes the secret.
+using var res = await acn.Proxy(${C(i.slug)}).GetAsync(${C(i.path)}${csQ});
 Console.WriteLine(await res.Content.ReadAsStringAsync());`,
-    lease: `using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
+    lease: `${csInstall}
+using Acnologia;
 
-var acnologia = new HttpClient { BaseAddress = new Uri(${L("csharp")(i.host)}) };
-acnologia.DefaultRequestHeaders.Authorization =
-    new AuthenticationHeaderValue("Bearer", Environment.GetEnvironmentVariable("ACNOLOGIA_TOKEN"));
+using var acn = new AcnologiaClient(${C(i.host)}, Environment.GetEnvironmentVariable("ACNOLOGIA_TOKEN")!);
+using var http = new HttpClient();
 
-// 1. Lease a key
-var leaseRes = await acnologia.PostAsJsonAsync("/api/v1/lease", new { service = ${L("csharp")(i.slug)}, ttl_sec = 300 });
-leaseRes.EnsureSuccessStatusCode();
-var lease = await leaseRes.Content.ReadFromJsonAsync<JsonElement>();
-var secret = lease.GetProperty("secret").GetString()!;
-
-// 2. Call the provider yourself (a separate client, so the Acnologia token never goes upstream)
-var call = new HttpRequestMessage(HttpMethod.Get, ${url("csharp", 'lease.GetProperty("base_url").GetString()', "Uri.EscapeDataString(secret)")});${q ? "" : `\ncall.Headers.TryAddWithoutValidation(${L("csharp")(hName)}, ${hValue("secret", plus, "csharp")});`}
-var res = await new HttpClient().SendAsync(call);
-Console.WriteLine(await res.Content.ReadAsStringAsync());
-
-// 3. Report the outcome (${STATUS_NOTE})
-var status = (int)res.StatusCode;
-var outcome = status == 429 ? "rate_limited" : status < 400 ? "ok" : "error";
-await acnologia.PostAsJsonAsync($"/api/v1/leases/{lease.GetProperty("lease_id").GetString()}/report",
-    new { outcome, status_code = status });`,
+// WithKeyAsync reports every lease and rotates to the next key on a rate limit.
+var body = await acn.WithKeyAsync(${C(i.slug)}, async (lease, ct) =>
+{
+    using var req = new HttpRequestMessage(HttpMethod.Get, lease.Url(${C(i.path)}${csQ}));
+    lease.Apply(req); // puts the key where this service expects it
+    using var res = await http.SendAsync(req, ct);
+    if ((int)res.StatusCode == 429) throw new RateLimitedException(statusCode: 429);
+    return await res.Content.ReadAsStringAsync(ct);
+});
+Console.WriteLine(body);`,
   };
 
+  const X = L("cpp");
+  const cppQ = has ? `, {${pairs((k, v) => `{${X(k)}, ${X(v)}}`)}}` : "";
+  const cppInstall = `// CMake: FetchContent_Declare(acnologia GIT_REPOSITORY https://github.com/sidharthpunathil/acnologia.git
+//          GIT_TAG main SOURCE_SUBDIR sdk/cpp), then link acnologia::acnologia`;
+  const cppClient = `    const char* token = std::getenv("ACNOLOGIA_TOKEN");
+    acnologia::Client client(${X(i.host)}, token ? token : "");`;
   const cpp = {
-    proxy: `// Needs cpr (github.com/libcpr/cpr).
-#include <cpr/cpr.h>
+    proxy: `${cppInstall}
+#include <acnologia/acnologia.hpp>
 #include <cstdlib>
 #include <iostream>
 
 int main() {
-    const char* token = std::getenv("ACNOLOGIA_TOKEN");
-    auto res = cpr::Get(cpr::Url{${L("cpp")(i.proxyUrl)}},
-                        cpr::Bearer{token ? token : ""});
-    std::cout << res.text << std::endl;
+${cppClient}
+
+    // Acnologia picks a key, retries on rate limits, and never exposes the secret.
+    auto res = client.proxy(${X(i.slug)}).get(${X(i.path)}${cppQ});
+    std::cout << res.body << std::endl;
 }`,
-    lease: `// Needs cpr (github.com/libcpr/cpr) and nlohmann/json.
-#include <cpr/cpr.h>
-#include <nlohmann/json.hpp>
+    lease: `${cppInstall}
+#include <acnologia/acnologia.hpp>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 int main() {
-    const std::string host = ${L("cpp")(i.host)};
-    const char* env = std::getenv("ACNOLOGIA_TOKEN");
-    const cpr::Header acnologia{{"Authorization", std::string("Bearer ") + (env ? env : "")},
-                             {"Content-Type", "application/json"}};
+${cppClient}
+    auto http = acnologia::make_curl_transport();  // or any HTTP library
 
-    // 1. Lease a key
-    auto leaseRes = cpr::Post(cpr::Url{host + "/api/v1/lease"}, acnologia,
-                              cpr::Body{nlohmann::json{{"service", ${L("cpp")(i.slug)}}, {"ttl_sec", 300}}.dump()});
-    if (leaseRes.status_code != 200) { std::cerr << leaseRes.text << std::endl; return 1; }
-    auto lease = nlohmann::json::parse(leaseRes.text);
-    const std::string secret = lease["secret"];
-
-    // 2. Call the provider yourself
-    auto res = cpr::Get(cpr::Url{${url("cpp", 'lease["base_url"].get<std::string>()', "cpr::util::urlEncode(secret)")}}${q ? "" : `,\n                        cpr::Header{{${L("cpp")(hName)}, ${hValue("secret", (a, b) => `std::string(${a}) + ${b}`, "cpp")}}}`});
-    std::cout << res.text << std::endl;
-
-    // 3. Report the outcome (${STATUS_NOTE})
-    const long status = res.status_code;
-    const std::string outcome = status == 429 ? "rate_limited" : (status >= 200 && status < 400) ? "ok" : "error";
-    cpr::Post(cpr::Url{host + "/api/v1/leases/" + lease["lease_id"].get<std::string>() + "/report"}, acnologia,
-              cpr::Body{nlohmann::json{{"outcome", outcome}, {"status_code", status}}.dump()});
+    // with_key reports every lease and rotates to the next key on a rate limit.
+    std::string body = client.with_key(${X(i.slug)}, [&](acnologia::Lease& lease) {
+        acnologia::HttpRequest req;
+        req.method = "GET";
+${
+  q
+    ? `        req.url = lease.signed_url(${X(i.path)}${cppQ});  // adds the key as this service expects`
+    : `        req.url = lease.url(${X(i.path)}${cppQ});
+        auto key = lease.apply();  // the header this service expects
+        req.headers.push_back({key.name, key.value});`
+}
+        auto res = http->send(req);
+        if (res.status == 429) throw acnologia::RateLimited({}, 429);
+        return res.body;
+    });
+    std::cout << body << std::endl;
 }`,
   };
 
+  const S = L("swift");
+  const swiftQ = has ? `, query: [${pairs((k, v) => `URLQueryItem(name: ${S(k)}, value: ${S(v)})`)}]` : "";
+  const swiftHead = `// Package.swift: .package(url: "https://github.com/sidharthpunathil/acnologia", branch: "main")
+// and .product(name: "Acnologia", package: "acnologia") in your target
+import Acnologia
+import Foundation
+
+let acn = try Acnologia(baseURL: ${S(i.host)}, token: ProcessInfo.processInfo.environment["ACNOLOGIA_TOKEN"] ?? "")`;
   const swift = {
-    proxy: `import Foundation
+    proxy: `${swiftHead}
 
-var req = URLRequest(url: URL(string: ${L("swift")(i.proxyUrl)})!)
-let token = ProcessInfo.processInfo.environment["ACNOLOGIA_TOKEN"] ?? ""
-req.setValue("Bearer \\(token)", forHTTPHeaderField: "Authorization")
+// Acnologia picks a key, retries on rate limits, and never exposes the secret.
+let res = try await acn.proxy(${S(i.slug)}).get(${S(i.path)}${swiftQ})
+print(res.text)`,
+    lease: `${swiftHead}
 
-let (data, _) = try await URLSession.shared.data(for: req)
-print(String(decoding: data, as: UTF8.self))`,
-    lease: `import Foundation
-
-struct Lease: Decodable {
-    let lease_id: String
-    let secret: String
-    let base_url: String
+// withKey reports every lease and rotates to the next key on a rate limit.
+let body: String = try await acn.withKey(${S(i.slug)}) { lease in
+    var req = URLRequest(url: try lease.url(${S(i.path)}${swiftQ}))
+    lease.apply(to: &req) // puts the key where this service expects it
+    let (data, res) = try await URLSession.shared.data(for: req)
+    if (res as? HTTPURLResponse)?.statusCode == 429 {
+        throw AcnologiaError.rateLimited(statusCode: 429)
+    }
+    return String(decoding: data, as: UTF8.self)
 }
-
-let host = ${L("swift")(i.host)}
-let token = ProcessInfo.processInfo.environment["ACNOLOGIA_TOKEN"] ?? ""
-
-func acnologia(_ path: String, _ body: [String: Any]) throws -> URLRequest {
-    var req = URLRequest(url: URL(string: host + path)!)
-    req.httpMethod = "POST"
-    req.setValue("Bearer \\(token)", forHTTPHeaderField: "Authorization")
-    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.httpBody = try JSONSerialization.data(withJSONObject: body)
-    return req
-}
-
-// 1. Lease a key
-let (leaseData, _) = try await URLSession.shared.data(for: acnologia("/api/v1/lease", ["service": ${L("swift")(i.slug)}, "ttl_sec": 300]))
-let lease = try JSONDecoder().decode(Lease.self, from: leaseData)
-
-// 2. Call the provider yourself
-var call = URLRequest(url: URL(string: ${url("swift", "lease.base_url", "(lease.secret.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? \"\")")})!)${q ? "" : `\ncall.setValue(${hValue("lease.secret", plus, "swift")}, forHTTPHeaderField: ${L("swift")(hName)})`}
-let (data, response) = try await URLSession.shared.data(for: call)
-print(String(decoding: data, as: UTF8.self))
-
-// 3. Report the outcome (${STATUS_NOTE})
-let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-let outcome = status == 429 ? "rate_limited" : (200..<400).contains(status) ? "ok" : "error"
-_ = try await URLSession.shared.data(for: acnologia("/api/v1/leases/\\(lease.lease_id)/report", ["outcome": outcome, "status_code": status]))`,
+print(body)`,
   };
 
+  const K = L("kotlin");
+  const kotlinQ = has ? `, mapOf(${pairs((k, v) => `${K(k)} to ${K(v)}`)})` : "";
+  const kotlinInstall = `// Install: cd acnologia/sdk/kotlin && gradle publishToMavenLocal
+// then implementation("dev.acnologia:acnologia-kotlin:0.1.0") with mavenLocal()`;
   const kotlin = {
-    proxy: `// Needs OkHttp (com.squareup.okhttp3:okhttp).
-import okhttp3.OkHttpClient
-import okhttp3.Request
+    proxy: `${kotlinInstall}
+import dev.acnologia.kotlin.Acnologia
 
-fun main() {
-    val req = Request.Builder()
-        .url(${L("kotlin")(i.proxyUrl)})
-        .header("Authorization", "Bearer " + System.getenv("ACNOLOGIA_TOKEN"))
-        .build()
-    OkHttpClient().newCall(req).execute().use { println(it.body!!.string()) }
+suspend fun main() {
+    val acn = Acnologia(${K(i.host)}, System.getenv("ACNOLOGIA_TOKEN"))
+
+    // Acnologia picks a key, retries on rate limits, and never exposes the secret.
+    acn.proxy(${K(i.slug)}).get(${K(i.path)}${kotlinQ}).use { res -> println(res.body!!.string()) }
 }`,
-    lease: `// Needs OkHttp (com.squareup.okhttp3:okhttp) and org.json.
-import java.net.URLEncoder
-import okhttp3.MediaType.Companion.toMediaType
+    lease: `${kotlinInstall}
+import dev.acnologia.kotlin.Acnologia
+import dev.acnologia.kotlin.RateLimitedException
+import dev.acnologia.kotlin.await
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
-val host = ${L("kotlin")(i.host)}
-val token: String = System.getenv("ACNOLOGIA_TOKEN")
-val http = OkHttpClient()
+suspend fun main() {
+    val acn = Acnologia(${K(i.host)}, System.getenv("ACNOLOGIA_TOKEN"))
+    val http = OkHttpClient()
 
-fun acnologia(path: String, body: Map<String, Any>): JSONObject {
-    val req = Request.Builder()
-        .url(host + path)
-        .header("Authorization", "Bearer " + token)
-        .post(JSONObject(body).toString().toRequestBody("application/json".toMediaType()))
-        .build()
-    return http.newCall(req).execute().use { res ->
-        check(res.isSuccessful) { res.body!!.string() }
-        JSONObject(res.body!!.string())
+    // withKey reports every lease and rotates to the next key on a rate limit.
+    val body = acn.withKey(${K(i.slug)}) { lease ->
+        // lease.request builds a GET with the key where this service expects it
+        http.newCall(lease.request(${K(i.path)}${kotlinQ})).await().use { res ->
+            if (res.code == 429) throw RateLimitedException(statusCode = 429)
+            res.body!!.string()
+        }
     }
-}
-
-fun main() {
-    // 1. Lease a key
-    val lease = acnologia("/api/v1/lease", mapOf("service" to ${L("kotlin")(i.slug)}, "ttl_sec" to 300))
-    val secret = lease.getString("secret")
-
-    // 2. Call the provider yourself
-    val call = Request.Builder()
-        .url(${url("kotlin", 'lease.getString("base_url")', 'URLEncoder.encode(secret, "UTF-8")')})${q ? "" : `\n        .header(${L("kotlin")(hName)}, ${hValue("secret", plus, "kotlin")})`}
-        .build()
-    val status = http.newCall(call).execute().use { res ->
-        println(res.body!!.string())
-        res.code
-    }
-
-    // 3. Report the outcome (${STATUS_NOTE})
-    val outcome = when {
-        status == 429 -> "rate_limited"
-        status < 400 -> "ok"
-        else -> "error"
-    }
-    acnologia("/api/v1/leases/" + lease.getString("lease_id") + "/report", mapOf("outcome" to outcome, "status_code" to status))
+    println(body)
 }`,
   };
 
+  const H = L("php");
+  const phpQ = `[${pairs((k, v) => `${H(k)} => ${H(v)}`)}]`;
+  const phpHead = `<?php
+// Install: add a Composer path repository for acnologia/sdk/php, then composer require acnologia/keys:@dev
+require 'vendor/autoload.php';
+
+$acn = new Acnologia\\Acnologia(${H(i.host)}, getenv('ACNOLOGIA_TOKEN'));`;
   const php = {
-    proxy: `<?php
-// composer require guzzlehttp/guzzle
-require 'vendor/autoload.php';
+    proxy: `${phpHead}
 
-$res = (new GuzzleHttp\\Client())->get(${L("php")(i.proxyUrl)}, [
-    'headers' => ['Authorization' => 'Bearer ' . getenv('ACNOLOGIA_TOKEN')],
-]);
-echo $res->getBody(), PHP_EOL;`,
-    lease: `<?php
-// composer require guzzlehttp/guzzle
-require 'vendor/autoload.php';
+// Acnologia picks a key, retries on rate limits, and never exposes the secret.
+$res = $acn->proxy(${H(i.slug)})->get(${H(i.path)}${has ? `, ${phpQ}` : ""});
+echo $res->body, PHP_EOL;`,
+    lease: `${phpHead}
 
-$acnologia = new GuzzleHttp\\Client([
-    'base_uri' => ${L("php")(i.host)},
-    'headers' => ['Authorization' => 'Bearer ' . getenv('ACNOLOGIA_TOKEN')],
-]);
-
-// 1. Lease a key
-$lease = json_decode((string) $acnologia->post('/api/v1/lease', [
-    'json' => ['service' => ${L("php")(i.slug)}, 'ttl_sec' => 300],
-])->getBody(), true);
-
-// 2. Call the provider yourself (a separate client, so the Acnologia token never goes upstream)
-$res = (new GuzzleHttp\\Client())->get(${url("php", "$lease['base_url']", "rawurlencode($lease['secret'])", " . ")}, [
-    'http_errors' => false,${q ? "" : `\n    'headers' => [${L("php")(hName)} => ${hValue("$lease['secret']", (a, b) => `${a} . ${b}`, "php")}],`}
-]);
-echo $res->getBody(), PHP_EOL;
-
-// 3. Report the outcome (${STATUS_NOTE})
-$status = $res->getStatusCode();
-$outcome = $status === 429 ? 'rate_limited' : ($status < 400 ? 'ok' : 'error');
-$acnologia->post("/api/v1/leases/{$lease['lease_id']}/report", [
-    'json' => ['outcome' => $outcome, 'status_code' => $status],
-]);`,
+// withKey reports every lease and rotates to the next key on a rate limit.
+$body = $acn->withKey(${H(i.slug)}, function (Acnologia\\Lease $lease) {
+    // apply puts the key where this service expects it
+    ['query' => $query, 'headers' => $headers] = $lease->apply(${phpQ});
+    $ch = curl_init($lease->url(${H(i.path)}, $query));
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => array_map(fn ($k, $v) => "$k: $v", array_keys($headers), $headers),
+    ]);
+    $body = curl_exec($ch);
+    if (curl_getinfo($ch, CURLINFO_RESPONSE_CODE) === 429) {
+        throw Acnologia\\Exception\\RateLimited::after(null);
+    }
+    return $body;
+});
+echo $body, PHP_EOL;`,
   };
 
+  const B = L("ruby");
+  const rubyQ = has ? `{ ${pairs((k, v) => `${B(k)} => ${B(v)}`)} }` : "{}";
+  const rubyHead = `# Gemfile: gem "acnologia", git: "https://github.com/sidharthpunathil/acnologia.git", glob: "sdk/ruby/*.gemspec"
+# then run with: bundle exec ruby app.rb
+require "acnologia"`;
+  const rubyClient = `acn = Acnologia::Client.new(${B(i.host)}, ENV.fetch("ACNOLOGIA_TOKEN"))`;
   const ruby = {
-    proxy: `require "net/http"
+    proxy: `${rubyHead}
 
-uri = URI(${L("ruby")(i.proxyUrl)})
-res = Net::HTTP.get_response(uri, { "Authorization" => "Bearer #{ENV.fetch("ACNOLOGIA_TOKEN")}" })
+${rubyClient}
+
+# Acnologia picks a key, retries on rate limits, and never exposes the secret.
+res = acn.proxy(${B(i.slug)}).get(${B(i.path)}, ${rubyQ})
 puts res.body`,
-    lease: `require "json"
+    lease: `${rubyHead}
 require "net/http"
 
-HOST = ${L("ruby")(i.host)}
-TOKEN = ENV.fetch("ACNOLOGIA_TOKEN")
+${rubyClient}
 
-def acnologia(path, body)
-  res = Net::HTTP.post(URI(HOST + path), body.to_json,
-                       "Authorization" => "Bearer #{TOKEN}", "Content-Type" => "application/json")
-  raise res.body unless res.is_a?(Net::HTTPSuccess)
-  JSON.parse(res.body)
+# with_key reports every lease and rotates to the next key on a rate limit.
+body = acn.with_key(${B(i.slug)}) do |lease|
+  # apply puts the key where this service expects it
+  query, headers = lease.apply(query: ${rubyQ})
+  uri = URI(lease.url(${B(i.path)}, query))
+  res = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+    http.get(uri.request_uri, headers)
+  end
+  raise Acnologia::RateLimited.new(status_code: 429) if res.code == "429"
+
+  res.body
 end
-
-# 1. Lease a key
-lease = acnologia("/api/v1/lease", { service: ${L("ruby")(i.slug)}, ttl_sec: 300 })
-
-# 2. Call the provider yourself
-uri = URI(${url("ruby", 'lease["base_url"]', 'URI.encode_www_form_component(lease["secret"])')})
-res = Net::HTTP.get_response(uri, { ${q ? "" : `${L("ruby")(hName)} => ${hValue('lease["secret"]', plus, "ruby")}`} })
-puts res.body
-
-# 3. Report the outcome (${STATUS_NOTE})
-status = res.code.to_i
-outcome = status == 429 ? "rate_limited" : status < 400 ? "ok" : "error"
-acnologia("/api/v1/leases/#{lease["lease_id"]}/report", { outcome: outcome, status_code: status })`,
+puts body`,
   };
 
+  const D = L("dart");
+  const dartQ = has ? `, query: {${pairs((k, v) => `${D(k)}: ${D(v)}`)}}` : "";
+  const dartInstall = `// pubspec.yaml dependencies:
+//   acnologia: {git: {url: https://github.com/sidharthpunathil/acnologia.git, path: sdk/dart}}`;
+  const dartClient = `  final acn = Acnologia(baseUrl: ${D(i.host)}, token: Platform.environment['ACNOLOGIA_TOKEN'] ?? '');`;
   const dart = {
-    proxy: `// dart pub add http
+    proxy: `${dartInstall}
 import 'dart:io';
-import 'package:http/http.dart' as http;
+
+import 'package:acnologia/acnologia.dart';
 
 Future<void> main() async {
-  final res = await http.get(
-    Uri.parse(${L("dart")(i.proxyUrl)}),
-    headers: {'Authorization': 'Bearer \${Platform.environment['ACNOLOGIA_TOKEN']}'},
-  );
+${dartClient}
+
+  // Acnologia picks a key, retries on rate limits, and never exposes the secret.
+  final res = await acn.proxy(${D(i.slug)}).get(${D(i.path)}${dartQ});
   print(res.body);
+  acn.close();
 }`,
-    lease: `// dart pub add http
-import 'dart:convert';
+    lease: `${dartInstall}
+//   http: ^1.1.0
 import 'dart:io';
+
+import 'package:acnologia/acnologia.dart';
 import 'package:http/http.dart' as http;
 
-final host = ${L("dart")(i.host)};
-final headers = {
-  'Authorization': 'Bearer \${Platform.environment['ACNOLOGIA_TOKEN']}',
-  'Content-Type': 'application/json',
-};
-
-Future<Map<String, dynamic>> acnologia(String path, Map<String, Object> body) async {
-  final res = await http.post(Uri.parse(host + path), headers: headers, body: jsonEncode(body));
-  if (res.statusCode >= 400) throw Exception(res.body);
-  return jsonDecode(res.body) as Map<String, dynamic>;
-}
-
 Future<void> main() async {
-  // 1. Lease a key
-  final lease = await acnologia('/api/v1/lease', {'service': ${L("dart")(i.slug)}, 'ttl_sec': 300});
-  final String secret = lease['secret'];
+${dartClient}
+  final client = http.Client();
 
-  // 2. Call the provider yourself
-  final res = await http.get(
-    Uri.parse(${url("dart", "(lease['base_url'] as String)", "Uri.encodeQueryComponent(secret)")}),${q ? "" : `\n    headers: {${L("dart")(hName)}: ${hValue("secret", plus, "dart")}},`}
-  );
-  print(res.body);
-
-  // 3. Report the outcome (${STATUS_NOTE})
-  final status = res.statusCode;
-  final outcome = status == 429 ? 'rate_limited' : status < 400 ? 'ok' : 'error';
-  await acnologia('/api/v1/leases/\${lease['lease_id']}/report', {'outcome': outcome, 'status_code': status});
+  // withKey reports every lease and rotates to the next key on a rate limit.
+  final body = await acn.withKey(${D(i.slug)}, (lease) async {
+    // lease.request builds a GET with the key where this service expects it
+    final req = lease.request('GET', ${D(i.path)}${dartQ});
+    final res = await http.Response.fromStream(await client.send(req));
+    if (res.statusCode == 429) throw const RateLimitedException(statusCode: 429);
+    return res.body;
+  });
+  print(body);
+  client.close();
+  acn.close();
 }`,
   };
 

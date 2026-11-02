@@ -29,6 +29,7 @@ failure up to 10 times).
    | `ACNOLOGIA_DATA_DIR` | `/data` (the image sets it already; keep it matching the volume). |
    | `ACNOLOGIA_MASTER_KEY` | Recommended, set before the first deploy: the output of `acnologia gen-master-key` (or `docker run --rm acnologia gen-master-key`). Kept in Railway's variables and your password manager, it survives losing the volume. |
    | `ANTHROPIC_API_KEY` | Optional: turns on the provider builder, "Fill with AI" and the Assistant. |
+   | `RAILWAY_RUN_UID` | `0`. The image runs as a non-root user, and Railway mounts a new volume owned by root, so without this the server stops with `mkdir /data: permission denied`. |
 
    Leave `ACNOLOGIA_ADDR` and `PORT` alone: with `ACNOLOGIA_ADDR` unset the
    server listens on `0.0.0.0:$PORT`, which Railway injects.
@@ -41,6 +42,23 @@ failure up to 10 times).
 6. **Open the site.** The lock screen asks for the access password, then the
    first visit creates the superadmin. The browser stays unlocked for 30
    days; "Lock this browser" in the account menu ends that early.
+
+## Move an existing install onto Railway
+
+To bring a local database along, upload a consistent copy and its master key
+to the volume root before the server opens them:
+
+1. On your machine: `sqlite3 data/acnologia.db ".backup snapshot.db"` (or
+   `cogito.db` on an older install), then
+   `sqlite3 snapshot.db "pragma integrity_check"`.
+2. Railway's file tools need a running container, so start the service once
+   with `ACNOLOGIA_DATA_DIR=/data/boot` (a throwaway folder) and no public
+   domain.
+3. `railway volume files upload snapshot.db /acnologia.db` and
+   `railway volume files upload data/master.key /master.key`, then download
+   both again and compare `shasum -a 256` with the originals.
+4. Set `ACNOLOGIA_DATA_DIR=/data` again. The next deploy opens your data, and
+   you sign in with the accounts you already had.
 
 ## Back up the master key
 

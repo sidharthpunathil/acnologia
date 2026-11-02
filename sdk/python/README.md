@@ -72,7 +72,7 @@ with open("hello.mp3", "wb") as f:
 
 ## Lease mode
 
-`acn.lease(service, exclude_key_ids=None, ttl_sec=None, wait_sec=None)` returns a `Lease` with
+`acn.lease(service, exclude_key_ids=None, ttl_sec=None, wait_sec=None, exclusive=False)` returns a `Lease` with
 `lease_id`, `key_id`, `service`, `secret`, `auth` (`type`, `name` and `prefix`),
 `base_url` and `expires_at`. When every key is cooling down it raises
 `NoKeyAvailable` with `retry_after` in seconds.
@@ -130,7 +130,7 @@ Outcomes: `ok`, `rate_limited`, `quota_exhausted`, `invalid`, `error`.
 
 ### with_key: retries with rotation
 
-`acn.with_key(service, fn, max_attempts=5, ttl_sec=None, wait_sec=None)` leases a key, calls `fn(lease)`,
+`acn.with_key(service, fn, max_attempts=5, ttl_sec=None, wait_sec=None, exclusive=False)` leases a key, calls `fn(lease)`,
 reports the result and returns what `fn` returned. Raise one of the exported
 exceptions to make Acnologia cool the key down and retry with the next one:
 
@@ -228,6 +228,24 @@ Proxy mode needs none of this: Acnologia queues proxied requests for up to the
 service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
 than the limit in parallel on one key.
 
+## Long jobs: renew and exclusive leases
+
+`lease.renew(ttl_sec=None)` extends an open lease so a long job keeps its key,
+and updates and returns `lease.expires_at` (`acn.renew(lease, ttl_sec)` does the
+same). `None` uses the server default (120 seconds); the server caps it at 24
+hours. When the lease is no longer open it raises `AcnologiaError` with
+`code == "lease_not_found"` (HTTP 404).
+
+`exclusive=True` on `lease()` or `with_key()` reserves the key for you only: no
+other lease or proxy call gets it until you report or the lease expires.
+`lease.exclusive` says whether you got it.
+
+```python
+with acn.lease("serpapi", ttl_sec=600, exclusive=True) as lease:
+    ...  # halfway through a long job:
+    lease.renew(600)
+```
+
 ## Async
 
 ```python
@@ -260,6 +278,7 @@ for s in acn.services():
 - `AcnologiaError`: any non 2xx from the consumer API (`.status_code`, `.code`, `.message`).
 - `NoKeyAvailable(AcnologiaError)`: HTTP 503 `no_key_available`, with `.retry_after` and `.busy`.
 - `AllKeysBusy(NoKeyAvailable)`: HTTP 503 `all_keys_busy`, every usable key is at its concurrency limit. `.busy` is `True`, `.retry_after` is usually 1.
+- `ServiceUnavailable(AcnologiaError)`: HTTP 503 `service_unavailable`, the provider keeps failing and its circuit breaker is open. Has `.retry_after` in seconds. Not a `NoKeyAvailable`.
 - `RateLimited`, `QuotaExhausted`, `InvalidKey`: raised by you inside `with_key` or a lease block. All subclass `KeyProblem`.
 
 ## Options

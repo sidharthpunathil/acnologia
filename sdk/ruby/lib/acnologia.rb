@@ -76,6 +76,18 @@ module Acnologia
     end
   end
 
+  # HTTP 503 service_unavailable: the provider keeps failing and its circuit
+  # breaker is open, so Acnologia paused traffic to it. retry_after is in
+  # seconds, or nil. Not a NoKeyAvailable: waiting for a key will not help.
+  class ServiceUnavailable < Error
+    attr_reader :retry_after
+
+    def initialize(message = "service unavailable", retry_after: nil, status: 503)
+      super(message, status: status, code: "service_unavailable")
+      @retry_after = retry_after
+    end
+  end
+
   # Raise a subclass inside with_key to report the key and retry with the next one.
   class KeyProblem < StandardError
     attr_reader :status_code, :retry_after
@@ -130,7 +142,7 @@ module Acnologia
 
   # A key handed out by Acnologia.
   class Lease
-    attr_reader :lease_id, :key_id, :service, :secret, :auth, :base_url, :expires_at
+    attr_reader :lease_id, :key_id, :service, :secret, :auth, :base_url, :expires_at, :exclusive
     attr_accessor :reported
 
     def initialize(client, data)
@@ -143,7 +155,21 @@ module Acnologia
       @auth = { "type" => auth["type"].to_s, "name" => auth["name"].to_s, "prefix" => auth["prefix"].to_s }.freeze
       @base_url = data["base_url"].to_s
       @expires_at = data["expires_at"]
+      @exclusive = data["exclusive"] == true
       @reported = false
+    end
+
+    # True when the key is reserved for this lease only.
+    def exclusive?
+      @exclusive
+    end
+
+    # Extend this open lease so a long job keeps its key. nil uses the server
+    # default (120 seconds); the server caps it at 24 hours. Returns the new
+    # expires_at and updates this lease's expires_at. Raises Acnologia::Error
+    # with code "lease_not_found" when the lease is no longer open.
+    def renew(ttl_sec: nil)
+      @expires_at = @client.renew(self, ttl_sec: ttl_sec)
     end
 
     # Report the outcome. Returns the next Lease when rotate is true and a key is free.
@@ -255,7 +281,10 @@ module Acnologia
     #
     # Always report the lease: on services with a concurrency limit it holds
     # one of the key's slots until it is reported or its TTL expires.
-    def lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil)
+    #
+    # exclusive: true keeps the key from every other caller until the lease
+    # is reported or expires.
+    def lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil, exclusive: false)
       body = { "service" => service }
       body["exclude_key_ids"] = exclude_key_ids if exclude_key_ids && !exclude_key_ids.empty?
       body["ttl_sec"] = ttl_sec.to_i unless ttl_sec.nil?
@@ -264,6 +293,7 @@ module Acnologia
 
         body["wait_sec"] = wait_sec.ceil
       end
+      body["exclusive"] = true if exclusive
       Lease.new(self, call("POST", "/api/v1/lease", body))
     end
 
@@ -272,13 +302,13 @@ module Acnologia
     #
     # Every lease is reported, whatever the block does (including raising any
     # exception). On services with a concurrency limit an unreported lease
-    # keeps one of the key's slots busy until its TTL expires. wait_sec is
-    # passed to every lease call.
-    def with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil)
+    # keeps one of the key's slots busy until its TTL expires. ttl_sec,
+    # wait_sec and exclusive are passed to every lease call.
+    def with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil, exclusive: false)
       raise ArgumentError, "max_attempts must be at least 1" if max_attempts < 1
 
       tried = []
-      lease = self.lease(service, ttl_sec: ttl_sec, wait_sec: wait_sec)
+      lease = self.lease(service, ttl_sec: ttl_sec, wait_sec: wait_sec, exclusive: exclusive)
       attempt = 0
       loop do
         attempt += 1
@@ -294,7 +324,8 @@ module Acnologia
                                           message: Acnologia.scrub_message(e.message, current.secret), rotate: !last)
           raise if last
 
-          lease = nxt || self.lease(service, exclude_key_ids: tried, ttl_sec: ttl_sec, wait_sec: wait_sec)
+          lease = nxt || self.lease(service, exclude_key_ids: tried, ttl_sec: ttl_sec, wait_sec: wait_sec,
+                                          exclusive: exclusive)
           next
         rescue Exception => e # rubocop:disable Lint/RescueException
           begin
@@ -321,6 +352,20 @@ module Acnologia
 
     def proxy(service)
       Proxy.new(self, service)
+    end
+
+    # Extend an open lease. nil uses the server default (120 seconds); the
+    # server caps it at 24 hours. Returns the new expires_at. Prefer
+    # Lease#renew, which also updates the lease's expires_at.
+    def renew(lease, ttl_sec: nil)
+      id = lease.is_a?(Lease) ? lease.lease_id : lease.to_s
+      body = {}
+      body["ttl_sec"] = ttl_sec.ceil if ttl_sec && ttl_sec.positive?
+      data = call("POST", "/api/v1/leases/#{URI.encode_www_form_component(id).gsub('+', '%20')}/renew", body)
+      exp = data["expires_at"]
+      raise Error.new("renew response has no expires_at") if exp.nil? || exp.to_s.empty?
+
+      exp
     end
 
     # @api private
@@ -359,10 +404,20 @@ module Acnologia
       code = err["code"].to_s
       message = (err["message"] || "HTTP #{res.status}").to_s
       retry_after = data.is_a?(Hash) && data["retry_after_sec"] ? data["retry_after_sec"].to_i : nil
+      if code == "service_unavailable"
+        retry_after ||= header_retry_after(res)
+        raise ServiceUnavailable.new(message, retry_after: retry_after, status: res.status)
+      end
       raise AllKeysBusy.new(message, retry_after: retry_after) if code == "all_keys_busy"
       raise NoKeyAvailable.new(message, retry_after: retry_after) if code == "no_key_available" || (res.status == 503 && code.empty?)
 
       raise Error.new(message, status: res.status, code: code)
+    end
+
+    # Retry-After in seconds, when the header is a positive number.
+    def header_retry_after(res)
+      v = res.headers.is_a?(Hash) ? res.headers["retry-after"].to_s.strip : ""
+      v.match?(/\A\d+\z/) && v.to_i.positive? ? v.to_i : nil
     end
 
     def net_http(method, url, headers, body)

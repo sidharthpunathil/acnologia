@@ -18,6 +18,7 @@ from acnologia import (
     NoKeyAvailable,
     QuotaExhausted,
     RateLimited,
+    ServiceUnavailable,
 )
 
 BASE = "http://acnologia.test"
@@ -37,6 +38,9 @@ class FakeServer:
         self.bad: set = set()
         self.counter = 0
         self.busy = False
+        self.renews: List[Dict[str, Any]] = []
+        self.no_next = False
+        self.unavailable: Optional[httpx.Response] = None
 
     def _lease(self, exclude: List[int]) -> Optional[Dict[str, Any]]:
         for k in self.keys:
@@ -82,6 +86,8 @@ class FakeServer:
             self.lease_bodies.append(body)
             if body.get("service") == "missing":
                 return httpx.Response(404, json={"error": {"code": "not_found", "message": "unknown service"}})
+            if self.unavailable is not None:
+                return self.unavailable
             if self.busy:
                 return httpx.Response(
                     503,
@@ -93,7 +99,15 @@ class FakeServer:
                     503,
                     json={"error": {"code": "no_key_available", "message": "pool drained"}, "retry_after_sec": 42},
                 )
+            lease["exclusive"] = bool(body.get("exclusive"))
             return httpx.Response(200, json=lease)
+        if path.startswith("/api/v1/leases/") and path.endswith("/renew"):
+            raw_id = path[len("/api/v1/leases/") : -len("/renew")]
+            body = json.loads(req.content)
+            self.renews.append({"raw_id": raw_id, "body": body})
+            if unquote(raw_id) not in self.leases:
+                return httpx.Response(404, json={"error": {"code": "lease_not_found", "message": "lease not found"}})
+            return httpx.Response(200, json={"ok": True, "expires_at": "2026-11-01T13:00:00Z"})
         if path.startswith("/api/v1/leases/") and path.endswith("/report"):
             raw_id = path[len("/api/v1/leases/") : -len("/report")]
             lid = unquote(raw_id)
@@ -104,7 +118,7 @@ class FakeServer:
             nxt = None
             if body["outcome"] in ("rate_limited", "quota_exhausted", "invalid"):
                 self.bad.add(key)
-            if body.get("rotate"):
+            if body.get("rotate") and not self.no_next:
                 nxt = self._lease([key])
             return httpx.Response(200, json={"ok": True, "next": nxt})
         if path.startswith("/proxy/"):
@@ -513,3 +527,78 @@ def test_proxy_does_not_follow_redirects() -> None:
     acn = Acnologia(BASE, TOKEN, transport=httpx.MockTransport(handler))
     resp = acn.proxy("serpapi").get("/search.json")
     assert resp.status_code == 302
+
+
+def test_renew(acn: Acnologia, server: FakeServer) -> None:
+    lease = acn.lease("serpapi")
+    assert lease.expires_at is not None and lease.expires_at.hour == 12
+    exp = lease.renew(1.5)
+    assert exp.hour == 13 and lease.expires_at == exp
+    assert server.renews[-1] == {"raw_id": "l%2F1", "body": {"ttl_sec": 2}}
+    acn.renew(lease)
+    assert server.renews[-1]["body"] == {}
+
+
+def test_renew_lease_not_found(acn: Acnologia) -> None:
+    lease = acn.lease("serpapi")
+    lease.lease_id = "gone"
+    with pytest.raises(AcnologiaError) as ei:
+        lease.renew(60)
+    assert ei.value.status_code == 404
+    assert ei.value.code == "lease_not_found"
+
+
+def test_lease_exclusive(acn: Acnologia, server: FakeServer) -> None:
+    plain = acn.lease("serpapi")
+    assert "exclusive" not in server.lease_bodies[-1]
+    assert plain.exclusive is False
+    held = acn.lease("serpapi", exclusive=True)
+    assert server.lease_bodies[-1] == {"service": "serpapi", "exclusive": True}
+    assert held.exclusive is True
+
+
+def test_with_key_forwards_exclusive(acn: Acnologia, server: FakeServer) -> None:
+    server.no_next = True
+    seen: List[bool] = []
+
+    def call(lease: Lease) -> int:
+        seen.append(lease.exclusive)
+        if lease.key_id == 1:
+            raise RateLimited()
+        return lease.key_id
+
+    assert acn.with_key("serpapi", call, exclusive=True) == 2
+    assert seen == [True, True]
+    assert [b.get("exclusive") for b in server.lease_bodies] == [True, True]
+
+
+def test_service_unavailable(server: FakeServer) -> None:
+    acn = Acnologia(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    server.unavailable = httpx.Response(
+        503, json={"error": {"code": "service_unavailable", "message": "circuit open"}, "retry_after_sec": 30}
+    )
+    with pytest.raises(ServiceUnavailable) as ei:
+        acn.lease("serpapi")
+    assert ei.value.retry_after == 30
+    assert ei.value.status_code == 503
+    assert ei.value.code == "service_unavailable"
+    assert isinstance(ei.value, AcnologiaError)
+    assert not isinstance(ei.value, NoKeyAvailable)
+
+    server.unavailable = httpx.Response(
+        503, json={"error": {"code": "service_unavailable", "message": "circuit open"}}, headers={"Retry-After": "9"}
+    )
+    with pytest.raises(ServiceUnavailable) as ei:
+        acn.lease("serpapi")
+    assert ei.value.retry_after == 9
+
+
+async def test_async_renew_and_exclusive(server: FakeServer) -> None:
+    async with AsyncAcnologia(BASE, TOKEN, transport=httpx.MockTransport(server.handler)) as acn:
+        lease = await acn.lease("serpapi", exclusive=True)
+        assert lease.exclusive is True
+        assert server.lease_bodies[-1] == {"service": "serpapi", "exclusive": True}
+        exp = await lease.renew(30)
+        assert lease.expires_at == exp and exp.hour == 13
+        assert server.renews[-1]["body"] == {"ttl_sec": 30}
+        await lease.report("ok")

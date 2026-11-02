@@ -18,6 +18,9 @@ var (
 	// every usable key is at its concurrency limit (HTTP 503 all_keys_busy).
 	// Such an error also matches NoKeyAvailable.
 	AllKeysBusy = errors.New("acnologia: all keys busy")
+	// ServiceUnavailable matches an *ErrServiceUnavailable: the provider keeps
+	// failing and its circuit breaker is open (HTTP 503 service_unavailable).
+	ServiceUnavailable = errors.New("acnologia: service unavailable")
 )
 
 // APIError is returned for any non-2xx response from the consumer API that is
@@ -119,4 +122,35 @@ func (e *ErrNoKeyAvailable) Error() string {
 }
 func (e *ErrNoKeyAvailable) Is(target error) bool {
 	return target == NoKeyAvailable || (target == AllKeysBusy && e.Busy)
+}
+
+// ErrServiceUnavailable is returned for HTTP 503 service_unavailable: the
+// provider keeps failing and Acnologia paused traffic to it (its circuit
+// breaker is open). Wait RetryAfter, or zero if unknown, before retrying. It
+// is not an *ErrNoKeyAvailable. errors.Is(err, ServiceUnavailable) tests it,
+// and errors.As(err, &apiErr) with an **APIError also matches.
+type ErrServiceUnavailable struct {
+	APIError
+	RetryAfter time.Duration
+}
+
+func (e *ErrServiceUnavailable) Error() string {
+	msg := "acnologia: service unavailable"
+	if e.RetryAfter > 0 {
+		msg += fmt.Sprintf(" (retry after %s)", e.RetryAfter)
+	}
+	if e.Message != "" {
+		msg += ": " + e.Message
+	}
+	return msg
+}
+func (e *ErrServiceUnavailable) Is(target error) bool { return target == ServiceUnavailable }
+
+// As lets errors.As(err, &apiErr) with apiErr *APIError see the embedded APIError.
+func (e *ErrServiceUnavailable) As(target any) bool {
+	if p, ok := target.(**APIError); ok {
+		*p = &e.APIError
+		return true
+	}
+	return false
 }

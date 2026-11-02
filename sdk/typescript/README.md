@@ -116,7 +116,7 @@ Acnologia cool down rate limited keys and retire exhausted or invalid ones.
 - every key busy (concurrency limit): throws `AllKeysBusyError`, a subclass of
   `NoKeyAvailableError`. Pass `{ waitSec }` to wait for a slot instead.
 
-Options: `{ maxAttempts?: number; ttlSec?: number; waitSec?: number }`.
+Options: `{ maxAttempts?: number; ttlSec?: number; waitSec?: number; exclusive?: boolean }`.
 
 #### SerpAPI search
 
@@ -247,6 +247,23 @@ Proxy mode needs none of this: Acnologia queues proxied requests for up to the s
 `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more than the limit in
 parallel on one key.
 
+## Long jobs: renew and exclusive leases
+
+`lease.renew(ttlSec?)` extends an open lease so a long job keeps its key, and updates and
+returns `lease.expiresAt` (`acnologia.renew(lease, ttlSec?)` does the same). Omit `ttlSec` for
+the server default (120 seconds); the server caps it at 24 hours. When the lease is no longer
+open it throws `AcnologiaError` with `code: "lease_not_found"` (status 404).
+
+`{ exclusive: true }` on `lease()` or `withKey()` reserves the key for you only: no other lease
+or proxy call gets it until you report or the lease expires. `lease.exclusive` says whether you
+got it.
+
+```ts
+const lease = await acnologia.lease("serpapi", { ttlSec: 600, exclusive: true });
+// halfway through a long job:
+await lease.renew(600);
+```
+
 ## Plain JavaScript
 
 The package works without TypeScript.
@@ -294,6 +311,7 @@ page needs. Anyone who can read the page can use the token.
 | `AcnologiaError` | Acnologia returned a non-2xx response. Has `status`, `code`, `body`. |
 | `NoKeyAvailableError` | 503 `no_key_available`. Has `retryAfter` (seconds or null) and `busy`. Extends `AcnologiaError`. |
 | `AllKeysBusyError` | 503 `all_keys_busy`: every usable key is at its concurrency limit. `busy` is true, `retryAfter` usually 1. Extends `NoKeyAvailableError`. |
+| `ServiceUnavailableError` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Has `retryAfter` (seconds or null). Extends `AcnologiaError`, not `NoKeyAvailableError`. |
 | `RateLimitedError(retryAfter?, { statusCode?, message? })` | You throw it inside `withKey`. |
 | `QuotaExhaustedError({ statusCode?, message? })` | You throw it inside `withKey`. |
 | `InvalidKeyError({ statusCode?, message? })` | You throw it inside `withKey`. |
