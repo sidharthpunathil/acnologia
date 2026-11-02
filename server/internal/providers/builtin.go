@@ -32,6 +32,14 @@ func Builtins() []Builtin {
 				// Cached and failed searches are free, so quota is read from the
 				// account endpoint rather than counted per request.
 				Quota: QuotaInfo{Unit: "searches"},
+				Offers: []Offer{
+					{Name: "Search", Match: &OfferMatch{Method: "GET", Path: "/search.json"},
+						Price:     &Price{Amount: 0.025, Currency: "USD", Unit: "search"},
+						Notes:     "Starter: $25 a month for 1,000 searches, 200 an hour. Free plan: 250 searches a month, 50 an hour. Only successful searches count.",
+						SourceURL: "https://serpapi.com/pricing", CheckedAt: "2026-11-02"},
+					{Name: "Locations", Match: &OfferMatch{Method: "GET", Path: "/locations.json"}, Free: true,
+						Notes: "The Locations API is free to use.", SourceURL: "https://serpapi.com/locations-api", CheckedAt: "2026-11-02"},
+				},
 				Rules: []Rule{
 					{Name: "Out of searches", Match: Match{BodyContains: []string{"run out of searches", "plan searches"}}, Outcome: QuotaExhausted},
 					{Name: "Hourly cap", Match: Match{BodyContains: []string{"past hour", "hourly"}}, Outcome: RateLimited, RetryAfter: &RetryAfter{Source: "next_hour"}},
@@ -74,6 +82,13 @@ func Builtins() []Builtin {
 				// The free plan allows 2 concurrent requests; raise it per key for paid plans.
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 5, MaxAttempts: 5, MaxConcurrency: 2, QueueTimeoutSec: 30},
 				Quota:    QuotaInfo{Unit: "characters"},
+				Offers: []Offer{
+					{Name: "Text to speech", Match: &OfferMatch{Method: "POST", Path: "/v1/text-to-speech"},
+						Price: &Price{Amount: 0.00008, Currency: "USD", Unit: "character"},
+						Notes: "API price per 1,000 characters: Multilingual v2 and v3 $0.08, Flash and Turbo $0.04. Free plan: 10,000 credits a month. " +
+							"Concurrent requests per plan (Multilingual v2 / Flash): Free 2/4, Starter 3/6, Creator 5/10, Pro 10/20.",
+						SourceURL: "https://elevenlabs.io/pricing/api", CheckedAt: "2026-11-02"},
+				},
 				Rules: []Rule{
 					{Name: "Character quota exceeded", Match: Match{BodyContains: []string{"quota_exceeded", "exceeds your quota"}}, Outcome: QuotaExhausted},
 					{Name: "Too many concurrent requests", Match: Match{BodyContains: []string{"too_many_concurrent_requests"}}, Outcome: Busy, RetryAfter: &RetryAfter{Source: "fixed", Value: "1"}},
@@ -116,5 +131,5 @@ func Builtins() []Builtin {
 				},
 			},
 		},
-	}, append(searchBuiltins(), llmBuiltins()...)...)
+	}, append(append(searchBuiltins(), tinyfishBuiltins()...), llmBuiltins()...)...)
 }

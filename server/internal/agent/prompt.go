@@ -21,6 +21,7 @@ const specGuide = `You are the provider engineer inside Acnologia, a self-hosted
 - base_url and auth: where requests go and where the key is placed (query param, header, or bearer token). The proxy puts the key there for every request.
 - defaults: strategy (round_robin, fill_first, least_used, most_quota, random), cooldown_sec (base cooldown after a rate limit, doubled on repeats), max_attempts (keys tried per proxied request), max_concurrency (parallel requests allowed per key; 0 = unlimited; set it when the provider documents a concurrency cap), queue_timeout_sec (how long a request waits for a free key when all are busy; 0 to 30 is sensible when max_concurrency is set), cache_ttl_sec (seconds to cache successful GET responses; set 3600 or so for search and lookup APIs whose results are stable, leave 0 for anything that generates content or changes state), breaker_threshold / breaker_window_sec / breaker_reset_sec (circuit breaker on provider errors; leave them out for the defaults of 10 errors in 60s pausing 30s).
 - quota: unit (searches, characters, credits, requests, tokens), counts_per_request (true only when each successful request spends exactly one unit), cost_per_request (USD for one successful request at the entry paid price, used for spend tracking and budgets; omit if pricing is not per request), free_tier (one short sentence on the free allowance, hedged when it changes often), headers (when every response carries quota headers: {limit: "X-RateLimit-Limit", remaining: "X-RateLimit-Remaining", reset: "X-RateLimit-Reset", reset_format: seconds | unix | unix_ms | iso8601 | http_date, index: n}. index picks entry n of a comma list such as "1, 2000" for per second and per month windows; use the longest window. Acnologia then tracks quota from live traffic without a health check).
+- offers: the provider's priced products or endpoints, from its pricing and rate limit pages. Acnologia paces every key to stay under an offer's limits before calling upstream, prices each request from the matching offer (free offers cost 0, falling back to quota.cost_per_request), and shows free offers and limits to people and AI clients. Each offer: name (the product name, for example "TinySearch"), match (omit for a provider wide offer; else {method, path} where path is relative to base_url and matches as a prefix, * matches inside one segment and a trailing $ makes it exact, or {examples: ["example name"]}), price {amount (USD per ONE unit: $5 per 1,000 is 0.005), currency (default USD), unit: request | search | query | url | page | step | minute | check | token | character | credit | image | second | session | run | gb, per_request (units one request uses when fixed, for example 1 credit)}, free (true when requests cost nothing), limits [{count, per: second | minute | hour | day | month, unit}], concurrency (in flight requests per key), notes (plan differences, daily allowances, anything else worth knowing), source_url (the page you read) and checked_at (today's date, YYYY-MM-DD). Put only limits that hold for every key in limits: the pacer enforces them on all keys, so a free plan cap would throttle paid keys. Write plan dependent caps in notes. Leave out any number the pages do not publish.
 - rules: ordered list, first match wins, evaluated on error responses. Each rule: name, match, outcome, optional retry_after.
   - match fields are ANDed; values inside a list are ORed; text matching is case insensitive substring.
     status: [codes] (empty = any status >= 400; rules never see 2xx/3xx unless status lists such a code),
@@ -37,14 +38,16 @@ slug (lowercase, hyphens), name (official product name), category (one or two wo
 
 # How to work
 1. Find the official API docs: authentication, base URL, rate limits, quotas, concurrency limits, error format and error codes, and any account or usage endpoint. Prefer official docs and official SDK source over blogs.
-2. Read the actual error format. Rules must match what the API really returns; quote real error strings in body_contains and tests.
-3. Draft the provider, call validate_spec, fix every problem.
-4. If a live_check tool is available, use it once the auth and health check are drafted.
-5. Call submit_provider with a short summary that names your sources.
+2. Find the provider's pricing page and its rate limits page, and fill offers from them with source_url and checked_at. Note what is free.
+3. Read the actual error format. Rules must match what the API really returns; quote real error strings in body_contains and tests.
+4. Draft the provider, call validate_spec, fix every problem.
+5. If a live_check tool is available, use it once the auth and health check are drafted.
+6. Call submit_provider with a short summary that names your sources, including the pricing page.
 
 # Hard rules
 - Base every rule on documentation or observed responses. Never invent error strings; if the docs do not say, rely on the standard rules and say so in the summary.
 - Never put an API key, token or secret in the spec, examples or tests.
+- Never guess a price or a limit. An offer with only a name, notes and source_url is fine.
 - The health check must not spend quota. If unsure, omit it.
 - Do not mark an example safe if it costs money or changes data.
 - Keep the spec compact: no duplicate rules, no rules the standard rules already cover unless the body text distinguishes outcomes.
@@ -53,8 +56,8 @@ slug (lowercase, hyphens), name (official product name), category (one or two wo
 func examplesBlock() string {
 	var b strings.Builder
 	b.WriteString("# Worked examples: Acnologia's built-in providers\n")
-	// A few varied examples teach the format; all twelve would only add tokens.
-	show := map[string]bool{"serpapi": true, "elevenlabs": true, "brave-search": true, "tavily": true}
+	// A few varied examples teach the format; all of them would only add tokens.
+	show := map[string]bool{"serpapi": true, "elevenlabs": true, "brave-search": true, "tavily": true, "tinyfish-search": true}
 	for _, bi := range providers.Builtins() {
 		if !show[bi.Slug] {
 			continue
@@ -99,7 +102,7 @@ func (a *Agent) taskPrompt(ctx context.Context, s *runState) (string, error) {
 			"website": p.Website, "docs_url": p.DocsURL, "color": p.Color, "spec": json.RawMessage(p.Spec)}, "", "  ")
 		fmt.Fprintf(&b, "Task: improve the existing provider %q (keep slug %q).\n\nCurrent version %d:\n```json\n%s\n```\n\n", p.Name, p.Slug, p.Version, cur)
 	} else {
-		b.WriteString("Task: add a new provider to Acnologia and fill in everything: metadata, brand color, logo URL if you find one, auth, defaults, rules, health check, examples and tests.\n\n")
+		b.WriteString("Task: add a new provider to Acnologia and fill in everything: metadata, brand color, logo URL if you find one, auth, defaults, offers from the pricing page, rules, health check, examples and tests.\n\n")
 		if ps, err := a.Store.ListProviders(ctx); err == nil {
 			names := []string{}
 			for _, p := range ps {

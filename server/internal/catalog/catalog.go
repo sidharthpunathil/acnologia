@@ -170,7 +170,8 @@ func (c *Catalog) Delete(ctx context.Context, slug string) error {
 // Boot seeds built-in providers on first run and loads every spec.
 func (c *Catalog) Boot(ctx context.Context) error {
 	for _, b := range providers.Builtins() {
-		if _, err := c.Store.GetProvider(ctx, b.Slug); err == nil {
+		if cur, err := c.Store.GetProvider(ctx, b.Slug); err == nil {
+			c.backfillOffers(ctx, cur, b)
 			// Already seeded: only fill in a logo that is still missing, so
 			// existing installs get logos added in newer releases.
 			if _, _, lerr := c.Store.ProviderLogo(ctx, b.Slug); errors.Is(lerr, store.ErrNotFound) {
@@ -199,6 +200,36 @@ func (c *Catalog) Boot(ctx context.Context) error {
 		}
 	}
 	return c.LoadAll(ctx)
+}
+
+// backfillOffers gives a built-in provider seeded by an older release the
+// offers this release ships, but only while nobody has edited it (version 1),
+// so an operator's own spec is never overwritten.
+func (c *Catalog) backfillOffers(ctx context.Context, cur *store.Provider, b providers.Builtin) {
+	if !cur.Builtin || cur.Version != 1 || len(b.Spec.Offers) == 0 {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(cur.Spec, &raw) != nil {
+		return
+	}
+	if _, ok := raw["offers"]; ok {
+		return
+	}
+	offers, err := json.Marshal(b.Spec.Offers)
+	if err != nil {
+		return
+	}
+	raw["offers"] = offers
+	spec, err := json.Marshal(raw)
+	if err != nil {
+		return
+	}
+	next := *cur
+	next.Spec = spec
+	if _, err := c.Store.SaveProvider(ctx, &next, "system", "built-in offers added"); err != nil {
+		slog.Warn("could not add offers to built-in provider", "slug", cur.Slug, "err", err)
+	}
 }
 
 func (c *Catalog) LoadAll(ctx context.Context) error {

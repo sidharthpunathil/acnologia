@@ -175,6 +175,7 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 				required = append(required, "body")
 			}
 			desc := fmt.Sprintf("%s on %s (%s %s). Acnologia adds a pooled key and rotates on rate limits.", ex.Name, sv.Name, strings.ToUpper(orDefault(ex.Method, "GET")), ex.Path)
+			desc += offerHint(spec, orDefault(ex.Method, "GET"), ex.Path)
 			if sv.Description != "" {
 				desc += " " + sv.Description
 			}
@@ -521,6 +522,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 			"slug": sv.Slug, "name": sv.Name, "category": sv.Category, "description": sv.Description,
 			"base_url": sv.BaseURL, "auth": map[string]any{"type": sv.AuthType, "name": sv.AuthName},
 			"quota_unit": spec.Quota.Unit, "max_concurrency_per_key": sv.MaxConcurrency, "examples": examples,
+			"offers":      offerRows(spec.Offers),
 			"how_to_call": "Use proxy_request with service=" + sv.Slug + " and a path, or the generated tool for an example. Acnologia adds the key.",
 		}
 		if p, err := s.Store.GetProvider(ctx, sv.Provider); err == nil && strings.HasPrefix(p.DocsURL, "https://") {

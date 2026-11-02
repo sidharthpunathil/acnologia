@@ -402,8 +402,8 @@ function ProviderSection({ data }: { data: UsageReport }) {
       <div className="flex flex-col gap-4">
         {unpriced && (
           <Callout tone="warning">
-            Provider spend needs cost_per_request on providers. Set quota.cost_per_request in the provider spec, or a cost per request on the service,
-            and each successful call is priced from then on.
+            Provider spend needs prices on providers. Add offers with prices to the provider spec (free offers count as $0), set
+            quota.cost_per_request, or set a cost per request on the service, and each successful call is priced from then on.
           </Callout>
         )}
         {rows.length === 0 ? (
@@ -412,7 +412,7 @@ function ProviderSection({ data }: { data: UsageReport }) {
             compact
             icon={AcnProxy}
             title="No provider requests in this range"
-            body="Call a service through /proxy or lease a key from an app. Spend shows up here once providers have cost_per_request set."
+            body="Call a service through /proxy or lease a key from an app. Spend shows up here once providers have offer prices or cost_per_request set."
           />
         ) : (
           <TableFrame>

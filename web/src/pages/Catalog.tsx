@@ -19,6 +19,7 @@ import { cx } from "@/utils/cx";
 import { AddServiceModal } from "./AddServiceModal";
 import { Callout, EmptyState, PageHeader } from "@/components/acn";
 import { CARD } from "./service/parts";
+import { FreeOfferChip } from "../components/OfferBits";
 import { SearchArt, ShelfArt } from "@/components/foundations/illustrations";
 
 const ALL = "__all";
@@ -71,6 +72,7 @@ function FreeTierLine({ provider }: { provider: string }) {
 }
 
 function ServiceCard({ s }: { s: Service }) {
+  const spec = useProviders((st) => st.providers.find((p) => p.slug === s.provider)?.spec);
   const dot = healthDot(s);
   const parts = metaParts(s);
   // No keys yet: keep the card quiet until it is hovered or focused.
@@ -104,6 +106,7 @@ function ServiceCard({ s }: { s: Service }) {
           <span className={cx("min-w-0 truncate text-body-medium", idle ? "text-text-secondary" : "text-text-primary")}>{s.name}</span>
           <span className={cx("size-1.5 shrink-0 rounded-full", dot.cls)} title={dot.label} aria-hidden="true" />
           <span className="sr-only">{dot.label}</span>
+          <FreeOfferChip spec={spec} className="ms-auto" />
         </div>
         <div className="mt-1 line-clamp-2 font-mono text-caption-1-regular text-text-secondary" title={serviceMeta(s)}>
           {parts.map((p, i) => (

@@ -1,4 +1,5 @@
 import type { Provider, Service, SpecExample } from "../../lib/types";
+import { limitText, matchText, offersOf, priceText } from "../../lib/offers";
 
 /*
  * A Markdown brief an LLM can act on with no other context: where to send
@@ -79,8 +80,22 @@ export function buildBrief({ service, provider, host, token }: BriefInput): stri
     out.push("```sh", curlFor(base, { name: "", method: "GET", path: "/", safe: true }, auth), "```", "");
   }
 
+  const offers = offersOf(spec);
+  if (offers.length) {
+    out.push("## Offers and limits", "");
+    out.push(`${name} publishes these prices and limits. Limits are per key; Acnologia spreads requests over the pool's keys and holds a request back rather than exceed them, so stay well under them and prefer the free offers.`, "");
+    for (const o of offers) {
+      const bits = [priceText(o), ...(o.limits ?? []).map(limitText), o.concurrency ? `at most ${o.concurrency} at a time` : null].filter(Boolean);
+      out.push(`- **${o.name}** (${ic(matchText(o))})${bits.length ? `: ${bits.join(", ")}` : ""}.${o.notes ? ` ${o.notes}` : ""}`);
+    }
+    const src = [...new Set(offers.map((o) => o.source_url).filter(Boolean))];
+    const checked = offers.map((o) => o.checked_at ?? "").sort().pop() || undefined;
+    if (src.length) out.push("", `Source: ${src.join(", ")}${checked ? ` (checked ${checked})` : ""}.`);
+    out.push("");
+  }
+
   if (quota?.unit || quota?.free_tier) {
-    out.push("## Limits", "");
+    out.push("## Quota", "");
     if (quota.unit) out.push(`- Usage is counted in ${quota.unit}.`);
     if (quota.free_tier) out.push(`- Free tier: ${quota.free_tier}.`);
     out.push(`- Keep calls purposeful: every request spends quota from a shared pool.`, "");
@@ -91,7 +106,7 @@ export function buildBrief({ service, provider, host, token }: BriefInput): stri
   out.push(`- ${ic("401 unauthenticated")}: the token is missing or wrong. Stop and ask the user for a valid token.`);
   out.push(`- ${ic("403 service_not_allowed")} or ${ic("proxy_not_allowed")}: this token may not call ${name} through the proxy. Ask the user to allow it on the Apps page.`);
   out.push(`- ${ic("503 no_key_available")}: every key is cooling down or out of quota. Wait the ${ic("retry_after_sec")} from the JSON body, then retry once.`);
-  out.push(`- ${ic("503 all_keys_busy")}: every key is at its concurrency limit. Retry after a second or two.`);
+  out.push(`- ${ic("503 all_keys_busy")}: every key is at its concurrency limit or at a limit listed above. Wait the ${ic("retry_after_sec")} from the JSON body, then retry.`);
   out.push(`- ${ic("503 service_unavailable")}: ${name} keeps failing upstream. Wait ${ic("retry_after_sec")} before retrying.`);
   out.push(`- Any other 4xx comes from ${name} itself, usually a bad parameter. Fix the request instead of retrying it as is.`);
   out.push("");

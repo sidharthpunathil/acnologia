@@ -50,6 +50,7 @@ var pages = []page{
 	{"security", "security.md", "docs/security.md", ""},
 	{"configuration", "configuration.md", "docs/configuration.md", ""},
 	{"api", "api.md", "docs/api.md", ""},
+	{"cli", "cli.md", "docs/cli.md", ""},
 	{"providers", "providers.md", "docs/providers.md", ""},
 	{"development", "development.md", "docs/development.md", ""},
 }

@@ -93,6 +93,9 @@ func writeNoKey(w http.ResponseWriter, err error) bool {
 	e := apiError{Code: "no_key_available", Message: "every key for this service is cooling down, exhausted or disabled"}
 	if nk.Busy {
 		e = apiError{Code: "all_keys_busy", Message: "every usable key is at its concurrency limit, retry shortly"}
+		if nk.Paced {
+			e.Message = "every usable key is at its concurrency limit or at a rate limit its provider publishes, retry shortly"
+		}
 	}
 	writeJSON(w, 503, map[string]any{"error": e, "retry_after_sec": retry})
 	return true
@@ -125,7 +128,7 @@ func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Ser
 	}
 	if ttl <= 0 || ttl > 24*time.Hour {
 		ttl = 5 * time.Minute
-		if p.Key.ConcurrencyLimit(sv) > 0 {
+		if pool.ConcurrencyLimit(p.Key, sv, providers.Get(sv.Provider)) > 0 {
 			// A forgotten lease blocks a slot, so default to a shorter hold.
 			ttl = 2 * time.Minute
 		}
@@ -141,7 +144,7 @@ func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Ser
 	}
 	s.Pool.HoldLease(p, l.ID, l.ExpiresAt)
 	// A lease is charged as one request: Acnologia cannot see what the app does with the key.
-	cost := costPerRequest(sv, providers.Get(sv.Provider))
+	cost := costPerRequest(sv, providers.Get(sv.Provider), "", "")
 	s.Store.AddEvent(ctx, store.NewEvent{Kind: "lease", ServiceID: sv.ID, KeyID: p.Key.ID, AppID: a.ID, Cost: cost})
 	_ = s.Store.RecordAppUsage(ctx, a.ID, cost, false)
 	return &leaseDTO{

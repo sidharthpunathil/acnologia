@@ -318,6 +318,9 @@ func migrate(db *sql.DB) error {
 	if err := migrateAIUsage(db); err != nil {
 		return err
 	}
+	if err := migrateAppTokens(db); err != nil {
+		return err
+	}
 	return migrateRuns(db)
 }
 

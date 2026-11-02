@@ -14,7 +14,8 @@ import {
 } from "@remixicon/react";
 import { Focusable } from "react-aria-components";
 import type { ComponentType } from "react";
-import type { AuthType, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecRule, Strategy, TestReport } from "../../lib/types";
+import type { AuthType, OfferLimit, OfferPer, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecOffer, SpecRule, Strategy, TestReport } from "../../lib/types";
+import { LIMIT_PERS, PRICE_UNITS, matchText } from "../../lib/offers";
 import { OUTCOMES } from "../../lib/types";
 import { STRATEGY_HELP } from "../../lib/format";
 import { ConcurrencyFields, StrategySelect } from "../../components/ServiceForm";
@@ -509,7 +510,7 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
               onChange={(v) => set({ quota: { ...quota, counts_per_request: v } })}
             />
           </div>
-          <OptionalNumberInput label="Cost per request (USD)" hint="Used for spend totals and app budgets. Empty means free or unknown." min={0} value={quota.cost_per_request} disabled={readOnly} onChange={(v) => set({ quota: { ...quota, cost_per_request: v } })} placeholder="0.002" />
+          <OptionalNumberInput label="Cost per request (USD)" hint="Used for spend totals and app budgets when no offer prices the request. Empty means free or unknown." min={0} value={quota.cost_per_request} disabled={readOnly} onChange={(v) => set({ quota: { ...quota, cost_per_request: v } })} placeholder="0.002" />
           <TextInput
             label="Free tier"
             hint="Short note shown in the catalog."
@@ -957,6 +958,215 @@ export function ExamplesTab({ spec, onChange, readOnly }: SpecTabProps) {
                       onChange={(v) => set({ safe: v })}
                     />
                   </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Offers
+
+const ANY = "any";
+
+/** Drops empty match fields; no method, path or examples means provider wide. */
+function cleanMatch(m: NonNullable<SpecOffer["match"]>): SpecOffer["match"] {
+  const out: NonNullable<SpecOffer["match"]> = {};
+  if (m.method) out.method = m.method;
+  if (m.path) out.path = m.path;
+  if (m.examples?.length) out.examples = m.examples;
+  return Object.keys(out).length ? out : undefined;
+}
+
+export function OffersTab({ spec, onChange, readOnly }: SpecTabProps) {
+  const list = spec.offers ?? [];
+  const setList = (l: SpecOffer[]) => onChange({ ...spec, offers: l });
+  const today = new Date().toISOString().slice(0, 10);
+  const add = () => setList([...list, { name: "", free: false, limits: [], checked_at: today }]);
+  const order = useOrderedList(list.length);
+  const exampleNames = spec.examples.map((e) => e.name).filter(Boolean);
+  return (
+    <div className="flex flex-col gap-5">
+      <Section
+        title="Offers"
+        description="Prices, free allowances and published limits per product or endpoint, from the provider's pricing page. Acnologia keeps every key under an offer's limits, prices requests from it, and shows it to people and AI clients."
+        actions={
+          !readOnly && (
+            <Button size="small" variant="secondary" leadingIcon={RiAddLine} onClick={add}>
+              Add offer
+            </Button>
+          )
+        }
+      />
+      {list.length === 0 ? (
+        <EmptyState
+          title="No offers yet"
+          body="Add what the pricing page says, such as a free search endpoint with 30 requests a minute. Without offers, Acnologia uses the cost per request on the Connection tab."
+          action={
+            !readOnly && (
+              <Button variant="primary" leadingIcon={RiAddLine} onClick={add}>
+                Add an offer
+              </Button>
+            )
+          }
+        />
+      ) : (
+        <ol className="flex flex-col gap-3">
+          {list.map((o, i) => {
+            const set = (p: Partial<SpecOffer>) => setList(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
+            const m = o.match ?? {};
+            const setMatch = (p: Partial<NonNullable<SpecOffer["match"]>>) => set({ match: cleanMatch({ ...m, ...p }) });
+            const price = o.price;
+            const setPrice = (p: Partial<NonNullable<SpecOffer["price"]>>) => {
+              const next = { amount: 0, unit: "request", ...price, ...p };
+              set({ price: next.unit ? next : undefined });
+            };
+            const limits = o.limits ?? [];
+            const setLimits = (l: OfferLimit[]) => set({ limits: l });
+            return (
+              <li key={order.key(i)} ref={order.ref(i)} className={cx(ITEM_CARD, "p-4 sm:p-5", order.isNew(i) && "fade-up")}>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-body-medium text-text-primary">{o.name || `Offer ${i + 1}`}</span>
+                    {o.free && (
+                      <Chip variant="caption" color="lime" className="font-mono">
+                        Free
+                      </Chip>
+                    )}
+                    <span className="truncate font-mono text-caption-1-regular text-text-tertiary">{matchText(o)}</span>
+                  </div>
+                  <ItemControls
+                    index={i}
+                    count={list.length}
+                    label={o.name || `offer ${i + 1}`}
+                    disabled={readOnly}
+                    onMove={(d) => {
+                      order.move(i, d);
+                      setList(move(list, i, d));
+                    }}
+                    onDuplicate={() => {
+                      order.duplicate(i);
+                      setList([...list.slice(0, i + 1), { ...o, name: `${o.name} copy` }, ...list.slice(i + 1)]);
+                    }}
+                    onRemove={() => {
+                      order.remove(i);
+                      setList(list.filter((_, j) => j !== i));
+                    }}
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <TextInput label="Name" isRequired value={o.name} disabled={readOnly} onChange={(v) => set({ name: v })} placeholder="TinySearch" />
+                  <div className="sm:col-span-2 sm:pt-7">
+                    <ToggleRow
+                      label="Free"
+                      description="Requests under this offer cost nothing, within its limits."
+                      checked={!!o.free}
+                      disabled={readOnly}
+                      onChange={(v) => set(v ? { free: true, price: price ? { ...price, amount: 0 } : undefined } : { free: false })}
+                    />
+                  </div>
+
+                  <fieldset className="grid grid-cols-1 gap-4 border-t border-separator-border pt-4 sm:col-span-3 sm:grid-cols-[130px_1fr_1fr]">
+                    <legend className={cx(LEGEND, "float-left w-full")}>Covers</legend>
+                    <p className="text-body-2-regular text-text-secondary sm:col-span-3">
+                      Leave all three empty for an offer that covers every request. The path is relative to the base URL and matches as a prefix; * matches inside one segment and a trailing $ makes it exact.
+                    </p>
+                    <SelectField
+                      label="Method"
+                      value={m.method || ANY}
+                      disabled={readOnly}
+                      onChange={(v) => setMatch({ method: v === ANY ? undefined : v })}
+                      options={[{ id: ANY, label: "Any" }, ...["GET", "POST", "PUT", "PATCH", "DELETE"].map((x) => ({ id: x, label: x }))]}
+                    />
+                    <TextInput label="Path" mono value={m.path ?? ""} disabled={readOnly} onChange={(v) => setMatch({ path: v || undefined })} placeholder="/search" spellCheck={false} />
+                    <FieldShell label="Examples" hint={exampleNames.length ? `Comma separated: ${exampleNames.join(", ")}` : "Names of examples, comma separated."}>
+                      <ListInput value={m.examples} disabled={readOnly} onChange={(v) => setMatch({ examples: v })} placeholder={exampleNames[0] ?? "Search"} />
+                    </FieldShell>
+                  </fieldset>
+
+                  <fieldset className="grid grid-cols-1 gap-4 border-t border-separator-border pt-4 sm:col-span-3 sm:grid-cols-4">
+                    <legend className={cx(LEGEND, "float-left w-full")}>Price</legend>
+                    <OptionalNumberInput
+                      label="Amount per unit"
+                      hint="$5 per 1,000 is 0.005."
+                      min={0}
+                      value={price?.amount}
+                      disabled={readOnly || !!o.free}
+                      onChange={(v) => (v === undefined && !price?.unit ? set({ price: undefined }) : setPrice({ amount: v ?? 0 }))}
+                      placeholder={o.free ? "0" : "0.016"}
+                    />
+                    <SelectField
+                      label="Unit"
+                      value={price?.unit || "none"}
+                      disabled={readOnly}
+                      onChange={(v) => (v === "none" ? set({ price: undefined }) : setPrice({ unit: v }))}
+                      options={[{ id: "none", label: "No price" }, ...PRICE_UNITS.map((u) => ({ id: u, label: u }))]}
+                    />
+                    <TextInput
+                      label="Currency"
+                      mono
+                      value={price?.currency ?? ""}
+                      disabled={readOnly || !price}
+                      onChange={(v) => setPrice({ currency: v.toUpperCase() || undefined })}
+                      placeholder="USD"
+                      maxLength={3}
+                    />
+                    <OptionalNumberInput
+                      label="Units per request"
+                      hint="When fixed, such as 1 credit."
+                      min={0}
+                      value={price?.per_request}
+                      disabled={readOnly || !price}
+                      onChange={(v) => setPrice({ per_request: v })}
+                      placeholder="1"
+                    />
+                  </fieldset>
+
+                  <fieldset className="flex flex-col gap-3 border-t border-separator-border pt-4 sm:col-span-3">
+                    <legend className={cx(LEGEND, "float-left w-full")}>Limits per key</legend>
+                    <p className="text-body-2-regular text-text-secondary">Acnologia enforces these on every key, so list only limits that hold for every plan. Put plan specific caps in the notes.</p>
+                    {limits.map((l, j) => {
+                      const setL = (p: Partial<OfferLimit>) => setLimits(limits.map((x, k) => (k === j ? { ...x, ...p } : x)));
+                      return (
+                        <div key={j} className="grid grid-cols-[1fr_1fr_auto] items-end gap-3 sm:grid-cols-[160px_160px_1fr_auto]">
+                          <OptionalNumberInput label="Count" min={1} value={l.count} disabled={readOnly} onChange={(v) => setL({ count: v ?? 0 })} placeholder="30" />
+                          <SelectField label="Per" value={l.per} disabled={readOnly} onChange={(v) => setL({ per: v as OfferPer })} options={LIMIT_PERS.map((x) => ({ id: x, label: x }))} />
+                          <TextInput className="max-sm:col-span-2 max-sm:row-start-2" label="Unit" value={l.unit ?? ""} disabled={readOnly} onChange={(v) => setL({ unit: v || undefined })} placeholder="requests" />
+                          <div className="pb-1.5 max-sm:col-start-3 max-sm:row-start-1">
+                            <RowIconButton danger icon={RiDeleteBinLine} label={`Delete limit ${j + 1}`} disabled={readOnly} onClick={() => setLimits(limits.filter((_, k) => k !== j))} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!readOnly && (
+                      <Button size="small" variant="secondary" leadingIcon={RiAddLine} className="w-fit" onClick={() => setLimits([...limits, { count: 60, per: "minute", unit: "requests" }])}>
+                        Add limit
+                      </Button>
+                    )}
+                    <OptionalNumberInput
+                      className="sm:max-w-[240px]"
+                      label="Concurrent requests per key"
+                      hint="Empty when not published."
+                      min={0}
+                      value={o.concurrency || undefined}
+                      disabled={readOnly}
+                      onChange={(v) => set({ concurrency: v || undefined })}
+                      placeholder="2"
+                    />
+                  </fieldset>
+
+                  <fieldset className="grid grid-cols-1 gap-4 border-t border-separator-border pt-4 sm:col-span-3 sm:grid-cols-[1fr_200px]">
+                    <legend className={cx(LEGEND, "float-left w-full")}>Notes and source</legend>
+                    <TextField value={o.notes ?? ""} onChange={(v) => set({ notes: v || undefined })} isDisabled={readOnly} className="min-w-0 sm:col-span-2">
+                      <Label>Notes</Label>
+                      <TextareaBase rows={2} placeholder="Free up to 12,000 a day, then wallet funds." />
+                    </TextField>
+                    <TextInput label="Source URL" value={o.source_url ?? ""} disabled={readOnly} onChange={(v) => set({ source_url: v || undefined })} placeholder="https://example.com/pricing" spellCheck={false} />
+                    <TextInput label="Checked on" type="date" value={o.checked_at ?? ""} disabled={readOnly} onChange={(v) => set({ checked_at: v || undefined })} />
+                  </fieldset>
                 </div>
               </li>
             );

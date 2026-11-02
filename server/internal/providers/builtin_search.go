@@ -20,6 +20,9 @@ func searchBuiltins() []Builtin {
 				Auth:     Auth{Type: "header", Name: "X-API-KEY"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 60, MaxAttempts: 5, CacheTTLSec: 3600},
 				Quota:    QuotaInfo{Unit: "queries", CountsPerRequest: true, CostPerRequest: 0.001, FreeTier: "Free queries on sign up (about 2,500), then paid credits"},
+				Offers: []Offer{{Name: "Google search", Price: &Price{Amount: 0.001, Currency: "USD", Unit: "query"},
+					Notes:     "2,500 free queries on sign up. Starter: $50 for 50,000 credits at 50 queries a second; Standard $0.75 per 1,000 at 100 a second; Ultimate $0.30 per 1,000 at 300 a second.",
+					SourceURL: "https://serper.dev", CheckedAt: "2026-11-02"}},
 				Rules: []Rule{
 					{Name: "Out of credits", Match: Match{BodyContains: []string{"not enough credits", "insufficient credits", "out of credits"}}, Outcome: QuotaExhausted},
 					{Name: "Bad API key", Match: Match{Status: []int{401, 403}, BodyContains: []string{"unauthorized", "invalid api key"}}, Outcome: Invalid},
@@ -45,6 +48,10 @@ func searchBuiltins() []Builtin {
 				// Brave sends "per second, per month" pairs; index 1 is the monthly window.
 				Quota: QuotaInfo{Unit: "queries", CostPerRequest: 0.005, FreeTier: "Free plan with a small monthly query allowance (check current pricing)",
 					Headers: &QuotaHeaders{Limit: "X-RateLimit-Limit", Remaining: "X-RateLimit-Remaining", Reset: "X-RateLimit-Reset", ResetFormat: "seconds", Index: 1}},
+				Offers: []Offer{{Name: "Search", Match: &OfferMatch{Method: "GET", Path: "/res/v1/"},
+					Price:     &Price{Amount: 0.005, Currency: "USD", Unit: "request"},
+					Notes:     "$5 per 1,000 requests at up to 50 a second. Every plan gets $5 of free credit each month.",
+					SourceURL: "https://brave.com/search/api/", CheckedAt: "2026-11-02"}},
 				Rules: []Rule{
 					{Name: "Invalid token", Match: Match{BodyContains: []string{"SUBSCRIPTION_TOKEN_INVALID", "invalid subscription token"}}, Outcome: Invalid},
 					{Name: "Monthly quota used up", Match: Match{BodyContains: []string{"QUOTA_LIMITED", "quota exceeded"}}, Outcome: QuotaExhausted},
@@ -69,6 +76,20 @@ func searchBuiltins() []Builtin {
 				Auth:     Auth{Type: "bearer"},
 				Defaults: Defaults{Strategy: "most_quota", CooldownSec: 60, MaxAttempts: 5, CacheTTLSec: 3600},
 				Quota:    QuotaInfo{Unit: "credits", CountsPerRequest: true, CostPerRequest: 0.008, FreeTier: "About 1,000 free credits a month"},
+				Offers: []Offer{
+					{Name: "Search", Match: &OfferMatch{Method: "POST", Path: "/search"}, Price: &Price{Amount: 0.008, Currency: "USD", Unit: "credit", PerRequest: 1},
+						Notes:     "1 credit for basic search, 2 for advanced. 1,000 free credits a month, then $0.008 a credit. Development keys allow 100 requests a minute, production keys 1,000.",
+						SourceURL: "https://docs.tavily.com/documentation/api-credits", CheckedAt: "2026-11-02"},
+					{Name: "Extract", Match: &OfferMatch{Method: "POST", Path: "/extract"}, Price: &Price{Amount: 0.008, Currency: "USD", Unit: "credit"},
+						Notes:     "1 credit per 5 successful URLs (basic), 2 per 5 (advanced). Failed URLs are free.",
+						SourceURL: "https://docs.tavily.com/documentation/api-credits", CheckedAt: "2026-11-02"},
+					{Name: "Map", Match: &OfferMatch{Method: "POST", Path: "/map"}, Price: &Price{Amount: 0.008, Currency: "USD", Unit: "credit"},
+						Notes: "1 credit per 10 pages, 2 per 10 with instructions.", SourceURL: "https://docs.tavily.com/documentation/api-credits", CheckedAt: "2026-11-02"},
+					{Name: "Crawl", Match: &OfferMatch{Method: "POST", Path: "/crawl"}, Price: &Price{Amount: 0.008, Currency: "USD", Unit: "credit"},
+						Limits:    []Limit{{Count: 100, Per: "minute", Unit: "requests"}},
+						Notes:     "Costs the map credits plus the extract credits. 100 requests a minute on every key.",
+						SourceURL: "https://docs.tavily.com/documentation/rate-limits", CheckedAt: "2026-11-02"},
+				},
 				Rules: []Rule{
 					{Name: "Plan limit reached", Match: Match{Status: []int{432, 433}}, Outcome: QuotaExhausted},
 					{Name: "Usage limit text", Match: Match{BodyContains: []string{"exceeds your plan", "usage limit"}}, Outcome: QuotaExhausted},
@@ -97,6 +118,19 @@ func searchBuiltins() []Builtin {
 				Auth:     Auth{Type: "header", Name: "x-api-key"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 30, MaxAttempts: 5, CacheTTLSec: 3600},
 				Quota:    QuotaInfo{Unit: "requests", CountsPerRequest: true, CostPerRequest: 0.007, FreeTier: "Free credits on sign up"},
+				// Exa's rate limits apply per team, across all its keys.
+				Offers: []Offer{
+					{Name: "Search", Match: &OfferMatch{Method: "POST", Path: "/search"}, Price: &Price{Amount: 0.007, Currency: "USD", Unit: "request"},
+						Limits:    []Limit{{Count: 10, Per: "second", Unit: "requests"}},
+						Notes:     "$7 per 1,000 (auto, fast), $4 per 1,000 (lite, instant); each result past 10 adds $1 per 1,000. $10 free credit, reset to $10 on the 1st of each month.",
+						SourceURL: "https://exa.ai/pricing", CheckedAt: "2026-11-02"},
+					{Name: "Contents", Match: &OfferMatch{Method: "POST", Path: "/contents"}, Price: &Price{Amount: 0.001, Currency: "USD", Unit: "page"},
+						Limits: []Limit{{Count: 100, Per: "second", Unit: "requests"}},
+						Notes:  "$1 per 1,000 pages, per content type.", SourceURL: "https://exa.ai/pricing", CheckedAt: "2026-11-02"},
+					{Name: "Answer", Match: &OfferMatch{Method: "POST", Path: "/answer"}, Price: &Price{Amount: 0.005, Currency: "USD", Unit: "request"},
+						Limits: []Limit{{Count: 10, Per: "second", Unit: "requests"}},
+						Notes:  "$5 per 1,000.", SourceURL: "https://exa.ai/pricing", CheckedAt: "2026-11-02"},
+				},
 				Rules: []Rule{
 					{Name: "Out of credits", Match: Match{BodyContains: []string{"insufficient credits", "out of credits", "credit limit"}}, Outcome: QuotaExhausted},
 				},
@@ -119,6 +153,15 @@ func searchBuiltins() []Builtin {
 				Auth:     Auth{Type: "bearer"},
 				Defaults: Defaults{Strategy: "most_quota", CooldownSec: 60, MaxAttempts: 5},
 				Quota:    QuotaInfo{Unit: "credits", CountsPerRequest: true, CostPerRequest: 0.002, FreeTier: "Free credits on sign up, then monthly plans"},
+				Offers: []Offer{
+					{Name: "Scrape", Match: &OfferMatch{Method: "POST", Path: "/v2/scrape"}, Price: &Price{Amount: 0.0038, Currency: "USD", Unit: "credit", PerRequest: 1},
+						Notes:     "1 credit a page. Free: 1,000 credits a month; Hobby: $19 a month for 5,000. Scrapes a minute: Free 10, Hobby 100, Standard 500. Concurrent browsers: Free 2, Hobby 5, Standard 25.",
+						SourceURL: "https://www.firecrawl.dev/pricing", CheckedAt: "2026-11-02"},
+					{Name: "Crawl", Match: &OfferMatch{Method: "POST", Path: "/v2/crawl"}, Price: &Price{Amount: 0.0038, Currency: "USD", Unit: "credit"},
+						Notes: "1 credit a page. Crawls a minute: Free 2, Hobby 20, Standard 100.", SourceURL: "https://docs.firecrawl.dev/rate-limits", CheckedAt: "2026-11-02"},
+					{Name: "Search", Match: &OfferMatch{Method: "POST", Path: "/v2/search"}, Price: &Price{Amount: 0.0038, Currency: "USD", Unit: "credit"},
+						Notes: "2 credits per 10 results. Searches a minute: Free 10, Hobby 100, Standard 500.", SourceURL: "https://www.firecrawl.dev/pricing", CheckedAt: "2026-11-02"},
+				},
 				Rules: []Rule{
 					{Name: "Out of credits", Match: Match{BodyContains: []string{"insufficient credits", "payment required"}}, Outcome: QuotaExhausted},
 				},
@@ -141,6 +184,9 @@ func searchBuiltins() []Builtin {
 				Auth:     Auth{Type: "bearer"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 30, MaxAttempts: 5, CacheTTLSec: 3600},
 				Quota:    QuotaInfo{Unit: "tokens", CostPerRequest: 0.002, FreeTier: "Free token allowance for new API keys"},
+				Offers: []Offer{{Name: "Search", Limits: []Limit{{Count: 100, Per: "minute", Unit: "requests"}},
+					Notes:     "Billed in tokens, from 10,000 tokens a request. New keys get 10 million free tokens. 100 requests a minute with a free or paid key, 1,000 with premium.",
+					SourceURL: "https://jina.ai/reader/", CheckedAt: "2026-11-02"}},
 				Rules: []Rule{
 					{Name: "Balance used up", Match: Match{BodyContains: []string{"insufficient balance", "insufficientbalance"}}, Outcome: QuotaExhausted},
 				},
@@ -162,6 +208,9 @@ func searchBuiltins() []Builtin {
 				Auth:     Auth{Type: "query", Name: "api_key"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 60, MaxAttempts: 5, CacheTTLSec: 3600},
 				Quota:    QuotaInfo{Unit: "searches", CountsPerRequest: true, CostPerRequest: 0.004, FreeTier: "About 100 free searches on sign up"},
+				Offers: []Offer{{Name: "Search", Match: &OfferMatch{Method: "GET", Path: "/api/v1/search"}, Price: &Price{Amount: 0.004, Currency: "USD", Unit: "search"},
+					Notes:     "Developer: $40 a month for 10,000 searches. 100 free requests on sign up. Up to 20% of the plan's searches in any hour.",
+					SourceURL: "https://www.searchapi.io/pricing", CheckedAt: "2026-11-02"}},
 				Rules: []Rule{
 					{Name: "Out of searches", Match: Match{BodyContains: []string{"run out of searches", "monthly allowance", "upgrade your plan"}}, Outcome: QuotaExhausted},
 				},
@@ -183,6 +232,9 @@ func searchBuiltins() []Builtin {
 				Auth:     Auth{Type: "bearer"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 30, MaxAttempts: 5, CacheTTLSec: 3600},
 				Quota:    QuotaInfo{Unit: "requests", CountsPerRequest: true, CostPerRequest: 0.005, FreeTier: "Free monthly credit"},
+				Offers: []Offer{{Name: "Search", Match: &OfferMatch{Method: "POST", Path: "/v1/search"}, Price: &Price{Amount: 0.005, Currency: "USD", Unit: "request"},
+					Notes:     "Standard search $0.005, deep $0.05; with sourcedAnswer or structured output $0.006 and $0.055. $20 credit on sign up, topped back up to $20 each month for eligible accounts.",
+					SourceURL: "https://docs.linkup.so/pages/documentation/development/pricing", CheckedAt: "2026-11-02"}},
 				Rules: []Rule{
 					{Name: "Out of credits", Match: Match{BodyContains: []string{"insufficient credit", "insufficient_credit", "no credits"}}, Outcome: QuotaExhausted},
 				},

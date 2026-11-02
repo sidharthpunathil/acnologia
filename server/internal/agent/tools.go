@@ -24,7 +24,7 @@ func schema(props map[string]any, required ...string) anthropic.BetaToolInputSch
 
 var providerProp = map[string]any{
 	"type":        "object",
-	"description": "The provider: slug, name, category, description, website, docs_url, color (#rrggbb brand color), logo_url (optional direct image URL of the brand logo), and spec (the provider spec object described in the system prompt).",
+	"description": "The provider: slug, name, category, description, website, docs_url, color (#rrggbb brand color), logo_url (optional direct image URL of the brand logo), and spec (the provider spec object described in the system prompt, including offers from the pricing page with source_url and checked_at).",
 	"properties": map[string]any{
 		"slug": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"},
 		"category": map[string]any{"type": "string"}, "description": map[string]any{"type": "string"},
@@ -48,7 +48,7 @@ func (a *Agent) tools(s *runState) []anthropic.BetaToolUnionParam {
 		},
 		{
 			Name:        "validate_spec",
-			Description: anthropic.String("Check a draft provider for schema problems and run its fixture tests through Acnologia's real engine. Call it before submitting."),
+			Description: anthropic.String("Check a draft provider for schema problems (offers included) and run its fixture tests through Acnologia's real engine. Call it before submitting."),
 			InputSchema: schema(map[string]any{"provider": providerProp}, "provider"),
 		},
 		{
@@ -57,7 +57,7 @@ func (a *Agent) tools(s *runState) []anthropic.BetaToolUnionParam {
 				liveSuffix(s) + ", then publishes it. If anything fails you get the errors back and can fix and resubmit (max 3 submits)."),
 			InputSchema: schema(map[string]any{
 				"provider": providerProp,
-				"summary":  map[string]any{"type": "string", "description": "Two to five sentences for the operator: what the API is, how keys, limits and quota work, and the source URLs you relied on."},
+				"summary":  map[string]any{"type": "string", "description": "Two to five sentences for the operator: what the API is, how keys, limits and quota work, what is free, and the source URLs you relied on (docs and pricing page)."},
 			}, "provider", "summary"),
 		},
 	}

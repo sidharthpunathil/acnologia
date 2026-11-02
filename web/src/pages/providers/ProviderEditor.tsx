@@ -42,12 +42,12 @@ import { PageHeader } from "@/components/acn/page-header";
 import { PageSkeleton } from "@/components/acn/page-skeleton";
 import { Section } from "@/components/acn/section";
 import { cx } from "@/utils/cx";
-import { ConnectionTab, ExamplesTab, HealthTab, JsonTab, OutcomeBadge, RulesTab, TestsTab } from "./SpecTabs";
+import { ConnectionTab, ExamplesTab, HealthTab, JsonTab, OffersTab, OutcomeBadge, RulesTab, TestsTab } from "./SpecTabs";
 import { RouteButton, SourceBadge } from "./ProvidersPage";
 import { AddServiceModal } from "../AddServiceModal";
 import { LostPathArt } from "@/components/foundations/illustrations";
 
-type TabId = "overview" | "connection" | "rules" | "health" | "examples" | "tests" | "json" | "versions" | "live";
+type TabId = "overview" | "connection" | "offers" | "rules" | "health" | "examples" | "tests" | "json" | "versions" | "live";
 
 type Validation =
   | { state: "idle" }
@@ -738,6 +738,7 @@ export function ProviderEditorPage() {
   const tabs: { id: TabId; label: string; count?: number }[] = [
     { id: "overview", label: "Overview" },
     { id: "connection", label: "Connection" },
+    { id: "offers", label: "Offers", count: draft.spec.offers?.length ?? 0 },
     { id: "rules", label: "Rules", count: draft.spec.rules?.length ?? 0 },
     { id: "health", label: "Health check" },
     { id: "examples", label: "Examples", count: draft.spec.examples?.length ?? 0 },
@@ -830,6 +831,9 @@ export function ProviderEditorPage() {
             </TabPanel>
             <TabPanel id="connection">
               <ConnectionTab {...specTab} />
+            </TabPanel>
+            <TabPanel id="offers">
+              <OffersTab {...specTab} />
             </TabPanel>
             <TabPanel id="rules">
               <RulesTab {...specTab} />

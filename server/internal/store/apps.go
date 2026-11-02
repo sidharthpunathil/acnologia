@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden, daily_requests, monthly_requests, daily_budget, monthly_budget`
+const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden, daily_requests, monthly_requests, daily_budget, monthly_budget,
+(SELECT COUNT(*) FROM app_tokens t WHERE t.app_id=apps.id AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>CAST(strftime('%s','now') AS INTEGER)))`
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var a App
@@ -17,7 +18,7 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var created int64
 	var last, dr, mr sql.NullInt64
 	var db, mb sql.NullFloat64
-	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden, &dr, &mr, &db, &mb); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden, &dr, &mr, &db, &mb, &a.TokenCount); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -39,15 +40,44 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	return &a, nil
 }
 
+// CreateApp creates an app with its first token, named "Default".
 func (s *Store) CreateApp(ctx context.Context, a *App, tokenHash string) (*App, error) {
+	a, _, err := s.CreateAppWithToken(ctx, a, "Default", TokenPrefixHint(a.TokenPrefix), tokenHash, 0)
+	return a, err
+}
+
+// CreateAppWithToken creates an app and its first token in one transaction.
+// apps.token_hash predates app_tokens and is no longer read; it gets a
+// placeholder that can never match a real token's hash.
+func (s *Store) CreateAppWithToken(ctx context.Context, a *App, tokenName, prefix, tokenHash string, createdBy int64) (*App, *AppToken, error) {
 	allowed, _ := json.Marshal(nonNil(a.AllowedServices))
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO apps(name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?)`,
-		a.Name, a.Description, tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), now(), b2i(a.LeaseHidden))
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	t := now()
+	res, err := tx.ExecContext(ctx, `INSERT INTO apps(name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?)`,
+		a.Name, a.Description, "app_tokens:"+tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), t, b2i(a.LeaseHidden))
+	if err != nil {
+		return nil, nil, err
 	}
 	id, _ := res.LastInsertId()
-	return s.GetApp(ctx, id)
+	res, err = tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?)`,
+		id, tokenName, prefix, tokenHash, t, nz(createdBy))
+	if err != nil {
+		return nil, nil, err
+	}
+	tokID, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	created, err := s.GetApp(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	tok, err := s.GetAppToken(ctx, id, tokID)
+	return created, tok, err
 }
 
 func (s *Store) UpdateApp(ctx context.Context, a *App) error {
@@ -57,21 +87,46 @@ func (s *Store) UpdateApp(ctx context.Context, a *App) error {
 	return err
 }
 
-// SetAppToken replaces the app token. keepHidden false also revokes the
-// app's access to hidden keys, since the new token holder may not be trusted.
-func (s *Store) SetAppToken(ctx context.Context, id int64, tokenHash, prefix string, keepHidden bool) error {
-	q := `UPDATE apps SET token_hash=?, token_prefix=? WHERE id=?`
-	if !keepHidden {
-		q = `UPDATE apps SET token_hash=?, token_prefix=?, lease_hidden=0 WHERE id=?`
-	}
-	res, err := s.DB.ExecContext(ctx, q, tokenHash, prefix, id)
+// RotateAppToken adds a new token to the app and revokes all its others,
+// in one transaction. keepHidden false also revokes the app's access to
+// hidden keys, since the new token holder may not be trusted.
+func (s *Store) RotateAppToken(ctx context.Context, id int64, name, prefix, tokenHash string, createdBy int64, keepHidden bool) (*AppToken, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	defer tx.Rollback()
+	q := `UPDATE apps SET token_prefix=? WHERE id=?`
+	if !keepHidden {
+		q = `UPDATE apps SET token_prefix=?, lease_hidden=0 WHERE id=?`
+	}
+	res, err := tx.ExecContext(ctx, q, prefix, id)
+	if err != nil {
+		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+		return nil, ErrNotFound
 	}
-	return nil
+	t := now()
+	if _, err := tx.ExecContext(ctx, `UPDATE app_tokens SET revoked_at=? WHERE app_id=? AND revoked_at IS NULL`, t, id); err != nil {
+		return nil, err
+	}
+	res, err = tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?)`,
+		id, name, TokenPrefixHint(prefix), tokenHash, t, nz(createdBy))
+	if err != nil {
+		return nil, err
+	}
+	tokID, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetAppToken(ctx, id, tokID)
+}
+
+// ClearLeaseHidden stops the app from leasing hidden keys.
+func (s *Store) ClearLeaseHidden(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET lease_hidden=0 WHERE id=?`, id)
+	return err
 }
 
 func (s *Store) DeleteApp(ctx context.Context, id int64) error {
@@ -81,10 +136,6 @@ func (s *Store) DeleteApp(ctx context.Context, id int64) error {
 
 func (s *Store) GetApp(ctx context.Context, id int64) (*App, error) {
 	return scanApp(s.DB.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=?`, id))
-}
-
-func (s *Store) AppByTokenHash(ctx context.Context, hash string) (*App, error) {
-	return scanApp(s.DB.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE token_hash=?`, hash))
 }
 
 func (s *Store) ListApps(ctx context.Context) ([]*App, error) {
@@ -102,10 +153,6 @@ func (s *Store) ListApps(ctx context.Context) ([]*App, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
-}
-
-func (s *Store) TouchApp(ctx context.Context, id int64) {
-	_, _ = s.DB.ExecContext(ctx, `UPDATE apps SET last_used_at=? WHERE id=?`, now(), id)
 }
 
 func nonNil(s []string) []string {

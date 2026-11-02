@@ -64,6 +64,15 @@ curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bear
   -H "Content-Type: application/json" -d '{"outcome":"rate_limited","retry_after_sec":60,"rotate":true}'
 ```
 
+**From a terminal**, install the [`acn` CLI](docs/cli.md) and sign in through
+the browser:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.sh | sh
+acn login        # asks for the URL, then you approve in the browser
+acn services
+```
+
 Each service's **Integrate** tab has ready snippets in curl, Python,
 TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 
@@ -91,7 +100,8 @@ TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
   model only sees placeholders.
 - **Speaks to agents and scripts**: MCP at `/mcp`, `/llms.txt`, SDKs for
   [Python](sdk/python), [TypeScript](sdk/typescript), [Go](sdk/go),
-  [PHP](sdk/php) and [Ruby](sdk/ruby), and the `acnologia ctl` CLI.
+  [PHP](sdk/php) and [Ruby](sdk/ruby), and the [`acn` CLI](docs/cli.md)
+  with browser sign in.
 
 | Apps | Assistant |
 |---|---|
@@ -107,6 +117,7 @@ provider and Claude spend, and a dashboard that works on a phone.
 - [Configuration](docs/configuration.md): every setting, self-hosting, backups, upgrading
 - [Deploying on Railway](docs/deploy-railway.md): a public deploy behind the access password
 - [HTTP API](docs/api.md): consumer error codes and every dashboard route with its role
+- [Command line](docs/cli.md): install `acn`, sign in through the browser, commands, CI
 - [Security model](docs/security.md): roles, hidden keys, what the model can see, limits
 - [Provider specs](docs/providers.md): built in providers, the spec format, building one with AI
 - [Architecture](docs/architecture.md) and [Development](docs/development.md)

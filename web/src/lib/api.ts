@@ -1,6 +1,7 @@
 import type {
   App,
   AppInput,
+  AppToken,
   AppWithToken,
   AuditEntry,
   AuthState,
@@ -233,6 +234,12 @@ export const api = {
     request<App>("PATCH", `/api/admin/apps/${id}`, body),
   deleteApp: (id: number) => request<unknown>("DELETE", `/api/admin/apps/${id}`),
   rotateAppToken: (id: number) => request<AppWithToken>("POST", `/api/admin/apps/${id}/rotate-token`),
+  listAppTokens: (id: number) => request<{ tokens: AppToken[] }>("GET", `/api/admin/apps/${id}/tokens`),
+  createAppToken: (id: number, body: { name: string; expires_in_days?: number }) =>
+    request<{ token: string; app_token: AppToken }>("POST", `/api/admin/apps/${id}/tokens`, body),
+  renameAppToken: (id: number, tokenId: number, name: string) =>
+    request<AppToken>("PATCH", `/api/admin/apps/${id}/tokens/${tokenId}`, { name }),
+  revokeAppToken: (id: number, tokenId: number) => request<AppToken>("DELETE", `/api/admin/apps/${id}/tokens/${tokenId}`),
 
   // Events
   listEvents: (params: { service_id?: number; key_id?: number; limit?: number } = {}) =>

@@ -1,6 +1,6 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: all web llms build run dev test docker clean
+.PHONY: all web llms build cli run dev test docker clean
 
 all: build
 
@@ -13,11 +13,15 @@ llms:
 	mkdir -p server/internal/docsmd/files server/internal/docsmd/assets
 	cp README.md server/internal/docsmd/files/overview.md
 	cp docs/architecture.md docs/flows.md docs/security.md docs/configuration.md \
-		docs/api.md docs/providers.md docs/development.md server/internal/docsmd/files/
+		docs/api.md docs/providers.md docs/cli.md docs/development.md server/internal/docsmd/files/
 	cp docs/screenshots/*.png docs/brand/logo.png server/internal/docsmd/assets/
 
 build: web llms
 	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../bin/acnologia ./cmd/acnologia
+
+# The acn command line client alone: standard library only, no web build.
+cli:
+	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../bin/acn ./cmd/acn
 
 run: build
 	ACNOLOGIA_DATA_DIR=./data ./bin/acnologia

@@ -10,6 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
@@ -265,10 +266,15 @@ func init() {
 		{
 			Name: "get_provider", Role: store.RoleMember, Required: []string{"slug"},
 			Props: map[string]any{"slug": map[string]any{"type": "string"}},
-			Desc:  "One provider's details: website, docs, base URL, auth placement, defaults.",
+			Desc:  "One provider's details: website, docs, base URL, auth placement, defaults, and its offers (what is free, prices, published limits).",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				return cs.simple("GET", "/api/admin/providers/"+url.PathEscape(argStr(in, "slug")), nil, "Read provider "+argStr(in, "slug"), func(m map[string]any) any {
 					if p, ok := m["provider"].(map[string]any); ok {
+						if raw, err := json.Marshal(p["spec"]); err == nil {
+							if spec, err := providers.DecodeSpec(raw); err == nil && len(spec.Offers) > 0 {
+								p["offers"] = offerRows(spec.Offers)
+							}
+						}
 						delete(p, "spec")
 						return p
 					}
@@ -349,7 +355,7 @@ func init() {
 			Desc: "Apps (consumers) with mode, allowed services and whether they are active. Tokens are never shown.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				out := cs.simple("GET", "/api/admin/apps", nil, "Listed apps", func(m map[string]any) any {
-					return rows(m["apps"], "id", "name", "description", "mode", "allowed_services", "active", "lease_hidden", "token_prefix", "last_used_at")
+					return rows(m["apps"], "id", "name", "description", "mode", "allowed_services", "active", "lease_hidden", "token_count", "last_used_at")
 				})
 				out.Entities = entitiesOf(out.Model, "app")
 				return out
@@ -602,6 +608,16 @@ func init() {
 			Run:   searchProvidersTool,
 		},
 		{
+			Name: "provider_offers", Role: store.RoleMember,
+			Props: map[string]any{
+				"provider":  map[string]any{"type": "string", "description": "a provider slug or name to narrow to, such as tinyfish; empty for all"},
+				"category":  map[string]any{"type": "string", "description": "a category such as Search, LLM or Voice; empty for all"},
+				"free_only": map[string]any{"type": "boolean", "description": "only providers with at least one free offer"},
+			},
+			Desc: "Read only. Providers' offers from their specs: which products or endpoints are free, prices, published rate limits and concurrency, with the pricing page and the date it was checked. Use it for questions like which search provider is free or what a provider's limits are.",
+			Run:  providerOffersTool,
+		},
+		{
 			Name: "start_provider_build", Role: store.RoleAdmin, Required: []string{"name"},
 			Props: map[string]any{
 				"name":         map[string]any{"type": "string", "description": "the API or company name"},
@@ -695,14 +711,14 @@ func init() {
 		{
 			Name: "rotate_app_token", Role: store.RoleAdmin, Confirm: true, Required: []string{"app_id"},
 			Props: map[string]any{"app_id": map[string]any{"type": "integer"}},
-			Desc:  "Replace an app's token; the old one stops working at once. The new token is shown to the user only. The user must confirm.",
+			Desc:  "Replace all of an app's tokens with one new token; every other token of the app stops working at once. To add a token without breaking the others use create_app_token. The new token is shown to the user only. The user must confirm.",
 			Describe: func(cs *chatSession, in map[string]any) (string, error) {
 				id, _ := argNum(in, "app_id")
 				a, err := cs.s.Store.GetApp(cs.ctx, id)
 				if err != nil {
 					return "", fmt.Errorf("no app %d", id)
 				}
-				return fmt.Sprintf("Rotate the token of app %s; the current token stops working immediately", a.Name), nil
+				return fmt.Sprintf("Rotate the tokens of app %s; a new token is created and all %d current tokens stop working immediately", a.Name, a.TokenCount), nil
 			},
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "app_id")
@@ -713,6 +729,63 @@ func init() {
 				tok, _ := out["token"].(string)
 				return toolOut{OK: true, Secret: tok, Summary: fmt.Sprintf("Rotated the token of app %d", id), Link: "/apps",
 					Model: `{"token":"shown to the user once in the chat; tell them to copy it now"}`}
+			},
+		},
+		{
+			Name: "list_app_tokens", Role: store.RoleMember, Required: []string{"app_id"},
+			Props: map[string]any{"app_id": map[string]any{"type": "integer"}},
+			Desc:  "An app's tokens: id, name, prefix hint, created, last used, expiry and whether revoked. Token values are never shown.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				id, _ := argNum(in, "app_id")
+				return cs.simple("GET", fmt.Sprintf("/api/admin/apps/%d/tokens", id), nil, fmt.Sprintf("Listed tokens of app %d", id), func(m map[string]any) any {
+					return rows(m["tokens"], "id", "name", "prefix", "created_at", "created_by_email", "last_used_at", "expires_at", "revoked_at")
+				})
+			},
+		},
+		{
+			Name: "create_app_token", Role: store.RoleAdmin, Required: []string{"app_id", "name"},
+			Props: map[string]any{
+				"app_id":          map[string]any{"type": "integer"},
+				"name":            map[string]any{"type": "string", "description": "what the token is for, such as ci or staging"},
+				"expires_in_days": map[string]any{"type": "integer", "description": "optional; omit for a token that does not expire"},
+			},
+			Desc: "Add a named token to an app; its other tokens keep working. The token is shown to the user once; you never see it.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				id, _ := argNum(in, "app_id")
+				code, out, msg := cs.api("POST", fmt.Sprintf("/api/admin/apps/%d/tokens", id), pick(in, "name", "expires_in_days"))
+				if code >= 400 {
+					return toolFail(msg)
+				}
+				tok, _ := out["token"].(string)
+				meta, _ := out["app_token"].(map[string]any)
+				return toolOut{OK: true, Secret: tok, Summary: fmt.Sprintf("Created token %s for app %d", argStr(meta, "name"), id), Link: "/apps",
+					Model: asJSON(map[string]any{"app_token": pick(meta, "id", "name", "prefix", "expires_at"),
+						"token": "shown to the user once in the chat; tell them to copy it now"})}
+			},
+		},
+		{
+			Name: "revoke_app_token", Role: store.RoleAdmin, Confirm: true, Required: []string{"app_id", "token_id"},
+			Props: map[string]any{"app_id": map[string]any{"type": "integer"}, "token_id": map[string]any{"type": "integer", "description": "from list_app_tokens"}},
+			Desc:  "Revoke one token of an app; it stops working at once and the app's other tokens keep working. The user must confirm.",
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				id, _ := argNum(in, "app_id")
+				tid, _ := argNum(in, "token_id")
+				a, err := cs.s.Store.GetApp(cs.ctx, id)
+				if err != nil {
+					return "", fmt.Errorf("no app %d", id)
+				}
+				t, err := cs.s.Store.GetAppToken(cs.ctx, id, tid)
+				if err != nil {
+					return "", fmt.Errorf("app %s has no token %d", a.Name, tid)
+				}
+				return fmt.Sprintf("Revoke token %s (%s) of app %s; it stops working immediately", t.Name, t.Prefix, a.Name), nil
+			},
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				id, _ := argNum(in, "app_id")
+				tid, _ := argNum(in, "token_id")
+				return cs.simple("DELETE", fmt.Sprintf("/api/admin/apps/%d/tokens/%d", id, tid), nil, fmt.Sprintf("Revoked token %d of app %d", tid, id), func(m map[string]any) any {
+					return pick(m, "id", "name", "prefix", "revoked_at")
+				})
 			},
 		},
 	}

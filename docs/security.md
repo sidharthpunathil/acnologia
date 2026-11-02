@@ -71,8 +71,8 @@ must never see. Two flags enforce this:
 
 - **`apps.lease_hidden`**: only apps a superadmin marked may use hidden keys,
   through a lease or the proxy. Admins cannot set it. When anyone other than a
-  superadmin rotates the app's token, the flag is cleared, because that person
-  now holds the token.
+  superadmin rotates the app's tokens or adds a token, the flag is cleared,
+  because that person now holds a working token.
 - **`services.target_trusted`**: when anyone other than a superadmin changes a
   service's base URL, auth placement or provider, the service becomes
   untrusted, and hidden keys are not sent to it by the proxy, leases or health
@@ -104,7 +104,7 @@ hidden key.
 | Provider keys | AES-256-GCM with a random nonce per write, plus a keyed HMAC fingerprint for duplicate detection |
 | AI run test keys | Same encryption, wiped when the run ends |
 | Passwords | bcrypt (10 to 72 characters) |
-| Session and app tokens | SHA-256 of 32 random bytes |
+| Session and app tokens | SHA-256 of 32 random bytes. An app can hold several tokens in `app_tokens`, each revocable and optionally expiring; a revoked or expired token gets 401. |
 | Master key | `ACNOLOGIA_MASTER_KEY`, else `data/master.key` (0600, generated on first boot) |
 
 The server refuses to start when the master key does not match the database
@@ -131,8 +131,8 @@ database files 0600.
 - Tools call the dashboard API in process with your own session, so the
   assistant can never do more than you can, and its changes appear in the
   audit log under your name. Members are offered read tools only.
-- Deleting keys, services or apps and rotating app tokens run only after you
-  press Confirm; a confirmation expires when you send another message.
+- Deleting keys, services or apps, rotating app tokens and revoking an app
+  token run only after you press Confirm; a confirmation expires when you send another message.
 - There is no tool that reveals a stored key secret. Tool results sent to
   Claude never contain secrets, and new app tokens are shown to you once and
   never sent to Claude or stored.
@@ -190,7 +190,8 @@ any client you would not hand a key to.
 - **Access password** (optional, for an instance on the internet): with
   `ACNOLOGIA_ACCESS_PASSWORD` set, a lock screen comes before setup, sign in
   and every dashboard route, and only the app shell, `/healthz`,
-  `/robots.txt` and the app token routes stay open. The `acnologia_gate`
+  `/robots.txt`, the app token routes and the CLI sign in's create and poll
+  calls stay open. A valid admin API token passes the lock on its own. The `acnologia_gate`
   cookie is an issue time plus an HMAC keyed by the master key and the
   password, refused after 30 days; wrong guesses are limited to 5 a minute
   and 50 a day globally. See [configuration](configuration.md#access-password).
@@ -267,7 +268,17 @@ are stored per app.
 
 Admin API tokens (`acnadm_`) are stored as SHA-256 hashes, carry a scope that
 never exceeds their owner's role, stop working when the owner is disabled, and
-cannot create tokens or change the account.
+cannot create tokens or change the account (a token may revoke itself, which
+is how `acn logout` works).
+
+`acn login` gets its token through a device flow: the CLI's device code is 32
+random bytes kept only as a SHA-256 hash, in memory, for 10 minutes; the
+person approves the 8 letter user code on `/cli/authorize` with a dashboard
+session past the site lock, picking a scope no higher than their role, and the
+token (90 days, named `acn on <hostname>`) is audit logged as `token.create`.
+Creating, polling and wrong user codes are rate limited globally (30, 600 and
+10 a minute), and an API token cannot approve a sign in. See
+[Command line](cli.md#how-the-sign-in-works).
 
 `SafeClient` checks the resolved address at dial time, which also defeats DNS
 rebinding, and refuses loopback, private, link local (including cloud metadata

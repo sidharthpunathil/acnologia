@@ -27,8 +27,9 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_AI_MODEL` | `claude-opus-5-5` | Model for AI features. |
 | `GITHUB_TOKEN` | empty | Lets the AI builder read GitHub with a higher rate limit. Use a fine grained, public read only token. |
 
-`acnologia ctl` reads two more: `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` override
-the saved server for one command.
+The `acn` CLI (and `acnologia ctl`) reads two more: `ACNOLOGIA_URL` and
+`ACNOLOGIA_TOKEN` override the saved server for one command. See
+[Command line](cli.md).
 
 ## Per service settings
 
@@ -90,9 +91,14 @@ account: the user accounts still apply behind it.
   A locked API call gets `401 {"error":{"code":"locked"}}`; a page navigation
   gets the app, which shows the lock screen.
 - **Open:** the app shell and its static files (they carry no data), `/healthz`,
-  `/robots.txt`, `/api/gate*`, and the consumer routes `/proxy/*`, `/api/v1/*`
-  and `/mcp`, which need an app token of their own. Apps and MCP clients keep
-  working unchanged.
+  `/robots.txt`, `/api/gate*`, the CLI sign in's `POST /api/cli/device` and
+  `POST /api/cli/device/token` (useless until a signed in person approves),
+  and the consumer routes `/proxy/*`, `/api/v1/*` and `/mcp`, which need an
+  app token of their own. Apps and MCP clients keep working unchanged.
+- **Admin API tokens:** a request with a valid `Authorization: Bearer
+  acnadm_...` passes the lock without the password, so `acn` and CI need
+  only their token. A wrong, expired or revoked token does not, and an app
+  token (`acn_`) never opens a dashboard route.
 - **Browsers:** the lock screen posts the password to `POST /api/gate/unlock`
   and gets an `acnologia_gate` cookie (HttpOnly, SameSite=Lax, Secure under
   `ACNOLOGIA_SECURE_COOKIES` or TLS) that lasts 30 days. It holds an issue time

@@ -16,7 +16,7 @@ import (
 func (e *env) legacyAppToken(appID int64) string {
 	e.t.Helper()
 	tok := "cog_" + strings.Repeat("L", 32)
-	if _, err := e.st.DB.Exec(`UPDATE apps SET token_hash=?, token_prefix=? WHERE id=?`, crypto.SHA256(tok), tok[:8], appID); err != nil {
+	if _, err := e.st.DB.Exec(`UPDATE app_tokens SET hash=?, prefix=? WHERE app_id=?`, crypto.SHA256(tok), tok[:8]+"...", appID); err != nil {
 		e.t.Fatal(err)
 	}
 	return tok

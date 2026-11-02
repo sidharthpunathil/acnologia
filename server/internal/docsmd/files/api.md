@@ -36,7 +36,7 @@ Status codes an app should handle:
 | 405 | `method_not_allowed` | Proxy method other than GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. |
 | 413 | `body_too_large` | Proxy body over `ACNOLOGIA_MAX_BODY_MB`. |
 | 503 | `no_key_available` | Every usable key is cooling down, exhausted or disabled. Wait `retry_after_sec`. |
-| 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit. Retry shortly or lease with `wait_sec`. |
+| 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit or at a rate limit their provider publishes in `offers`. Retry after `retry_after_sec` or lease with `wait_sec`. |
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
 | 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
@@ -63,6 +63,20 @@ application/json` or `X-Requested-With`. The dashboard sends both.
 | `POST /login` | public | `{email, password}`. 429 after 10 failures in 10 minutes. |
 | `POST /logout` | any | End the session. |
 
+### CLI sign in (`/api/cli/device`)
+
+The device flow behind `acn login` ([Command line](cli.md#how-the-sign-in-works)).
+Create and poll are open in the site lock and need no account; the rest need a
+dashboard session (not an API token).
+
+| Route | Role | Purpose |
+|---|---|---|
+| `POST /api/cli/device` | public | `{client, hostname, os}` returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}`. 30 a minute across all clients. |
+| `POST /api/cli/device/token` | public | `{device_code}`. 400 `authorization_pending`, `slow_down` (with `interval`), `access_denied` or `expired_token`; 200 `{token, token_id, user, scope, expires_at}` once after approval. |
+| `GET /api/cli/device/lookup?user_code=` | m, session | `{request: {user_code, client, hostname, os, created_at, expires_at, state}}`. Wrong codes: 10 a minute, 200 a day, then 429. |
+| `POST /api/cli/device/approve` | m, session | `{user_code, scope, label}`. Creates a 90 day admin token named `acn on <hostname>` (or `label`), scope capped at your role. |
+| `POST /api/cli/device/deny` | m, session | `{user_code}`. The CLI's next poll gets `access_denied`. |
+
 ### Admin (`/api/admin`)
 
 Role column: **m** member, **a** admin, **s** superadmin (minimum role).
@@ -71,7 +85,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 |---|:-:|---|
 | `GET /me`, `PATCH /me` | m | Own profile; changing the password needs `current_password` and ends other sessions. `PATCH` needs a dashboard session, not an API token. |
 | `GET /overview` | m | Key totals (including `banned`), in-flight count, 24 h requests, rate limits, cache hits and spend, cache stats, recent events. |
-| `GET /tokens`, `POST /tokens`, `DELETE /tokens/{id}` | m | Your admin API tokens: `{name, scope: read\|write\|admin, expires_in_days}`, scope capped at your role. Create returns the token once. Session only. Superadmins can list everyone's with `?all=1`. |
+| `GET /tokens`, `POST /tokens`, `DELETE /tokens/{id}` | m | Your admin API tokens: `{name, scope: read\|write\|admin, expires_in_days}`, scope capped at your role. Create returns the token once. Session only, except that a token may `DELETE` itself (`acn logout`). Superadmins can list everyone's with `?all=1`. |
 | `GET /webhooks` | m | Webhooks (URL shown only as a host hint), event types and formats. |
 | `POST /webhooks`, `PATCH /webhooks/{id}`, `DELETE /webhooks/{id}` | a | `{name, url, format: json\|slack\|discord\|telegram, events, active}`. Create returns the JSON signing secret once. |
 | `POST /webhooks/{id}/test` | a | Send a test event now and report the receiver's answer. |
@@ -98,12 +112,16 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /keys/check-all` | a | Health check every key. |
 | `POST /keys/{id}/reveal` | s | Return the secret. Audited. |
 | `GET /events` | m | Request and health events, filters `service_id`, `key_id`, `kind`, `limit` (max 500). |
-| `GET /apps` | m | Apps (token prefix only). |
-| `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the token once. |
+| `GET /apps` | m | Apps. Each carries `token_count` (tokens neither revoked nor expired) and `last_used_at` (the latest use by any of its tokens). Token values are never returned. |
+| `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the first token once as `token`, with its record (named `Default`) as `app_token`. |
 | `GET /apps/{id}/mcp`, `PUT /apps/{id}/mcp` | m / a | An app's MCP settings: `{core, service_tools, insights, manage, resources, prompts, exclusive_default, max_result_kb, instructions, disabled_tools}`, with the tool list. `max_result_kb` defaults to 200, at most 2048; `instructions` under 8,000 characters. |
-| `POST /apps/{id}/rotate-token` | a | New token, shown once. Clears `lease_hidden` unless a superadmin rotates. |
+| `GET /apps/{id}/tokens` | m | The app's tokens, revoked ones included: `{id, name, prefix, created_at, created_by, created_by_email, last_used_at, expires_at, revoked_at}`. `prefix` is the first 8 characters plus `...`. `last_used_at` is written at most once a minute per token. |
+| `POST /apps/{id}/tokens` | a | Add a token: `{name, expires_in_days?}` (name up to 64 characters, expiry 1 to 3650 days, omitted means never). Returns `{token, app_token}`; the token is shown once. The app's other tokens keep working. Clears `lease_hidden` unless a superadmin creates it. |
+| `PATCH /apps/{id}/tokens/{tokenId}` | a | Rename: `{name}`. |
+| `DELETE /apps/{id}/tokens/{tokenId}` | a | Revoke the token at once. It stays listed with `revoked_at` set. Token changes are audited as `app.token_create`, `app.token_rename`, `app.token_revoke` and `app.rotate_token`. |
+| `POST /apps/{id}/rotate-token` | a | Kept for compatibility: creates one new token and revokes all the app's other tokens. Returns `{app, token, app_token}`; the token is shown once. Clears `lease_hidden` unless a superadmin rotates. |
 | `DELETE /apps/{id}` | a | Delete the app and its leases. |
-| `GET /providers`, `GET /providers/{slug}` | m | Provider specs, versions and metadata. |
+| `GET /providers`, `GET /providers/{slug}` | m | Provider specs, versions and metadata. Specs may carry `offers` (prices, free allowances and limits per endpoint; see [providers.md](providers.md#offers)). |
 | `POST /providers/validate` | m | Validate a spec and run its fixture tests without saving. |
 | `POST /providers`, `PUT /providers/{slug}` | a | Create or publish a new version of a provider. |
 | `DELETE /providers/{slug}` | a | Delete an unused, non built-in provider. |

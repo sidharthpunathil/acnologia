@@ -67,7 +67,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, code, "unauthenticated", msg)
 		return
 	}
-	ctx := context.WithValue(r.Context(), appKey, a)
+	ctx := store.WithAppToken(context.WithValue(r.Context(), appKey, a), a.TokenID)
 	var req rpcReq
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		writeJSON(w, 200, map[string]any{"jsonrpc": "2.0", "id": nil, "error": rpcErr{-32700, "parse error"}})

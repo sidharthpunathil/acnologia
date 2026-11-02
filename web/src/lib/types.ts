@@ -236,6 +236,23 @@ export interface App {
     daily_budget: number | null;
     monthly_budget: number | null;
   };
+  /** Tokens that still work: neither revoked nor expired. */
+  token_count?: number;
+}
+
+/** One of an app's tokens. Only its prefix hint is ever shown again. */
+export interface AppToken {
+  id: number;
+  app_id: number;
+  name: string;
+  /** First 8 characters plus "...". */
+  prefix: string;
+  created_at: string;
+  created_by: number | null;
+  created_by_email: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
 }
 
 export type AppInput = Pick<App, "name" | "description" | "mode" | "allowed_services"> & { lease_hidden?: boolean };
@@ -243,6 +260,8 @@ export type AppInput = Pick<App, "name" | "description" | "mode" | "allowed_serv
 export interface AppWithToken {
   app: App;
   token: string;
+  /** The token's record: "Default" for a new app. */
+  app_token?: AppToken;
 }
 
 export type EventKind =
@@ -411,6 +430,29 @@ export interface SpecFixture {
   expect: Outcome;
 }
 
+export type OfferPer = "second" | "minute" | "hour" | "day" | "month";
+
+/** A published cap: count units per window. */
+export interface OfferLimit {
+  count: number;
+  per: OfferPer;
+  unit?: string;
+}
+
+/** One priced product or endpoint of a provider, from its pricing page. */
+export interface SpecOffer {
+  name: string;
+  /** Which requests it covers; absent means every request. */
+  match?: { method?: string; path?: string; examples?: string[] };
+  price?: { amount: number; currency?: string; unit: string; per_request?: number };
+  free?: boolean;
+  limits?: OfferLimit[];
+  concurrency?: number;
+  notes?: string;
+  source_url?: string;
+  checked_at?: string;
+}
+
 export interface ProviderSpec {
   base_url: string;
   auth: { type: AuthType; name: string; prefix: string };
@@ -432,6 +474,7 @@ export interface ProviderSpec {
     cost_per_request?: number;
     free_tier?: string;
   };
+  offers?: SpecOffer[];
   rules: SpecRule[];
   use_standard_rules: boolean;
   health: SpecHealth | null;

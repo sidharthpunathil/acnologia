@@ -49,6 +49,8 @@ type Server struct {
 	WebFS   fs.FS
 	LLMsTxt []byte
 	limiter *loginLimiter
+	// devices holds pending CLI sign ins (clidevice.go).
+	devices *deviceStore
 	// gate is the site-wide access password lock (gate.go); off when
 	// ACNOLOGIA_ACCESS_PASSWORD is unset.
 	gate *accessGate
@@ -73,6 +75,7 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 		Breakers: breaker.New(),
 		Cache:    respcache.New(cfg.CacheBytes),
 		limiter:  newLoginLimiter(),
+		devices:  newDeviceStore(),
 	}
 	s.Breakers.OnChange = func(id int64, down bool, reason string) { go s.onBreakerChange(id, down, reason) }
 	// main wires these up with their workers; tests and embedders get working defaults.
@@ -139,6 +142,21 @@ func (s *Server) Router() http.Handler {
 		r.Post("/lock", s.gateLock)
 	})
 
+	// CLI sign in (clidevice.go). Create and poll are open in the gate and
+	// need no account; looking up, approving and denying a code need a
+	// dashboard session, not an API token.
+	r.Route("/api/cli/device", func(r chi.Router) {
+		r.Use(jsonOnly)
+		r.Post("/", s.cliDeviceCreate)
+		r.Post("/token", s.cliDeviceToken)
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireUser, s.sessionOnly)
+			r.Get("/lookup", s.cliDeviceLookup)
+			r.Post("/approve", s.cliDeviceApprove)
+			r.Post("/deny", s.cliDeviceDeny)
+		})
+	})
+
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(jsonOnly)
 		r.Get("/state", s.authState)
@@ -154,7 +172,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.sessionOnly).Patch("/me", s.updateMe)
 		r.With(s.sessionOnly).Get("/tokens", s.listTokens)
 		r.With(s.sessionOnly).Post("/tokens", s.createToken)
-		r.With(s.sessionOnly).Delete("/tokens/{id}", s.deleteToken)
+		// A token may revoke itself (acn logout), and nothing else.
+		r.With(s.sessionOrSelfToken).Delete("/tokens/{id}", s.deleteToken)
 		r.Get("/webhooks", s.listWebhooks)
 		r.Get("/egress", s.listEgress)
 		r.Get("/groups", s.listGroups)
@@ -172,6 +191,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/events", s.listEvents)
 		r.Get("/apps", s.listApps)
 		r.Get("/apps/{id}/mcp", s.getAppMCP)
+		r.Get("/apps/{id}/tokens", s.listAppTokens)
 		r.Get("/providers/{slug}", s.getProvider)
 		r.Post("/providers/validate", s.validateProvider)
 		r.Get("/ai/status", s.aiStatus)
@@ -204,6 +224,9 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/apps/{id}", s.updateApp)
 			r.Delete("/apps/{id}", s.deleteApp)
 			r.Post("/apps/{id}/rotate-token", s.rotateAppToken)
+			r.Post("/apps/{id}/tokens", s.createAppToken)
+			r.Patch("/apps/{id}/tokens/{tokenId}", s.renameAppToken)
+			r.Delete("/apps/{id}/tokens/{tokenId}", s.revokeAppToken)
 			r.Put("/apps/{id}/mcp", s.putAppMCP)
 			r.Put("/services/{id}/logo", s.putServiceLogo)
 			r.Delete("/services/{id}/logo", s.deleteServiceLogo)
@@ -370,15 +393,7 @@ func (s *Server) serveLLMs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeLLMs(w http.ResponseWriter, r *http.Request, text []byte) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	body := string(text)
-	base := s.Cfg.PublicURL
-	if base == "" {
-		scheme := "http"
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			scheme = "https"
-		}
-		base = scheme + "://" + r.Host
-	}
-	body = strings.ReplaceAll(body, "{{BASE_URL}}", base)
+	body = strings.ReplaceAll(body, "{{BASE_URL}}", s.baseURL(r))
 	_, _ = w.Write([]byte(body))
 }
 

@@ -6,6 +6,7 @@ import {
   RiPuzzle2Line,
   RiSettings3Line,
   RiShieldCheckLine,
+  RiTerminalBoxLine,
   RiToolsLine,
 } from "@remixicon/react";
 import type { IconComponent } from "@/components/acn/types";
@@ -43,6 +44,7 @@ export const DOCS: DocEntry[] = [
   { slug: "security", title: "Security model", blurb: "Roles, hidden keys, what the model can see, secrets at rest and outbound requests.", icon: RiShieldCheckLine, group: "concepts" },
   { slug: "configuration", title: "Configuration", blurb: "Environment variables, per service settings, self-hosting, backups and upgrading.", icon: RiSettings3Line, group: "operate" },
   { slug: "api", title: "HTTP API", blurb: "Consumer error codes and every dashboard route with its required role.", icon: RiCodeSSlashLine, group: "reference" },
+  { slug: "cli", title: "Command line", blurb: "Install acn, sign in through the browser, every command and CI variables.", icon: RiTerminalBoxLine, group: "reference" },
   { slug: "providers", title: "Provider specs", blurb: "Built in providers, the spec format, and adding one by hand or with AI.", icon: RiPuzzle2Line, group: "reference" },
   { slug: "development", title: "Development", blurb: "Setup, repository layout, tests and conventions.", icon: RiToolsLine, group: "contribute" },
 ];

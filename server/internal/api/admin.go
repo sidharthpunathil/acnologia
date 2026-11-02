@@ -911,7 +911,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	}
 	tok, prefix, hash := newAppToken()
 	a.TokenPrefix = prefix
-	created, err := s.Store.CreateApp(r.Context(), a, hash)
+	created, first, err := s.Store.CreateAppWithToken(r.Context(), a, "Default", store.TokenPrefixHint(prefix), hash, userID(r))
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -924,7 +924,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		created.Limits = a.Limits
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "app.create", created.Name, "")
-	writeJSON(w, 201, map[string]any{"app": created, "token": tok})
+	writeJSON(w, 201, map[string]any{"app": created, "token": tok, "app_token": first})
 }
 
 func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
@@ -976,6 +976,8 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// rotateAppToken predates multiple tokens per app. It still means "replace
+// the token": it creates a new token and revokes every other one.
 func (s *Server) rotateAppToken(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)
 	if !ok {
@@ -984,7 +986,8 @@ func (s *Server) rotateAppToken(w http.ResponseWriter, r *http.Request) {
 	tok, prefix, hash := newAppToken()
 	// Whoever rotates gets the token. If that is not a superadmin, the app
 	// loses access to hidden keys until a superadmin grants it again.
-	if err := s.Store.SetAppToken(r.Context(), id, hash, prefix, isSuper(r)); err != nil {
+	t, err := s.Store.RotateAppToken(r.Context(), id, "Rotated "+time.Now().UTC().Format(time.DateOnly), prefix, hash, userID(r), isSuper(r))
+	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
@@ -993,8 +996,8 @@ func (s *Server) rotateAppToken(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "app.rotate_token", a.Name, "")
-	writeJSON(w, 200, map[string]any{"app": a, "token": tok})
+	s.Store.AddAudit(r.Context(), userFrom(r), "app.rotate_token", a.Name, "new token "+t.Name+", other tokens revoked")
+	writeJSON(w, 200, map[string]any{"app": a, "token": tok, "app_token": t})
 }
 
 // ---- events and audit ----

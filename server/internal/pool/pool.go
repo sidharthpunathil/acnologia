@@ -39,6 +39,9 @@ func ValidStrategy(s string) bool {
 type NoKeyError struct {
 	RetryAfter time.Duration
 	Busy       bool
+	// Paced is set when some usable key is held back by a rate limit its
+	// provider publishes in offers, rather than by a concurrency slot.
+	Paced bool
 }
 
 func (e *NoKeyError) Error() string {
@@ -60,13 +63,14 @@ type Pool struct {
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
 	slots *slots
+	pacer *pacer
 	// picked holds the last pick time per key in nanoseconds (key id -> int64).
 	picked sync.Map
 }
 
 func New(s *store.Store, box *crypto.Box) *Pool {
 	return &Pool{
-		Store: s, Box: box, locks: map[int64]*sync.Mutex{}, slots: newSlots(),
+		Store: s, Box: box, locks: map[int64]*sync.Mutex{}, slots: newSlots(), pacer: newPacer(),
 		Client: &http.Client{
 			Timeout: 20 * time.Second,
 			// Never follow a redirect with a key attached: Go forwards custom
@@ -114,10 +118,10 @@ func (pk *Picked) Release() {
 // vouched for the service's target, so they never reach a host or an app
 // token holder that only an admin controls.
 func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool) (*Picked, error) {
-	return p.pick(ctx, svc, appID, allowHidden, exclude, false)
+	return p.pick(ctx, svc, appID, allowHidden, exclude, false, Request{})
 }
 
-func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, exclusive bool) (*Picked, error) {
+func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, exclusive bool, req Request) (*Picked, error) {
 	allowHidden = allowHidden && svc.TargetTrusted
 	l := p.lock(svc.ID)
 	l.Lock()
@@ -129,9 +133,12 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	}
 	now := time.Now()
 	p.slots.sweep(now)
+	spec := providers.Get(svc.Provider)
+	applied := spec.OffersFor(req.Method, req.Path)
 	var primary, backup []*store.Key
 	var earliest *time.Time
-	busy := false
+	busy, slotBusy := false, false
+	var paceWait time.Duration
 	for _, k := range keys {
 		if exclude[k.ID] || !allowed(k, appID) || (k.Hidden && !allowHidden) {
 			continue
@@ -142,13 +149,23 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 			}
 			continue
 		}
-		if lim := k.ConcurrencyLimit(svc); lim > 0 && p.slots.count(k.ID) >= lim {
-			busy = true
+		if lim := ConcurrencyLimit(k, svc, spec); lim > 0 && p.slots.count(k.ID) >= lim {
+			busy, slotBusy = true, true
 			continue
 		}
 		// Exclusive leases own a key outright; exclusive requests need an idle key.
 		if p.slots.exclusiveHeld(k.ID) || (exclusive && p.slots.count(k.ID) > 0) {
+			busy, slotBusy = true, true
+			continue
+		}
+		// Stay under the limits the provider publishes for this endpoint.
+		if ok, wait := p.pacer.check(k.ID, applied, now); !ok {
 			busy = true
+			if wait <= 0 {
+				slotBusy = true
+			} else if paceWait == 0 || wait < paceWait {
+				paceWait = wait
+			}
 			continue
 		}
 		if k.Tier == "backup" {
@@ -162,8 +179,10 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		set = backup
 	}
 	if len(set) == 0 {
-		e := &NoKeyError{Busy: busy}
+		e := &NoKeyError{Busy: busy, Paced: paceWait > 0}
 		switch {
+		case busy && paceWait > 0 && (!slotBusy || paceWait < time.Second):
+			e.RetryAfter = paceWait
 		case busy:
 			e.RetryAfter = time.Second
 		case earliest != nil:
@@ -191,8 +210,14 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		return nil, err
 	}
 	p.slots.acquire(k.ID)
+	freeOffer := p.pacer.take(k.ID, applied, now)
 	keyID, svcID := k.ID, svc.ID
-	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: func() { p.slots.release(keyID, svcID) }}, nil
+	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: func() {
+		if freeOffer != nil {
+			freeOffer()
+		}
+		p.slots.release(keyID, svcID)
+	}}, nil
 }
 
 func allowed(k *store.Key, appID int64) bool {

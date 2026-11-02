@@ -145,11 +145,15 @@ func cacheTTL(sv *store.Service, prov *providers.Spec) time.Duration {
 	return time.Duration(prov.Defaults.CacheTTLSec) * time.Second
 }
 
-func costPerRequest(sv *store.Service, prov *providers.Spec) float64 {
+// costPerRequest is the USD cost of one successful request: the service's
+// override, else the price of the provider offer that matches the request
+// (free offers cost 0), else quota.cost_per_request. A lease passes an empty
+// method and gets the provider wide price.
+func costPerRequest(sv *store.Service, prov *providers.Spec, method, path string) float64 {
 	if sv.CostPerRequest != nil {
 		return *sv.CostPerRequest
 	}
-	return prov.Quota.CostPerRequest
+	return prov.CostFor(method, path)
 }
 
 func breakerSettings(prov *providers.Spec) breaker.Settings {

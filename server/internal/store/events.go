@@ -28,8 +28,13 @@ func nz(v int64) any {
 
 func (s *Store) AddEvent(ctx context.Context, e NewEvent) {
 	e.Detail = truncate(s.Scrub(ctx, e.Detail), 500)
-	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,status_code,latency_ms,detail,cost) VALUES(?,?,?,?,?,?,?,?,?)`,
-		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), e.StatusCode, e.LatencyMS, e.Detail, e.Cost)
+	// The token is noted only on events of the app that made the request.
+	var tok int64
+	if e.AppID != 0 {
+		tok = appTokenFrom(ctx)
+	}
+	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,token_id,status_code,latency_ms,detail,cost) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), nz(tok), e.StatusCode, e.LatencyMS, e.Detail, e.Cost)
 }
 
 type EventFilter struct {

@@ -44,6 +44,7 @@ import { ServiceSettings } from "./ServiceSettings";
 import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
+import { OffersBlock } from "../../components/OfferBits";
 import { KeyRingArt, LostPathArt, PulseArt } from "@/components/foundations/illustrations";
 
 type Tab = "keys" | "activity" | "integrate" | "settings";
@@ -297,6 +298,8 @@ export function ServicePage() {
         />
         <StatTile label="Requests, 24h" value={compact(service.requests_24h)} />
       </div>
+
+      <OffersBlock spec={provider?.spec} className="mt-4" />
 
       <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="mt-10 gap-6">
         <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">

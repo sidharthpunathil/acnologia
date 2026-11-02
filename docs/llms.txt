@@ -64,7 +64,7 @@ Every SDK's lease call and `with_key` helper accept a wait option and raise a di
 
 ## Admin API and CLI
 
-Operators can script the admin API with a token from Account, API tokens (`Authorization: Bearer acnadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The same binary ships a client: `acnologia ctl login https://keys.example.com --token acnadm_...`, then `acnologia ctl status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`.
+Operators can script the admin API with a token from Account, API tokens (`Authorization: Bearer acnadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The `acn` CLI (`curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.sh | sh`, also built in as `acnologia ctl`) signs in through the browser with `acn login`, or takes a token with `acn login https://keys.example.com --token acnadm_...`; then `acn status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`.
 
 ## Docs
 
@@ -72,6 +72,7 @@ Every page of the docs is also served as raw Markdown. Fetch these when you need
 
 - [Overview](/docs/overview.md): what Acnologia does, quick start and features.
 - [HTTP API](/docs/api.md): consumer error codes and every dashboard route with its required role.
+- [Command line](/docs/cli.md): install the acn CLI, sign in through the browser, commands and CI variables.
 - [Configuration](/docs/configuration.md): environment variables, per service settings, self-hosting, backups and upgrading.
 
 ## Optional

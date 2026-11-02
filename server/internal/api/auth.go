@@ -106,14 +106,20 @@ func (s *Server) authApp(r *http.Request) (*store.App, int, string) {
 	if tok == "" {
 		return nil, 401, "missing app token: send Authorization: Bearer acn_..."
 	}
-	a, err := s.Store.AppByTokenHash(r.Context(), crypto.SHA256(tok))
+	a, t, err := s.Store.AppByToken(r.Context(), crypto.SHA256(tok))
 	if err != nil {
 		return nil, 401, "invalid app token"
+	}
+	if t.RevokedAt != nil {
+		return nil, 401, "app token revoked"
+	}
+	if !t.Usable(time.Now()) {
+		return nil, 401, "app token expired"
 	}
 	if !a.Active {
 		return nil, 403, "app is disabled"
 	}
-	s.Store.TouchApp(r.Context(), a.ID)
+	s.Store.TouchAppToken(r.Context(), a.ID, t.ID)
 	return a, 0, ""
 }
 
@@ -124,7 +130,8 @@ func (s *Server) requireApp(next http.Handler) http.Handler {
 			writeErr(w, code, "unauthenticated", msg)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), appKey, a)))
+		ctx := store.WithAppToken(context.WithValue(r.Context(), appKey, a), a.TokenID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

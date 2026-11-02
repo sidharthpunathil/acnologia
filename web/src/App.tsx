@@ -31,6 +31,7 @@ import { EgressPage } from "./pages/Egress";
 import { GroupsPage } from "./pages/Groups";
 import { UsagePage } from "./pages/Usage";
 import { AssistantPage } from "./pages/Assistant";
+import { CliAuthorizePage } from "./pages/CliAuthorize";
 import { IconGalleryPage } from "./pages/dev/IconGallery";
 import { IllustrationGallery } from "./components/foundations/illustrations/gallery";
 
@@ -83,6 +84,7 @@ export function App() {
     body = (
       <Routes>
         <Route path="/login" element={<Navigate to="/" replace />} />
+        <Route path="/cli/authorize" element={<CliAuthorizePage />} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/docs/:slug" element={<DocPage />} />
         <Route element={<Layout />}>

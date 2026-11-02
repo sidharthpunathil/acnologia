@@ -314,7 +314,8 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			s.Breakers.Abort(sv.ID)
 		}
 	}()
-	cost := costPerRequest(sv, prov)
+	cost := costPerRequest(sv, prov, r.Method, "/"+path)
+	pr := pool.Request{Method: r.Method, Path: "/" + path}
 	tried := map[int64]bool{}
 	queue := time.Duration(sv.QueueTimeoutSec) * time.Second
 	for attempt := 1; attempt <= sv.MaxAttempts; attempt++ {
@@ -322,7 +323,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		// Upstreams can echo the key (account endpoints, redirects that keep
 		// the query), so proxying can disclose it just like a lease. Hidden
 		// keys therefore need the same superadmin grant as leasing them.
-		picked, err := s.Pool.PickWait(r.Context(), sv, a.ID, a.LeaseHidden, tried, queue)
+		picked, err := s.Pool.PickFor(r.Context(), sv, a.ID, a.LeaseHidden, tried, queue, false, pr)
 		waited := time.Since(waitStart)
 		if err != nil && r.Context().Err() != nil {
 			out.served = true // client went away while queued; nothing to write

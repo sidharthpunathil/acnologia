@@ -209,6 +209,10 @@ type App struct {
 	LeaseHidden bool `json:"lease_hidden"`
 	// Limits caps the app's upstream requests and spend.
 	Limits AppLimits `json:"limits"`
+	// TokenCount is the number of the app's tokens that still work.
+	TokenCount int `json:"token_count"`
+	// TokenID is the token the current request authenticated with.
+	TokenID int64 `json:"-"`
 }
 
 func (a *App) CanUse(slug string) bool {

@@ -2,13 +2,13 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
 
-Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, app limits, egress proxies, webhooks, key secrecy and redaction, errors, admin tokens and `acnologia ctl`, docs.
+Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, app limits, egress proxies, webhooks, key secrecy and redaction, errors, admin tokens and the `acn` CLI, docs.
 
 Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code": "string", "message": "string"}}` with a matching HTTP status.
 
 ## Authentication
 
-Every consumer and MCP call carries an app token (`acn_...`) created on the dashboard Apps page. The token is shown once and stored only as a hash.
+Every consumer and MCP call carries an app token (`acn_...`) created on the dashboard Apps page. The token is shown once and stored only as a hash. An app can have several named tokens (for example one per deployment), each revocable on its own and optionally expiring; requests, spend and limits are counted per app, whichever token made the call. Tokens from before the rename (`cog_...`) keep working.
 
 ```
 Authorization: Bearer acn_xxx
@@ -16,7 +16,7 @@ X-Acnologia-Token: acn_xxx            (alternative)
 ?acn_token=acn_xxx                    (proxy only, for URL-only tools)
 ```
 
-Acnologia strips all of them before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong or inactive gets 401; a service or mode the app may not use gets 403.
+Acnologia strips all of them before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong, revoked or expired gets 401 (`app token revoked`, `app token expired`); a paused app gets 403; a service or mode the app may not use gets 403.
 
 ## Public endpoints
 
@@ -118,7 +118,7 @@ Content-Type: application/json
 {"error": {"code": "all_keys_busy", "message": "every usable key is at its concurrency limit, retry shortly"}, "retry_after_sec": 1}
 ```
 
-For `no_key_available`, `retry_after_sec` is the time until the earliest cooldown ends, when known. For `all_keys_busy` it is usually 1: a slot frees as soon as another caller reports. Both also set a `Retry-After` header. Selection prefers `primary` keys and only uses `backup` keys when no primary key is free; within a tier the service strategy (`round_robin`, `fill_first`, `least_used`, `most_quota`, `random`) decides.
+For `no_key_available`, `retry_after_sec` is the time until the earliest cooldown ends, when known. For `all_keys_busy` it is usually 1: a slot frees as soon as another caller reports. When the keys are held back by a rate limit the provider publishes in its offers, it is the time until the first key's window frees, and the message says so. Both also set a `Retry-After` header. Selection prefers `primary` keys and only uses `backup` keys when no primary key is free; within a tier the service strategy (`round_robin`, `fill_first`, `least_used`, `most_quota`, `random`) decides.
 
 ## POST /api/v1/leases/{lease_id}/report
 
@@ -199,7 +199,7 @@ X-Acnologia-Cache: hit        hit, miss or bypass, on services with caching
 
 Allowed methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS (others get 405). A path containing a literal `?` or `#`, or a `.` or `..` segment, gets 400 `bad_path`; percent encoded characters such as `%2F` are forwarded as sent. Provider redirects are returned to you rather than followed, with the key removed from response headers. Responses carry `Content-Security-Policy: sandbox`, so they cannot run script on the Acnologia origin.
 
-If no key is available the proxy answers 503 `no_key_available` with `retry_after_sec`, like the lease endpoint. On a service with a concurrency limit, a request that finds every key busy waits in a queue for up to the service `queue_timeout_sec` (ElevenLabs default 30s); if no slot frees up in time the proxy answers 503 `all_keys_busy`. The proxy never sends more than a key's limit in parallel, so you do not need your own throttling.
+If no key is available the proxy answers 503 `no_key_available` with `retry_after_sec`, like the lease endpoint. On a service with a concurrency limit, a request that finds every key busy waits in a queue for up to the service `queue_timeout_sec` (ElevenLabs default 30s); if no slot frees up in time the proxy answers 503 `all_keys_busy`. The proxy never sends more than a key's limit in parallel, so you do not need your own throttling. It also keeps each key under the rate limits its provider publishes in `offers` (for example TinyFish Search: 30 requests a minute and 500 an hour per key): a key at a limit is skipped, then the request waits up to `queue_timeout_sec`, then it gets 503 `all_keys_busy` with `retry_after_sec`.
 
 ### SerpAPI
 
@@ -285,7 +285,7 @@ Each app chooses its tool sets on the dashboard Apps page. Core, service tools, 
 | core | `renew_key` | extend a lease for a long job | `lease_id`, optional `ttl_sec` |
 | core | `report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome` (`ok`, `rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned`, `error`), optional `retry_after_sec`, `message`, `rotate` |
 | core | `proxy_request` | make a provider call through the proxy without seeing a key | `service`, `path`, optional `method`, `query`, `body` |
-| service tools | one per provider example, named after the service and the example | ready to call endpoints, such as a SerpAPI search | the example's path and query parameters, `extra_query`, `body` |
+| service tools | one per provider example, named after the service and the example | ready to call endpoints, such as a SerpAPI search; the description names the matching offer, whether it is free and its per key limits | the example's path and query parameters, `extra_query`, `body` |
 | insights | `list_keys`, `key_details`, `service_stats` | read only key health, quota and recent events, never a secret | `service`, `validity`, `key_id` |
 | manage | `check_keys`, `set_key_status`, `add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
 
@@ -470,7 +470,7 @@ Acnologia tries the first member. It moves to the next when the member has no us
 
 ## App limits and spend
 
-Each app can have `daily_requests`, `monthly_requests`, `daily_budget` and `monthly_budget` (USD, UTC days and months). Cost per request comes from the provider spec (`quota.cost_per_request`) or a service override. Cache hits are free and do not count as requests. A lease counts as one request when it is issued. Over a limit, proxy and lease calls answer:
+Each app can have `daily_requests`, `monthly_requests`, `daily_budget` and `monthly_budget` (USD, UTC days and months). Cost per request comes from a service override, else the price of the provider offer that matches the request (free offers cost 0), else the provider spec's `quota.cost_per_request`. Cache hits are free and do not count as requests. A lease counts as one request when it is issued. Over a limit, proxy and lease calls answer:
 
 ```http
 HTTP/1.1 429 Too Many Requests
@@ -523,25 +523,40 @@ The signing secret (`whsec_...`) is shown once when the webhook is created. Reje
 | 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
 | 502 | `upstream_unreachable` | The provider could not be reached on the first attempt. |
 | 503 | `no_key_available` | Every usable key is cooling down, exhausted or disabled. Wait `retry_after_sec`. |
-| 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit. Retry shortly or lease with `wait_sec`. |
+| 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit or at a rate limit their provider publishes. Retry after `retry_after_sec` or lease with `wait_sec`. |
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
 
-## Admin API tokens and acnologia ctl
+## Admin API tokens and the acn CLI
+
+Install the `acn` client (macOS and Linux; it checks the release's SHA256SUMS and installs to /usr/local/bin when writable, else ~/.local/bin), or use `go install`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.sh | sh
+go install github.com/sidharthpunathil/acnologia/server/cmd/acn@latest
+```
+
+Sign in through the browser with `acn login` (or `acn login --domain https://keys.example.com --no-browser`). It asks for the server URL (a bare host means https; http only for localhost), shows a one-time code like `WDJB-MJHT` and opens `/cli/authorize?code=WDJB-MJHT`. After you unlock the site, sign in and approve with a scope, the CLI receives an admin API token named `acn on <hostname>` that lasts 90 days, and prints `Signed in to <host> as <email> (<scope>)`. A valid admin token passes the site lock, so the CLI never needs the site password.
+
+The device flow behind it (RFC 8628 style): `POST /api/cli/device {client, hostname, os}` returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in: 600, interval: 5}`; `POST /api/cli/device/token {device_code}` answers 400 with `authorization_pending`, `slow_down` (plus a longer `interval`), `access_denied` or `expired_token`, then 200 `{token, token_id, user, scope, expires_at}` once. Both are open in the site lock. `GET /api/cli/device/lookup?user_code=`, `POST /api/cli/device/approve {user_code, scope, label}` and `POST /api/cli/device/deny {user_code}` need a dashboard session.
 
 Create tokens in the dashboard (Account, API tokens) or with `POST /api/admin/tokens {"name": "ci", "scope": "write", "expires_in_days": 90}`. Scopes: `read` (member), `write` (admin), `admin` (superadmin), capped at the creator's role. Tokens cannot manage tokens or change the account. Send them as `Authorization: Bearer acnadm_...` to any `/api/admin/` endpoint.
 
 ```sh
-acnologia ctl login https://keys.example.com --token acnadm_... --name prod
-acnologia ctl status
-acnologia ctl keys add serpapi < keys.txt      # one per line: secret, or label,secret
-acnologia ctl keys check serpapi
-acnologia ctl events --service serpapi --kind rate_limited
-acnologia ctl breaker serpapi --reset
-acnologia ctl usage 3
+acn login                                      # browser sign in
+acn login https://keys.example.com --token acnadm_... --name prod
+acn whoami
+acn status                                     # server version and pool overview
+acn keys add serpapi < keys.txt                # one per line: secret, or label,secret
+acn keys check serpapi
+acn events --service serpapi --kind rate_limited
+acn breaker serpapi --reset
+acn usage 3
+acn services --json
+acn logout                                     # revokes the token, then forgets the server
 ```
 
-The CLI stores servers in `~/.config/acnologia/ctl.json` (mode 0600). `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` override it for one command. `acnologia ctl contexts` lists saved servers and `acnologia ctl use <name>` switches; `services`, `keys <service>` and `cache purge <service>` round out the commands.
+The CLI stores servers per host in `acnologia/ctl.json` under the user config folder (mode 0600, folder 0700). `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` override it for one command, for CI. `acn contexts` lists saved servers and `acn use <host>` switches; `services`, `keys <service>` and `cache purge <service>` round out the commands, and `--json` prints raw JSON for `whoami`, `status`, `services`, `keys`, `events` and `usage`. Every command also works as `acnologia ctl <command>` from the server binary.
 
 ## Docs as Markdown
 
@@ -549,6 +564,7 @@ This reference covers the consumer API. The rest of the docs are served as raw M
 
 - [/docs/overview.md](/docs/overview.md): what Acnologia does, quick start and features.
 - [/docs/api.md](/docs/api.md): consumer error codes and the dashboard API with required roles.
+- [/docs/cli.md](/docs/cli.md): the acn command line client, browser sign in, commands and CI variables.
 - [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, self-hosting, backups and upgrading.
 - [/docs/architecture.md](/docs/architecture.md): components, packages, request pipeline, data model and background work.
 - [/docs/flows.md](/docs/flows.md): diagrams of the proxy, key selection, leases, key states, health checks, sign in, MCP and the AI builder.

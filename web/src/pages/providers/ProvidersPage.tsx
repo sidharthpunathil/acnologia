@@ -19,6 +19,7 @@ import { EmptyState } from "@/components/acn/empty-state";
 import { PageHeader } from "@/components/acn/page-header";
 import { PageSkeleton } from "@/components/acn/page-skeleton";
 import { SearchArt, SpecSheetArt } from "@/components/foundations/illustrations";
+import { FreeOfferChip } from "../../components/OfferBits";
 
 /**
  * ButtonLink that routes on the client. A plain click goes through the
@@ -92,6 +93,7 @@ function ProviderCard({ p }: { p: Provider }) {
           <div className="flex items-center gap-2">
             <span className={cx("truncate text-body-medium", disabled || idle ? "text-text-secondary" : "text-text-primary")}>{p.name}</span>
             {disabled && <Chip variant="caption" color="yellow">disabled</Chip>}
+            <FreeOfferChip spec={p.spec} className="ms-auto" />
           </div>
           <div className="mt-0.5 flex min-w-0 items-center gap-1 font-mono text-caption-1-regular text-text-secondary">
             <CategoryMark className="size-3.5 shrink-0" aria-hidden />

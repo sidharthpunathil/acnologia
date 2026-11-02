@@ -3,8 +3,8 @@ import { BRAND_TITLE, TAGLINE, useTitle } from "@/hooks/useTitle";
 import { BRAND_NAME, Mark } from "@/components/acn/brand";
 
 /** Centered auth page: the dragon, the name and tagline, then the card. */
-export function AuthShell({ meta, children }: { meta: string; children: ReactNode }) {
-  useTitle(null);
+export function AuthShell({ meta, title, children }: { meta: string; title?: string; children: ReactNode }) {
+  useTitle(title ?? null);
   return (
     <div className="flex min-h-dvh flex-col bg-background-full">
       <main className="fade-up mx-auto flex w-full max-w-[440px] flex-1 flex-col items-center px-4 pt-[calc(3.5rem+env(safe-area-inset-top))] pb-16 sm:pt-20">

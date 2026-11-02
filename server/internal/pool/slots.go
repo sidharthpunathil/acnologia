@@ -169,7 +169,11 @@ func (p *Pool) ExclusiveHeld(keyID int64) bool { return p.slots.exclusiveHeld(ke
 func (p *Pool) ReleaseLease(leaseID string) { p.slots.dropLease(leaseID) }
 
 // SweepLeases frees slots held by expired leases.
-func (p *Pool) SweepLeases() int { return p.slots.sweep(time.Now()) }
+func (p *Pool) SweepLeases() int {
+	now := time.Now()
+	p.pacer.prune(now)
+	return p.slots.sweep(now)
+}
 
 // RestoreLeases re-acquires slots for open leases after a restart.
 func (p *Pool) RestoreLeases(ctx context.Context) error {
@@ -198,12 +202,19 @@ func (p *Pool) PickWait(ctx context.Context, svc *store.Service, appID int64, al
 // PickWaitOpts is PickWait that can ask for an exclusive key: one with
 // nothing in flight, which no one else is handed until the lease ends.
 func (p *Pool) PickWaitOpts(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, wait time.Duration, exclusive bool) (*Picked, error) {
+	return p.PickFor(ctx, svc, appID, allowHidden, exclude, wait, exclusive, Request{})
+}
+
+// PickFor is PickWaitOpts for a known request, so the provider's offer for
+// that endpoint paces the key. A key at an offer's rate limit counts as busy:
+// the pick tries another key, then waits up to wait for a window to free.
+func (p *Pool) PickFor(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, wait time.Duration, exclusive bool, req Request) (*Picked, error) {
 	deadline := time.Now().Add(wait)
 	for {
 		// Grab the wake channel before trying, so a release between the
 		// attempt and the wait is not missed.
 		ch := p.slots.waitCh(svc.ID)
-		pk, err := p.pick(ctx, svc, appID, allowHidden, exclude, exclusive)
+		pk, err := p.pick(ctx, svc, appID, allowHidden, exclude, exclusive, req)
 		nk, isNoKey := err.(*NoKeyError)
 		if err == nil || !isNoKey || !nk.Busy {
 			return pk, err
@@ -213,7 +224,12 @@ func (p *Pool) PickWaitOpts(ctx context.Context, svc *store.Service, appID int64
 			return nil, err
 		}
 		// Expired leases free slots too, so wake up at least once a second.
-		t := time.NewTimer(min(left, time.Second))
+		// A paced key frees up at a known time, which may be sooner.
+		next := min(left, time.Second)
+		if nk.Paced && nk.RetryAfter > 0 {
+			next = min(next, nk.RetryAfter)
+		}
+		t := time.NewTimer(next)
 		select {
 		case <-ctx.Done():
 			t.Stop()

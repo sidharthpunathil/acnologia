@@ -1,5 +1,12 @@
 package providers
 
+// gemini is a model's offer: free on free tier keys, paid per token otherwise.
+func gemini(name, model, paid string) Offer {
+	return Offer{Name: name, Match: &OfferMatch{Method: "POST", Path: "/v1beta/models/" + model + ":"}, Free: true,
+		Notes:     "Free of charge on free tier keys, within per model limits shown in AI Studio. Paid tier: " + paid + ".",
+		SourceURL: "https://ai.google.dev/gemini-api/docs/pricing", CheckedAt: "2026-11-02"}
+}
+
 // llmBuiltins are model APIs whose keys people pool across accounts.
 func llmBuiltins() []Builtin {
 	t := func(name string, status int, body string, expect Outcome) Fixture {
@@ -16,6 +23,12 @@ func llmBuiltins() []Builtin {
 				Auth:     Auth{Type: "header", Name: "x-goog-api-key"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 60, MaxAttempts: 5},
 				Quota:    QuotaInfo{Unit: "requests", FreeTier: "Free tier on most models, with per minute and per day limits"},
+				// The free tier's per model limits are shown only in AI Studio, so none are listed here.
+				Offers: []Offer{
+					gemini("Gemini 2.5 Flash-Lite", "gemini-2.5-flash-lite", "$0.10 input and $0.40 output per million tokens"),
+					gemini("Gemini 2.5 Flash", "gemini-2.5-flash", "$0.30 input and $2.50 output per million tokens"),
+					gemini("Gemini 2.5 Pro", "gemini-2.5-pro", "$1.25 input and $10 output per million tokens (prompts up to 200k tokens)"),
+				},
 				Rules: []Rule{
 					// Free tier daily caps say "per day" in the quota id; they reset at midnight Pacific.
 					{Name: "Daily quota used up", Match: Match{Status: []int{429}, BodyContains: []string{"PerDay", "per day"}}, Outcome: QuotaExhausted},

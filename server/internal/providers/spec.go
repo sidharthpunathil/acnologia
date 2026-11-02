@@ -10,10 +10,13 @@ import (
 // Spec is a provider described as data. The engine interprets it; nothing in
 // a spec is executed, so specs written by an AI agent are safe to load.
 type Spec struct {
-	BaseURL          string    `json:"base_url"`
-	Auth             Auth      `json:"auth"`
-	Defaults         Defaults  `json:"defaults"`
-	Quota            QuotaInfo `json:"quota"`
+	BaseURL  string    `json:"base_url"`
+	Auth     Auth      `json:"auth"`
+	Defaults Defaults  `json:"defaults"`
+	Quota    QuotaInfo `json:"quota"`
+	// Offers are the provider's priced products or endpoints with their
+	// free allowances and published limits. Optional.
+	Offers           []Offer   `json:"offers,omitempty"`
 	Rules            []Rule    `json:"rules"`
 	UseStandardRules bool      `json:"use_standard_rules"`
 	Health           *Health   `json:"health"`
@@ -50,7 +53,7 @@ type QuotaInfo struct {
 	// health checks.
 	Headers *QuotaHeaders `json:"headers,omitempty"`
 	// CostPerRequest is the USD price of one successful request, used for
-	// spend tracking and app budgets.
+	// spend tracking and app budgets when no offer prices the request.
 	CostPerRequest float64 `json:"cost_per_request,omitempty"`
 	// FreeTier describes the provider's free allowance, for the catalog.
 	FreeTier string `json:"free_tier,omitempty"`
@@ -184,6 +187,7 @@ func (s *Spec) Validate() []string {
 	if len(s.Quota.FreeTier) > 200 {
 		add("quota.free_tier must be at most 200 characters")
 	}
+	s.validateOffers(add)
 	if qh := s.Quota.Headers; qh != nil {
 		if qh.Limit == "" && qh.Remaining == "" && qh.Reset == "" {
 			add("quota.headers needs at least one of limit, remaining or reset")

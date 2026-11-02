@@ -419,7 +419,7 @@ Tools by role:
 
 | Role | Tools |
 |---|---|
-| member and up | ask_user, search_providers, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
+| member and up | ask_user, search_providers, provider_offers, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
 | admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), create_webhook, update_webhook, test_webhook, create_egress_proxy, update_egress_proxy, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build |
 | admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, enable_app_mcp_manage |
 

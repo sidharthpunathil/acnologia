@@ -20,14 +20,17 @@ import (
 // It sits in front of the user accounts, not instead of them. A browser types
 // the password once on the lock screen and gets the acnologia_gate cookie;
 // only then can it reach setup, sign in and the dashboard. A script sends the
-// password in X-Acnologia-Access on every request instead.
+// password in X-Acnologia-Access on every request instead, or a valid admin
+// API token (Authorization: Bearer acnadm_...): that is how the acn CLI gets
+// through without ever knowing the password (clidevice.go mints its token).
 //
 // Locked: everything that carries data or lets someone act. That is /api/*
 // (setup and sign in included) except the consumer API and the gate's own
 // routes, the docs markdown and assets, /llms.txt and /llms-full.txt, and any
 // request that is not a GET or HEAD. Open: the SPA shell and its static files
 // (they carry no data, and the lock screen is part of them), /healthz,
-// /robots.txt, /api/gate*, and the consumer routes (/proxy/*, /api/v1/*,
+// /robots.txt, /api/gate*, the CLI sign in's create and poll calls
+// (/api/cli/device and /api/cli/device/token), and the consumer routes (/proxy/*, /api/v1/*,
 // /mcp), which already demand an app token of their own.
 //
 // The cookie is "<issued unix>.<mac>", the MAC keyed by the master key and
@@ -159,6 +162,13 @@ func (g *accessGate) authorised(r *http.Request) bool {
 	return false
 }
 
+// gatePasses is authorised plus a valid admin API token. Only the admin
+// token prefix is looked up, so an app token (acn_) never opens a dashboard
+// route, and a made up acnadm_ value costs one hash lookup and fails.
+func (s *Server) gatePasses(r *http.Request) bool {
+	return s.gate.authorised(r) || (s.gate.on() && s.validAdminToken(r))
+}
+
 // tryUnlock checks one lock screen guess against the limits. Checking and
 // counting happen under one lock, so a burst of parallel guesses cannot all
 // slip past the check before any is counted. limited means the guess was
@@ -194,6 +204,9 @@ var gateOpenPrefixes = []string{"/proxy/", "/api/v1/", "/api/gate/"}
 
 var gateOpenExact = map[string]bool{
 	"/healthz": true, "/robots.txt": true, "/mcp": true, "/api/gate": true, "/api/v1": true,
+	// The CLI sign in: a code is useless until a signed in person, past
+	// the gate, approves it (clidevice.go).
+	"/api/cli/device": true, "/api/cli/device/token": true,
 }
 
 // gateOpen reports whether a path is reachable while locked. Both the decoded
@@ -245,7 +258,7 @@ func (s *Server) gateRequests(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if gateOpen(r) || s.gate.authorised(r) {
+		if gateOpen(r) || s.gatePasses(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -264,7 +277,7 @@ func (s *Server) gateState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"required": s.gate.on(),
-		"locked":   !s.gate.authorised(r),
+		"locked":   !s.gatePasses(r),
 	})
 }
 

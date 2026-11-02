@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
 import { RiAddLine, RiPencilLine, RiPlugLine } from "@remixicon/react";
-import { AcnAppToken, AcnKeyRotate } from "@/components/foundations/icons/acn";
+import { AcnAppToken } from "@/components/foundations/icons/acn";
 import { Focusable } from "react-aria-components";
 import { useTitle } from "../hooks/useTitle";
 import { useApps } from "../stores/apps";
 import { enabledCount, useMcp } from "../stores/mcp";
 import { AppMcpPanel } from "./AppMcpPanel";
+import { AppTokensPanel } from "./AppTokensPanel";
 import { useServices } from "../stores/services";
 import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
@@ -310,7 +311,7 @@ function AppFormModal({
                 Lease hidden keys
               </div>
               <p id="lease-hidden-hint" className="mt-0.5 text-caption-1-regular text-text-secondary">
-                Lets this app use hidden keys. Leases and some upstream responses reveal the plain key, so turn this on only for apps you trust. Rotating the token as an admin turns it off.
+                Lets this app use hidden keys. Leases and some upstream responses reveal the plain key, so turn this on only for apps you trust. A new token made by an admin turns it off.
               </p>
             </div>
             <Switch
@@ -326,12 +327,12 @@ function AppFormModal({
   );
 }
 
-function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null; rotated: boolean; onClose: () => void }) {
+function TokenModal({ result, onClose }: { result: AppWithToken | null; onClose: () => void }) {
   return (
     <Modal
       open={!!result}
       onClose={onClose}
-      title={rotated ? `New token for ${result?.app.name}` : `${result?.app.name} created`}
+      title={`${result?.app.name} created`}
       footer={
         <Button variant="primary" onClick={onClose}>
           I have saved it
@@ -341,8 +342,7 @@ function TokenModal({ result, rotated, onClose }: { result: AppWithToken | null;
       {result && (
         <div className="flex flex-col gap-3">
           <Callout tone="warning">
-            Copy this token now. Acnologia stores only a hash, so it cannot show the token again.
-            {rotated && " The old token has stopped working."}
+            Copy this token now. You will not see it again: Acnologia stores only a hash. You can add more tokens later from Tokens.
           </Callout>
           <SecretBox value={result.token} />
           <div className="font-mono text-caption-1-regular text-text-secondary wrap-anywhere text-text-tertiary">Send it as Authorization: Bearer {result.app.token_prefix}...</div>
@@ -445,16 +445,16 @@ function McpSummary({ app }: { app: App }) {
 
 export function AppsPage() {
   useTitle("Apps");
-  const { apps, loaded, error, fetch, update, remove, rotate } = useApps();
+  const { apps, loaded, error, fetch, update, remove } = useApps();
   const { services, loaded: servicesLoaded, fetch: fetchServices } = useServices();
   const role = useAuth((s) => s.user?.role);
   const manage = can.manage(role);
   const now = useNow(30000);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<App | null>(null);
-  const [token, setToken] = useState<{ result: AppWithToken; rotated: boolean } | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [token, setToken] = useState<AppWithToken | null>(null);
   const [mcpApp, setMcpApp] = useState<App | null>(null);
+  const [tokensApp, setTokensApp] = useState<App | null>(null);
 
   useEffect(() => {
     fetch().catch(() => undefined);
@@ -463,18 +463,6 @@ export function AppsPage() {
 
   const nameBySlug = useMemo(() => Object.fromEntries(services.map((s) => [s.slug, s.name])), [services]);
   const sorted = useMemo(() => [...apps].sort((a, b) => a.name.localeCompare(b.name)), [apps]);
-
-  const doRotate = async (a: App) => {
-    setBusyId(a.id);
-    try {
-      const res = await rotate(a.id);
-      setToken({ result: res, rotated: true });
-    } catch (e) {
-      toast.error(errorMessage(e));
-    } finally {
-      setBusyId(null);
-    }
-  };
 
   const toggleActive = async (a: App, v: boolean) => {
     try {
@@ -516,7 +504,7 @@ export function AppsPage() {
           title="No apps yet"
           body={
             manage
-              ? "Create one app per website, agent or script. Each gets its own token, so you can pause or rotate it without touching the others."
+              ? "Create one app per website, agent or script. Each gets its own tokens, so you can pause an app or revoke a token without touching the others."
               : "No apps yet. Ask an admin to create one."
           }
           action={
@@ -546,7 +534,7 @@ export function AppsPage() {
                   </div>
                   {a.description && <div className="wrap-anywhere mt-0.5 text-body-2-regular text-text-secondary">{a.description}</div>}
                   <div className="font-mono text-caption-1-regular text-text-secondary wrap-anywhere mt-1.5">
-                    {a.token_prefix}... · {a.allowed_services?.length ? a.allowed_services.map((s) => nameBySlug[s] ?? s).join(", ") : "all services"} ·{" "}
+                    {plural(a.token_count ?? 0, "active token")} · {a.allowed_services?.length ? a.allowed_services.map((s) => nameBySlug[s] ?? s).join(", ") : "all services"} ·{" "}
                     <span title={dateTime(a.last_used_at)}>used {relTime(a.last_used_at, now)}</span>
                     <McpSummary app={a} />
                   </div>
@@ -555,6 +543,9 @@ export function AppsPage() {
                 <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-separator-border pt-3 sm:border-0 sm:pt-0">
                   <Button size="small" variant="ghost" leadingIcon={RiPlugLine} onClick={() => setMcpApp(a)} aria-label={`MCP settings for ${a.name}`}>
                     MCP
+                  </Button>
+                  <Button size="small" variant="ghost" leadingIcon={AcnAppToken} onClick={() => setTokensApp(a)} aria-label={`Tokens for ${a.name}`}>
+                    Tokens
                   </Button>
                   {/* Kept together so a narrow row wraps as a group, not one icon at a time. */}
                   <div className="flex items-center gap-1.5">
@@ -571,7 +562,6 @@ export function AppsPage() {
                     {manage && (
                       <>
                         <span aria-hidden className="mx-1 h-5 w-px bg-separator-border" />
-                        <TipButton icon={AcnKeyRotate} label="Rotate token" onClick={() => void doRotate(a)} disabled={busyId === a.id} />
                         <TipButton
                           icon={RiPencilLine}
                           label="Edit app"
@@ -608,10 +598,11 @@ export function AppsPage() {
         open={formOpen}
         initial={editing}
         onClose={() => setFormOpen(false)}
-        onCreated={(r) => setToken({ result: r, rotated: false })}
+        onCreated={(r) => setToken(r)}
       />
       <AppMcpPanel app={mcpApp} canEdit={manage} onClose={() => setMcpApp(null)} />
-      <TokenModal result={token?.result ?? null} rotated={token?.rotated ?? false} onClose={() => setToken(null)} />
+      <AppTokensPanel app={tokensApp} canEdit={manage} onClose={() => setTokensApp(null)} />
+      <TokenModal result={token} onClose={() => setToken(null)} />
     </div>
   );
 }
