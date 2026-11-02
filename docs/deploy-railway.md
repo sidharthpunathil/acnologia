@@ -51,7 +51,7 @@ site comes up locked with it. The log names the file, never the password.
 Read it with:
 
 ```
-railway volume files download /access-password access-password.txt --service acnologia
+railway volume files --volume acnologia-data download /access-password access-password.txt
 ```
 
 Setting `ACNOLOGIA_ACCESS_PASSWORD` later replaces it. Delete the file to get
