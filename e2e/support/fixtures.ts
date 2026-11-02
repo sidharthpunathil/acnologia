@@ -99,7 +99,7 @@ export const test = base.extend<Fixtures & { theme: Theme }>({
   page: async ({ page, theme, run, errors }, use) => {
     await page.addInitScript((t) => {
       try {
-        localStorage.setItem("cogito.theme", t);
+        localStorage.setItem("acn.theme", t);
       } catch {
         // Storage can be blocked on about:blank; the next navigation sets it.
       }

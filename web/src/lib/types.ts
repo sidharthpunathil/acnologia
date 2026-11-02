@@ -1,4 +1,4 @@
-// Mirrors the JSON shapes in docs/superpowers/specs/2026-11-01-cogito-key-pool-design.md
+// Mirrors the JSON shapes in docs/superpowers/specs/2026-11-01-acnologia-key-pool-design.md
 
 export type Role = "superadmin" | "admin" | "member";
 
@@ -161,7 +161,7 @@ export interface KeyInsights {
   service: { id: number; slug: string; name: string; logo_url: string | null; max_concurrency: number };
   has_health_check: boolean;
   quota_unit: string;
-  events: CogitoEvent[];
+  events: AcnologiaEvent[];
   daily: DayActivity[];
 }
 
@@ -276,7 +276,7 @@ export const EVENT_KINDS: EventKind[] = [
   "service_up",
 ];
 
-export interface CogitoEvent {
+export interface AcnologiaEvent {
   id: number;
   ts: string;
   kind: EventKind;
@@ -336,7 +336,7 @@ export interface Overview {
   rate_limits_24h: number;
   cache_hits_24h?: number;
   spend_24h?: number;
-  recent_events: CogitoEvent[];
+  recent_events: AcnologiaEvent[];
 }
 
 // Providers as data. Mirrors docs/superpowers/specs/2026-11-01-providers-as-data-and-ai-builder.md

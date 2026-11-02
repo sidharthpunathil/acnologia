@@ -17,28 +17,28 @@ llms:
 	cp docs/screenshots/*.png docs/brand/logo.png server/internal/docsmd/assets/
 
 build: web llms
-	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../bin/cogito ./cmd/cogito
+	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../bin/acnologia ./cmd/acnologia
 
 run: build
-	COGITO_DATA_DIR=./data ./bin/cogito
+	ACNOLOGIA_DATA_DIR=./data ./bin/acnologia
 
 # Backend on :8080 and Vite on :5173 with hot reload.
 dev: llms
-	(cd server && COGITO_DATA_DIR=../data go run ./cmd/cogito) & (cd web && pnpm dev)
+	(cd server && ACNOLOGIA_DATA_DIR=../data go run ./cmd/acnologia) & (cd web && pnpm dev)
 
 test:
 	cd server && go test -race ./...
 	cd sdk/go && go test ./...
 
 docker:
-	docker build -t cogito:$(VERSION) -t cogito:latest .
+	docker build -t acnologia:$(VERSION) -t acnologia:latest .
 
 clean:
 	rm -rf bin server/internal/webui/dist/assets
 
-# Screenshot tests for the dashboard against bin/cogito (run `make build`
+# Screenshot tests for the dashboard against bin/acnologia (run `make build`
 # first). UPDATE=1 refreshes the baselines in e2e/__screenshots__.
 .PHONY: test-screens
 test-screens:
-	@test -x bin/cogito || { echo "bin/cogito is missing, run make build first"; exit 1; }
+	@test -x bin/acnologia || { echo "bin/acnologia is missing, run make build first"; exit 1; }
 	cd e2e && npm ci --no-audit --no-fund && npm run $(if $(UPDATE),update,test)

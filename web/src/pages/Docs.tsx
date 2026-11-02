@@ -17,7 +17,7 @@ docker compose up -d --build
 open http://localhost:8080    # the first visit creates the superadmin`;
 
 const CALL = `curl "http://localhost:8080/proxy/serpapi/search.json?q=coffee" \\
-  -H "Authorization: Bearer cog_your_app_token"`;
+  -H "Authorization: Bearer acn_your_app_token"`;
 
 const CARD = "rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs";
 const CARD_LINK = cx(
@@ -167,7 +167,7 @@ function DocsHome({ signedIn }: { signedIn: boolean }) {
             <Step n={2} title="Add a service, its keys and an app">
               <p>
                 Pick a provider from the catalog (or describe any HTTP API), paste your keys one per line, then create an app for
-                each consumer and copy its <Code>cog_</Code> token. It is shown once.
+                each consumer and copy its <Code>acn_</Code> token. It is shown once.
               </p>
               <div className="mt-3">
                 <RouterButton to={signedIn ? "/" : "/login"} size="small" variant="secondary" trailingIcon={RiArrowRightLine}>

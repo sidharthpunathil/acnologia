@@ -1,10 +1,10 @@
-# Cogito v2: providers as data, AI provider builder, logos
+# Acnologia v2: providers as data, AI provider builder, logos
 
 ## Why
 
 Today a provider (SerpAPI, ElevenLabs) is Go code. Adding one means writing
 Go, rebuilding and restarting, which takes the dashboard down. The goal: give
-Cogito some context (docs URL, GitHub repo, notes) and have an AI agent research
+Acnologia some context (docs URL, GitHub repo, notes) and have an AI agent research
 the API, write the provider, test it, and publish it, with no restart and no
 downtime.
 
@@ -83,13 +83,13 @@ website, docs_url, color, logo, status (`active` | `disabled`), builtin, source
 A background job runner inside the Go server. One run = one goal: "create
 provider" or "update provider X".
 
-Loop (Claude API, manual tool loop, model from `COGITO_AI_MODEL`, default
+Loop (Claude API, manual tool loop, model from `ACNOLOGIA_AI_MODEL`, default
 `claude-opus-5-5`):
 
 1. The prompt holds the user's context, URLs, GitHub repo, the spec format and
    the SerpAPI/ElevenLabs specs as worked examples.
 2. Tools:
-   - server side: `web_search`, `web_fetch` (Anthropic hosted, so no SSRF exposure for Cogito)
+   - server side: `web_search`, `web_fetch` (Anthropic hosted, so no SSRF exposure for Acnologia)
    - `github_read(repo, path, ref)`: lists a dir or reads a file through the GitHub API (`GITHUB_TOKEN` optional)
    - `validate_spec(provider)`: schema and sanity errors
    - `run_tests(provider)`: runs fixture tests through the real engine

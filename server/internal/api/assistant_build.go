@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // chatBuild is a provider build the assistant follows, shown as a card.

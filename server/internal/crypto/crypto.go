@@ -48,7 +48,7 @@ func LoadOrCreateKey(envValue, dataDir string) ([]byte, error) {
 	if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(key)+"\n"), 0o600); err != nil {
 		return nil, fmt.Errorf("write master key: %w", err)
 	}
-	slog.Warn("generated a new master key; back it up or set COGITO_MASTER_KEY, losing it makes stored keys unreadable", "path", path)
+	slog.Warn("generated a new master key; back it up or set ACNOLOGIA_MASTER_KEY, losing it makes stored keys unreadable", "path", path)
 	return key, nil
 }
 
@@ -72,6 +72,9 @@ func New(key []byte) (*Box, error) {
 		return nil, err
 	}
 	m := hmac.New(sha256.New, key)
+	// The label keeps the product's old name on purpose: it derives the key behind
+	// every stored fingerprint and the master key check, so changing it would
+	// make existing databases unreadable.
 	m.Write([]byte("cogito-secret-fingerprint"))
 	return &Box{aead: aead, mac: m.Sum(nil)}, nil
 }
@@ -100,6 +103,7 @@ func (b *Box) Decrypt(blob []byte) (string, error) {
 // different master key is detected before anything is encrypted with it.
 func (b *Box) CheckValue() string {
 	m := hmac.New(sha256.New, b.mac)
+	// Old product name kept on purpose, see New.
 	m.Write([]byte("cogito-master-key-check"))
 	return hex.EncodeToString(m.Sum(nil))
 }

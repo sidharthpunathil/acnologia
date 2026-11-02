@@ -11,12 +11,12 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 const (
-	sessionCookie = "cogito_session"
+	sessionCookie = "acnologia_session"
 	sessionTTL    = 14 * 24 * time.Hour
 )
 
@@ -45,16 +45,16 @@ func isSuper(r *http.Request) bool {
 
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && strings.HasPrefix(tok, "cogadm_") {
+		if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && store.IsAdminToken(tok) {
 			s.tokenUser(w, r, tok, next)
 			return
 		}
-		c, err := r.Cookie(sessionCookie)
-		if err != nil || c.Value == "" {
+		sess := sessionFrom(r)
+		if sess == "" {
 			writeErr(w, 401, "unauthenticated", "sign in first")
 			return
 		}
-		h := crypto.SHA256(c.Value)
+		h := crypto.SHA256(sess)
 		u, err := s.Store.SessionUser(r.Context(), h)
 		if err != nil {
 			writeErr(w, 401, "unauthenticated", "session expired")
@@ -78,21 +78,33 @@ func (s *Server) requireRole(role store.Role) func(http.Handler) http.Handler {
 	}
 }
 
-// appToken reads the app token from the Authorization header, X-Cogito-Token, or ?cogito_token.
+// appToken reads the app token from the Authorization header, X-Acnologia-Token
+// or ?acn_token, and from the old X-Cogito-Token and ?cogito_token names.
 func appToken(r *http.Request) string {
-	if v := r.Header.Get("X-Cogito-Token"); v != "" {
+	if v := reqHeader(r, "Token"); v != "" {
 		return v
 	}
-	if v := r.Header.Get("Authorization"); strings.HasPrefix(v, "Bearer cog_") {
+	if v := r.Header.Get("Authorization"); isBearerAppToken(v) {
 		return strings.TrimPrefix(v, "Bearer ")
 	}
-	return r.URL.Query().Get("cogito_token")
+	q := r.URL.Query()
+	if v := q.Get(tokenParam); v != "" {
+		return v
+	}
+	return q.Get(legacyTokenParam)
+}
+
+// isBearerAppToken reports whether an Authorization value carries an app
+// token, with the new acn_ prefix or the old cog_ one.
+func isBearerAppToken(v string) bool {
+	tok, ok := strings.CutPrefix(v, "Bearer ")
+	return ok && store.IsAppToken(tok)
 }
 
 func (s *Server) authApp(r *http.Request) (*store.App, int, string) {
 	tok := appToken(r)
 	if tok == "" {
-		return nil, 401, "missing app token: send Authorization: Bearer cog_..."
+		return nil, 401, "missing app token: send Authorization: Bearer acn_..."
 	}
 	a, err := s.Store.AppByTokenHash(r.Context(), crypto.SHA256(tok))
 	if err != nil {
@@ -123,8 +135,8 @@ func (s *Server) authState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var user *store.User
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		user, _ = s.Store.SessionUser(r.Context(), crypto.SHA256(c.Value))
+	if sess := sessionFrom(r); sess != "" {
+		user, _ = s.Store.SessionUser(r.Context(), crypto.SHA256(sess))
 	}
 	writeJSON(w, 200, map[string]any{"setup_required": n == 0, "user": user})
 }
@@ -153,7 +165,7 @@ func hashPassword(w http.ResponseWriter, p string) (string, bool) {
 
 // dummyHash is compared against when the user does not exist, so a login
 // takes the same time whether or not the email is registered.
-var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("cogito-timing-equalizer"), bcrypt.DefaultCost)
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("acnologia-timing-equalizer"), bcrypt.DefaultCost)
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	var c credentials
@@ -197,14 +209,14 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 }
 
 // clientIP is the connection's address without the port, so reconnecting
-// does not reset the login limiter. With COGITO_TRUST_PROXY_HEADERS the
+// does not reset the login limiter. With ACNOLOGIA_TRUST_PROXY_HEADERS the
 // RealIP middleware has already replaced RemoteAddr.
 var proxyHeaderWarn sync.Once
 
 func clientIP(r *http.Request) string {
 	if r.Header.Get("X-Forwarded-For") != "" {
 		proxyHeaderWarn.Do(func() {
-			slog.Warn("requests carry X-Forwarded-For but COGITO_TRUST_PROXY_HEADERS is off; behind a reverse proxy every client shares one login rate limit, so set it to true there")
+			slog.Warn("requests carry X-Forwarded-For but ACNOLOGIA_TRUST_PROXY_HEADERS is off; behind a reverse proxy every client shares one login rate limit, so set it to true there")
 		})
 	}
 	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -270,11 +282,13 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.U
 func (s *Server) secureCookie(r *http.Request) bool { return s.Cfg.SecureCookies || r.TLS != nil }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		_ = s.Store.DeleteSession(r.Context(), crypto.SHA256(c.Value))
+	if sess := sessionFrom(r); sess != "" {
+		_ = s.Store.DeleteSession(r.Context(), crypto.SHA256(sess))
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, Secure: s.secureCookie(r)})
+	for _, name := range []string{sessionCookie, legacySessionCookie} {
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
+			SameSite: http.SameSiteLaxMode, Secure: s.secureCookie(r)})
+	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

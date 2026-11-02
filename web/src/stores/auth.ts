@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, setUnauthorizedHandler } from "../lib/api";
 import type { User } from "../lib/types";
 
-const EXPIRE_KEY = "cogito.expired_at";
+const EXPIRE_KEY = "acn.expired_at";
 
 type Status = "loading" | "setup" | "anonymous" | "authenticated" | "error";
 

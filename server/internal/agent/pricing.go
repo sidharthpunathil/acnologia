@@ -8,7 +8,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // Price is a model's list price in USD. Token prices are per million tokens,

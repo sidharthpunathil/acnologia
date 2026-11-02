@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/egress"
-	"github.com/cogito-keys/cogito/internal/notify"
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 const maxCooldown = time.Hour
@@ -185,7 +185,7 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	p.picked.Store(k.ID, time.Now().UnixNano())
 	secret, err := p.Box.Decrypt(k.SecretEnc)
 	if err != nil {
-		return nil, errors.New("cannot decrypt key, is COGITO_MASTER_KEY correct?")
+		return nil, errors.New("cannot decrypt key, is ACNOLOGIA_MASTER_KEY correct?")
 	}
 	if err := p.Store.MarkUsed(ctx, k.ID); err != nil {
 		return nil, err

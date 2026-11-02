@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/egress"
-	"github.com/cogito-keys/cogito/internal/notify"
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // maxBusyCooldown caps how long a busy key steps aside.

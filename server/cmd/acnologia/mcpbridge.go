@@ -1,6 +1,6 @@
 package main
 
-// `cogito mcp` bridges a stdio MCP client (for example Claude Desktop) to a
+// `acnologia mcp` bridges a stdio MCP client (for example Claude Desktop) to an
 // Acnologia server's streamable HTTP MCP endpoint. Each JSON-RPC message read
 // from stdin is POSTed to /mcp with the app token; responses go to stdout.
 
@@ -16,17 +16,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sidharthpunathil/acnologia/server/internal/config"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 func runMCPBridge(args []string) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	url := fs.String("url", envOr("COGITO_URL", "http://localhost:8080"), "Acnologia base URL (or COGITO_URL)")
-	token := fs.String("token", os.Getenv("COGITO_TOKEN"), "app token cog_... (or COGITO_TOKEN)")
+	url := fs.String("url", envOr("ACNOLOGIA_URL", "http://localhost:8080"), "Acnologia base URL (or ACNOLOGIA_URL)")
+	token := fs.String("token", config.Getenv("ACNOLOGIA_TOKEN"), "app token acn_... (or ACNOLOGIA_TOKEN)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if !strings.HasPrefix(*token, "cog_") {
-		fmt.Fprintln(os.Stderr, "cogito mcp: set an app token with --token cog_... or COGITO_TOKEN")
+	if !store.IsAppToken(*token) {
+		fmt.Fprintln(os.Stderr, "acnologia mcp: set an app token with --token acn_... or ACNOLOGIA_TOKEN")
 		return 2
 	}
 	endpoint := strings.TrimRight(*url, "/") + "/mcp"
@@ -88,7 +91,7 @@ func runMCPBridge(args []string) int {
 }
 
 func envOr(k, d string) string {
-	if v := os.Getenv(k); v != "" {
+	if v := config.Getenv(k); v != "" {
 		return v
 	}
 	return d

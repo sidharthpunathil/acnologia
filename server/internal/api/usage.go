@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/agent"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/agent"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // usageMaxDays bounds the range of GET /api/admin/usage.

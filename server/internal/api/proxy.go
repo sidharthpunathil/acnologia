@@ -15,12 +15,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cogito-keys/cogito/internal/breaker"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/pool"
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/respcache"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // proxyIdleTimeout ends a proxied response when the upstream sends nothing
@@ -117,7 +117,7 @@ func newUpstreamClient() *http.Client {
 
 var hopHeaders = []string{
 	"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
-	"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Host", "Cookie", "X-Cogito-Token",
+	"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Host", "Cookie", "X-Acnologia-Token", "X-Cogito-Token",
 	"X-Forwarded-For", "X-Real-Ip", "Content-Length",
 	// Let the Go transport negotiate gzip so error bodies can be classified.
 	"Accept-Encoding",
@@ -126,7 +126,7 @@ var hopHeaders = []string{
 // buildUpstream creates the upstream request for one attempt.
 func buildUpstream(ctx context.Context, r *http.Request, sv *store.Service, path string, body []byte, secret string) (*http.Request, error) {
 	q := r.URL.Query()
-	q.Del("cogito_token")
+	delTokenParams(q)
 	prefix := authPrefix(sv)
 	if sv.AuthType == "query" {
 		q.Set(sv.AuthName, prefix+secret)
@@ -145,7 +145,7 @@ func buildUpstream(ctx context.Context, r *http.Request, sv *store.Service, path
 	for _, h := range hopHeaders {
 		req.Header.Del(h)
 	}
-	if strings.HasPrefix(req.Header.Get("Authorization"), "Bearer cog_") {
+	if isBearerAppToken(req.Header.Get("Authorization")) {
 		req.Header.Del("Authorization")
 	}
 	switch sv.AuthType {
@@ -222,7 +222,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		if ttl > 0 && r.Method == http.MethodGet && !noCache(r) {
 			cacheKey = responseCacheKey(sv.ID, r, path)
 			if e, ok := s.Cache.Get(cacheKey); ok {
-				w.Header().Set("X-Cogito-Service", sv.Slug)
+				setHeader(w.Header(), "Service", sv.Slug)
 				writeCached(w, e, "hit")
 				s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "cache_hit", ServiceID: sv.ID, AppID: a.ID, StatusCode: e.Status, Detail: r.Method + " /" + path})
 				_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, true)
@@ -254,7 +254,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if last != nil {
 		_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, false)
-		w.Header().Set("X-Cogito-Service", last.service)
+		setHeader(w.Header(), "Service", last.service)
 		if idemKey != "" && last.resp.StatusCode < 500 {
 			s.Cache.Set(idemKey, &respcache.Entry{Status: last.resp.StatusCode, Header: last.resp.Header.Clone(), Body: last.body, KeyID: last.keyID}, idempotencyTTL)
 		}
@@ -389,7 +389,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			s.Breakers.Success(sv.ID)
 			verdict = true
 			_ = s.Pool.Apply(r.Context(), sv, k, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(resp.Header)})
-			w.Header().Set("X-Cogito-Service", sv.Slug)
+			setHeader(w.Header(), "Service", sv.Slug)
 			// The slot stays held until the (possibly streamed) body is fully
 			// sent, or the upstream goes quiet for proxyIdleTimeout.
 			func() {
@@ -436,7 +436,7 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxCachedBody+1))
 	if err != nil || len(buf) > maxCachedBody {
 		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
-		w.Header().Set("X-Cogito-Cache", "bypass")
+		setHeader(w.Header(), "Cache", "bypass")
 		relayStream(w, resp, k.ID, attempt, cancel, secret)
 		return
 	}
@@ -445,9 +445,9 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 	entry := &respcache.Entry{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: buf, KeyID: k.ID}
 	if cap.cacheKey != "" && cacheable(resp, buf, k, secret) {
 		s.Cache.Set(cap.cacheKey, entry, cap.ttl)
-		w.Header().Set("X-Cogito-Cache", "miss")
+		setHeader(w.Header(), "Cache", "miss")
 	} else if cap.cacheKey != "" {
-		w.Header().Set("X-Cogito-Cache", "bypass")
+		setHeader(w.Header(), "Cache", "bypass")
 	}
 	if cap.idemKey != "" {
 		s.Cache.Set(cap.idemKey, entry, idempotencyTTL)
@@ -484,8 +484,8 @@ func copyResponseHeaders(w http.ResponseWriter, resp *http.Response, keyID int64
 	h.Set("Content-Security-Policy", proxyCSP)
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("X-Cogito-Key-Id", itoa(int(keyID)))
-	h.Set("X-Cogito-Attempts", itoa(attempts))
+	setHeader(h, "Key-Id", itoa(int(keyID)))
+	setHeader(h, "Attempts", itoa(attempts))
 }
 
 // relay writes a buffered upstream response to the client.

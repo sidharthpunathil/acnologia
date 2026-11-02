@@ -10,7 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // fakeClaude replays scripted assistant messages and records what it was sent.
@@ -192,7 +192,7 @@ func TestAssistantAppTokenGoesToUserOnly(t *testing.T) {
 			tok = it.Secret
 		}
 	}
-	if !strings.HasPrefix(tok, "cog_") {
+	if !strings.HasPrefix(tok, "acn_") {
 		t.Fatalf("token not shown to the user: %+v", out.Items)
 	}
 	for _, sent := range f.sent {

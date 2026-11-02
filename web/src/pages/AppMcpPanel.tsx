@@ -55,9 +55,9 @@ const CLIENTS: Array<{ id: Client; label: string }> = [
   { id: "other", label: "Other clients" },
 ];
 
-const TOKEN = "cog_...";
+const TOKEN = "acn_...";
 
-/** A config-safe server name, such as cogito-marketing-site. */
+/** A config-safe server name, such as acnologia-marketing-site. */
 export function serverName(app: App): string {
   const slug = app.name
     .toLowerCase()
@@ -66,7 +66,7 @@ export function serverName(app: App): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 40)
     .replace(/-+$/, "");
-  return `cogito-${slug || app.id}`;
+  return `acnologia-${slug || app.id}`;
 }
 
 function snippets(name: string, endpoint: string) {
@@ -83,14 +83,14 @@ function snippets(name: string, endpoint: string) {
     "claude-desktop": [
       {
         label: "claude_desktop_config.json",
-        code: json({ mcpServers: { [name]: { command: "/path/to/cogito", args: ["mcp", "--url", base], env: { COGITO_TOKEN: TOKEN } } } }),
+        code: json({ mcpServers: { [name]: { command: "/path/to/acnologia", args: ["mcp", "--url", base], env: { ACNOLOGIA_TOKEN: TOKEN } } } }),
       },
     ],
     cursor: [{ label: ".cursor/mcp.json", code: json({ mcpServers: { [name]: { url: endpoint, headers: { Authorization: auth } } } }) }],
     vscode: [{ label: ".vscode/mcp.json", code: json({ servers: { [name]: { type: "http", url: endpoint, headers: { Authorization: auth } } } }) }],
     other: [
       { label: "streamable http", code: `URL     ${endpoint}\nHeader  Authorization: ${auth}` },
-      { label: "stdio bridge", code: `COGITO_URL=${base} COGITO_TOKEN=${TOKEN} cogito mcp` },
+      { label: "stdio bridge", code: `ACNOLOGIA_URL=${base} ACNOLOGIA_TOKEN=${TOKEN} acnologia mcp` },
     ],
   } satisfies Record<Client, Array<{ label: string; code: string }>>;
 }
@@ -98,7 +98,7 @@ function snippets(name: string, endpoint: string) {
 const CLIENT_NOTE: Record<Client, string> = {
   "claude-code": "Run this in your project folder. Add --scope user to use it in every project.",
   "claude-desktop":
-    "Claude Desktop starts servers as local programs, so it talks to Acnologia through the cogito binary. Set command to where that binary lives, then restart the app.",
+    "Claude Desktop starts servers as local programs, so it talks to Acnologia through the acnologia binary. Set command to where that binary lives, then restart the app.",
   cursor: "Put this in .cursor/mcp.json in your project, or in ~/.cursor/mcp.json for every project.",
   vscode: "Put this in .vscode/mcp.json in your workspace. VS Code shows a Start button above the server name.",
   other: "Any client that speaks streamable HTTP can connect with the URL and header. Clients that only start local programs can use the stdio bridge.",

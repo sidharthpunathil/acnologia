@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -13,7 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/cogito-keys/cogito/internal/redact"
+	"github.com/sidharthpunathil/acnologia/server/internal/redact"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -217,8 +218,30 @@ CREATE TABLE IF NOT EXISTS agent_steps(
 );
 `
 
+// DBFile is the database file name inside the data dir. Data dirs created
+// before the rename from Cogito hold cogito.db instead; DBFileIn picks it.
+const (
+	DBFile       = "acnologia.db"
+	legacyDBFile = "cogito.db"
+)
+
+// DBFileIn returns the database file name to open in dataDir: acnologia.db,
+// or the old cogito.db when only that one exists. The old file is opened in
+// place, never renamed or moved.
+func DBFileIn(dataDir string) string {
+	if _, err := os.Stat(filepath.Join(dataDir, DBFile)); err == nil {
+		return DBFile
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, legacyDBFile)); err == nil {
+		return legacyDBFile
+	}
+	return DBFile
+}
+
 func Open(dataDir string) (*Store, error) {
-	dsn := "file:" + filepath.Join(dataDir, "cogito.db") +
+	file := DBFileIn(dataDir)
+	slog.Info("opening database", "path", filepath.Join(dataDir, file))
+	dsn := "file:" + filepath.Join(dataDir, file) +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -230,7 +253,7 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	// The database holds encrypted keys and password hashes: owner only.
-	for _, f := range []string{"cogito.db", "cogito.db-wal", "cogito.db-shm"} {
+	for _, f := range []string{file, file + "-wal", file + "-shm"} {
 		_ = os.Chmod(filepath.Join(dataDir, f), 0o600)
 	}
 	if err := migrate(db); err != nil {

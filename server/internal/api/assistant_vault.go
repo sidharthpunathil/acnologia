@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/keyparse"
-	"github.com/cogito-keys/cogito/internal/redact"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/keyparse"
+	"github.com/sidharthpunathil/acnologia/server/internal/redact"
 )
 
 // The key vault keeps pasted secrets away from Claude.

@@ -82,7 +82,7 @@ export function moreSnippets(i: SnippetInput): Record<"proxy" | "lease", Record<
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = env::var("COGITO_TOKEN")?;
+    let token = env::var("ACNOLOGIA_TOKEN")?;
     let res = reqwest::blocking::Client::new()
         .get(${L("rust")(i.proxyUrl)})
         .bearer_auth(token)
@@ -96,7 +96,7 @@ use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host = ${L("rust")(i.host)};
-    let token = env::var("COGITO_TOKEN")?;
+    let token = env::var("ACNOLOGIA_TOKEN")?;
     let client = reqwest::blocking::Client::new();
 
     // 1. Lease a key
@@ -139,7 +139,7 @@ import java.net.http.HttpResponse;
 public class Main {
     public static void main(String[] args) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(${L("java")(i.proxyUrl)}))
-            .header("Authorization", "Bearer " + System.getenv("COGITO_TOKEN"))
+            .header("Authorization", "Bearer " + System.getenv("ACNOLOGIA_TOKEN"))
             .build();
         HttpResponse<String> res = HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
         System.out.println(res.body());
@@ -158,11 +158,11 @@ import java.util.Map;
 
 public class Main {
     static final String HOST = ${L("java")(i.host)};
-    static final String TOKEN = System.getenv("COGITO_TOKEN");
+    static final String TOKEN = System.getenv("ACNOLOGIA_TOKEN");
     static final HttpClient HTTP = HttpClient.newHttpClient();
     static final ObjectMapper JSON = new ObjectMapper();
 
-    static String cogito(String path, Map<String, Object> body) throws Exception {
+    static String acnologia(String path, Map<String, Object> body) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(HOST + path))
             .header("Authorization", "Bearer " + TOKEN)
             .header("Content-Type", "application/json")
@@ -175,7 +175,7 @@ public class Main {
 
     public static void main(String[] args) throws Exception {
         // 1. Lease a key
-        JsonNode lease = JSON.readTree(cogito("/api/v1/lease", Map.of("service", ${L("java")(i.slug)}, "ttl_sec", 300)));
+        JsonNode lease = JSON.readTree(acnologia("/api/v1/lease", Map.of("service", ${L("java")(i.slug)}, "ttl_sec", 300)));
         String secret = lease.get("secret").asText();
 
         // 2. Call the provider yourself
@@ -187,7 +187,7 @@ public class Main {
         // 3. Report the outcome (${STATUS_NOTE})
         int status = res.statusCode();
         String outcome = status == 429 ? "rate_limited" : status < 400 ? "ok" : "error";
-        cogito("/api/v1/leases/" + lease.get("lease_id").asText() + "/report", Map.of("outcome", outcome, "status_code", status));
+        acnologia("/api/v1/leases/" + lease.get("lease_id").asText() + "/report", Map.of("outcome", outcome, "status_code", status));
     }
 }`,
   };
@@ -197,7 +197,7 @@ public class Main {
 
 var http = new HttpClient();
 http.DefaultRequestHeaders.Authorization =
-    new AuthenticationHeaderValue("Bearer", Environment.GetEnvironmentVariable("COGITO_TOKEN"));
+    new AuthenticationHeaderValue("Bearer", Environment.GetEnvironmentVariable("ACNOLOGIA_TOKEN"));
 
 var res = await http.GetAsync(${L("csharp")(i.proxyUrl)});
 Console.WriteLine(await res.Content.ReadAsStringAsync());`,
@@ -205,12 +205,12 @@ Console.WriteLine(await res.Content.ReadAsStringAsync());`,
 using System.Net.Http.Json;
 using System.Text.Json;
 
-var cogito = new HttpClient { BaseAddress = new Uri(${L("csharp")(i.host)}) };
-cogito.DefaultRequestHeaders.Authorization =
-    new AuthenticationHeaderValue("Bearer", Environment.GetEnvironmentVariable("COGITO_TOKEN"));
+var acnologia = new HttpClient { BaseAddress = new Uri(${L("csharp")(i.host)}) };
+acnologia.DefaultRequestHeaders.Authorization =
+    new AuthenticationHeaderValue("Bearer", Environment.GetEnvironmentVariable("ACNOLOGIA_TOKEN"));
 
 // 1. Lease a key
-var leaseRes = await cogito.PostAsJsonAsync("/api/v1/lease", new { service = ${L("csharp")(i.slug)}, ttl_sec = 300 });
+var leaseRes = await acnologia.PostAsJsonAsync("/api/v1/lease", new { service = ${L("csharp")(i.slug)}, ttl_sec = 300 });
 leaseRes.EnsureSuccessStatusCode();
 var lease = await leaseRes.Content.ReadFromJsonAsync<JsonElement>();
 var secret = lease.GetProperty("secret").GetString()!;
@@ -223,7 +223,7 @@ Console.WriteLine(await res.Content.ReadAsStringAsync());
 // 3. Report the outcome (${STATUS_NOTE})
 var status = (int)res.StatusCode;
 var outcome = status == 429 ? "rate_limited" : status < 400 ? "ok" : "error";
-await cogito.PostAsJsonAsync($"/api/v1/leases/{lease.GetProperty("lease_id").GetString()}/report",
+await acnologia.PostAsJsonAsync($"/api/v1/leases/{lease.GetProperty("lease_id").GetString()}/report",
     new { outcome, status_code = status });`,
   };
 
@@ -234,7 +234,7 @@ await cogito.PostAsJsonAsync($"/api/v1/leases/{lease.GetProperty("lease_id").Get
 #include <iostream>
 
 int main() {
-    const char* token = std::getenv("COGITO_TOKEN");
+    const char* token = std::getenv("ACNOLOGIA_TOKEN");
     auto res = cpr::Get(cpr::Url{${L("cpp")(i.proxyUrl)}},
                         cpr::Bearer{token ? token : ""});
     std::cout << res.text << std::endl;
@@ -247,12 +247,12 @@ int main() {
 
 int main() {
     const std::string host = ${L("cpp")(i.host)};
-    const char* env = std::getenv("COGITO_TOKEN");
-    const cpr::Header cogito{{"Authorization", std::string("Bearer ") + (env ? env : "")},
+    const char* env = std::getenv("ACNOLOGIA_TOKEN");
+    const cpr::Header acnologia{{"Authorization", std::string("Bearer ") + (env ? env : "")},
                              {"Content-Type", "application/json"}};
 
     // 1. Lease a key
-    auto leaseRes = cpr::Post(cpr::Url{host + "/api/v1/lease"}, cogito,
+    auto leaseRes = cpr::Post(cpr::Url{host + "/api/v1/lease"}, acnologia,
                               cpr::Body{nlohmann::json{{"service", ${L("cpp")(i.slug)}}, {"ttl_sec", 300}}.dump()});
     if (leaseRes.status_code != 200) { std::cerr << leaseRes.text << std::endl; return 1; }
     auto lease = nlohmann::json::parse(leaseRes.text);
@@ -265,7 +265,7 @@ int main() {
     // 3. Report the outcome (${STATUS_NOTE})
     const long status = res.status_code;
     const std::string outcome = status == 429 ? "rate_limited" : (status >= 200 && status < 400) ? "ok" : "error";
-    cpr::Post(cpr::Url{host + "/api/v1/leases/" + lease["lease_id"].get<std::string>() + "/report"}, cogito,
+    cpr::Post(cpr::Url{host + "/api/v1/leases/" + lease["lease_id"].get<std::string>() + "/report"}, acnologia,
               cpr::Body{nlohmann::json{{"outcome", outcome}, {"status_code", status}}.dump()});
 }`,
   };
@@ -274,7 +274,7 @@ int main() {
     proxy: `import Foundation
 
 var req = URLRequest(url: URL(string: ${L("swift")(i.proxyUrl)})!)
-let token = ProcessInfo.processInfo.environment["COGITO_TOKEN"] ?? ""
+let token = ProcessInfo.processInfo.environment["ACNOLOGIA_TOKEN"] ?? ""
 req.setValue("Bearer \\(token)", forHTTPHeaderField: "Authorization")
 
 let (data, _) = try await URLSession.shared.data(for: req)
@@ -288,9 +288,9 @@ struct Lease: Decodable {
 }
 
 let host = ${L("swift")(i.host)}
-let token = ProcessInfo.processInfo.environment["COGITO_TOKEN"] ?? ""
+let token = ProcessInfo.processInfo.environment["ACNOLOGIA_TOKEN"] ?? ""
 
-func cogito(_ path: String, _ body: [String: Any]) throws -> URLRequest {
+func acnologia(_ path: String, _ body: [String: Any]) throws -> URLRequest {
     var req = URLRequest(url: URL(string: host + path)!)
     req.httpMethod = "POST"
     req.setValue("Bearer \\(token)", forHTTPHeaderField: "Authorization")
@@ -300,7 +300,7 @@ func cogito(_ path: String, _ body: [String: Any]) throws -> URLRequest {
 }
 
 // 1. Lease a key
-let (leaseData, _) = try await URLSession.shared.data(for: cogito("/api/v1/lease", ["service": ${L("swift")(i.slug)}, "ttl_sec": 300]))
+let (leaseData, _) = try await URLSession.shared.data(for: acnologia("/api/v1/lease", ["service": ${L("swift")(i.slug)}, "ttl_sec": 300]))
 let lease = try JSONDecoder().decode(Lease.self, from: leaseData)
 
 // 2. Call the provider yourself
@@ -311,7 +311,7 @@ print(String(decoding: data, as: UTF8.self))
 // 3. Report the outcome (${STATUS_NOTE})
 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 let outcome = status == 429 ? "rate_limited" : (200..<400).contains(status) ? "ok" : "error"
-_ = try await URLSession.shared.data(for: cogito("/api/v1/leases/\\(lease.lease_id)/report", ["outcome": outcome, "status_code": status]))`,
+_ = try await URLSession.shared.data(for: acnologia("/api/v1/leases/\\(lease.lease_id)/report", ["outcome": outcome, "status_code": status]))`,
   };
 
   const kotlin = {
@@ -322,7 +322,7 @@ import okhttp3.Request
 fun main() {
     val req = Request.Builder()
         .url(${L("kotlin")(i.proxyUrl)})
-        .header("Authorization", "Bearer " + System.getenv("COGITO_TOKEN"))
+        .header("Authorization", "Bearer " + System.getenv("ACNOLOGIA_TOKEN"))
         .build()
     OkHttpClient().newCall(req).execute().use { println(it.body!!.string()) }
 }`,
@@ -335,10 +335,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 val host = ${L("kotlin")(i.host)}
-val token: String = System.getenv("COGITO_TOKEN")
+val token: String = System.getenv("ACNOLOGIA_TOKEN")
 val http = OkHttpClient()
 
-fun cogito(path: String, body: Map<String, Any>): JSONObject {
+fun acnologia(path: String, body: Map<String, Any>): JSONObject {
     val req = Request.Builder()
         .url(host + path)
         .header("Authorization", "Bearer " + token)
@@ -352,7 +352,7 @@ fun cogito(path: String, body: Map<String, Any>): JSONObject {
 
 fun main() {
     // 1. Lease a key
-    val lease = cogito("/api/v1/lease", mapOf("service" to ${L("kotlin")(i.slug)}, "ttl_sec" to 300))
+    val lease = acnologia("/api/v1/lease", mapOf("service" to ${L("kotlin")(i.slug)}, "ttl_sec" to 300))
     val secret = lease.getString("secret")
 
     // 2. Call the provider yourself
@@ -370,7 +370,7 @@ fun main() {
         status < 400 -> "ok"
         else -> "error"
     }
-    cogito("/api/v1/leases/" + lease.getString("lease_id") + "/report", mapOf("outcome" to outcome, "status_code" to status))
+    acnologia("/api/v1/leases/" + lease.getString("lease_id") + "/report", mapOf("outcome" to outcome, "status_code" to status))
 }`,
   };
 
@@ -380,20 +380,20 @@ fun main() {
 require 'vendor/autoload.php';
 
 $res = (new GuzzleHttp\\Client())->get(${L("php")(i.proxyUrl)}, [
-    'headers' => ['Authorization' => 'Bearer ' . getenv('COGITO_TOKEN')],
+    'headers' => ['Authorization' => 'Bearer ' . getenv('ACNOLOGIA_TOKEN')],
 ]);
 echo $res->getBody(), PHP_EOL;`,
     lease: `<?php
 // composer require guzzlehttp/guzzle
 require 'vendor/autoload.php';
 
-$cogito = new GuzzleHttp\\Client([
+$acnologia = new GuzzleHttp\\Client([
     'base_uri' => ${L("php")(i.host)},
-    'headers' => ['Authorization' => 'Bearer ' . getenv('COGITO_TOKEN')],
+    'headers' => ['Authorization' => 'Bearer ' . getenv('ACNOLOGIA_TOKEN')],
 ]);
 
 // 1. Lease a key
-$lease = json_decode((string) $cogito->post('/api/v1/lease', [
+$lease = json_decode((string) $acnologia->post('/api/v1/lease', [
     'json' => ['service' => ${L("php")(i.slug)}, 'ttl_sec' => 300],
 ])->getBody(), true);
 
@@ -406,7 +406,7 @@ echo $res->getBody(), PHP_EOL;
 // 3. Report the outcome (${STATUS_NOTE})
 $status = $res->getStatusCode();
 $outcome = $status === 429 ? 'rate_limited' : ($status < 400 ? 'ok' : 'error');
-$cogito->post("/api/v1/leases/{$lease['lease_id']}/report", [
+$acnologia->post("/api/v1/leases/{$lease['lease_id']}/report", [
     'json' => ['outcome' => $outcome, 'status_code' => $status],
 ]);`,
   };
@@ -415,15 +415,15 @@ $cogito->post("/api/v1/leases/{$lease['lease_id']}/report", [
     proxy: `require "net/http"
 
 uri = URI(${L("ruby")(i.proxyUrl)})
-res = Net::HTTP.get_response(uri, { "Authorization" => "Bearer #{ENV.fetch("COGITO_TOKEN")}" })
+res = Net::HTTP.get_response(uri, { "Authorization" => "Bearer #{ENV.fetch("ACNOLOGIA_TOKEN")}" })
 puts res.body`,
     lease: `require "json"
 require "net/http"
 
 HOST = ${L("ruby")(i.host)}
-TOKEN = ENV.fetch("COGITO_TOKEN")
+TOKEN = ENV.fetch("ACNOLOGIA_TOKEN")
 
-def cogito(path, body)
+def acnologia(path, body)
   res = Net::HTTP.post(URI(HOST + path), body.to_json,
                        "Authorization" => "Bearer #{TOKEN}", "Content-Type" => "application/json")
   raise res.body unless res.is_a?(Net::HTTPSuccess)
@@ -431,7 +431,7 @@ def cogito(path, body)
 end
 
 # 1. Lease a key
-lease = cogito("/api/v1/lease", { service: ${L("ruby")(i.slug)}, ttl_sec: 300 })
+lease = acnologia("/api/v1/lease", { service: ${L("ruby")(i.slug)}, ttl_sec: 300 })
 
 # 2. Call the provider yourself
 uri = URI(${url("ruby", 'lease["base_url"]', 'URI.encode_www_form_component(lease["secret"])')})
@@ -441,7 +441,7 @@ puts res.body
 # 3. Report the outcome (${STATUS_NOTE})
 status = res.code.to_i
 outcome = status == 429 ? "rate_limited" : status < 400 ? "ok" : "error"
-cogito("/api/v1/leases/#{lease["lease_id"]}/report", { outcome: outcome, status_code: status })`,
+acnologia("/api/v1/leases/#{lease["lease_id"]}/report", { outcome: outcome, status_code: status })`,
   };
 
   const dart = {
@@ -452,7 +452,7 @@ import 'package:http/http.dart' as http;
 Future<void> main() async {
   final res = await http.get(
     Uri.parse(${L("dart")(i.proxyUrl)}),
-    headers: {'Authorization': 'Bearer \${Platform.environment['COGITO_TOKEN']}'},
+    headers: {'Authorization': 'Bearer \${Platform.environment['ACNOLOGIA_TOKEN']}'},
   );
   print(res.body);
 }`,
@@ -463,11 +463,11 @@ import 'package:http/http.dart' as http;
 
 final host = ${L("dart")(i.host)};
 final headers = {
-  'Authorization': 'Bearer \${Platform.environment['COGITO_TOKEN']}',
+  'Authorization': 'Bearer \${Platform.environment['ACNOLOGIA_TOKEN']}',
   'Content-Type': 'application/json',
 };
 
-Future<Map<String, dynamic>> cogito(String path, Map<String, Object> body) async {
+Future<Map<String, dynamic>> acnologia(String path, Map<String, Object> body) async {
   final res = await http.post(Uri.parse(host + path), headers: headers, body: jsonEncode(body));
   if (res.statusCode >= 400) throw Exception(res.body);
   return jsonDecode(res.body) as Map<String, dynamic>;
@@ -475,7 +475,7 @@ Future<Map<String, dynamic>> cogito(String path, Map<String, Object> body) async
 
 Future<void> main() async {
   // 1. Lease a key
-  final lease = await cogito('/api/v1/lease', {'service': ${L("dart")(i.slug)}, 'ttl_sec': 300});
+  final lease = await acnologia('/api/v1/lease', {'service': ${L("dart")(i.slug)}, 'ttl_sec': 300});
   final String secret = lease['secret'];
 
   // 2. Call the provider yourself
@@ -487,7 +487,7 @@ Future<void> main() async {
   // 3. Report the outcome (${STATUS_NOTE})
   final status = res.statusCode;
   final outcome = status == 429 ? 'rate_limited' : status < 400 ? 'ok' : 'error';
-  await cogito('/api/v1/leases/\${lease['lease_id']}/report', {'outcome': outcome, 'status_code': status});
+  await acnologia('/api/v1/leases/\${lease['lease_id']}/report', {'outcome': outcome, 'status_code': status});
 }`,
   };
 

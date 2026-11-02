@@ -10,7 +10,7 @@ import type {
   ChatReply,
   ChatThread,
   ChatTurn,
-  CogitoEvent,
+  AcnologiaEvent,
   CheckSummary,
   Key,
   KeyInsights,
@@ -77,7 +77,7 @@ export async function request<T>(method: Method, path: string, body?: unknown): 
     // CSRF guard: the server rejects mutating requests without both headers.
     const h = init.headers as Record<string, string>;
     h["Content-Type"] = "application/json";
-    h["X-Requested-With"] = "cogito";
+    h["X-Requested-With"] = "acnologia";
     init.body = JSON.stringify(body ?? {});
   }
 
@@ -214,7 +214,7 @@ export const api = {
 
   // Events
   listEvents: (params: { service_id?: number; key_id?: number; limit?: number } = {}) =>
-    request<{ events: CogitoEvent[] }>("GET", `/api/admin/events${qs(params)}`),
+    request<{ events: AcnologiaEvent[] }>("GET", `/api/admin/events${qs(params)}`),
 
   // Users
   listUsers: () => request<{ users: User[] }>("GET", "/api/admin/users"),

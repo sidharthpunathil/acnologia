@@ -1,4 +1,4 @@
-# cogito-keys (Ruby)
+# acnologia (Ruby)
 
 Ruby client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Acnologia
 holds many keys per provider and hands out a working one, rotating automatically
@@ -9,34 +9,34 @@ Ruby 2.6+, standard library only (`net/http`, `json`).
 ## Install
 
 ```bash
-gem install cogito-keys
+gem install acnologia
 ```
 
 ```ruby
-require "cogito"
+require "acnologia"
 
-cog = Acnologia::Client.new("http://localhost:8080", "cog_your_app_token")
-# or set COGITO_URL and COGITO_TOKEN and call Acnologia::Client.new
+acn = Acnologia::Client.new("http://localhost:8080", "acn_your_app_token")
+# or set ACNOLOGIA_URL and ACNOLOGIA_TOKEN and call Acnologia::Client.new
 ```
 
 ## Proxy mode
 
 Send the provider request to Acnologia. It injects a key, retries with the next key
 on rate limits, and never exposes a secret. Methods return `Acnologia::Response`
-(`status`, `headers`, `body`, `ok?`, `json`, `res["X-Cogito-Key-Id"]`), including
+(`status`, `headers`, `body`, `ok?`, `json`, `res["X-Acnologia-Key-Id"]`), including
 non 2xx responses.
 
 ### SerpAPI search
 
 ```ruby
-res = cog.proxy("serpapi").get("/search.json", "engine" => "google", "q" => "best espresso grinder")
+res = acn.proxy("serpapi").get("/search.json", "engine" => "google", "q" => "best espresso grinder")
 res.json.fetch("organic_results", []).first(5).each { |r| puts "#{r['title']} #{r['link']}" }
 ```
 
 ### ElevenLabs text to speech
 
 ```ruby
-res = cog.proxy("elevenlabs").post(
+res = acn.proxy("elevenlabs").post(
   "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
   { "text" => "Hello from Acnologia.", "model_id" => "eleven_multilingual_v2" },
   headers: { "Accept" => "audio/mpeg" }
@@ -49,7 +49,7 @@ Hash and Array bodies are sent as JSON.
 
 ## Lease mode
 
-`cog.lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil)` returns a
+`acn.lease(service, exclude_key_ids: nil, ttl_sec: nil, wait_sec: nil)` returns a
 `Acnologia::Lease` (`lease_id`, `key_id`, `service`, `secret`, `auth`, `base_url`,
 `expires_at`). It raises `Acnologia::NoKeyAvailable` (`retry_after`) when the pool
 is drained.
@@ -68,7 +68,7 @@ returns the next lease (or nil) when `rotate: true`.
 
 ### with_key
 
-`cog.with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil) { |lease| ... }` leases a key, yields
+`acn.with_key(service, max_attempts: 5, ttl_sec: nil, wait_sec: nil) { |lease| ... }` leases a key, yields
 it, reports the outcome and returns the block's value. Raise
 `Acnologia::RateLimited`, `Acnologia::QuotaExhausted` or `Acnologia::InvalidKey` to cool
 the key down and retry with the next one. Other exceptions are reported as
@@ -79,7 +79,7 @@ SerpAPI:
 ```ruby
 require "net/http"
 
-data = cog.with_key("serpapi") do |lease|
+data = acn.with_key("serpapi") do |lease|
   query, = lease.apply(query: { "engine" => "google", "q" => "coffee" })
   res = Net::HTTP.get_response(URI(lease.url("/search.json", query)))
   case res.code.to_i
@@ -96,7 +96,7 @@ end
 ElevenLabs:
 
 ```ruby
-audio = cog.with_key("elevenlabs") do |lease|
+audio = acn.with_key("elevenlabs") do |lease|
   _, headers = lease.apply(headers: { "Accept" => "audio/mpeg", "Content-Type" => "application/json" })
   uri = URI(lease.url("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"))
   res = Net::HTTP.post(uri, JSON.generate("text" => "Hi", "model_id" => "eleven_multilingual_v2"), headers)
@@ -115,7 +115,7 @@ File.binwrite("hi.mp3", audio)
 Manual flow (report on every path, see Concurrency limits):
 
 ```ruby
-lease = cog.lease("serpapi")
+lease = acn.lease("serpapi")
 begin
   # ... call the provider ...
   next_lease = lease.report("rate_limited", status_code: 429, retry_after_sec: 3600, rotate: true)
@@ -140,10 +140,10 @@ services, 300 otherwise).
   timeout is extended to cover the wait.
 
 ```ruby
-audio = cog.with_key("elevenlabs", wait_sec: 20) { |lease| speak(lease) }
+audio = acn.with_key("elevenlabs", wait_sec: 20) { |lease| speak(lease) }
 
 begin
-  lease = cog.lease("elevenlabs")
+  lease = acn.lease("elevenlabs")
 rescue Acnologia::AllKeysBusy => e # e.busy? is true
   sleep(e.retry_after || 1)
   retry
@@ -171,8 +171,8 @@ than the limit in parallel on one key.
 ## Tests
 
 ```bash
-ruby -Ilib test/test_cogito.rb
+ruby -Ilib test/test_acnologia.rb
 ```
 
-Pass `transport: ->(method, url, headers, body) { Cogito::Response.new(...) }`
+Pass `transport: ->(method, url, headers, body) { Acnologia::Response.new(...) }`
 to the client to replace `net/http`, as the tests do.

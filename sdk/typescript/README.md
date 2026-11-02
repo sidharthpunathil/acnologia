@@ -1,4 +1,4 @@
-# @cogito/keys
+# @acnologia/keys
 
 TypeScript and JavaScript client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool.
 Register many provider accounts (SerpAPI, ElevenLabs, any API key based service) in Acnologia and
@@ -12,33 +12,33 @@ hits a rate limit.
 ## Install
 
 ```bash
-npm install @cogito/keys
+npm install @acnologia/keys
 # or
-pnpm add @cogito/keys
+pnpm add @acnologia/keys
 # or
-bun add @cogito/keys
+bun add @acnologia/keys
 ```
 
 Deno:
 
 ```ts
-import { Cogito } from "npm:@cogito/keys";
+import { Acnologia } from "npm:@acnologia/keys";
 ```
 
 ## Setup
 
-Create an app in the Acnologia dashboard and copy its token (`cog_...`, shown once).
+Create an app in the Acnologia dashboard and copy its token (`acn_...`, shown once).
 
 ```ts
-import { Cogito } from "@cogito/keys";
+import { Acnologia } from "@acnologia/keys";
 
-const cogito = new Cogito({
+const acnologia = new Acnologia({
   baseUrl: "http://localhost:8080",
-  token: process.env.COGITO_TOKEN!,
+  token: process.env.ACNOLOGIA_TOKEN!,
   // fetch: customFetch, // optional, defaults to globalThis.fetch
 });
 
-const services = await cogito.services();
+const services = await acnologia.services();
 // [{ slug: "serpapi", name: "SerpAPI", available: true, baseUrl: "https://serpapi.com", auth: { type: "query", name: "api_key" }, ... }]
 ```
 
@@ -55,18 +55,18 @@ The app must be allowed the mode you use (`proxy`, `lease` or `both`).
 
 Call Acnologia as if it were the provider. Acnologia injects a key, retries with the next key on a
 rate limit, and returns the provider's response as a standard `Response`. Non-2xx responses do
-not throw, check `res.ok` yourself. The response carries `X-Cogito-Key-Id` and
-`X-Cogito-Attempts` headers.
+not throw, check `res.ok` yourself. The response carries `X-Acnologia-Key-Id` and
+`X-Acnologia-Attempts` headers.
 
 ### SerpAPI search
 
 ```ts
-const serp = cogito.proxy("serpapi");
+const serp = acnologia.proxy("serpapi");
 
 const res = await serp.get("/search.json", { engine: "google", q: "best espresso grinder" });
 if (!res.ok) throw new Error(`SerpAPI ${res.status}: ${await res.text()}`);
 const data = await res.json();
-console.log(data.organic_results?.[0]?.title, "via key", res.headers.get("X-Cogito-Key-Id"));
+console.log(data.organic_results?.[0]?.title, "via key", res.headers.get("X-Acnologia-Key-Id"));
 ```
 
 ### ElevenLabs text to speech
@@ -74,7 +74,7 @@ console.log(data.organic_results?.[0]?.title, "via key", res.headers.get("X-Cogi
 ```ts
 import { writeFile } from "node:fs/promises";
 
-const eleven = cogito.proxy("elevenlabs");
+const eleven = acnologia.proxy("elevenlabs");
 const voiceId = "21m00Tcm4TlvDq8Ikwam";
 
 const res = await eleven.post(`/v1/text-to-speech/${voiceId}`, {
@@ -88,7 +88,7 @@ await writeFile("hello.mp3", new Uint8Array(await res.arrayBuffer()));
 ### Proxy API
 
 ```ts
-const p = cogito.proxy("serpapi");
+const p = acnologia.proxy("serpapi");
 p.get(path, query?, init?)
 p.delete(path, query?, init?)
 p.post(path, body?, init?)   // also put, patch
@@ -121,9 +121,9 @@ Options: `{ maxAttempts?: number; ttlSec?: number; waitSec?: number }`.
 #### SerpAPI search
 
 ```ts
-import { Cogito, RateLimitedError, QuotaExhaustedError, InvalidKeyError } from "@cogito/keys";
+import { Acnologia, RateLimitedError, QuotaExhaustedError, InvalidKeyError } from "@acnologia/keys";
 
-const data = await cogito.withKey("serpapi", async (lease) => {
+const data = await acnologia.withKey("serpapi", async (lease) => {
   const res = await fetch(lease.url("/search.json", { engine: "google", q: "best espresso grinder" }));
   if (res.status === 429) {
     const body = await res.text();
@@ -144,7 +144,7 @@ services whose auth type is `query` (SerpAPI uses `api_key`).
 ```ts
 const voiceId = "21m00Tcm4TlvDq8Ikwam";
 
-const audio = await cogito.withKey("elevenlabs", async (lease) => {
+const audio = await acnologia.withKey("elevenlabs", async (lease) => {
   const { headers } = lease.apply({ headers: { "Content-Type": "application/json" } });
   const res = await fetch(`${lease.baseUrl}/v1/text-to-speech/${voiceId}`, {
     method: "POST",
@@ -169,10 +169,10 @@ const audio = await cogito.withKey("elevenlabs", async (lease) => {
 ### Manual lease and report
 
 ```ts
-import { NoKeyAvailableError } from "@cogito/keys";
+import { NoKeyAvailableError } from "@acnologia/keys";
 
 try {
-  const lease = await cogito.lease("serpapi", { ttlSec: 120, waitSec: 10 });
+  const lease = await acnologia.lease("serpapi", { ttlSec: 120, waitSec: 10 });
   try {
     const res = await fetch(lease.url("/search.json", { q: "coffee" }));
     if (res.status === 429) {
@@ -226,12 +226,12 @@ limit, each lease holds one of the key's slots until you report it or its `ttlSe
   server waits that long for a slot when every usable key is busy.
 
 ```ts
-import { AllKeysBusyError } from "@cogito/keys";
+import { AllKeysBusyError } from "@acnologia/keys";
 
-const audio = await cogito.withKey("elevenlabs", speak, { waitSec: 20 });
+const audio = await acnologia.withKey("elevenlabs", speak, { waitSec: 20 });
 
 try {
-  const lease = await cogito.lease("elevenlabs");
+  const lease = await acnologia.lease("elevenlabs");
 } catch (err) {
   if (err instanceof AllKeysBusyError) {
     // err.busy === true, err.retryAfter is usually 1
@@ -254,22 +254,22 @@ The package works without TypeScript.
 ### ESM (Node, Bun, Deno, bundlers)
 
 ```js
-import { Cogito } from "@cogito/keys";
+import { Acnologia } from "@acnologia/keys";
 
-const cogito = new Cogito({ baseUrl: "http://localhost:8080", token: process.env.COGITO_TOKEN });
-const res = await cogito.proxy("serpapi").get("/search.json", { q: "coffee" });
+const acnologia = new Acnologia({ baseUrl: "http://localhost:8080", token: process.env.ACNOLOGIA_TOKEN });
+const res = await acnologia.proxy("serpapi").get("/search.json", { q: "coffee" });
 console.log(await res.json());
 ```
 
 ### CommonJS (require)
 
 ```js
-const { Cogito, RateLimitedError } = require("@cogito/keys");
+const { Acnologia, RateLimitedError } = require("@acnologia/keys");
 
-const cogito = new Cogito({ baseUrl: "http://localhost:8080", token: process.env.COGITO_TOKEN });
+const acnologia = new Acnologia({ baseUrl: "http://localhost:8080", token: process.env.ACNOLOGIA_TOKEN });
 
 async function main() {
-  const res = await cogito.proxy("serpapi").get("/search.json", { q: "coffee" });
+  const res = await acnologia.proxy("serpapi").get("/search.json", { q: "coffee" });
   console.log(res.status, await res.json());
 }
 main();
@@ -279,8 +279,8 @@ main();
 
 ```html
 <script type="module">
-  import { Cogito } from "https://esm.sh/@cogito/keys";
-  const cogito = new Cogito({ baseUrl: "https://cogito.example.com", token: "cog_..." });
+  import { Acnologia } from "https://esm.sh/@acnologia/keys";
+  const acnologia = new Acnologia({ baseUrl: "https://acnologia.example.com", token: "acn_..." });
 </script>
 ```
 
@@ -291,8 +291,8 @@ page needs. Anyone who can read the page can use the token.
 
 | Class | When |
 |-------|------|
-| `CogitoError` | Acnologia returned a non-2xx response. Has `status`, `code`, `body`. |
-| `NoKeyAvailableError` | 503 `no_key_available`. Has `retryAfter` (seconds or null) and `busy`. Extends `CogitoError`. |
+| `AcnologiaError` | Acnologia returned a non-2xx response. Has `status`, `code`, `body`. |
+| `NoKeyAvailableError` | 503 `no_key_available`. Has `retryAfter` (seconds or null) and `busy`. Extends `AcnologiaError`. |
 | `AllKeysBusyError` | 503 `all_keys_busy`: every usable key is at its concurrency limit. `busy` is true, `retryAfter` usually 1. Extends `NoKeyAvailableError`. |
 | `RateLimitedError(retryAfter?, { statusCode?, message? })` | You throw it inside `withKey`. |
 | `QuotaExhaustedError({ statusCode?, message? })` | You throw it inside `withKey`. |

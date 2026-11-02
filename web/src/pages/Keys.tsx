@@ -165,10 +165,13 @@ export function KeysPage() {
       return true;
     });
     list = [...list];
-    if (sort === "quota") list.sort((a, b) => frac(a) - frac(b));
-    else if (sort === "validity") list.sort((a, b) => (RANK[a.validity] ?? 1) - (RANK[b.validity] ?? 1) || t(b.last_used_at) - t(a.last_used_at));
-    else if (sort === "label") list.sort((a, b) => (a.label || a.hint).localeCompare(b.label || b.hint));
-    else list.sort((a, b) => t(b.last_used_at) - t(a.last_used_at));
+    // Last used to the second, then the key id, so keys used in the same second keep a stable order.
+    const recent = (a: KeyRow, b: KeyRow) =>
+      Math.floor(t(b.last_used_at) / 1000) - Math.floor(t(a.last_used_at) / 1000) || a.id - b.id;
+    if (sort === "quota") list.sort((a, b) => frac(a) - frac(b) || a.id - b.id);
+    else if (sort === "validity") list.sort((a, b) => (RANK[a.validity] ?? 1) - (RANK[b.validity] ?? 1) || recent(a, b));
+    else if (sort === "label") list.sort((a, b) => (a.label || a.hint).localeCompare(b.label || b.hint) || a.id - b.id);
+    else list.sort(recent);
     return list;
   }, [scoped, validity, only, sort, now]);
 

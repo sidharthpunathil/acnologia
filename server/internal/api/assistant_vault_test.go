@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/agent"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/agent"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // fakeAnthropicHTTP is a Messages endpoint that replays scripted replies and

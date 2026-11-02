@@ -36,23 +36,23 @@ type Config struct {
 
 func Load(version string) Config {
 	return Config{
-		Addr:                env("COGITO_ADDR", ":8080"),
-		DataDir:             env("COGITO_DATA_DIR", "./data"),
-		MasterKey:           os.Getenv("COGITO_MASTER_KEY"),
-		PublicURL:           strings.TrimRight(os.Getenv("COGITO_PUBLIC_URL"), "/"),
-		SecureCookies:       envBool("COGITO_SECURE_COOKIES", false),
-		TrustProxyHeaders:   envBool("COGITO_TRUST_PROXY_HEADERS", false),
-		EventRetentionDays:  envInt("COGITO_EVENT_RETENTION_DAYS", 30),
-		HealthInterval:      envDuration("COGITO_HEALTH_INTERVAL", 6*time.Hour),
-		MaxBodyBytes:        int64(envInt("COGITO_MAX_BODY_MB", 50)) << 20,
-		CacheBytes:          int64(envInt("COGITO_CACHE_MB", 64)) << 20,
-		WebhookAllowPrivate: envBool("COGITO_WEBHOOK_ALLOW_PRIVATE", false),
-		EgressEchoURL:       env("COGITO_EGRESS_ECHO_URL", "https://www.cloudflare.com/cdn-cgi/trace"),
-		BootstrapEmail:      os.Getenv("COGITO_BOOTSTRAP_EMAIL"),
-		BootstrapPassword:   os.Getenv("COGITO_BOOTSTRAP_PASSWORD"),
+		Addr:                env("ACNOLOGIA_ADDR", ":8080"),
+		DataDir:             env("ACNOLOGIA_DATA_DIR", "./data"),
+		MasterKey:           Getenv("ACNOLOGIA_MASTER_KEY"),
+		PublicURL:           strings.TrimRight(Getenv("ACNOLOGIA_PUBLIC_URL"), "/"),
+		SecureCookies:       envBool("ACNOLOGIA_SECURE_COOKIES", false),
+		TrustProxyHeaders:   envBool("ACNOLOGIA_TRUST_PROXY_HEADERS", false),
+		EventRetentionDays:  envInt("ACNOLOGIA_EVENT_RETENTION_DAYS", 30),
+		HealthInterval:      envDuration("ACNOLOGIA_HEALTH_INTERVAL", 6*time.Hour),
+		MaxBodyBytes:        int64(envInt("ACNOLOGIA_MAX_BODY_MB", 50)) << 20,
+		CacheBytes:          int64(envInt("ACNOLOGIA_CACHE_MB", 64)) << 20,
+		WebhookAllowPrivate: envBool("ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE", false),
+		EgressEchoURL:       env("ACNOLOGIA_EGRESS_ECHO_URL", "https://www.cloudflare.com/cdn-cgi/trace"),
+		BootstrapEmail:      Getenv("ACNOLOGIA_BOOTSTRAP_EMAIL"),
+		BootstrapPassword:   Getenv("ACNOLOGIA_BOOTSTRAP_PASSWORD"),
 		Version:             version,
 		AnthropicAPIKey:     os.Getenv("ANTHROPIC_API_KEY"),
-		AIModel:             env("COGITO_AI_MODEL", "claude-opus-5-5"),
+		AIModel:             env("ACNOLOGIA_AI_MODEL", "claude-opus-5-5"),
 		GitHubToken:         os.Getenv("GITHUB_TOKEN"),
 	}
 }
@@ -85,28 +85,28 @@ func LoadDotEnv(path string) {
 }
 
 func env(k, def string) string {
-	if v := os.Getenv(k); v != "" {
+	if v := Getenv(k); v != "" {
 		return v
 	}
 	return def
 }
 
 func envInt(k string, def int) int {
-	if v, err := strconv.Atoi(os.Getenv(k)); err == nil {
+	if v, err := strconv.Atoi(Getenv(k)); err == nil {
 		return v
 	}
 	return def
 }
 
 func envBool(k string, def bool) bool {
-	if v, err := strconv.ParseBool(os.Getenv(k)); err == nil {
+	if v, err := strconv.ParseBool(Getenv(k)); err == nil {
 		return v
 	}
 	return def
 }
 
 func envDuration(k string, def time.Duration) time.Duration {
-	v := os.Getenv(k)
+	v := Getenv(k)
 	if v == "" {
 		return def
 	}

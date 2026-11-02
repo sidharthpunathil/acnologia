@@ -9,8 +9,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 func prStatus(st *string) store.RunPatch { return store.RunPatch{Status: st} }

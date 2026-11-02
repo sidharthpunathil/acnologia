@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // Event types.
@@ -237,15 +237,15 @@ func (n *Notifier) Deliver(ctx context.Context, h *store.Webhook, e Event) (int,
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Cogito-Webhooks/1")
+	req.Header.Set("User-Agent", "Acnologia-Webhooks/1")
 	if h.Format == "json" && len(h.SecretEnc) > 0 {
 		if secret, err := n.Box.Decrypt(h.SecretEnc); err == nil {
 			ts := strconv.FormatInt(n.now().Unix(), 10)
-			req.Header.Set("X-Cogito-Timestamp", ts)
-			req.Header.Set("X-Cogito-Signature", "sha256="+Sign(secret, ts, body))
+			setHeader(req.Header, "Timestamp", ts)
+			setHeader(req.Header, "Signature", "sha256="+Sign(secret, ts, body))
 		}
 	}
-	req.Header.Set("X-Cogito-Event", e.Type)
+	setHeader(req.Header, "Event", e.Type)
 	resp, err := n.Client.Do(req)
 	if err != nil {
 		// The URL is itself a secret (Slack, Discord and Telegram put the
@@ -312,4 +312,11 @@ func ValidFormat(f string) bool {
 		}
 	}
 	return false
+}
+
+// setHeader sets X-Acnologia-<name> and the old X-Cogito-<name>. The old
+// header is kept for existing receivers that verify it; drop it in a later release.
+func setHeader(h http.Header, name, value string) {
+	h.Set("X-Acnologia-"+name, value)
+	h.Set("X-Cogito-"+name, value)
 }

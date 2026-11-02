@@ -9,7 +9,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // assistForms describes the fields "Fill with AI" may set on each form.

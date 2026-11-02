@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import type { Theme } from "./support/fixtures";
 
-// Screenshot suite for the dashboard. The server comes from ../bin/cogito
+// Screenshot suite for the dashboard. The server comes from ../bin/acnologia
 // (run `make build` first); support/global-setup.ts starts it on a free port
 // with seeded data and support/global-teardown.ts stops it.
 

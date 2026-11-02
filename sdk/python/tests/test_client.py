@@ -7,12 +7,12 @@ from typing import Any, Dict, List, Optional
 import httpx
 import pytest
 
-from cogito import (
+from acnologia import (
     AllKeysBusy,
-    AsyncCogito,
+    AsyncAcnologia,
     Auth,
-    Cogito,
-    CogitoError,
+    Acnologia,
+    AcnologiaError,
     InvalidKey,
     Lease,
     NoKeyAvailable,
@@ -20,12 +20,12 @@ from cogito import (
     RateLimited,
 )
 
-BASE = "http://cogito.test"
-TOKEN = "cog_test"
+BASE = "http://acnologia.test"
+TOKEN = "acn_test"
 
 
 class FakeServer:
-    """A tiny in-memory Cogito consumer API."""
+    """A tiny in-memory Acnologia consumer API."""
 
     def __init__(self, keys: Optional[List[int]] = None, auth: Optional[Dict[str, str]] = None) -> None:
         self.keys = list(keys if keys is not None else [1, 2, 3])
@@ -111,7 +111,7 @@ class FakeServer:
             return httpx.Response(
                 200,
                 json={"path": path, "query": dict(req.url.params), "body": req.content.decode() or None},
-                headers={"X-Cogito-Key-Id": "1", "X-Cogito-Attempts": "1"},
+                headers={"X-Acnologia-Key-Id": "1", "X-Acnologia-Attempts": "1"},
             )
         return httpx.Response(404, json={"error": {"code": "not_found", "message": path}})
 
@@ -122,12 +122,12 @@ def server() -> FakeServer:
 
 
 @pytest.fixture
-def cog(server: FakeServer) -> Cogito:
-    return Cogito(BASE + "/", TOKEN, transport=httpx.MockTransport(server.handler))
+def acn(server: FakeServer) -> Acnologia:
+    return Acnologia(BASE + "/", TOKEN, transport=httpx.MockTransport(server.handler))
 
 
-def test_services(cog: Cogito) -> None:
-    svcs = cog.services()
+def test_services(acn: Acnologia) -> None:
+    svcs = acn.services()
     assert len(svcs) == 1
     assert svcs[0].slug == "serpapi"
     assert svcs[0].available is True
@@ -135,17 +135,17 @@ def test_services(cog: Cogito) -> None:
 
 
 def test_requires_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("COGITO_URL", raising=False)
-    monkeypatch.delenv("COGITO_TOKEN", raising=False)
+    monkeypatch.delenv("ACNOLOGIA_URL", raising=False)
+    monkeypatch.delenv("ACNOLOGIA_TOKEN", raising=False)
     with pytest.raises(ValueError):
-        Cogito()
-    monkeypatch.setenv("COGITO_URL", BASE)
-    monkeypatch.setenv("COGITO_TOKEN", TOKEN)
-    assert Cogito().base_url == BASE
+        Acnologia()
+    monkeypatch.setenv("ACNOLOGIA_URL", BASE)
+    monkeypatch.setenv("ACNOLOGIA_TOKEN", TOKEN)
+    assert Acnologia().base_url == BASE
 
 
-def test_lease_fields_and_body(cog: Cogito, server: FakeServer) -> None:
-    lease = cog.lease("serpapi", exclude_key_ids=[1], ttl_sec=60)
+def test_lease_fields_and_body(acn: Acnologia, server: FakeServer) -> None:
+    lease = acn.lease("serpapi", exclude_key_ids=[1], ttl_sec=60)
     assert server.lease_bodies[-1] == {"service": "serpapi", "exclude_key_ids": [1], "ttl_sec": 60}
     assert lease.key_id == 2
     assert lease.secret == "secret-2"
@@ -153,28 +153,28 @@ def test_lease_fields_and_body(cog: Cogito, server: FakeServer) -> None:
     assert "secret-2" not in repr(lease)
 
 
-def test_lease_minimal_body(cog: Cogito, server: FakeServer) -> None:
-    cog.lease("serpapi")
+def test_lease_minimal_body(acn: Acnologia, server: FakeServer) -> None:
+    acn.lease("serpapi")
     assert server.lease_bodies[-1] == {"service": "serpapi"}
 
 
 def test_no_key_available(server: FakeServer) -> None:
     server.keys = []
-    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    acn = Acnologia(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
     with pytest.raises(NoKeyAvailable) as ei:
-        cog.lease("serpapi")
+        acn.lease("serpapi")
     assert ei.value.retry_after == 42
     assert ei.value.status_code == 503
     assert ei.value.code == "no_key_available"
 
 
-def test_lease_sends_wait_sec(cog: Cogito, server: FakeServer) -> None:
-    cog.lease("serpapi", wait_sec=10)
+def test_lease_sends_wait_sec(acn: Acnologia, server: FakeServer) -> None:
+    acn.lease("serpapi", wait_sec=10)
     assert server.lease_bodies[-1] == {"service": "serpapi", "wait_sec": 10}
-    cog.lease("serpapi", wait_sec=0)
+    acn.lease("serpapi", wait_sec=0)
     assert server.lease_bodies[-1] == {"service": "serpapi"}
     with pytest.raises(ValueError):
-        cog.lease("serpapi", wait_sec=61)
+        acn.lease("serpapi", wait_sec=61)
 
 
 def test_lease_wait_extends_timeout() -> None:
@@ -185,20 +185,20 @@ def test_lease_wait_extends_timeout() -> None:
         seen.append(req.extensions.get("timeout"))
         return server.handler(req)
 
-    cog = Cogito(BASE, TOKEN, timeout=5.0, transport=httpx.MockTransport(handler))
-    cog.lease("serpapi")
+    acn = Acnologia(BASE, TOKEN, timeout=5.0, transport=httpx.MockTransport(handler))
+    acn.lease("serpapi")
     assert seen[-1]["read"] == 5.0
-    cog.lease("serpapi", wait_sec=30)
+    acn.lease("serpapi", wait_sec=30)
     assert seen[-1]["read"] == 40.0
 
 
-def test_with_key_sends_wait_sec(cog: Cogito, server: FakeServer) -> None:
+def test_with_key_sends_wait_sec(acn: Acnologia, server: FakeServer) -> None:
     def fn(lease: Lease) -> int:
         if lease.key_id == 1:
             raise RateLimited(retry_after=5)
         return lease.key_id
 
-    assert cog.with_key("serpapi", fn, wait_sec=15, ttl_sec=60) == 2
+    assert acn.with_key("serpapi", fn, wait_sec=15, ttl_sec=60) == 2
     assert server.lease_bodies[0] == {"service": "serpapi", "ttl_sec": 60, "wait_sec": 15}
     assert all(r.get("_lease_id") for r in server.reports)
     assert [r["outcome"] for r in server.reports] == ["rate_limited", "ok"]
@@ -206,9 +206,9 @@ def test_with_key_sends_wait_sec(cog: Cogito, server: FakeServer) -> None:
 
 def test_all_keys_busy(server: FakeServer) -> None:
     server.busy = True
-    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    acn = Acnologia(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
     with pytest.raises(AllKeysBusy) as ei:
-        cog.lease("serpapi", wait_sec=5)
+        acn.lease("serpapi", wait_sec=5)
     err = ei.value
     assert isinstance(err, NoKeyAvailable)
     assert err.busy is True
@@ -219,24 +219,24 @@ def test_all_keys_busy(server: FakeServer) -> None:
 
 def test_no_key_available_is_not_busy(server: FakeServer) -> None:
     server.keys = []
-    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    acn = Acnologia(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
     with pytest.raises(NoKeyAvailable) as ei:
-        cog.lease("serpapi")
+        acn.lease("serpapi")
     assert ei.value.busy is False
     assert not isinstance(ei.value, AllKeysBusy)
 
 
 def test_with_key_busy_raises_without_calling_fn(server: FakeServer) -> None:
     server.busy = True
-    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
+    acn = Acnologia(BASE, TOKEN, transport=httpx.MockTransport(server.handler))
     calls: List[int] = []
     with pytest.raises(AllKeysBusy):
-        cog.with_key("serpapi", lambda lease: calls.append(1), wait_sec=2)
+        acn.with_key("serpapi", lambda lease: calls.append(1), wait_sec=2)
     assert calls == []
     assert server.reports == []
 
 
-def test_with_key_reports_on_unexpected_exception(cog: Cogito, server: FakeServer) -> None:
+def test_with_key_reports_on_unexpected_exception(acn: Acnologia, server: FakeServer) -> None:
     class Boom(Exception):
         pass
 
@@ -244,29 +244,29 @@ def test_with_key_reports_on_unexpected_exception(cog: Cogito, server: FakeServe
         raise Boom()
 
     with pytest.raises(Boom):
-        cog.with_key("serpapi", fn)
+        acn.with_key("serpapi", fn)
     assert len(server.reports) == 1
     assert server.reports[0]["outcome"] == "error"
     assert server.reports[0]["rotate"] is False
 
 
-def test_api_error(cog: Cogito) -> None:
-    with pytest.raises(CogitoError) as ei:
-        cog.lease("missing")
+def test_api_error(acn: Acnologia) -> None:
+    with pytest.raises(AcnologiaError) as ei:
+        acn.lease("missing")
     assert not isinstance(ei.value, NoKeyAvailable)
     assert ei.value.code == "not_found"
     assert ei.value.status_code == 404
 
 
 def test_bad_token(server: FakeServer) -> None:
-    cog = Cogito(BASE, "cog_wrong", transport=httpx.MockTransport(server.handler))
-    with pytest.raises(CogitoError) as ei:
-        cog.services()
+    acn = Acnologia(BASE, "acn_wrong", transport=httpx.MockTransport(server.handler))
+    with pytest.raises(AcnologiaError) as ei:
+        acn.services()
     assert ei.value.status_code == 401
 
 
-def test_report_returns_next(cog: Cogito, server: FakeServer) -> None:
-    lease = cog.lease("serpapi")
+def test_report_returns_next(acn: Acnologia, server: FakeServer) -> None:
+    lease = acn.lease("serpapi")
     nxt = lease.report("rate_limited", status_code=429, retry_after_sec=1.2, message="slow down", rotate=True)
     assert isinstance(nxt, Lease)
     assert nxt.key_id == 2
@@ -284,28 +284,28 @@ def test_report_returns_next(cog: Cogito, server: FakeServer) -> None:
     assert server.requests[-1].url.raw_path == b"/api/v1/leases/l%2F1/report"
 
 
-def test_report_without_rotate_returns_none(cog: Cogito) -> None:
-    assert cog.lease("serpapi").report("ok") is None
+def test_report_without_rotate_returns_none(acn: Acnologia) -> None:
+    assert acn.lease("serpapi").report("ok") is None
 
 
-def test_context_manager_ok(cog: Cogito, server: FakeServer) -> None:
-    with cog.lease("serpapi") as lease:
+def test_context_manager_ok(acn: Acnologia, server: FakeServer) -> None:
+    with acn.lease("serpapi") as lease:
         assert lease.key_id == 1
     assert server.reports[-1]["outcome"] == "ok"
     assert server.reports[-1]["rotate"] is False
 
 
-def test_context_manager_error(cog: Cogito, server: FakeServer) -> None:
+def test_context_manager_error(acn: Acnologia, server: FakeServer) -> None:
     with pytest.raises(ZeroDivisionError):
-        with cog.lease("serpapi"):
+        with acn.lease("serpapi"):
             1 / 0
     assert server.reports[-1]["outcome"] == "error"
     assert "ZeroDivisionError" in server.reports[-1]["message"]
 
 
-def test_context_manager_rate_limited(cog: Cogito, server: FakeServer) -> None:
+def test_context_manager_rate_limited(acn: Acnologia, server: FakeServer) -> None:
     with pytest.raises(RateLimited):
-        with cog.lease("serpapi"):
+        with acn.lease("serpapi"):
             raise RateLimited(retry_after=30, status_code=429)
     rep = server.reports[-1]
     assert rep["outcome"] == "rate_limited"
@@ -314,18 +314,18 @@ def test_context_manager_rate_limited(cog: Cogito, server: FakeServer) -> None:
     assert rep["rotate"] is False
 
 
-def test_context_manager_no_double_report(cog: Cogito, server: FakeServer) -> None:
-    with cog.lease("serpapi") as lease:
+def test_context_manager_no_double_report(acn: Acnologia, server: FakeServer) -> None:
+    with acn.lease("serpapi") as lease:
         lease.report("quota_exhausted")
     assert len(server.reports) == 1
 
 
-def test_with_key_success(cog: Cogito, server: FakeServer) -> None:
-    assert cog.with_key("serpapi", lambda lease: lease.key_id * 10) == 10
+def test_with_key_success(acn: Acnologia, server: FakeServer) -> None:
+    assert acn.with_key("serpapi", lambda lease: lease.key_id * 10) == 10
     assert [r["outcome"] for r in server.reports] == ["ok"]
 
 
-def test_with_key_rotates(cog: Cogito, server: FakeServer) -> None:
+def test_with_key_rotates(acn: Acnologia, server: FakeServer) -> None:
     seen: List[int] = []
 
     def call(lease: Lease) -> str:
@@ -336,7 +336,7 @@ def test_with_key_rotates(cog: Cogito, server: FakeServer) -> None:
             raise QuotaExhausted("out of searches", status_code=429)
         return lease.secret
 
-    assert cog.with_key("serpapi", call) == "secret-3"
+    assert acn.with_key("serpapi", call) == "secret-3"
     assert seen == [1, 2, 3]
     assert [(r["outcome"], r["rotate"]) for r in server.reports] == [
         ("rate_limited", True),
@@ -346,32 +346,32 @@ def test_with_key_rotates(cog: Cogito, server: FakeServer) -> None:
     assert server.reports[0]["retry_after_sec"] == 5
 
 
-def test_with_key_max_attempts(cog: Cogito, server: FakeServer) -> None:
+def test_with_key_max_attempts(acn: Acnologia, server: FakeServer) -> None:
     def call(lease: Lease) -> None:
         raise InvalidKey()
 
     with pytest.raises(InvalidKey):
-        cog.with_key("serpapi", call, max_attempts=2)
+        acn.with_key("serpapi", call, max_attempts=2)
     assert [(r["outcome"], r["rotate"]) for r in server.reports] == [("invalid", True), ("invalid", False)]
 
 
-def test_with_key_pool_drained(cog: Cogito, server: FakeServer) -> None:
+def test_with_key_pool_drained(acn: Acnologia, server: FakeServer) -> None:
     def call(lease: Lease) -> None:
         raise RateLimited()
 
     with pytest.raises(NoKeyAvailable) as ei:
-        cog.with_key("serpapi", call, max_attempts=10)
+        acn.with_key("serpapi", call, max_attempts=10)
     assert ei.value.retry_after == 42
     # fallback lease call excluded every key already tried
     assert server.lease_bodies[-1]["exclude_key_ids"] == [1, 2, 3]
 
 
-def test_with_key_other_error(cog: Cogito, server: FakeServer) -> None:
+def test_with_key_other_error(acn: Acnologia, server: FakeServer) -> None:
     def call(lease: Lease) -> None:
         raise KeyError("boom")
 
     with pytest.raises(KeyError):
-        cog.with_key("serpapi", call)
+        acn.with_key("serpapi", call)
     assert server.reports[-1]["outcome"] == "error"
     assert server.reports[-1]["rotate"] is False
 
@@ -424,17 +424,17 @@ def test_lease_url() -> None:
     assert lease.url() == "https://api.example.com/"
 
 
-def test_proxy(cog: Cogito, server: FakeServer) -> None:
-    serp = cog.proxy("serpapi")
+def test_proxy(acn: Acnologia, server: FakeServer) -> None:
+    serp = acn.proxy("serpapi")
     resp = serp.get("/search.json", params={"engine": "google", "q": "coffee"})
     assert resp.status_code == 200
     assert resp.json()["path"] == "/proxy/serpapi/search.json"
     assert resp.json()["query"] == {"engine": "google", "q": "coffee"}
-    assert resp.headers["X-Cogito-Key-Id"] == "1"
+    assert resp.headers["X-Acnologia-Key-Id"] == "1"
     req = server.requests[-1]
     assert req.headers["authorization"] == f"Bearer {TOKEN}"
 
-    eleven = cog.proxy("elevenlabs")
+    eleven = acn.proxy("elevenlabs")
     resp = eleven.post("v1/text-to-speech/voice1", json={"text": "hi"}, headers={"Accept": "audio/mpeg"})
     assert resp.json()["path"] == "/proxy/elevenlabs/v1/text-to-speech/voice1"
     assert json.loads(resp.json()["body"]) == {"text": "hi"}
@@ -446,11 +446,11 @@ def test_proxy(cog: Cogito, server: FakeServer) -> None:
 
 
 async def test_async_client(server: FakeServer) -> None:
-    async with AsyncCogito(BASE, TOKEN, transport=httpx.MockTransport(server.handler)) as cog:
-        svcs = await cog.services()
+    async with AsyncAcnologia(BASE, TOKEN, transport=httpx.MockTransport(server.handler)) as acn:
+        svcs = await acn.services()
         assert svcs[0].slug == "serpapi"
 
-        async with await cog.lease("serpapi") as lease:
+        async with await acn.lease("serpapi") as lease:
             assert lease.key_id == 1
         assert server.reports[-1]["outcome"] == "ok"
 
@@ -459,45 +459,45 @@ async def test_async_client(server: FakeServer) -> None:
                 raise RateLimited(retry_after=1)
             return lease.key_id
 
-        assert await cog.with_key("serpapi", call) == 2
+        assert await acn.with_key("serpapi", call) == 2
         assert [r["outcome"] for r in server.reports[-2:]] == ["rate_limited", "ok"]
 
-        assert await cog.with_key("serpapi", lambda lease: "sync fn ok") == "sync fn ok"
+        assert await acn.with_key("serpapi", lambda lease: "sync fn ok") == "sync fn ok"
 
-        resp = await cog.proxy("serpapi").get("search.json", params={"q": "a"})
+        resp = await acn.proxy("serpapi").get("search.json", params={"q": "a"})
         assert resp.json()["query"] == {"q": "a"}
 
-        await (await cog.lease("serpapi", wait_sec=7)).report("ok")
+        await (await acn.lease("serpapi", wait_sec=7)).report("ok")
         assert server.lease_bodies[-1] == {"service": "serpapi", "wait_sec": 7}
 
         server.busy = True
         with pytest.raises(AllKeysBusy):
-            await cog.lease("serpapi", wait_sec=1)
+            await acn.lease("serpapi", wait_sec=1)
         server.busy = False
 
         server.keys = []
         with pytest.raises(NoKeyAvailable):
-            await cog.lease("serpapi")
+            await acn.lease("serpapi")
 
 
-def test_with_key_report_scrubs_secret(cog: Cogito, server: FakeServer) -> None:
+def test_with_key_report_scrubs_secret(acn: Acnologia, server: FakeServer) -> None:
     def call(lease: Lease) -> None:
         raise RuntimeError(f"GET https://serpapi.com/search.json?api_key={lease.secret} failed")
 
     with pytest.raises(RuntimeError):
-        cog.with_key("serpapi", call)
+        acn.with_key("serpapi", call)
     assert server.reports[-1]["message"] == "RuntimeError: GET https://serpapi.com/search.json?api_key=[key] failed"
 
     def limited(lease: Lease) -> None:
         raise RateLimited(message=f"429 for {lease.secret}")
 
     with pytest.raises(RateLimited):
-        cog.with_key("serpapi", limited, max_attempts=1)
+        acn.with_key("serpapi", limited, max_attempts=1)
     assert server.reports[-1]["message"] == "429 for [key]"
 
 
 def test_scrub_message_encoded_and_truncated() -> None:
-    from cogito._models import scrub_message
+    from acnologia._models import scrub_message
 
     secret = "a+b/c=d"
     assert scrub_message("url ?k=a%2Bb%2Fc%3Dd and a+b/c=d", secret) == "url ?k=[key] and [key]"
@@ -510,6 +510,6 @@ def test_proxy_does_not_follow_redirects() -> None:
             raise AssertionError("redirect was followed")
         return httpx.Response(302, headers={"Location": "http://evil.test/steal"})
 
-    cog = Cogito(BASE, TOKEN, transport=httpx.MockTransport(handler))
-    resp = cog.proxy("serpapi").get("/search.json")
+    acn = Acnologia(BASE, TOKEN, transport=httpx.MockTransport(handler))
+    resp = acn.proxy("serpapi").get("/search.json")
     assert resp.status_code == 302

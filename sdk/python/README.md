@@ -1,4 +1,4 @@
-# cogito-keys (Python)
+# acnologia (Python)
 
 Python client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Acnologia
 holds many keys per provider (SerpAPI, ElevenLabs, any API key based HTTP service)
@@ -11,24 +11,24 @@ you get the next one automatically.
 ## Install
 
 ```bash
-pip install cogito-keys
+pip install acnologia
 ```
 
 ```python
-import cogito
+import acnologia
 ```
 
 ## Configure
 
 ```python
-from cogito import Cogito
+from acnologia import Acnologia
 
-cog = Cogito("http://localhost:8080", "cog_your_app_token")
-# or set COGITO_URL and COGITO_TOKEN and call Cogito()
+acn = Acnologia("http://localhost:8080", "acn_your_app_token")
+# or set ACNOLOGIA_URL and ACNOLOGIA_TOKEN and call Acnologia()
 ```
 
 The token is an app token created in the Acnologia dashboard (Apps page). It is
-sent as `Authorization: Bearer cog_...`.
+sent as `Authorization: Bearer acn_...`.
 
 ## Two ways to use a key
 
@@ -37,19 +37,19 @@ retries with the next key on rate limits, and your process never sees a secret.
 
 **Lease mode**: borrow a key, call the provider yourself, then report how it went.
 Use this when the provider SDK needs the raw key or when you cannot route traffic
-through Cogito.
+through Acnologia.
 
 ## Proxy mode
 
-`cog.proxy(service)` returns an object with `get`, `post`, `put`, `patch`,
+`acn.proxy(service)` returns an object with `get`, `post`, `put`, `patch`,
 `delete` and `request(method, path, **httpx_kwargs)`. Each returns a plain
 `httpx.Response` (non 2xx responses are returned, not raised). The response
-carries `X-Cogito-Key-Id` and `X-Cogito-Attempts` headers.
+carries `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` headers.
 
 ### SerpAPI search
 
 ```python
-serp = cog.proxy("serpapi")
+serp = acn.proxy("serpapi")
 resp = serp.get("/search.json", params={"engine": "google", "q": "best espresso grinder"})
 resp.raise_for_status()
 for r in resp.json().get("organic_results", [])[:5]:
@@ -59,7 +59,7 @@ for r in resp.json().get("organic_results", [])[:5]:
 ### ElevenLabs text to speech
 
 ```python
-tts = cog.proxy("elevenlabs")
+tts = acn.proxy("elevenlabs")
 resp = tts.post(
     "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
     json={"text": "Hello from Acnologia.", "model_id": "eleven_multilingual_v2"},
@@ -72,7 +72,7 @@ with open("hello.mp3", "wb") as f:
 
 ## Lease mode
 
-`cog.lease(service, exclude_key_ids=None, ttl_sec=None, wait_sec=None)` returns a `Lease` with
+`acn.lease(service, exclude_key_ids=None, ttl_sec=None, wait_sec=None)` returns a `Lease` with
 `lease_id`, `key_id`, `service`, `secret`, `auth` (`type`, `name` and `prefix`),
 `base_url` and `expires_at`. When every key is cooling down it raises
 `NoKeyAvailable` with `retry_after` in seconds.
@@ -100,9 +100,9 @@ outcome if the block raises.
 
 ```python
 import httpx
-from cogito import Cogito, RateLimited
+from acnologia import Acnologia, RateLimited
 
-with cog.lease("serpapi") as lease:
+with acn.lease("serpapi") as lease:
     resp = httpx.get(lease.url("/search.json"), params=lease.apply({"engine": "google", "q": "coffee"}))
     if resp.status_code == 429:
         raise RateLimited(retry_after=3600, status_code=429)  # reported as rate_limited
@@ -113,7 +113,7 @@ with cog.lease("serpapi") as lease:
 ### Manual reporting and rotation
 
 ```python
-lease = cog.lease("elevenlabs")
+lease = acn.lease("elevenlabs")
 resp = httpx.post(
     lease.url("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"),
     headers=lease.apply({"Accept": "audio/mpeg"}),
@@ -130,7 +130,7 @@ Outcomes: `ok`, `rate_limited`, `quota_exhausted`, `invalid`, `error`.
 
 ### with_key: retries with rotation
 
-`cog.with_key(service, fn, max_attempts=5, ttl_sec=None, wait_sec=None)` leases a key, calls `fn(lease)`,
+`acn.with_key(service, fn, max_attempts=5, ttl_sec=None, wait_sec=None)` leases a key, calls `fn(lease)`,
 reports the result and returns what `fn` returned. Raise one of the exported
 exceptions to make Acnologia cool the key down and retry with the next one:
 
@@ -145,9 +145,9 @@ All three accept `message=` and `status_code=` keyword arguments.
 
 ```python
 import httpx
-from cogito import Cogito, InvalidKey, QuotaExhausted, RateLimited
+from acnologia import Acnologia, InvalidKey, QuotaExhausted, RateLimited
 
-cog = Cogito("http://localhost:8080", "cog_your_app_token")
+acn = Acnologia("http://localhost:8080", "acn_your_app_token")
 
 def search(lease):
     resp = httpx.get(lease.url("/search.json"), params=lease.apply({"engine": "google", "q": "coffee"}))
@@ -160,7 +160,7 @@ def search(lease):
     resp.raise_for_status()
     return resp.json()
 
-results = cog.with_key("serpapi", search)
+results = acn.with_key("serpapi", search)
 ```
 
 ElevenLabs with `with_key`:
@@ -182,7 +182,7 @@ def speak(lease):
     resp.raise_for_status()
     return resp.content
 
-audio = cog.with_key("elevenlabs", speak)
+audio = acn.with_key("elevenlabs", speak)
 ```
 
 If no key is left, `with_key` raises `NoKeyAvailable` (check `.retry_after`),
@@ -207,15 +207,15 @@ services, 300 otherwise).
   timeout to cover the wait.
 
 ```python
-from cogito import AllKeysBusy
+from acnologia import AllKeysBusy
 
-with cog.lease("elevenlabs", wait_sec=20) as lease:
+with acn.lease("elevenlabs", wait_sec=20) as lease:
     ...
 
-audio = cog.with_key("elevenlabs", speak, wait_sec=20)
+audio = acn.with_key("elevenlabs", speak, wait_sec=20)
 
 try:
-    lease = cog.lease("elevenlabs")
+    lease = acn.lease("elevenlabs")
 except AllKeysBusy as exc:   # subclass of NoKeyAvailable, exc.busy is True
     time.sleep(exc.retry_after or 1)
 ```
@@ -232,18 +232,18 @@ than the limit in parallel on one key.
 
 ```python
 import asyncio
-from cogito import AsyncAcnologia
+from acnologia import AsyncAcnologia
 
 async def main():
-    async with AsyncCogito("http://localhost:8080", "cog_your_app_token") as cog:
-        resp = await cog.proxy("serpapi").get("/search.json", params={"q": "coffee"})
+    async with AsyncAcnologia("http://localhost:8080", "acn_your_app_token") as acn:
+        resp = await acn.proxy("serpapi").get("/search.json", params={"q": "coffee"})
         print(resp.json())
 
-        async with await cog.lease("serpapi") as lease:
+        async with await acn.lease("serpapi") as lease:
             ...  # reports ok on exit
 
         # fn may be sync or async
-        data = await cog.with_key("serpapi", async_search)
+        data = await acn.with_key("serpapi", async_search)
 
 asyncio.run(main())
 ```
@@ -251,20 +251,20 @@ asyncio.run(main())
 ## Other calls
 
 ```python
-for s in cog.services():
+for s in acn.services():
     print(s.slug, s.available, s.auth.type, s.auth.name)
 ```
 
 ## Errors
 
-- `CogitoError`: any non 2xx from the consumer API (`.status_code`, `.code`, `.message`).
-- `NoKeyAvailable(CogitoError)`: HTTP 503 `no_key_available`, with `.retry_after` and `.busy`.
+- `AcnologiaError`: any non 2xx from the consumer API (`.status_code`, `.code`, `.message`).
+- `NoKeyAvailable(AcnologiaError)`: HTTP 503 `no_key_available`, with `.retry_after` and `.busy`.
 - `AllKeysBusy(NoKeyAvailable)`: HTTP 503 `all_keys_busy`, every usable key is at its concurrency limit. `.busy` is `True`, `.retry_after` is usually 1.
 - `RateLimited`, `QuotaExhausted`, `InvalidKey`: raised by you inside `with_key` or a lease block. All subclass `KeyProblem`.
 
 ## Options
 
-`Cogito(base_url, token, timeout=30.0, http_client=None, transport=None)`. Pass
+`Acnologia(base_url, token, timeout=30.0, http_client=None, transport=None)`. Pass
 your own `httpx.Client` to reuse connection pools, proxies or TLS settings, or a
 `transport` (for example `httpx.MockTransport`) in tests.
 

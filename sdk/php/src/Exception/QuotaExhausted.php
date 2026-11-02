@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Cogito\Exception;
+namespace Acnologia\Exception;
 
 /** The key used up its quota. */
 final class QuotaExhausted extends KeyProblem

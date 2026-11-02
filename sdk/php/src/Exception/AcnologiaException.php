@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Cogito\Exception;
+namespace Acnologia\Exception;
 
-/** A non 2xx response from the Cogito consumer API, or a transport failure (status 0). */
-class CogitoException extends \RuntimeException
+/** A non 2xx response from the Acnologia consumer API, or a transport failure (status 0). */
+class AcnologiaException extends \RuntimeException
 {
     public function __construct(
         string $message,

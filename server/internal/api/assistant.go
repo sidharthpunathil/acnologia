@@ -17,10 +17,10 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cogito-keys/cogito/internal/agent"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/redact"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/agent"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/redact"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // The assistant is a chat where Claude manages Acnologia through tool calls.
@@ -860,10 +860,10 @@ func (cs *chatSession) api(method, path string, body any) (int, map[string]any, 
 	// Drop the outer request's chi route context, or the router would treat
 	// this call as a sub route of the chat endpoint.
 	ctx := context.WithValue(cs.ctx, chi.RouteCtxKey, nil)
-	req := httptest.NewRequest(method, "http://cogito.internal"+path, rdr).WithContext(ctx)
+	req := httptest.NewRequest(method, "http://acnologia.internal"+path, rdr).WithContext(ctx)
 	req.Header.Set("Cookie", cs.cookie)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "cogito-assistant")
+	req.Header.Set("X-Requested-With", "acnologia-assistant")
 	req.RemoteAddr = cs.remote
 	rec := httptest.NewRecorder()
 	cs.s.handler().ServeHTTP(rec, req)

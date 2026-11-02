@@ -37,7 +37,7 @@ const FORMAT_HELP: Record<WebhookFormat, string> = {
 };
 
 const FORMAT_PLACEHOLDER: Record<WebhookFormat, string> = {
-  json: "https://example.com/hooks/cogito",
+  json: "https://example.com/hooks/acnologia",
   slack: "https://hooks.slack.com/services/...",
   discord: "https://discord.com/api/webhooks/...",
   telegram: "https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>",
@@ -279,14 +279,14 @@ function SecretModal({ result, onClose }: { result: { name: string; secret: stri
           <Callout tone="warning">Copy this signing secret now. Acnologia cannot show it again.</Callout>
           <SecretBox value={result.secret} />
           <p className="text-body-2-regular text-text-secondary">
-            Each delivery carries <code className="font-mono text-caption-1-regular text-text-primary">X-Cogito-Timestamp</code> and{" "}
-            <code className="font-mono text-caption-1-regular text-text-primary">X-Cogito-Signature</code>. Verify it on your receiver:
+            Each delivery carries <code className="font-mono text-caption-1-regular text-text-primary">X-Acnologia-Timestamp</code> and{" "}
+            <code className="font-mono text-caption-1-regular text-text-primary">X-Acnologia-Signature</code>. Verify it on your receiver:
           </p>
           <pre
             dir="ltr"
             className="wrap-anywhere whitespace-pre-wrap rounded-2xl bg-code-bg px-3.5 py-3 font-mono text-caption-1-regular text-code-ink"
           >
-            X-Cogito-Signature: sha256=HMAC_SHA256(secret, "&lt;X-Cogito-Timestamp&gt;.&lt;body&gt;")
+            X-Acnologia-Signature: sha256=HMAC_SHA256(secret, "&lt;X-Acnologia-Timestamp&gt;.&lt;body&gt;")
           </pre>
           <p className="text-caption-1-regular text-text-secondary">Compare in constant time and reject old timestamps.</p>
         </div>
@@ -376,7 +376,7 @@ export function WebhooksPage() {
       />
       <p className="mb-6 max-w-2xl text-body-2-regular text-text-secondary">
         Post Acnologia events to your own endpoint, Slack, Discord or Telegram. URLs on a private network are refused unless the server sets{" "}
-        <code className="font-mono text-caption-1-regular text-text-primary">COGITO_WEBHOOK_ALLOW_PRIVATE</code>.
+        <code className="font-mono text-caption-1-regular text-text-primary">ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE</code>.
       </p>
 
       {error && hooks.length === 0 ? (

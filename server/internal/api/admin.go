@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/catalog"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/keyparse"
-	"github.com/cogito-keys/cogito/internal/pool"
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/keyparse"
+	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // ---- overview ----
@@ -758,7 +758,7 @@ func (s *Server) revealKey(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := s.Pool.Box.Decrypt(k.SecretEnc)
 	if err != nil {
-		writeErr(w, 500, "decrypt_failed", "cannot decrypt, check COGITO_MASTER_KEY")
+		writeErr(w, 500, "decrypt_failed", "cannot decrypt, check ACNOLOGIA_MASTER_KEY")
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "key.reveal", fmt.Sprintf("%s/%s", sv.Slug, k.Label), k.Hint)
@@ -894,7 +894,7 @@ func (in appInput) applyFields(a *store.App) string {
 }
 
 func newAppToken() (token, prefix, hash string) {
-	token = crypto.RandomToken("cog_", 32)
+	token = crypto.RandomToken(store.AppTokenPrefix, 32)
 	return token, token[:8], crypto.SHA256(token)
 }
 

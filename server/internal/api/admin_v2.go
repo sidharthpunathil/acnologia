@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/egress"
-	"github.com/cogito-keys/cogito/internal/notify"
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // checkServiceRefs rejects a service whose slug collides with a group or
@@ -134,7 +134,7 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 	s.Store.AddAudit(r.Context(), userFrom(r), "webhook.create", created.Name, created.URLHint)
 	out := map[string]any{"webhook": created}
 	if created.Format == "json" {
-		out["signing_secret"] = secret // shown once; verify X-Cogito-Signature with it
+		out["signing_secret"] = secret // shown once; verify X-Acnologia-Signature with it
 	}
 	writeJSON(w, 201, out)
 }
@@ -533,7 +533,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid", "expires_in_days must be 0 (never) to 3650")
 		return
 	}
-	tok := crypto.RandomToken("cogadm_", 40)
+	tok := crypto.RandomToken(store.AdminTokenPrefix, 40)
 	t := &store.AdminToken{Name: in.Name, Scope: in.Scope, UserID: u.ID, TokenPrefix: tok[:12]}
 	if in.ExpiresInDays > 0 {
 		exp := time.Now().AddDate(0, 0, in.ExpiresInDays).UTC()

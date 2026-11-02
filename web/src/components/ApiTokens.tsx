@@ -47,7 +47,7 @@ const EXPIRY: { days: number; label: string }[] = [
 ];
 
 function NewTokenModal({ result, onClose }: { result: { token: string; info: AdminToken } | null; onClose: () => void }) {
-  const cmd = result ? `cogito ctl login ${window.location.origin} --token ${result.token}` : "";
+  const cmd = result ? `acnologia ctl login ${window.location.origin} --token ${result.token}` : "";
   return (
     <Modal
       open={!!result}
@@ -143,7 +143,7 @@ export function ApiTokens() {
   return (
     <Section
       title="API tokens"
-      description="For scripts and the cogito CLI. A token acts as you, limited to the scope you pick. Tokens cannot manage tokens or change your account."
+      description="For scripts and the acnologia CLI. A token acts as you, limited to the scope you pick. Tokens cannot manage tokens or change your account."
     >
       <form onSubmit={submit} noValidate className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-start">
         <Input

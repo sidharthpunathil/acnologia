@@ -19,15 +19,15 @@ COPY README.md ./internal/docsmd/files/overview.md
 COPY docs/architecture.md docs/flows.md docs/security.md docs/configuration.md docs/api.md docs/providers.md docs/development.md ./internal/docsmd/files/
 COPY docs/screenshots/*.png docs/brand/logo.png ./internal/docsmd/assets/
 ARG VERSION=docker
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /cogito ./cmd/cogito \
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /acnologia ./cmd/acnologia \
     && mkdir -p /data-empty
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=server /cogito /cogito
+COPY --from=server /acnologia /acnologia
 # distroless nonroot is uid 65532; the data dir must be writable by it.
 COPY --from=server --chown=65532:65532 /data-empty /data
-ENV COGITO_ADDR=:8080 COGITO_DATA_DIR=/data
+ENV ACNOLOGIA_ADDR=:8080 ACNOLOGIA_DATA_DIR=/data
 VOLUME /data
 EXPOSE 8080
 USER nonroot:nonroot
-ENTRYPOINT ["/cogito"]
+ENTRYPOINT ["/acnologia"]

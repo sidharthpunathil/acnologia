@@ -19,7 +19,7 @@ type fake struct {
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.auth = append(f.auth, r.Header.Get("Authorization"))
-	if r.Header.Get("Authorization") != "Bearer cogadm_good" {
+	if r.Header.Get("Authorization") != "Bearer acnadm_good" {
 		w.WriteHeader(401)
 		_, _ = io.WriteString(w, `{"error":{"code":"unauthenticated","message":"API token is invalid"}}`)
 		return
@@ -47,9 +47,9 @@ func TestLoginAndCommands(t *testing.T) {
 	srv := httptest.NewServer(f)
 	defer srv.Close()
 	cfg := filepath.Join(t.TempDir(), "ctl.json")
-	t.Setenv("COGITO_CTL_CONFIG", cfg)
-	t.Setenv("COGITO_URL", "")
-	t.Setenv("COGITO_TOKEN", "")
+	t.Setenv("ACNOLOGIA_CTL_CONFIG", cfg)
+	t.Setenv("ACNOLOGIA_URL", "")
+	t.Setenv("ACNOLOGIA_TOKEN", "")
 	run := func(stdin string, args ...string) (int, string, string) {
 		var out, errb bytes.Buffer
 		code := Run(args, strings.NewReader(stdin), &out, &errb)
@@ -59,10 +59,10 @@ func TestLoginAndCommands(t *testing.T) {
 	if code, _, errs := run("", "status"); code == 0 || !strings.Contains(errs, "not logged in") {
 		t.Fatalf("status without login: %d %s", code, errs)
 	}
-	if code, _, errs := run("", "login", srv.URL, "--token", "cogadm_bad"); code == 0 || !strings.Contains(errs, "API token is invalid") {
+	if code, _, errs := run("", "login", srv.URL, "--token", "acnadm_bad"); code == 0 || !strings.Contains(errs, "API token is invalid") {
 		t.Fatalf("bad token should fail: %s", errs)
 	}
-	code, out, errs := run("", "login", srv.URL, "--token", "cogadm_good", "--name", "prod")
+	code, out, errs := run("", "login", srv.URL, "--token", "acnadm_good", "--name", "prod")
 	if code != 0 || !strings.Contains(out, "ops@x.io") {
 		t.Fatalf("login: %d %s %s", code, out, errs)
 	}
@@ -87,5 +87,41 @@ func TestLoginAndCommands(t *testing.T) {
 	}
 	if code, out, _ := run("", "contexts"); code != 0 || !strings.Contains(out, "* ") || !strings.Contains(out, "prod") {
 		t.Fatalf("contexts: %q", out)
+	}
+}
+
+func TestReadsLegacyConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("ACNOLOGIA_CTL_CONFIG", "")
+	t.Setenv("COGITO_CTL_CONFIG", "")
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		t.Skip(err)
+	}
+	legacy := filepath.Join(dir, "cogito", "ctl.json")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte(`{"current":"old","contexts":{"old":{"url":"http://old","token":"cogadm_x"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &cli{}
+	if want := filepath.Join(dir, "acnologia", "ctl.json"); c.configPath() != want {
+		t.Fatalf("saves go to %s, want %s", c.configPath(), want)
+	}
+	cf := c.load()
+	if cf.Current != "old" || cf.Contexts["old"].URL != "http://old" {
+		t.Fatalf("legacy config not read: %+v", cf)
+	}
+	if err := c.save(cf); err != nil {
+		t.Fatal(err)
+	}
+	if c.readPath() != c.configPath() {
+		t.Fatal("once the new file exists it wins")
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatal("the legacy file must be left alone")
 	}
 }

@@ -15,7 +15,8 @@
 //     rewrite ordinary words and numbers.
 //  2. Patterns, for secrets nobody told us about (see Find): well known key
 //     prefixes (sk-ant-, sk-, AIza, ghp_, xox, tvly-, AKIA, sk_live_, JWTs and
-//     Acnologia's own cog_ tokens), Bearer and Basic credentials, auth headers,
+//     Acnologia's own acn_ and acnadm_ tokens, plus the older cog_ and cogadm_
+//     ones), Bearer and Basic credentials, auth headers,
 //     key=, api_key=, token=, secret= and password= in query strings, env
 //     lines and JSON fields, and long high entropy tokens.
 //

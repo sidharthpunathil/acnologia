@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 const tokenKey ctxKey = 100

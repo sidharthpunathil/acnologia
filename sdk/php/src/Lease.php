@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Cogito;
+namespace Acnologia;
 
-/** A key handed out by Cogito. Report how it went with report(). */
+/** A key handed out by Acnologia. Report how it went with report(). */
 final class Lease
 {
     public bool $reported = false;
@@ -13,7 +13,7 @@ final class Lease
      * @param array{type: string, name: string, prefix: string} $auth
      */
     public function __construct(
-        private readonly Cogito $client,
+        private readonly Acnologia $client,
         public readonly string $leaseId,
         public readonly int $keyId,
         public readonly string $service,
@@ -25,7 +25,7 @@ final class Lease
     }
 
     /** @param array<string, mixed> $data */
-    public static function fromArray(Cogito $client, array $data): self
+    public static function fromArray(Acnologia $client, array $data): self
     {
         $auth = is_array($data['auth'] ?? null) ? $data['auth'] : [];
         return new self(

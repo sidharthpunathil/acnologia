@@ -1,12 +1,12 @@
-/** Error returned by the Cogito consumer API (any non-2xx response). */
-export class CogitoError extends Error {
+/** Error returned by the Acnologia consumer API (any non-2xx response). */
+export class AcnologiaError extends Error {
   readonly status: number;
   readonly code: string;
   readonly body: unknown;
 
   constructor(message: string, status: number, code: string, body?: unknown) {
     super(message);
-    this.name = "CogitoError";
+    this.name = "AcnologiaError";
     this.status = status;
     this.code = code;
     this.body = body;
@@ -18,7 +18,7 @@ export class CogitoError extends Error {
  * when every key is cooling down, exhausted or excluded, and `all_keys_busy` when every
  * usable key is at its concurrency limit (see `busy` and `AllKeysBusyError`).
  */
-export class NoKeyAvailableError extends CogitoError {
+export class NoKeyAvailableError extends AcnologiaError {
   /** Seconds to wait before retrying, when the server knows it. */
   readonly retryAfter: number | null;
 

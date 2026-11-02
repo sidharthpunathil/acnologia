@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 func setup(t *testing.T) (*Notifier, *store.Store, *crypto.Box) {
@@ -72,9 +72,15 @@ func TestSignedJSONDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := s.heads[0]
-	want := "sha256=" + Sign("whsec_test", head.Get("X-Cogito-Timestamp"), s.bodies[0])
-	if head.Get("X-Cogito-Signature") != want {
-		t.Fatalf("bad signature %q, want %q", head.Get("X-Cogito-Signature"), want)
+	want := "sha256=" + Sign("whsec_test", head.Get("X-Acnologia-Timestamp"), s.bodies[0])
+	if head.Get("X-Acnologia-Signature") != want {
+		t.Fatalf("bad signature %q, want %q", head.Get("X-Acnologia-Signature"), want)
+	}
+	// Receivers set up before the rename still verify the old headers.
+	for _, name := range []string{"Timestamp", "Signature", "Event"} {
+		if v := head.Get("X-Acnologia-" + name); v == "" || head.Get("X-Cogito-"+name) != v {
+			t.Fatalf("X-Cogito-%s should mirror X-Acnologia-%s: %q vs %q", name, name, head.Get("X-Cogito-"+name), v)
+		}
 	}
 	var got Event
 	_ = json.Unmarshal(s.bodies[0], &got)

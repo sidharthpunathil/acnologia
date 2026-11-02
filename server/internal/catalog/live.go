@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // LiveReport is the result of trying a provider against the real API.

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // slots tracks in-flight requests per key so providers with a concurrency

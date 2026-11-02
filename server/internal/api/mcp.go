@@ -18,8 +18,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cogito-keys/cogito/internal/pool"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // MCP over streamable HTTP. Each POST carries one JSON-RPC message and gets a
@@ -63,7 +63,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	}
 	a, code, msg := s.authApp(r)
 	if a == nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="cogito"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="acnologia"`)
 		writeErr(w, code, "unauthenticated", msg)
 		return
 	}
@@ -118,7 +118,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		return map[string]any{
 			"protocolVersion": v,
 			"capabilities":    caps,
-			"serverInfo":      map[string]any{"name": "cogito", "title": "Acnologia: " + a.Name, "version": s.Cfg.Version},
+			"serverInfo":      map[string]any{"name": "acnologia", "title": "Acnologia: " + a.Name, "version": s.Cfg.Version},
 			"instructions":    instr,
 		}, nil
 	case "ping":
@@ -161,7 +161,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if !st.Resources {
 			return nil, &rpcErr{-32601, "resources are off for this app"}
 		}
-		return map[string]any{"resourceTemplates": []map[string]any{{"uriTemplate": "cogito://services/{slug}", "name": "service", "title": "A service", "mimeType": "application/json"}}}, nil
+		return map[string]any{"resourceTemplates": []map[string]any{{"uriTemplate": "acnologia://services/{slug}", "name": "service", "title": "A service", "mimeType": "application/json"}}}, nil
 	case "resources/read":
 		if !st.Resources {
 			return nil, &rpcErr{-32601, "resources are off for this app"}
@@ -327,7 +327,7 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	if len(body) > 0 && string(body) != "null" {
 		rdr = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://cogito.local"+target, rdr)
+	req, err := http.NewRequestWithContext(ctx, method, "http://acnologia.local"+target, rdr)
 	if err != nil {
 		return nil, fmt.Errorf("bad path or query: %v", err)
 	}
@@ -349,7 +349,7 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	rec := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), max: limit + 1}
 	s.proxy(rec, req)
 
-	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type"), "key_id": rec.Header().Get("X-Cogito-Key-Id")}
+	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type"), "key_id": rec.Header().Get("X-Acnologia-Key-Id")}
 	b := rec.Body.Bytes()
 	ct := rec.Header().Get("Content-Type")
 	switch {

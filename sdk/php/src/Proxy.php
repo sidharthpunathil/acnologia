@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace Cogito;
+namespace Acnologia;
 
 /**
- * Sends requests through /proxy/{service}/. Cogito injects a key and rotates on
+ * Sends requests through /proxy/{service}/. Acnologia injects a key and rotates on
  * rate limits. Non 2xx responses are returned, never thrown.
  */
 final class Proxy
 {
-    public function __construct(private readonly Cogito $client, public readonly string $service)
+    public function __construct(private readonly Acnologia $client, public readonly string $service)
     {
     }
 

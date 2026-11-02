@@ -4,16 +4,16 @@
 declare(strict_types=1);
 
 spl_autoload_register(static function (string $class): void {
-    if (str_starts_with($class, 'Cogito\\')) {
+    if (str_starts_with($class, 'Acnologia\\')) {
         require __DIR__ . '/../src/' . str_replace('\\', '/', substr($class, 7)) . '.php';
     }
 });
 
-use Cogito\Cogito;
-use Cogito\Exception\AllKeysBusy;
-use Cogito\Exception\NoKeyAvailable;
-use Cogito\Exception\RateLimited;
-use Cogito\Response;
+use Acnologia\Acnologia;
+use Acnologia\Exception\AllKeysBusy;
+use Acnologia\Exception\NoKeyAvailable;
+use Acnologia\Exception\RateLimited;
+use Acnologia\Response;
 
 $keys = [1, 2];
 $bad = [];
@@ -58,7 +58,7 @@ $transport = static function (string $method, string $url, array $headers, ?stri
         }
         return new Response(200, [], json_encode(['ok' => true, 'next' => $next]));
     }
-    return new Response(200, ['x-cogito-key-id' => '1'], json_encode(['url' => $url, 'body' => $body]));
+    return new Response(200, ['x-acnologia-key-id' => '1'], json_encode(['url' => $url, 'body' => $body]));
 };
 
 $fails = 0;
@@ -67,21 +67,21 @@ $check = static function (bool $cond, string $name) use (&$fails): void {
     $fails += $cond ? 0 : 1;
 };
 
-$cog = new Cogito('http://cogito.test/', 'cog_x', 30, $transport);
+$acn = new Acnologia('http://acnologia.test/', 'acn_x', 30, $transport);
 
-$res = $cog->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
-$check($res->json()['url'] === 'http://cogito.test/proxy/serpapi/search.json?q=coffee', 'proxy get url');
-$check($log[0][2]['Authorization'] === 'Bearer cog_x', 'proxy sends token');
-$res = $cog->proxy('elevenlabs')->post('v1/text-to-speech/v', ['text' => 'hi']);
+$res = $acn->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
+$check($res->json()['url'] === 'http://acnologia.test/proxy/serpapi/search.json?q=coffee', 'proxy get url');
+$check($log[0][2]['Authorization'] === 'Bearer acn_x', 'proxy sends token');
+$res = $acn->proxy('elevenlabs')->post('v1/text-to-speech/v', ['text' => 'hi']);
 $check($res->json()['body'] === '{"text":"hi"}', 'proxy post json');
 
-$l = $cog->lease('serpapi');
+$l = $acn->lease('serpapi');
 $check($l->apply(['q' => 'a'])['query'] === ['q' => 'a', 'api_key' => 's1'], 'apply query');
 $check($l->url('/search.json', ['q' => 'a']) === 'https://serpapi.com/search.json?q=a', 'lease url');
 $l->report('ok');
 
 $seen = [];
-$out = $cog->withKey('serpapi', static function ($lease) use (&$seen) {
+$out = $acn->withKey('serpapi', static function ($lease) use (&$seen) {
     $seen[] = $lease->keyId;
     if ($lease->keyId === 1) {
         throw RateLimited::after(60);
@@ -100,19 +100,19 @@ $lastBody = static function () use (&$log): array {
 };
 
 $bad = [];
-$cog->lease('elevenlabs', [], 60, 20)->report('ok');
+$acn->lease('elevenlabs', [], 60, 20)->report('ok');
 $check($lastBody() === ['service' => 'elevenlabs', 'ttl_sec' => 60, 'wait_sec' => 20], 'lease sends wait_sec');
-$cog->lease('elevenlabs', [], null, 0)->report('ok');
+$acn->lease('elevenlabs', [], null, 0)->report('ok');
 $check(!array_key_exists('wait_sec', $lastBody()), 'wait_sec 0 omitted');
 try {
-    $cog->lease('elevenlabs', [], null, 61);
+    $acn->lease('elevenlabs', [], null, 61);
     $check(false, 'wait_sec above 60 rejected');
 } catch (\InvalidArgumentException) {
     $check(true, 'wait_sec above 60 rejected');
 }
 
 $bad = [];
-$cog->withKey('elevenlabs', static function ($lease) {
+$acn->withKey('elevenlabs', static function ($lease) {
     if ($lease->keyId === 1) {
         throw RateLimited::after(5);
     }
@@ -124,7 +124,7 @@ $check(json_decode(end($leaseBodies)[3], true)['wait_sec'] === 15, 'withKey send
 $bad = [];
 $reportsBefore = count(array_filter($log, static fn ($r) => str_ends_with((string) parse_url($r[1], PHP_URL_PATH), '/report')));
 try {
-    $cog->withKey('serpapi', static function () {
+    $acn->withKey('serpapi', static function () {
         throw new \LogicException('boom');
     });
 } catch (\LogicException) {
@@ -133,7 +133,7 @@ $reportsAfter = count(array_filter($log, static fn ($r) => str_ends_with((string
 $lastReport = json_decode(end($log)[3], true);
 $check($reportsAfter === $reportsBefore + 1 && $lastReport['outcome'] === 'error', 'withKey reports on other exceptions');
 
-$mk = static fn (array $auth): \Cogito\Lease => \Cogito\Lease::fromArray($cog, ['lease_id' => 'p', 'key_id' => 1, 'secret' => 'sk', 'auth' => $auth]);
+$mk = static fn (array $auth): \Acnologia\Lease => \Acnologia\Lease::fromArray($acn, ['lease_id' => 'p', 'key_id' => 1, 'secret' => 'sk', 'auth' => $auth]);
 $check($mk(['type' => 'query', 'name' => 'api_key'])->auth['prefix'] === '', 'prefix defaults to empty');
 $check($mk(['type' => 'query', 'name' => 'key', 'prefix' => 'pk_'])->apply(['q' => 'a'])['query'] === ['q' => 'a', 'key' => 'pk_sk'], 'prefix query');
 $check($mk(['type' => 'header', 'name' => 'Authorization', 'prefix' => 'Token '])->apply()['headers'] === ['Authorization' => 'Token sk'], 'prefix header');
@@ -143,17 +143,17 @@ $check($mk(['type' => 'bearer', 'name' => 'X-Token', 'prefix' => 'Token '])->app
 $check($mk(['type' => 'bearer', 'name' => ''])->apply()['headers'] === ['Authorization' => 'Bearer sk'], 'bearer default');
 
 $secret = 'a b+c/d';
-$scrubbed = Cogito::scrubMessage("GET /x?key=$secret&k2=" . urlencode($secret) . '&k3=' . rawurlencode($secret), $secret);
+$scrubbed = Acnologia::scrubMessage("GET /x?key=$secret&k2=" . urlencode($secret) . '&k3=' . rawurlencode($secret), $secret);
 $check($scrubbed === 'GET /x?key=[key]&k2=[key]&k3=[key]', 'scrub raw and encoded secret');
-$check(strlen(Cogito::scrubMessage(str_repeat('x', 600), 'sk')) === 500, 'scrub truncates to 500');
-$check(Cogito::scrubMessage('no secret here', '') === 'no secret here', 'scrub with empty secret');
-$cut = Cogito::scrubMessage(str_repeat('x', 499) . "\u{00e9}tail", 'sk');
+$check(strlen(Acnologia::scrubMessage(str_repeat('x', 600), 'sk')) === 500, 'scrub truncates to 500');
+$check(Acnologia::scrubMessage('no secret here', '') === 'no secret here', 'scrub with empty secret');
+$cut = Acnologia::scrubMessage(str_repeat('x', 499) . "\u{00e9}tail", 'sk');
 $check($cut === str_repeat('x', 499) && preg_match('//u', $cut) === 1, 'scrub keeps valid utf8');
 
 $bad = [];
 $keys = [1, 2];
 try {
-    $cog->withKey('serpapi', static function ($lease) {
+    $acn->withKey('serpapi', static function ($lease) {
         throw new \RuntimeException('GET https://serpapi.com/search?api_key=' . $lease->secret . ' failed');
     });
 } catch (\RuntimeException) {
@@ -163,7 +163,7 @@ $check($lastReport['outcome'] === 'error' && !str_contains($lastReport['message'
 
 $bad = [];
 $keys = [1, 2];
-$cog->withKey('serpapi', static function ($lease) {
+$acn->withKey('serpapi', static function ($lease) {
     if ($lease->keyId === 1) {
         throw new RateLimited('429 for key ' . $lease->secret, 429, 5);
     }
@@ -182,7 +182,7 @@ $check($rlReport !== null && $rlReport['message'] === '429 for key [key]', 'with
 
 $busy = true;
 try {
-    $cog->lease('elevenlabs', [], null, 5);
+    $acn->lease('elevenlabs', [], null, 5);
     $check(false, 'all keys busy');
 } catch (NoKeyAvailable $e) {
     $check($e instanceof AllKeysBusy, 'all keys busy throws AllKeysBusy');
@@ -192,7 +192,7 @@ $busy = false;
 
 $keys = [];
 try {
-    $cog->lease('serpapi');
+    $acn->lease('serpapi');
     $check(false, 'no key available');
 } catch (NoKeyAvailable $e) {
     $check($e->retryAfter === 9, 'no key available');

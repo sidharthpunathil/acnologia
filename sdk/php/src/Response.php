@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Cogito;
+namespace Acnologia;
 
 /** A raw HTTP response. Header names are lower cased. */
 final class Response

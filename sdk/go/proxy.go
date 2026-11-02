@@ -1,4 +1,4 @@
-package cogito
+package acnologia
 
 import (
 	"bytes"
@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-// Proxy sends requests through Cogito's proxy for one service. Cogito injects
+// Proxy sends requests through Acnologia's proxy for one service. Acnologia injects
 // a key, retries on rate limits with the next key, and never returns the
 // secret. Non-2xx upstream responses are returned as-is, never as errors.
-// Responses carry X-Cogito-Key-Id and X-Cogito-Attempts headers.
+// Responses carry X-Acnologia-Key-Id and X-Acnologia-Attempts headers.
 type Proxy struct {
 	client  *Client
 	service string

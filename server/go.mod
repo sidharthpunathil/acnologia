@@ -1,4 +1,4 @@
-module github.com/cogito-keys/cogito
+module github.com/sidharthpunathil/acnologia/server
 
 go 1.26.0
 

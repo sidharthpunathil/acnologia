@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cogito-keys/cogito/internal/docsmd"
+	"github.com/sidharthpunathil/acnologia/server/internal/docsmd"
 )
 
 // mountDocs serves the Markdown docs. All of it is public, like /docs and

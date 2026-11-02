@@ -5,7 +5,7 @@ import './HeroDemo.css'
 // Acnologia's docs hero: one request through the key pool. An app's curl
 // goes to the proxy; the first SerpAPI key answers 429 and parks itself as
 // cooling; the pool moves on to the next key, which answers 200; the
-// response comes back with X-Cogito-Attempts: 2 and acct-2's quota ticks
+// response comes back with X-Acnologia-Attempts: 2 and acct-2's quota ticks
 // down by one. No cursor: this is what the system does.
 //
 // Beats: the command is typed; the request lands on acct-1 (busy); 429, and
@@ -364,7 +364,7 @@ function Response({ compact, on = true }: { compact: boolean; on?: boolean }) {
         HTTP/1.1 <span className="ok">200 OK</span>
       </div>
       <div className="ah-line">
-        <span className="ah-strong">X-Cogito-Attempts:</span> <span className="ah-attempts">2</span>
+        <span className="ah-strong">X-Acnologia-Attempts:</span> <span className="ah-attempts">2</span>
       </div>
       <div className="ah-line ah-json">{compact ? '{"organic_results": [{"title": "Blue Bottle' : '{"organic_results": [{"title": "Blue Bottle Coffee", "link"'}</div>
     </div>

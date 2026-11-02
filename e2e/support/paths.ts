@@ -5,7 +5,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 export const E2E_DIR = path.resolve(here, "..");
 export const REPO_DIR = path.resolve(E2E_DIR, "..");
-export const BIN = process.env.COGITO_BIN || path.join(REPO_DIR, "bin", "cogito");
+export const BIN = process.env.ACNOLOGIA_BIN || path.join(REPO_DIR, "bin", "acnologia");
 export const RUN_DIR = path.join(E2E_DIR, ".run");
 export const STATE_FILE = path.join(RUN_DIR, "server.json");
 export const AUTH_FILE = path.join(RUN_DIR, "admin.json");

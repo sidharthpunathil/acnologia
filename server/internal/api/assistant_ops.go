@@ -3,7 +3,7 @@ package api
 import (
 	"fmt"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // opsTools cover webhooks, egress proxies, service groups, app usage, the

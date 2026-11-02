@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // A made up provider whose quota errors are a 400 with a JSON code, which the

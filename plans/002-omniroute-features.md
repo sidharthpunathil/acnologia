@@ -37,7 +37,7 @@ Each step ships with Go tests and keeps `go test -race ./...` green.
    (default from the spec). Only 2xx GET responses up to 1MB are cached, in an
    in-memory LRU with a global byte cap. `Cache-Control: no-cache` bypasses
    it. `Idempotency-Key` replays any method's response per app for 10 minutes.
-   Responses carry `X-Cogito-Cache: hit|miss|bypass`, and hits are logged as
+   Responses carry `X-Acnologia-Cache: hit|miss|bypass`, and hits are logged as
    events so the savings show up.
 6. **Egress proxies.** A registry of HTTP, HTTPS and SOCKS5 proxies with the
    URL encrypted at rest. They are assigned per key, else per service, else
@@ -57,16 +57,16 @@ Each step ships with Go tests and keeps `go test -race ./...` green.
    same request moves to the next member. Meant for services with the same
    request shape, such as two SerpAPI accounts in different orgs or two
    regions of one API.
-10. **Admin API tokens and `cogito ctl`.** `cogadm_` tokens with `read`,
+10. **Admin API tokens and `acnologia ctl`.** `acnadm_` tokens with `read`,
     `write` or `admin` scope, never above the creator's role, stored hashed.
-    The CLI runs `cogito ctl login|status|services|keys add|keys check|events`
+    The CLI runs `acnologia ctl login|status|services|keys add|keys check|events`
     against a remote instance.
 11. **AI builder, llms.txt, README and SDK types** learn the new spec fields
     and outcomes.
 12. **Dashboard.** Pages for webhooks, proxies, groups and tokens. App limit
     and usage fields, service cache and proxy settings, the banned status, and
     the busy and banned outcomes in the spec editor.
-13. **Docs page.** A public `/docs` page listing everything Cogito does,
+13. **Docs page.** A public `/docs` page listing everything Acnologia does,
     written with the copywriting skill.
 
 ## Left out on purpose

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Cogito\Exception;
+namespace Acnologia\Exception;
 
 /**
  * Throw a subclass from inside withKey() to report the key and retry with the next one.

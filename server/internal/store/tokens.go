@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -27,7 +28,7 @@ func ScopeRole(scope string) (Role, bool) {
 	return "", false
 }
 
-// AdminToken lets scripts, CI and the cogito ctl CLI call the admin API
+// AdminToken lets scripts, CI and the acnologia ctl CLI call the admin API
 // without a browser session.
 type AdminToken struct {
 	ID          int64      `json:"id"`
@@ -121,4 +122,24 @@ func (s *Store) TokenByHash(ctx context.Context, hash string) (*AdminToken, *Use
 	}
 	_, _ = s.DB.ExecContext(ctx, `UPDATE admin_tokens SET last_used_at=? WHERE id=?`, now(), t.ID)
 	return t, u, nil
+}
+
+// Token prefixes. New tokens use the acn prefixes; tokens minted before the
+// rename from Cogito carry cog_ and cogadm_ and keep working, because lookups
+// go by the hash of the whole token and the prefix only routes the request.
+const (
+	AppTokenPrefix         = "acn_"
+	AdminTokenPrefix       = "acnadm_"
+	legacyAppTokenPrefix   = "cog_"
+	legacyAdminTokenPrefix = "cogadm_"
+)
+
+// IsAppToken reports whether tok looks like an app token, new or legacy.
+func IsAppToken(tok string) bool {
+	return strings.HasPrefix(tok, AppTokenPrefix) || strings.HasPrefix(tok, legacyAppTokenPrefix)
+}
+
+// IsAdminToken reports whether tok looks like an admin API token, new or legacy.
+func IsAdminToken(tok string) bool {
+	return strings.HasPrefix(tok, AdminTokenPrefix) || strings.HasPrefix(tok, legacyAdminTokenPrefix)
 }

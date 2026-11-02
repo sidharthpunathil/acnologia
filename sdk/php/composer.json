@@ -1,6 +1,6 @@
 {
-    "name": "cogito/keys",
-    "description": "Client for Cogito, a self-hosted API key pool with automatic rotation.",
+    "name": "acnologia/keys",
+    "description": "Client for Acnologia, a self-hosted API key pool with automatic rotation.",
     "type": "library",
     "license": "MIT",
     "keywords": ["api-keys", "rate-limit", "key-rotation", "serpapi", "elevenlabs"],
@@ -11,7 +11,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Cogito\\": "src/"
+            "Acnologia\\": "src/"
         }
     },
     "scripts": {

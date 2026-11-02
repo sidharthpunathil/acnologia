@@ -1,4 +1,4 @@
-# cogito-go
+# acnologia-go
 
 Go client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Standard library only.
 
@@ -10,24 +10,24 @@ Two ways to use your pooled keys:
 ## Install
 
 ```sh
-go get github.com/cogito-keys/cogito-go
+go get github.com/sidharthpunathil/acnologia/sdk/go
 ```
 
 Requires Go 1.22+.
 
 ```go
-import cogito "github.com/cogito-keys/cogito-go"
+import acnologia "github.com/sidharthpunathil/acnologia/sdk/go"
 
-c := cogito.New("http://localhost:8080", os.Getenv("COGITO_TOKEN")) // app token, cog_...
+c := acnologia.New("http://localhost:8080", os.Getenv("ACNOLOGIA_TOKEN")) // app token, acn_...
 ```
 
-Options: `cogito.WithHTTPClient(*http.Client)`, `cogito.WithUserAgent(string)`.
+Options: `acnologia.WithHTTPClient(*http.Client)`, `acnologia.WithUserAgent(string)`.
 
 ## Proxy mode
 
 `c.Proxy(service)` returns a helper whose requests go to `/proxy/{service}/{path}`.
 Upstream responses come back unchanged (non-2xx is not an error). Each response
-carries `X-Cogito-Key-Id` and `X-Cogito-Attempts`.
+carries `X-Acnologia-Key-Id` and `X-Acnologia-Attempts`.
 
 ### SerpAPI search
 
@@ -75,9 +75,9 @@ Return one of the typed errors from your callback to rotate to the next key:
 | Return | Reported outcome | Rotates |
 |---|---|---|
 | `nil` | `ok` | no |
-| `*cogito.ErrRateLimited{RetryAfter}` | `rate_limited` | yes |
-| `*cogito.ErrQuotaExhausted{}` | `quota_exhausted` | yes |
-| `*cogito.ErrInvalidKey{}` | `invalid` | yes |
+| `*acnologia.ErrRateLimited{RetryAfter}` | `rate_limited` | yes |
+| `*acnologia.ErrQuotaExhausted{}` | `quota_exhausted` | yes |
+| `*acnologia.ErrInvalidKey{}` | `invalid` | yes |
 | any other error | `error` | no, the error is returned as is |
 
 Wrapped errors (`fmt.Errorf("...: %w", err)`) are recognized. After
@@ -85,13 +85,13 @@ Wrapped errors (`fmt.Errorf("...: %w", err)`) are recognized. After
 final attempt is reported without asking for a next key.
 
 Options: `WithMaxAttempts(n)`, `WithWait(d)` (see [Concurrency limits](#concurrency-limits))
-and `WithLeaseOptions(cogito.LeaseOptions{...})`.
+and `WithLeaseOptions(acnologia.LeaseOptions{...})`.
 
 #### SerpAPI search
 
 ```go
 var results map[string]any
-err := c.WithKey(ctx, "serpapi", func(l *cogito.Lease) error {
+err := c.WithKey(ctx, "serpapi", func(l *acnologia.Lease) error {
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		l.URL("/search.json", url.Values{"engine": {"google"}, "q": {"coffee"}}), nil)
 	l.Apply(req) // adds ?api_key=<secret>
@@ -103,23 +103,23 @@ err := c.WithKey(ctx, "serpapi", func(l *cogito.Lease) error {
 	body, _ := io.ReadAll(resp.Body)
 	switch {
 	case resp.StatusCode == 429 && strings.Contains(string(body), "run out of searches"):
-		return &cogito.ErrQuotaExhausted{StatusCode: 429}
+		return &acnologia.ErrQuotaExhausted{StatusCode: 429}
 	case resp.StatusCode == 429:
-		return &cogito.ErrRateLimited{StatusCode: 429, RetryAfter: time.Hour}
+		return &acnologia.ErrRateLimited{StatusCode: 429, RetryAfter: time.Hour}
 	case resp.StatusCode == 401:
-		return &cogito.ErrInvalidKey{StatusCode: 401}
+		return &acnologia.ErrInvalidKey{StatusCode: 401}
 	case resp.StatusCode >= 400:
 		return fmt.Errorf("serpapi: http %d", resp.StatusCode)
 	}
 	return json.Unmarshal(body, &results)
-}, cogito.WithMaxAttempts(3))
+}, acnologia.WithMaxAttempts(3))
 ```
 
 #### ElevenLabs text to speech
 
 ```go
 var audio []byte
-err := c.WithKey(ctx, "elevenlabs", func(l *cogito.Lease) error {
+err := c.WithKey(ctx, "elevenlabs", func(l *acnologia.Lease) error {
 	payload := strings.NewReader(`{"text":"Hello from Acnologia","model_id":"eleven_multilingual_v2"}`)
 	req, _ := http.NewRequestWithContext(ctx, "POST",
 		l.URL("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM", nil), payload)
@@ -135,11 +135,11 @@ err := c.WithKey(ctx, "elevenlabs", func(l *cogito.Lease) error {
 	case resp.StatusCode == 429 && strings.Contains(string(body), "system_busy"):
 		return fmt.Errorf("elevenlabs busy") // provider side, key not penalized
 	case resp.StatusCode == 429:
-		return &cogito.ErrRateLimited{StatusCode: 429, RetryAfter: 5 * time.Second}
+		return &acnologia.ErrRateLimited{StatusCode: 429, RetryAfter: 5 * time.Second}
 	case resp.StatusCode == 401 && strings.Contains(string(body), "quota_exceeded"):
-		return &cogito.ErrQuotaExhausted{StatusCode: 401}
+		return &acnologia.ErrQuotaExhausted{StatusCode: 401}
 	case resp.StatusCode == 401:
-		return &cogito.ErrInvalidKey{StatusCode: 401}
+		return &acnologia.ErrInvalidKey{StatusCode: 401}
 	case resp.StatusCode >= 400:
 		return fmt.Errorf("elevenlabs: http %d", resp.StatusCode)
 	}
@@ -151,7 +151,7 @@ err := c.WithKey(ctx, "elevenlabs", func(l *cogito.Lease) error {
 ### Lease and Report by hand
 
 ```go
-lease, err := c.Lease(ctx, "serpapi", &cogito.LeaseOptions{TTL: 5 * time.Minute, Wait: 10 * time.Second})
+lease, err := c.Lease(ctx, "serpapi", &acnologia.LeaseOptions{TTL: 5 * time.Minute, Wait: 10 * time.Second})
 if err != nil {
 	return err
 }
@@ -161,8 +161,8 @@ req, _ := http.NewRequestWithContext(ctx, "GET",
 lease.Apply(req)
 resp, err := http.DefaultClient.Do(req)
 // ...
-next, err := lease.Report(ctx, cogito.Report{
-	Outcome:    cogito.OutcomeRateLimited,
+next, err := lease.Report(ctx, acnologia.Report{
+	Outcome:    acnologia.OutcomeRateLimited,
 	StatusCode: 429,
 	RetryAfter: time.Hour,
 	Rotate:     true, // ask for the next key in the same call
@@ -194,21 +194,21 @@ services, 300 otherwise).
   when `ctx` is cancelled while it runs (the report goes out on a detached
   context). With a manual `Lease`, report on every return path.
 - **Wait instead of failing.** Set `LeaseOptions.Wait` (or `WithWait(d)` for
-  `WithKey`), up to `cogito.MaxWait` (60s), and the server waits that long for
+  `WithKey`), up to `acnologia.MaxWait` (60s), and the server waits that long for
   a slot when every usable key is busy. If your `http.Client` has a `Timeout`,
   keep it longer than the wait.
 
 ```go
-err := c.WithKey(ctx, "elevenlabs", speak, cogito.WithWait(20*time.Second))
+err := c.WithKey(ctx, "elevenlabs", speak, acnologia.WithWait(20*time.Second))
 
-if errors.Is(err, cogito.AllKeysBusy) {
+if errors.Is(err, acnologia.AllKeysBusy) {
 	// every usable key is at its limit; retry soon
 }
 ```
 
-A busy pool returns `*cogito.ErrNoKeyAvailable` with `Busy: true` and
+A busy pool returns `*acnologia.ErrNoKeyAvailable` with `Busy: true` and
 `Code: "all_keys_busy"` (HTTP 503, `RetryAfter` usually 1s). It still matches
-`cogito.NoKeyAvailable`, so existing checks keep working; it clears as soon as
+`acnologia.NoKeyAvailable`, so existing checks keep working; it clears as soon as
 another caller reports.
 
 Proxy mode needs none of this: Acnologia queues proxied requests for up to the
@@ -228,19 +228,19 @@ for _, s := range svcs {
 
 | Type | Sentinel | When |
 |---|---|---|
-| `*cogito.ErrNoKeyAvailable{RetryAfter, Code, Busy}` | `cogito.NoKeyAvailable` | 503 `no_key_available` from the pool |
-| `*cogito.ErrNoKeyAvailable` with `Busy: true` | `cogito.AllKeysBusy` (and `cogito.NoKeyAvailable`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
-| `*cogito.ErrRateLimited{RetryAfter}` | `cogito.RateLimited` | you return it from `WithKey` |
-| `*cogito.ErrQuotaExhausted` | `cogito.QuotaExhausted` | you return it from `WithKey` |
-| `*cogito.ErrInvalidKey` | `cogito.InvalidKey` | you return it from `WithKey` |
-| `*cogito.APIError{StatusCode, Code, Message}` | | any other non-2xx from the consumer API |
+| `*acnologia.ErrNoKeyAvailable{RetryAfter, Code, Busy}` | `acnologia.NoKeyAvailable` | 503 `no_key_available` from the pool |
+| `*acnologia.ErrNoKeyAvailable` with `Busy: true` | `acnologia.AllKeysBusy` (and `acnologia.NoKeyAvailable`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
+| `*acnologia.ErrRateLimited{RetryAfter}` | `acnologia.RateLimited` | you return it from `WithKey` |
+| `*acnologia.ErrQuotaExhausted` | `acnologia.QuotaExhausted` | you return it from `WithKey` |
+| `*acnologia.ErrInvalidKey` | `acnologia.InvalidKey` | you return it from `WithKey` |
+| `*acnologia.APIError{StatusCode, Code, Message}` | | any other non-2xx from the consumer API |
 
 Each typed error matches its sentinel, so both styles work:
 
 ```go
-if errors.Is(err, cogito.NoKeyAvailable) { ... }
+if errors.Is(err, acnologia.NoKeyAvailable) { ... }
 
-var nk *cogito.ErrNoKeyAvailable
+var nk *acnologia.ErrNoKeyAvailable
 if errors.As(err, &nk) {
 	time.Sleep(nk.RetryAfter)
 }

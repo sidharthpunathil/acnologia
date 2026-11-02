@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/catalog"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // fakeAnthropic answers every Messages call with one canned response.

@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/breaker"
-	"github.com/cogito-keys/cogito/internal/egress"
-	"github.com/cogito-keys/cogito/internal/notify"
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/respcache"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
+	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 const (
@@ -127,7 +127,7 @@ func noCache(r *http.Request) bool {
 
 func cacheQuery(r *http.Request) string {
 	q := r.URL.Query()
-	q.Del("cogito_token")
+	delTokenParams(q)
 	return q.Encode() // sorted by key, so parameter order does not matter
 }
 
@@ -180,7 +180,7 @@ func writeCached(w http.ResponseWriter, e *respcache.Entry, mode string) {
 	if mode == "replay" {
 		w.Header().Set("Idempotent-Replayed", "true")
 	}
-	w.Header().Set("X-Cogito-Cache", mode)
+	setHeader(w.Header(), "Cache", mode)
 	w.WriteHeader(e.Status)
 	_, _ = w.Write(e.Body)
 }

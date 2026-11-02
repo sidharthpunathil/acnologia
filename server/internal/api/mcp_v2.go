@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/providers"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // Tool set names, as shown in the dashboard.
@@ -471,14 +471,14 @@ func firstService(m map[int64]*store.Service) (*store.Service, bool) {
 
 func (s *Server) mcpResources(ctx context.Context, a *store.App) []map[string]any {
 	out := []map[string]any{
-		{"uri": "cogito://services", "name": "services", "title": "Services", "mimeType": "application/json",
+		{"uri": "acnologia://services", "name": "services", "title": "Services", "mimeType": "application/json",
 			"description": "Services this app can use, with availability and how the key is sent."},
-		{"uri": "cogito://llms.txt", "name": "llms.txt", "title": "Acnologia guide for agents", "mimeType": "text/plain"},
+		{"uri": "acnologia://llms.txt", "name": "llms.txt", "title": "Acnologia guide for agents", "mimeType": "text/plain"},
 	}
 	svcs, _ := s.Store.ListServices(ctx)
 	for _, sv := range svcs {
 		if a.CanUse(sv.Slug) {
-			out = append(out, map[string]any{"uri": "cogito://services/" + sv.Slug, "name": sv.Slug, "title": sv.Name,
+			out = append(out, map[string]any{"uri": "acnologia://services/" + sv.Slug, "name": sv.Slug, "title": sv.Name,
 				"mimeType": "application/json", "description": "How to call " + sv.Name + " through Acnologia"})
 		}
 	}
@@ -489,18 +489,22 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 	text := func(mime, body string) map[string]any {
 		return map[string]any{"contents": []map[string]any{{"uri": uri, "mimeType": mime, "text": body}}}
 	}
+	// Clients may have saved URIs from before the rename, under cogito://.
+	if rest, ok := strings.CutPrefix(uri, "cogito://"); ok {
+		uri = "acnologia://" + rest
+	}
 	switch {
-	case uri == "cogito://llms.txt":
+	case uri == "acnologia://llms.txt":
 		return text("text/plain", strings.ReplaceAll(string(s.LLMsTxt), "{{BASE_URL}}", s.Cfg.PublicURL)), nil
-	case uri == "cogito://services":
+	case uri == "acnologia://services":
 		res, err := s.mcpCall(ctx, nil, "list_services", nil)
 		if err != nil {
 			return nil, err
 		}
 		b, _ := json.MarshalIndent(res, "", "  ")
 		return text("application/json", string(b)), nil
-	case strings.HasPrefix(uri, "cogito://services/"):
-		slug := strings.TrimPrefix(uri, "cogito://services/")
+	case strings.HasPrefix(uri, "acnologia://services/"):
+		slug := strings.TrimPrefix(uri, "acnologia://services/")
 		if !a.CanUse(slug) {
 			return nil, fmt.Errorf("no resource %s", uri)
 		}
@@ -548,7 +552,7 @@ func (s *Server) mcpGetPrompt(ctx context.Context, a *store.App, st store.MCPSet
 			return nil, fmt.Errorf("this app cannot use service %q", svc)
 		}
 		return msg(fmt.Sprintf("You can call the %q service through Acnologia, which holds a pool of API keys and rotates them on rate limits. "+
-			"First read the resource cogito://services/%s to see its examples. Prefer the generated tools named %s_*, or proxy_request with service=%q. "+
+			"First read the resource acnologia://services/%s to see its examples. Prefer the generated tools named %s_*, or proxy_request with service=%q. "+
 			"Never ask for or print an API key. If a call returns a rate limit, try again: Acnologia already rotated keys for you. "+
 			"Only lease a key with get_key when you must call the provider yourself, and always call report_key afterwards.", svc, svc, toolName(svc), svc)), nil
 	case "key_health_report":

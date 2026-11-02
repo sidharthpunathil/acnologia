@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/cogito-keys/cogito/internal/redact"
+	"github.com/sidharthpunathil/acnologia/server/internal/redact"
 )
 
 // The store is where text meets the database, so it is the choke point for

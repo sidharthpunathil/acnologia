@@ -53,14 +53,14 @@ export interface WithKeyOptions {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-export interface CogitoOptions {
-  /** Where Cogito runs, for example `http://localhost:8080`. */
+export interface AcnologiaOptions {
+  /** Where Acnologia runs, for example `http://localhost:8080`. */
   baseUrl: string;
-  /** App token, `cog_...`. */
+  /** App token, `acn_...`. */
   token: string;
   /** Custom fetch. Defaults to `globalThis.fetch`. */
   fetch?: FetchLike;
-  /** Extra headers sent with every request to Cogito. */
+  /** Extra headers sent with every request to Acnologia. */
   headers?: Record<string, string>;
   /**
    * Timeout for API calls (lease, report, services) in milliseconds. Default 75000, longer than

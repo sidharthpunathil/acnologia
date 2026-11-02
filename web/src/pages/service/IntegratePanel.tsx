@@ -40,7 +40,7 @@ function savedLang(): Lang {
   return "curl";
 }
 
-const TOKEN = "cog_...";
+const TOKEN = "acn_...";
 
 /*
  * Every value below can come from the server (provider spec, service config),
@@ -149,20 +149,20 @@ function snippets(s: Service, host: string, spec?: ProviderSpec): Record<Mode, R
   -H "Authorization: Bearer ${TOKEN}"
 
 # Tools that only take a URL can pass the token as a query parameter:
-curl ${sh(`${proxyUrl}${q ? "&" : "?"}cogito_token=${TOKEN}`)}`,
-      python: `from cogito import Cogito
+curl ${sh(`${proxyUrl}${q ? "&" : "?"}acn_token=${TOKEN}`)}`,
+      python: `from acnologia import Acnologia
 
-c = Cogito(${lit(host)}, "${TOKEN}")
+c = Acnologia(${lit(host)}, "${TOKEN}")
 
 # Acnologia picks a key, retries on rate limits, and never exposes the secret.
 r = c.proxy(${lit(slug)}).get(${lit(ex.path)}, params=${pyDict(ex.params)})
 print(r.json())`,
-      typescript: `import { Cogito } from "@cogito/keys";
+      typescript: `import { Acnologia } from "@acnologia/keys";
 
-const cogito = new Cogito({ baseUrl: ${lit(host)}, token: process.env.COGITO_TOKEN! });
+const acnologia = new Acnologia({ baseUrl: ${lit(host)}, token: process.env.ACNOLOGIA_TOKEN! });
 
 // Acnologia picks a key, retries on rate limits, and never exposes the secret.
-const res = await cogito.proxy(${lit(slug)}).get(${lit(ex.path)}, ${tsObj(ex.params)});
+const res = await acnologia.proxy(${lit(slug)}).get(${lit(ex.path)}, ${tsObj(ex.params)});
 console.log(await res.json());`,
       go: `package main
 
@@ -175,7 +175,7 @@ import (
 
 func main() {
 	req, _ := http.NewRequest("GET", ${lit(proxyUrl)}, nil)
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("COGITO_TOKEN"))
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("ACNOLOGIA_TOKEN"))
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -183,7 +183,7 @@ func main() {
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
-	fmt.Println(res.Header.Get("X-Cogito-Key-Id"), string(body))
+	fmt.Println(res.Header.Get("X-Acnologia-Key-Id"), string(body))
 }`,
     },
     lease: {
@@ -204,9 +204,9 @@ curl -X POST "${host}/api/v1/leases/$LEASE_ID/report" \\
   -H "Content-Type: application/json" \\
   -d '{"outcome": "ok", "status_code": 200}'`,
       python: `import requests
-from cogito import Cogito
+from acnologia import Acnologia
 
-c = Cogito(${lit(host)}, "${TOKEN}")
+c = Acnologia(${lit(host)}, "${TOKEN}")
 
 with c.lease(${lit(slug)}) as lease:
     r = requests.get(
@@ -214,11 +214,11 @@ with c.lease(${lit(slug)}) as lease:
         ${pyAuth},
     )
     print(r.json())`,
-      typescript: `import { Cogito } from "@cogito/keys";
+      typescript: `import { Acnologia } from "@acnologia/keys";
 
-const cogito = new Cogito({ baseUrl: ${lit(host)}, token: process.env.COGITO_TOKEN! });
+const acnologia = new Acnologia({ baseUrl: ${lit(host)}, token: process.env.ACNOLOGIA_TOKEN! });
 
-const data = await cogito.withKey(${lit(slug)}, async (key) => {
+const data = await acnologia.withKey(${lit(slug)}, async (key) => {
   const res = await fetch(${tsUrl}${tsHeaders});
   return res.json();
 });`,
@@ -231,14 +231,14 @@ import (
 	"net/http"
 	"os"
 
-	cogito "github.com/cogito-keys/cogito-go"
+	acnologia "github.com/sidharthpunathil/acnologia/sdk/go"
 )
 
 func main() {
 	ctx := context.Background()
-	c := cogito.New(${lit(host)}, os.Getenv("COGITO_TOKEN"))
+	c := acnologia.New(${lit(host)}, os.Getenv("ACNOLOGIA_TOKEN"))
 
-	err := c.WithKey(ctx, ${lit(slug)}, func(l *cogito.Lease) error {
+	err := c.WithKey(ctx, ${lit(slug)}, func(l *acnologia.Lease) error {
 		req, _ := http.NewRequestWithContext(ctx, "GET", l.BaseURL+${lit(`${ex.path}${q}`)}, nil)
 		l.Apply(req) // puts the key where this service expects it
 		res, err := http.DefaultClient.Do(req)
@@ -247,7 +247,7 @@ func main() {
 		}
 		defer res.Body.Close()
 		if res.StatusCode == http.StatusTooManyRequests {
-			return &cogito.ErrRateLimited{StatusCode: 429} // WithKey reports it and rotates
+			return &acnologia.ErrRateLimited{StatusCode: 429} // WithKey reports it and rotates
 		}
 		body, _ := io.ReadAll(res.Body)
 		fmt.Println(string(body))

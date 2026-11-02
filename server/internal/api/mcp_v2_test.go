@@ -108,7 +108,7 @@ func TestMCPv2ToolSetsAndServiceTools(t *testing.T) {
 	}
 
 	// Resources and prompts.
-	rs := m.call("resources/read", map[string]any{"uri": "cogito://services/serpapi"})["result"].(map[string]any)
+	rs := m.call("resources/read", map[string]any{"uri": "acnologia://services/serpapi"})["result"].(map[string]any)
 	if !strings.Contains(rs["contents"].([]any)[0].(map[string]any)["text"].(string), "proxy_request") {
 		t.Fatal("service resource")
 	}
@@ -161,7 +161,7 @@ func TestExclusiveLeases(t *testing.T) {
 		}
 		e.do(http.DefaultClient, "POST", "/api/v1/leases/"+l.LeaseID+"/report", map[string]any{"outcome": "ok"}, 200, nil, auth...)
 		resp := e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=x", nil, 200, nil, auth...)
-		if resp.Header.Get("X-Cogito-Key-Id") == itoa(held) {
+		if resp.Header.Get("X-Acnologia-Key-Id") == itoa(held) {
 			t.Fatal("exclusive key used by the proxy")
 		}
 	}

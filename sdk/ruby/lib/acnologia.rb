@@ -4,11 +4,11 @@ require "json"
 require "net/http"
 require "uri"
 
-# Client for Cogito, a self-hosted API key pool with automatic rotation.
+# Client for Acnologia, a self-hosted API key pool with automatic rotation.
 #
-#   cog = Cogito::Client.new("http://localhost:8080", "cog_...")
-#   res = cog.proxy("serpapi").get("/search.json", q: "coffee")
-module Cogito
+#   acn = Acnologia::Client.new("http://localhost:8080", "acn_...")
+#   res = acn.proxy("serpapi").get("/search.json", q: "coffee")
+module Acnologia
   VERSION = "0.1.0"
   OUTCOMES = %w[ok rate_limited busy quota_exhausted invalid banned error].freeze
   # Longest wait_sec the server accepts.
@@ -128,7 +128,7 @@ module Cogito
     end
   end
 
-  # A key handed out by Cogito.
+  # A key handed out by Acnologia.
   class Lease
     attr_reader :lease_id, :key_id, :service, :secret, :auth, :base_url, :expires_at
     attr_accessor :reported
@@ -179,7 +179,7 @@ module Cogito
     end
 
     def inspect
-      "#<Cogito::Lease lease_id=#{@lease_id.inspect} key_id=#{@key_id} service=#{@service.inspect} secret=***>"
+      "#<Acnologia::Lease lease_id=#{@lease_id.inspect} key_id=#{@key_id} service=#{@service.inspect} secret=***>"
     end
     alias to_s inspect
   end
@@ -232,9 +232,9 @@ module Cogito
     attr_reader :base_url, :token
 
     # transport: optional callable(method, url, headers, body) -> Response, for tests.
-    def initialize(base_url = ENV["COGITO_URL"], token = ENV["COGITO_TOKEN"], timeout: 30, transport: nil)
-      raise ArgumentError, "base_url is required (or set COGITO_URL)" if base_url.nil? || base_url.empty?
-      raise ArgumentError, "token is required (or set COGITO_TOKEN)" if token.nil? || token.empty?
+    def initialize(base_url = ENV["ACNOLOGIA_URL"], token = ENV["ACNOLOGIA_TOKEN"], timeout: 30, transport: nil)
+      raise ArgumentError, "base_url is required (or set ACNOLOGIA_URL)" if base_url.nil? || base_url.empty?
+      raise ArgumentError, "token is required (or set ACNOLOGIA_TOKEN)" if token.nil? || token.empty?
 
       @base_url = base_url.chomp("/")
       @token = token
@@ -291,14 +291,14 @@ module Cogito
         rescue KeyProblem => e
           last = attempt >= max_attempts
           nxt = current.report(e.outcome, status_code: e.status_code, retry_after_sec: e.retry_after,
-                                          message: Cogito.scrub_message(e.message, current.secret), rotate: !last)
+                                          message: Acnologia.scrub_message(e.message, current.secret), rotate: !last)
           raise if last
 
           lease = nxt || self.lease(service, exclude_key_ids: tried, ttl_sec: ttl_sec, wait_sec: wait_sec)
           next
         rescue Exception => e # rubocop:disable Lint/RescueException
           begin
-            current.report("error", message: Cogito.scrub_message("#{e.class}: #{e.message}", current.secret))
+            current.report("error", message: Acnologia.scrub_message("#{e.class}: #{e.message}", current.secret))
           rescue StandardError
             nil # never mask the caller's exception
           end
@@ -335,7 +335,7 @@ module Cogito
 
     # @api private
     def send_request(method, url, headers, body)
-      @transport.call(method, url, headers.merge("User-Agent" => "cogito-ruby/#{VERSION}"), body)
+      @transport.call(method, url, headers.merge("User-Agent" => "acnologia-ruby/#{VERSION}"), body)
     end
 
     private

@@ -1,6 +1,6 @@
-export { Cogito, Lease, Proxy, VERSION } from "./client.js";
+export { Acnologia, Lease, Proxy, VERSION } from "./client.js";
 export {
-  CogitoError,
+  AcnologiaError,
   NoKeyAvailableError,
   AllKeysBusyError,
   KeyRotationError,
@@ -12,7 +12,7 @@ export type { RotationErrorOptions } from "./errors.js";
 export type {
   AuthSpec,
   AuthType,
-  CogitoOptions,
+  AcnologiaOptions,
   FetchLike,
   HeadersLike,
   LeaseJSON,

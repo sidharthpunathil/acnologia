@@ -1,4 +1,4 @@
-# Cogito: self-hosted API key pool
+# Acnologia: self-hosted API key pool
 
 ## Intent
 
@@ -8,7 +8,7 @@ monthly quota. You register many accounts per provider and want one place that
 holds all their keys and hands out a working one on demand. When a key hits a
 rate limit, the caller gets the next available key without any manual work.
 
-Cogito is that place: a single Go binary with an embedded React dashboard,
+Acnologia is that place: a single Go binary with an embedded React dashboard,
 self-hosted with Docker, backed by SQLite.
 
 ## Goals
@@ -18,7 +18,7 @@ self-hosted with Docker, backed by SQLite.
 - Detect rate limits and quota exhaustion, cool keys down, and rotate.
 - Two ways to consume:
   - **Lease mode**: ask for a key, call the provider yourself, report the outcome.
-  - **Proxy mode**: call Cogito instead of the provider; Cogito injects a key,
+  - **Proxy mode**: call Acnologia instead of the provider; Acnologia injects a key,
     retries on rate limits with the next key, and never exposes secrets.
 - Roles: `superadmin`, `admin`, `member`.
 - Key flags: `hidden` (only superadmins see it or count it), `tier` = `primary`
@@ -47,10 +47,10 @@ self-hosted with Docker, backed by SQLite.
 | Entity  | Notes |
 |---------|-------|
 | User    | email, name, bcrypt password, role, disabled |
-| Session | random token (sha256 stored), cookie `cogito_session`, 14 day expiry |
+| Session | random token (sha256 stored), cookie `acnologia_session`, 14 day expiry |
 | Service | slug, name, provider, category, description, base_url, auth_type (`query`, `header`, `bearer`), auth_name, strategy, cooldown_sec, max_attempts, icon |
 | Key     | service, label, encrypted secret, hint (last 4), tier, hidden, restricted, status, weight, priority, cooldown_until, consecutive_fails, quota_limit, quota_remaining, quota_reset_at, usage_total, usage_today, last_used_at, last_error, notes |
-| App     | a consumer, e.g. "my website". Token `cog_...` (sha256 stored, shown once), allowed services (empty means all), mode `proxy`, `lease` or `both`, active |
+| App     | a consumer, e.g. "my website". Token `acn_...` (sha256 stored, shown once), allowed services (empty means all), mode `proxy`, `lease` or `both`, active |
 | KeyApp  | allow-list rows for restricted keys |
 | Lease   | key handed to an app, ttl, outcome |
 | Event   | lease, proxy, rate_limited, quota_exhausted, invalid, error, health |
@@ -102,8 +102,8 @@ reactivates it. `invalid` sets status `invalid`. `ok` resets consecutive_fails.
 
 - Dashboard: session cookie. First run with zero users shows a setup screen that
   creates the superadmin.
-- Apps: `Authorization: Bearer cog_...` or `X-Cogito-Token: cog_...` or
-  query `cogito_token=cog_...` (proxy only, for tools that only take a URL). All
+- Apps: `Authorization: Bearer acn_...` or `X-Acnologia-Token: acn_...` or
+  query `acn_token=acn_...` (proxy only, for tools that only take a URL). All
   three are stripped before forwarding upstream.
 
 ## Permissions
@@ -133,7 +133,7 @@ All JSON. Errors: `{"error": {"code": "string", "message": "string"}}`.
 - `POST /api/v1/leases/{lease_id}/report` body `{"outcome": "ok|rate_limited|quota_exhausted|invalid|error", "status_code": 429, "retry_after_sec": 60, "message": "", "rotate": true}`
   -> `{"ok": true, "next": <lease or null>}`
 - `ANY /proxy/{service_slug}/{path...}` forwards to `base_url/{path}` with query
-  string and body. Response headers add `X-Cogito-Key-Id`, `X-Cogito-Attempts`.
+  string and body. Response headers add `X-Acnologia-Key-Id`, `X-Acnologia-Attempts`.
 
 ### Dashboard API (session cookie)
 - `GET /api/auth/state` -> `{"setup_required": bool, "user": User|null}`
@@ -154,8 +154,8 @@ All JSON. Errors: `{"error": {"code": "string", "message": "string"}}`.
 ## Stack (builder's calls)
 
 - Go 1.26, chi router, `modernc.org/sqlite` (pure Go, no CGO), bcrypt.
-- Master key from `COGITO_MASTER_KEY` (base64, 32 bytes). If unset, generated
-  into `$COGITO_DATA_DIR/master.key` on first boot with a loud log line.
+- Master key from `ACNOLOGIA_MASTER_KEY` (base64, 32 bytes). If unset, generated
+  into `$ACNOLOGIA_DATA_DIR/master.key` on first boot with a loud log line.
 - React 18 + Vite + TypeScript + Zustand + Tailwind, built and embedded in the
   Go binary with `embed`.
 - UI follows treg.to/catalog: warm off-white canvas, white rounded cards,
@@ -188,7 +188,7 @@ interface Key {
   last_checked_at: string | null; notes: string; created_at: string;
 }
 interface App {
-  id: number; name: string; description: string; token_prefix: string;   // "cog_ab12"
+  id: number; name: string; description: string; token_prefix: string;   // "acn_ab12"
   allowed_services: string[]; mode: "proxy" | "lease" | "both"; active: boolean;
   created_at: string; last_used_at: string | null;
 }
@@ -219,5 +219,5 @@ The production build is emitted to `server/internal/webui/dist` and embedded.
 - Proxy retries only on key-specific outcomes (rate_limited, quota_exhausted, invalid). It does not retry 5xx, because a retried TTS call could be billed twice.
 - Accept-Encoding is dropped upstream so the Go transport decompresses error bodies for classification.
 - SerpAPI quota is decremented locally per successful proxied search; ElevenLabs quota is refreshed by health checks (character cost is not known per request).
-- Health checks run every 6h (`COGITO_HEALTH_INTERVAL`), hourly for exhausted keys, and right after keys are added.
+- Health checks run every 6h (`ACNOLOGIA_HEALTH_INTERVAL`), hourly for exhausted keys, and right after keys are added.
 - A failing SerpAPI account check marks a key invalid only on 401 or "Invalid API key"; other errors are treated as transient.

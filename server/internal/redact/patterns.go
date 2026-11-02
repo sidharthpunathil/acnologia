@@ -35,7 +35,7 @@ var rules = []rule{
 	{name: "jwt", re: regexp.MustCompile(`eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}`)},
 	// Shorter prefixes need a boundary in front ("task-..." is not "sk-...").
 	{name: "openai", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])(sk-[A-Za-z0-9_\-]{16,})`), group: 1, ok: hasDigit},
-	{name: "prefixed", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])((?:hf|gsk|r8|cog|cogadm|whsec)_[A-Za-z0-9_\-]{20,}|(?:pplx|xai|fc)-[A-Za-z0-9_\-]{20,})`), group: 1},
+	{name: "prefixed", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])((?:hf|gsk|r8|acn|acnadm|cog|cogadm|whsec)_[A-Za-z0-9_\-]{20,}|(?:pplx|xai|fc)-[A-Za-z0-9_\-]{20,})`), group: 1},
 	// Credentials by position.
 	{name: "bearer", re: regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+([A-Za-z0-9_\-.~+/=:]{8,})`), group: 1, ok: secretish},
 	{name: "header", re: regexp.MustCompile(`(?i)(?:x-api-key|x-goog-api-key|api-key|x-auth-token|x-access-token|authorization)["']?\s*[:=]\s*["']?([A-Za-z0-9_\-.~+/=]{8,})`), group: 1, ok: notPlaceholder},

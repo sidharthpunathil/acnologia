@@ -1,5 +1,5 @@
-// Package ctl is the `cogito ctl` command line client. It drives a local or
-// remote Acnologia through the admin API with a cogadm_ token, so CI jobs and
+// Package ctl is the `acnologia ctl` command line client. It drives a local or
+// remote Acnologia through the admin API with a acnadm_ token, so CI jobs and
 // scripts can add keys, check them and watch the pool without a browser.
 package ctl
 
@@ -20,14 +20,16 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/sidharthpunathil/acnologia/server/internal/config"
 )
 
-const usage = `cogito ctl: manage a Acnologia server from the command line
+const usage = `acnologia ctl: manage an Acnologia server from the command line
 
 Connect once, then run commands against that server:
-  cogito ctl login <url> --token cogadm_...   [--name prod]
-  cogito ctl contexts                          list saved servers
-  cogito ctl use <name>                        switch the current server
+  acnologia ctl login <url> --token acnadm_...   [--name prod]
+  acnologia ctl contexts                          list saved servers
+  acnologia ctl use <name>                        switch the current server
 
 Commands:
   status                         pool overview
@@ -41,8 +43,8 @@ Commands:
   cache purge <service>          drop cached responses of a service
   usage <app-id>                 an app's requests, spend and limits
 
-Create a token in the dashboard under Settings, API tokens. COGITO_URL and
-COGITO_TOKEN override the saved server for one command.
+Create a token in the dashboard under Settings, API tokens. ACNOLOGIA_URL and
+ACNOLOGIA_TOKEN override the saved server for one command.
 `
 
 // Run executes a ctl command and returns the process exit code.
@@ -76,19 +78,37 @@ func (c *cli) configPath() string {
 	if c.cfgPath != "" {
 		return c.cfgPath
 	}
-	if p := os.Getenv("COGITO_CTL_CONFIG"); p != "" {
+	if p := config.Getenv("ACNOLOGIA_CTL_CONFIG"); p != "" {
 		return p
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		dir = "."
 	}
-	return filepath.Join(dir, "cogito", "ctl.json")
+	return filepath.Join(dir, "acnologia", "ctl.json")
+}
+
+// readPath is where saved servers are read from. When the config lives in the
+// default place and has not been written yet, the file from before the rename
+// (~/.config/cogito/ctl.json) is read instead. Saves always go to configPath.
+func (c *cli) readPath() string {
+	p := c.configPath()
+	if c.cfgPath != "" || config.Getenv("ACNOLOGIA_CTL_CONFIG") != "" {
+		return p
+	}
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	legacy := filepath.Join(filepath.Dir(filepath.Dir(p)), "cogito", "ctl.json")
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return p
 }
 
 func (c *cli) load() configFile {
 	cf := configFile{Contexts: map[string]context{}}
-	b, err := os.ReadFile(c.configPath())
+	b, err := os.ReadFile(c.readPath())
 	if err == nil {
 		_ = json.Unmarshal(b, &cf)
 	}
@@ -108,13 +128,13 @@ func (c *cli) save(cf configFile) error {
 }
 
 func (c *cli) current() (context, error) {
-	if u, t := os.Getenv("COGITO_URL"), os.Getenv("COGITO_TOKEN"); u != "" && t != "" {
+	if u, t := config.Getenv("ACNOLOGIA_URL"), config.Getenv("ACNOLOGIA_TOKEN"); u != "" && t != "" {
 		return context{URL: strings.TrimRight(u, "/"), Token: t}, nil
 	}
 	cf := c.load()
 	ctx, ok := cf.Contexts[cf.Current]
 	if !ok {
-		return context{}, errors.New("not logged in; run: cogito ctl login <url> --token cogadm_...")
+		return context{}, errors.New("not logged in; run: acnologia ctl login <url> --token acnadm_...")
 	}
 	return ctx, nil
 }
@@ -151,11 +171,11 @@ func (c *cli) run(args []string) error {
 		if len(args) > 2 && args[1] == "purge" {
 			return c.cachePurge(args[2])
 		}
-		return errors.New("usage: cogito ctl cache purge <service>")
+		return errors.New("usage: acnologia ctl cache purge <service>")
 	case "usage":
 		return c.usage(args[1:])
 	}
-	return fmt.Errorf("unknown command %q; run cogito ctl help", args[0])
+	return fmt.Errorf("unknown command %q; run acnologia ctl help", args[0])
 }
 
 // ---- HTTP ----
@@ -187,7 +207,7 @@ func (c *cli) callWith(ctx context, method, path string, body, out any) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+ctx.Token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "cogito-ctl")
+	req.Header.Set("X-Requested-With", "acnologia-ctl")
 	hc := c.http
 	if hc == nil {
 		hc = &http.Client{Timeout: 2 * time.Minute}
@@ -216,14 +236,14 @@ func (c *cli) callWith(ctx context, method, path string, body, out any) error {
 func (c *cli) login(args []string) error {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	fs.SetOutput(c.err)
-	token := fs.String("token", os.Getenv("COGITO_TOKEN"), "admin API token (cogadm_...)")
+	token := fs.String("token", config.Getenv("ACNOLOGIA_TOKEN"), "admin API token (acnadm_...)")
 	name := fs.String("name", "default", "name for this server")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 || *token == "" {
-		return errors.New("usage: cogito ctl login <url> --token cogadm_... [--name prod]")
+		return errors.New("usage: acnologia ctl login <url> --token acnadm_... [--name prod]")
 	}
 	u := strings.TrimRight(pos[0], "/")
 	if !strings.Contains(u, "://") {
@@ -271,7 +291,7 @@ func (c *cli) contexts() error {
 
 func (c *cli) use(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: cogito ctl use <name>")
+		return errors.New("usage: acnologia ctl use <name>")
 	}
 	cf := c.load()
 	if _, ok := cf.Contexts[args[0]]; !ok {
@@ -353,7 +373,7 @@ func (c *cli) services() error {
 
 func (c *cli) keys(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: cogito ctl keys <service>")
+		return errors.New("usage: acnologia ctl keys <service>")
 	}
 	sv, err := c.serviceBySlug(args[0])
 	if err != nil {
@@ -399,7 +419,7 @@ func (c *cli) keys(args []string) error {
 
 func (c *cli) keysAdd(args []string) error {
 	if len(args) < 1 || len(args) > 2 {
-		return errors.New("usage: cogito ctl keys add <service> [file]")
+		return errors.New("usage: acnologia ctl keys add <service> [file]")
 	}
 	sv, err := c.serviceBySlug(args[0])
 	if err != nil {
@@ -451,7 +471,7 @@ func (c *cli) keysAdd(args []string) error {
 
 func (c *cli) keysCheck(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: cogito ctl keys check <service>")
+		return errors.New("usage: acnologia ctl keys check <service>")
 	}
 	sv, err := c.serviceBySlug(args[0])
 	if err != nil {
@@ -526,7 +546,7 @@ func (c *cli) breaker(args []string) error {
 		return err
 	}
 	if len(pos) != 1 {
-		return errors.New("usage: cogito ctl breaker <service> [--reset]")
+		return errors.New("usage: acnologia ctl breaker <service> [--reset]")
 	}
 	sv, err := c.serviceBySlug(pos[0])
 	if err != nil {
@@ -580,7 +600,7 @@ func (c *cli) cachePurge(slug string) error {
 
 func (c *cli) usage(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: cogito ctl usage <app-id>")
+		return errors.New("usage: acnologia ctl usage <app-id>")
 	}
 	var out struct {
 		Usage struct {

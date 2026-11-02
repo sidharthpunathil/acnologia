@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Cogito\Exception;
+namespace Acnologia\Exception;
 
 /** The provider rate limited this key. Pass retryAfter (seconds) when the provider says. */
 final class RateLimited extends KeyProblem

@@ -1,12 +1,12 @@
 import {
   AllKeysBusyError,
-  CogitoError,
+  AcnologiaError,
   KeyRotationError,
   NoKeyAvailableError,
 } from "./errors.js";
 import type {
   AuthSpec,
-  CogitoOptions,
+  AcnologiaOptions,
   FetchLike,
   HeadersLike,
   LeaseJSON,
@@ -18,7 +18,7 @@ import type {
 } from "./types.js";
 
 export const VERSION = "0.1.0";
-const CLIENT_HEADER = `cogito-ts/${VERSION}`;
+const CLIENT_HEADER = `acnologia-ts/${VERSION}`;
 const DEFAULT_TIMEOUT_MS = 75_000;
 const MAX_REPORT_MESSAGE = 500;
 const INSPECT = Symbol.for("nodejs.util.inspect.custom");
@@ -80,7 +80,7 @@ function isPassThroughBody(body: unknown): boolean {
   return false;
 }
 
-/** A key handed out by Cogito. Report how it went with `report()`. */
+/** A key handed out by Acnologia. Report how it went with `report()`. */
 export class Lease {
   readonly leaseId: string;
   readonly keyId: number;
@@ -93,7 +93,7 @@ export class Lease {
   private _reported = false;
 
   constructor(
-    private readonly client: Cogito,
+    private readonly client: Acnologia,
     raw: LeaseJSON,
   ) {
     this.raw = raw;
@@ -183,10 +183,10 @@ export class Lease {
   }
 }
 
-/** Calls go to Cogito's proxy, which injects a key and rotates on rate limits. */
+/** Calls go to Acnologia's proxy, which injects a key and rotates on rate limits. */
 export class Proxy {
   constructor(
-    private readonly client: Cogito,
+    private readonly client: Acnologia,
     readonly service: string,
   ) {}
 
@@ -241,17 +241,17 @@ export class Proxy {
   }
 }
 
-/** Client for a Cogito key pool. */
-export class Cogito {
+/** Client for an Acnologia key pool. */
+export class Acnologia {
   readonly baseUrl: string;
   private readonly token: string;
   private readonly fetchImpl: FetchLike | undefined;
   private readonly extraHeaders: Record<string, string>;
   private readonly timeoutMs: number;
 
-  constructor(opts: CogitoOptions) {
-    if (!opts || !opts.baseUrl) throw new TypeError("Cogito: baseUrl is required");
-    if (!opts.token) throw new TypeError("Cogito: token is required");
+  constructor(opts: AcnologiaOptions) {
+    if (!opts || !opts.baseUrl) throw new TypeError("Acnologia: baseUrl is required");
+    if (!opts.token) throw new TypeError("Acnologia: token is required");
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.token = opts.token;
     this.fetchImpl = opts.fetch;
@@ -269,7 +269,7 @@ export class Cogito {
     return {
       ...this.extraHeaders,
       Authorization: `Bearer ${this.token}`,
-      "X-Cogito-Client": CLIENT_HEADER,
+      "X-Acnologia-Client": CLIENT_HEADER,
     };
   }
 
@@ -277,7 +277,7 @@ export class Cogito {
   _fetch(url: string, init: RequestInit): Promise<Response> {
     const f = this.fetchImpl ?? (typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : undefined);
     if (!f) {
-      throw new Error("Cogito: no fetch implementation found. Pass { fetch } to the constructor (Node 18+ has one built in).");
+      throw new Error("Acnologia: no fetch implementation found. Pass { fetch } to the constructor (Node 18+ has one built in).");
     }
     return f(url, init);
   }
@@ -314,7 +314,7 @@ export class Cogito {
       if (code === "no_key_available") {
         throw new NoKeyAvailableError(message, retryAfter, data);
       }
-      throw new CogitoError(message, res.status, code, data);
+      throw new AcnologiaError(message, res.status, code, data);
     }
     return data as T;
   }
@@ -347,7 +347,7 @@ export class Cogito {
     if (opts.ttlSec !== undefined) body.ttl_sec = opts.ttlSec;
     if (opts.waitSec !== undefined && opts.waitSec !== 0) {
       if (!(opts.waitSec > 0 && opts.waitSec <= 60)) {
-        throw new RangeError("Cogito: waitSec must be between 0 and 60");
+        throw new RangeError("Acnologia: waitSec must be between 0 and 60");
       }
       body.wait_sec = Math.ceil(opts.waitSec);
     }
@@ -412,7 +412,7 @@ export class Cogito {
     throw lastErr;
   }
 
-  /** Proxy helper: requests go through Cogito, which injects a key and rotates for you. */
+  /** Proxy helper: requests go through Acnologia, which injects a key and rotates for you. */
   proxy(service: string): Proxy {
     return new Proxy(this, service);
   }

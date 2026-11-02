@@ -13,7 +13,7 @@ import { useTheme } from "@/stores/theme";
 export type ThemeMode = "light" | "dark";
 
 // Acnologia: the same key as stores/theme.ts, which owns persistence.
-export const THEME_STORAGE_KEY = "cogito.theme";
+export const THEME_STORAGE_KEY = "acn.theme";
 export const THEME_CHANGE_EVENT = "boardui:theme-change";
 
 const THEME_TRANSITION_DURATION = 820;

@@ -1,19 +1,22 @@
 services:
-  cogito:
+  acnologia:
     build: .
-    image: cogito:latest
+    image: acnologia:latest
     restart: unless-stopped
     ports:
       - "8080:8080"
     env_file: .env
     environment:
       # Inside the container data always lives on the volume.
-      COGITO_DATA_DIR: /data
-      COGITO_ADDR: ":8080"
+      ACNOLOGIA_DATA_DIR: /data
+      ACNOLOGIA_ADDR: ":8080"
     volumes:
+      # The volume keeps its name from before the rename (Cogito), so an
+      # existing install finds its data; the old database file inside is
+      # still opened as is.
       - cogito-data:/data
     healthcheck:
-      test: ["CMD", "/cogito", "version"]
+      test: ["CMD", "/acnologia", "version"]
       interval: 30s
 
 volumes:

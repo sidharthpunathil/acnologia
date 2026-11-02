@@ -91,10 +91,10 @@ func TestTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	past := time.Now().Add(-time.Hour)
-	if _, err := s.CreateToken(ctx, &AdminToken{Name: "old", TokenPrefix: "cogadm_ab", Scope: ScopeRead, UserID: u.ID, ExpiresAt: &past}, "h-old"); err != nil {
+	if _, err := s.CreateToken(ctx, &AdminToken{Name: "old", TokenPrefix: "acnadm_ab", Scope: ScopeRead, UserID: u.ID, ExpiresAt: &past}, "h-old"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateToken(ctx, &AdminToken{Name: "ci", TokenPrefix: "cogadm_cd", Scope: ScopeWrite, UserID: u.ID}, "h-ci"); err != nil {
+	if _, err := s.CreateToken(ctx, &AdminToken{Name: "ci", TokenPrefix: "acnadm_cd", Scope: ScopeWrite, UserID: u.ID}, "h-ci"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.TokenByHash(ctx, "h-old"); err == nil {

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/catalog"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // fakeByModel answers Haiku naming calls with naming and every other call

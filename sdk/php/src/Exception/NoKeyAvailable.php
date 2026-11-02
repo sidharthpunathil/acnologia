@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Cogito\Exception;
+namespace Acnologia\Exception;
 
 /**
  * HTTP 503: no key can be leased right now.
@@ -11,7 +11,7 @@ namespace Cogito\Exception;
  * excluded, and `all_keys_busy` when every usable key is at its concurrency
  * limit. In the second case $busy is true and the subclass AllKeysBusy is thrown.
  */
-class NoKeyAvailable extends CogitoException
+class NoKeyAvailable extends AcnologiaException
 {
     /** True when every usable key is at its concurrency limit (`all_keys_busy`). */
     public readonly bool $busy;

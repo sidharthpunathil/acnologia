@@ -1,4 +1,4 @@
-package cogito
+package acnologia
 
 import (
 	"context"
@@ -37,12 +37,12 @@ func leaseJSON(id int64) map[string]any {
 func (f *fakeServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	check := func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Header.Get("Authorization") != "Bearer cog_test" {
+		if r.Header.Get("Authorization") != "Bearer acn_test" {
 			w.WriteHeader(401)
 			_, _ = io.WriteString(w, `{"error":{"code":"unauthorized","message":"bad token"}}`)
 			return false
 		}
-		if !strings.HasPrefix(r.Header.Get("User-Agent"), "cogito-go/") {
+		if !strings.HasPrefix(r.Header.Get("User-Agent"), "acnologia-go/") {
 			f.t.Errorf("user agent %q", r.Header.Get("User-Agent"))
 		}
 		return true
@@ -98,8 +98,8 @@ func (f *fakeServer) handler() http.Handler {
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
-		w.Header().Set("X-Cogito-Key-Id", "7")
-		w.Header().Set("X-Cogito-Attempts", "1")
+		w.Header().Set("X-Acnologia-Key-Id", "7")
+		w.Header().Set("X-Acnologia-Attempts", "1")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"method": r.Method, "path": r.URL.EscapedPath(), "query": r.URL.RawQuery,
@@ -114,7 +114,7 @@ func setup(t *testing.T, keys ...int64) (*Client, *fakeServer) {
 	f := &fakeServer{t: t, keys: keys}
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
-	return New(srv.URL+"/", "cog_test"), f
+	return New(srv.URL+"/", "acn_test"), f
 }
 
 func TestServices(t *testing.T) {
@@ -455,7 +455,7 @@ func TestProxyGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Header.Get("X-Cogito-Key-Id") != "7" {
+	if resp.Header.Get("X-Acnologia-Key-Id") != "7" {
 		t.Fatal("missing key id header")
 	}
 	m := decode(t, resp)
@@ -561,7 +561,7 @@ func TestProxyDoesNotFollowRedirects(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	hc := &http.Client{}
-	for _, c := range []*Client{New(srv.URL, "cog_test"), New(srv.URL, "cog_test", WithHTTPClient(hc))} {
+	for _, c := range []*Client{New(srv.URL, "acn_test"), New(srv.URL, "acn_test", WithHTTPClient(hc))} {
 		resp, err := c.Proxy("serpapi").Get(context.Background(), "/search.json", nil)
 		if err != nil {
 			t.Fatal(err)
@@ -577,13 +577,13 @@ func TestProxyDoesNotFollowRedirects(t *testing.T) {
 }
 
 func TestDefaultTimeout(t *testing.T) {
-	if c := New("http://x", "cog_test"); c.httpClient == http.DefaultClient || c.httpClient.Timeout != DefaultTimeout {
+	if c := New("http://x", "acn_test"); c.httpClient == http.DefaultClient || c.httpClient.Timeout != DefaultTimeout {
 		t.Fatalf("default client %+v", c.httpClient)
 	}
 }
 
 func TestStringRedactsSecrets(t *testing.T) {
-	c := New("http://x", "cog_supersecret")
+	c := New("http://x", "acn_supersecret")
 	l := &Lease{LeaseID: "l1", Secret: "sk_supersecret", client: c}
 	for _, s := range []string{
 		fmt.Sprint(c), fmt.Sprintf("%+v", c), fmt.Sprintf("%#v", c), fmt.Sprintf("%v", *c),

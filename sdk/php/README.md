@@ -1,4 +1,4 @@
-# cogito/keys (PHP)
+# acnologia/keys (PHP)
 
 PHP client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Acnologia
 holds many keys per provider and hands out a working one, rotating automatically
@@ -9,16 +9,16 @@ PHP 8.1+, uses the `curl` and `json` extensions, no Composer dependencies.
 ## Install
 
 ```bash
-composer require cogito/keys
+composer require acnologia/keys
 ```
 
 ```php
 require 'vendor/autoload.php';
 
-$cog = new Cogito\Cogito('http://localhost:8080', 'cog_your_app_token');
+$acn = new Acnologia\Acnologia('http://localhost:8080', 'acn_your_app_token');
 ```
 
-The token is an app token from the Acnologia dashboard, sent as `Authorization: Bearer cog_...`.
+The token is an app token from the Acnologia dashboard, sent as `Authorization: Bearer acn_...`.
 
 ## Proxy mode
 
@@ -30,17 +30,17 @@ including non 2xx ones.
 ### SerpAPI search
 
 ```php
-$res = $cog->proxy('serpapi')->get('/search.json', ['engine' => 'google', 'q' => 'best espresso grinder']);
+$res = $acn->proxy('serpapi')->get('/search.json', ['engine' => 'google', 'q' => 'best espresso grinder']);
 foreach (array_slice($res->json()['organic_results'] ?? [], 0, 5) as $r) {
     echo $r['title'], ' ', $r['link'], PHP_EOL;
 }
-echo 'served by key ', $res->header('X-Cogito-Key-Id'), PHP_EOL;
+echo 'served by key ', $res->header('X-Acnologia-Key-Id'), PHP_EOL;
 ```
 
 ### ElevenLabs text to speech
 
 ```php
-$res = $cog->proxy('elevenlabs')->post(
+$res = $acn->proxy('elevenlabs')->post(
     '/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM',
     ['text' => 'Hello from Acnologia.', 'model_id' => 'eleven_multilingual_v2'],
     ['Accept' => 'audio/mpeg'],
@@ -55,7 +55,7 @@ Array bodies are sent as JSON; strings are sent as is.
 
 ## Lease mode
 
-`$cog->lease($service, $excludeKeyIds = [], $ttlSec = null, $waitSec = null)` returns a
+`$acn->lease($service, $excludeKeyIds = [], $ttlSec = null, $waitSec = null)` returns a
 `Acnologia\Lease` with `leaseId`, `keyId`, `service`, `secret`, `auth`
 (`['type' => ..., 'name' => ..., 'prefix' => ...]`), `baseUrl` and `expiresAt`. It throws
 `Acnologia\Exception\NoKeyAvailable` (with `retryAfter`) when the pool is drained.
@@ -73,7 +73,7 @@ returns the next `Lease` (or null) when `$rotate` is true.
 
 ### withKey
 
-`$cog->withKey($service, $fn, $maxAttempts = 5, $ttlSec = null, $waitSec = null)` leases a key, calls `$fn($lease)`,
+`$acn->withKey($service, $fn, $maxAttempts = 5, $ttlSec = null, $waitSec = null)` leases a key, calls `$fn($lease)`,
 reports and returns the result. Throw `RateLimited`, `QuotaExhausted` or
 `InvalidKey` from `$fn` to cool the key down and retry with the next one. Any
 other exception is reported as `error` and rethrown.
@@ -83,7 +83,7 @@ SerpAPI with your own HTTP call:
 ```php
 use Acnologia\Exception\{InvalidKey, QuotaExhausted, RateLimited};
 
-$data = $cog->withKey('serpapi', function (Cogito\Lease $lease) {
+$data = $acn->withKey('serpapi', function (Acnologia\Lease $lease) {
     ['query' => $q] = $lease->apply(['engine' => 'google', 'q' => 'coffee']);
     $ch = curl_init($lease->url('/search.json', $q));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -104,7 +104,7 @@ $data = $cog->withKey('serpapi', function (Cogito\Lease $lease) {
 ElevenLabs:
 
 ```php
-$audio = $cog->withKey('elevenlabs', function (Cogito\Lease $lease) {
+$audio = $acn->withKey('elevenlabs', function (Acnologia\Lease $lease) {
     ['headers' => $h] = $lease->apply([], ['Accept' => 'audio/mpeg', 'Content-Type' => 'application/json']);
     $ch = curl_init($lease->url('/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM'));
     curl_setopt_array($ch, [
@@ -128,7 +128,7 @@ file_put_contents('hi.mp3', $audio);
 Manual flow (report on every path, see Concurrency limits):
 
 ```php
-$lease = $cog->lease('serpapi');
+$lease = $acn->lease('serpapi');
 try {
     // ... call the provider ...
     $next = $lease->report('rate_limited', 429, 3600, 'hourly limit', rotate: true);
@@ -157,10 +157,10 @@ services, 300 otherwise).
 ```php
 use Acnologia\Exception\AllKeysBusy;
 
-$audio = $cog->withKey('elevenlabs', $speak, waitSec: 20);
+$audio = $acn->withKey('elevenlabs', $speak, waitSec: 20);
 
 try {
-    $lease = $cog->lease('elevenlabs', waitSec: 20);
+    $lease = $acn->lease('elevenlabs', waitSec: 20);
 } catch (AllKeysBusy $e) {
     sleep($e->retryAfter ?? 1); // $e->busy === true
 }

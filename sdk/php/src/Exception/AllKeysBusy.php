@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Cogito\Exception;
+namespace Acnologia\Exception;
 
 /**
  * HTTP 503 all_keys_busy: usable keys exist but every one is at its concurrency

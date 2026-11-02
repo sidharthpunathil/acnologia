@@ -29,24 +29,24 @@ export interface Started {
   baseURL: string;
 }
 
-/** Starts bin/cogito on a free port with an empty data dir and waits for /healthz. */
+/** Starts bin/acnologia on a free port with an empty data dir and waits for /healthz. */
 export async function startServer(): Promise<Started> {
   if (!fs.existsSync(BIN)) throw new Error(`${BIN} is missing. Run \`make build\` first.`);
   const masterKey = execFileSync(BIN, ["gen-master-key"], { encoding: "utf8" }).trim().split("\n")[0].trim();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cogito-e2e-"));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "acnologia-e2e-"));
   const port = await freePort();
   const baseURL = `http://127.0.0.1:${port}`;
   const log = fs.openSync(path.join(dataDir, "server.log"), "a");
-  // A minimal environment, so an ANTHROPIC_API_KEY or COGITO_* variable in the
+  // A minimal environment, so an ANTHROPIC_API_KEY or ACNOLOGIA_* variable in the
   // developer's shell cannot change what the dashboard renders.
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: process.env.HOME ?? dataDir,
     TZ: "UTC",
-    COGITO_ADDR: `127.0.0.1:${port}`,
-    COGITO_DATA_DIR: dataDir,
-    COGITO_MASTER_KEY: masterKey,
-    COGITO_HEALTH_INTERVAL: "off",
+    ACNOLOGIA_ADDR: `127.0.0.1:${port}`,
+    ACNOLOGIA_DATA_DIR: dataDir,
+    ACNOLOGIA_MASTER_KEY: masterKey,
+    ACNOLOGIA_HEALTH_INTERVAL: "off",
   };
   const child = spawn(BIN, [], { env, stdio: ["ignore", log, log], detached: true });
   child.unref();
@@ -63,7 +63,7 @@ export async function startServer(): Promise<Started> {
   }
   const output = fs.readFileSync(path.join(dataDir, "server.log"), "utf8");
   stopServer(child.pid!, dataDir);
-  throw new Error(`cogito did not come up on ${baseURL}. Log:\n${output}`);
+  throw new Error(`acnologia did not come up on ${baseURL}. Log:\n${output}`);
 }
 
 /** Kills the server and removes its data dir. Safe to call twice. */

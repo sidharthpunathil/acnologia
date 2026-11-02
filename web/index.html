@@ -18,7 +18,13 @@
       (function () {
         var pref = "system";
         try {
-          var v = localStorage.getItem("cogito.theme");
+          // Preferences saved before the rename live under cogito.theme; move it.
+          var old = localStorage.getItem("cogito.theme");
+          if (old !== null) {
+            if (localStorage.getItem("acn.theme") === null) localStorage.setItem("acn.theme", old);
+            localStorage.removeItem("cogito.theme");
+          }
+          var v = localStorage.getItem("acn.theme");
           if (v === "light" || v === "dark" || v === "system") pref = v;
         } catch (e) {}
         var dark = pref === "dark" || (pref === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);

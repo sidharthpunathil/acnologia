@@ -1,4 +1,4 @@
-// Command cogito runs the Acnologia API key pool server.
+// Command acnologia runs the Acnologia API key pool server.
 package main
 
 import (
@@ -17,20 +17,20 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/cogito-keys/cogito/internal/agent"
-	"github.com/cogito-keys/cogito/internal/api"
-	"github.com/cogito-keys/cogito/internal/catalog"
-	"github.com/cogito-keys/cogito/internal/config"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/ctl"
-	"github.com/cogito-keys/cogito/internal/egress"
-	"github.com/cogito-keys/cogito/internal/llmstxt"
-	"github.com/cogito-keys/cogito/internal/notify"
-	"github.com/cogito-keys/cogito/internal/pool"
-	"github.com/cogito-keys/cogito/internal/redact"
-	"github.com/cogito-keys/cogito/internal/store"
-	"github.com/cogito-keys/cogito/internal/webui"
-	"github.com/cogito-keys/cogito/internal/worker"
+	"github.com/sidharthpunathil/acnologia/server/internal/agent"
+	"github.com/sidharthpunathil/acnologia/server/internal/api"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/config"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/ctl"
+	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/llmstxt"
+	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/redact"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/webui"
+	"github.com/sidharthpunathil/acnologia/server/internal/worker"
 )
 
 var version = "dev"
@@ -74,6 +74,7 @@ var logHandler *redact.Handler
 func run() error {
 	config.LoadDotEnv(".env")
 	cfg := config.Load(version)
+	config.LogDeprecatedEnv()
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return err
 	}
@@ -151,7 +152,7 @@ func run() error {
 		defer cancel()
 		_ = hs.Shutdown(sctx)
 	}()
-	slog.Info("cogito listening", "addr", cfg.Addr, "data", cfg.DataDir, "version", version)
+	slog.Info("acnologia listening", "addr", cfg.Addr, "data", cfg.DataDir, "version", version)
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -173,13 +174,13 @@ func checkMasterKey(st *store.Store, box *crypto.Box) error {
 		if n > 0 {
 			// A database from before the check existed: verify one secret decrypts.
 			if err := st.VerifyAnySecret(ctx, box.Decrypt); err != nil {
-				return fmt.Errorf("the master key cannot decrypt stored keys; set COGITO_MASTER_KEY to the key this database was created with: %w", err)
+				return fmt.Errorf("the master key cannot decrypt stored keys; set ACNOLOGIA_MASTER_KEY to the key this database was created with: %w", err)
 			}
 		}
 		return st.SetMeta(ctx, "master_key_check", want)
 	}
 	if got != want {
-		return errors.New("the master key does not match this database; set COGITO_MASTER_KEY (or restore master.key) to the key it was created with")
+		return errors.New("the master key does not match this database; set ACNOLOGIA_MASTER_KEY (or restore master.key) to the key it was created with")
 	}
 	return nil
 }

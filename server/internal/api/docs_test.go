@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cogito-keys/cogito/internal/docsmd"
+	"github.com/sidharthpunathil/acnologia/server/internal/docsmd"
 )
 
 var docSlugs = []string{"overview", "architecture", "flows", "security", "configuration", "api", "providers", "development"}

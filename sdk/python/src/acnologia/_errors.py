@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Optional
 
 
-class CogitoError(Exception):
-    """An error response from the Cogito server (`{"error": {"code", "message"}}`)."""
+class AcnologiaError(Exception):
+    """An error response from the Acnologia server (`{"error": {"code", "message"}}`)."""
 
     def __init__(self, message: str, *, status_code: int = 0, code: str = "") -> None:
         super().__init__(message)
@@ -16,7 +16,7 @@ class CogitoError(Exception):
         return f"{type(self).__name__}(status_code={self.status_code!r}, code={self.code!r}, message={self.message!r})"
 
 
-class NoKeyAvailable(CogitoError):
+class NoKeyAvailable(AcnologiaError):
     """No key could be leased right now (HTTP 503).
 
     `code` is `no_key_available` when every key is cooling down, exhausted or
@@ -65,7 +65,7 @@ class AllKeysBusy(NoKeyAvailable):
 
 
 class KeyProblem(Exception):
-    """Base class for errors you raise from inside `with_key` to make Cogito rotate the key.
+    """Base class for errors you raise from inside `with_key` to make Acnologia rotate the key.
 
     `outcome` is the value sent to the report endpoint.
     """

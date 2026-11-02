@@ -15,12 +15,12 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/agent"
-	"github.com/cogito-keys/cogito/internal/catalog"
-	"github.com/cogito-keys/cogito/internal/config"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/pool"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/agent"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/config"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // scripted is an upstream whose answer per key is set by the test. Keys
@@ -73,7 +73,7 @@ func newFeatureEnv(t *testing.T) (*env, *Server) {
 	}
 	ag := agent.New(agent.Config{}, st, cat, box)
 	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20, CacheBytes: 8 << 20}, st, pool.New(st, box), cat, ag,
-		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Cogito"))
+		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Acnologia"))
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)
 	e := &env{t: t, srv: srv, super: client(), st: st}
@@ -164,8 +164,8 @@ func TestCacheServesRepeatsWithoutUpstream(t *testing.T) {
 	appID, tok := e.app(map[string]any{"name": "x"})
 	r1, b1 := call(t, e, "GET", "/proxy/search/q?b=2&a=1", tok)
 	r2, b2 := call(t, e, "GET", "/proxy/search/q?a=1&b=2", tok)
-	if r1.Header.Get("X-Cogito-Cache") != "miss" || r2.Header.Get("X-Cogito-Cache") != "hit" || b1 != b2 {
-		t.Fatalf("want miss then hit: %q %q", r1.Header.Get("X-Cogito-Cache"), r2.Header.Get("X-Cogito-Cache"))
+	if r1.Header.Get("X-Acnologia-Cache") != "miss" || r2.Header.Get("X-Acnologia-Cache") != "hit" || b1 != b2 {
+		t.Fatalf("want miss then hit: %q %q", r1.Header.Get("X-Acnologia-Cache"), r2.Header.Get("X-Acnologia-Cache"))
 	}
 	if up.total.Load() != 1 {
 		t.Fatalf("upstream hit %d times", up.total.Load())
@@ -198,8 +198,8 @@ func TestCacheSkipsResponsesThatEchoTheKey(t *testing.T) {
 	_, tok := e.app(map[string]any{"name": "x"})
 	r, _ := call(t, e, "GET", "/proxy/echo/me", tok)
 	call(t, e, "GET", "/proxy/echo/me", tok)
-	if r.Header.Get("X-Cogito-Cache") != "bypass" || up.total.Load() != 2 {
-		t.Fatalf("a body containing the key must not be cached: %q total=%d", r.Header.Get("X-Cogito-Cache"), up.total.Load())
+	if r.Header.Get("X-Acnologia-Cache") != "bypass" || up.total.Load() != 2 {
+		t.Fatalf("a body containing the key must not be cached: %q total=%d", r.Header.Get("X-Acnologia-Cache"), up.total.Load())
 	}
 }
 
@@ -228,8 +228,8 @@ func TestGroupFallsThroughToNextService(t *testing.T) {
 	e.do(e.super, "POST", "/api/admin/groups", map[string]any{"slug": "serp-a", "name": "Clash", "members": []string{"serp-a", "serp-b"}}, 409, nil)
 	_, tok := e.app(map[string]any{"name": "x", "allowed_services": []string{"search"}})
 	r, body := call(t, e, "GET", "/proxy/search/q", tok)
-	if r.StatusCode != 200 || r.Header.Get("X-Cogito-Service") != "serp-b" || !strings.Contains(body, `"b1"`) {
-		t.Fatalf("group should fall through to serp-b: %d %s %s", r.StatusCode, r.Header.Get("X-Cogito-Service"), body)
+	if r.StatusCode != 200 || r.Header.Get("X-Acnologia-Service") != "serp-b" || !strings.Contains(body, `"b1"`) {
+		t.Fatalf("group should fall through to serp-b: %d %s %s", r.StatusCode, r.Header.Get("X-Acnologia-Service"), body)
 	}
 	if first.total.Load() != 2 || second.total.Load() != 1 {
 		t.Fatalf("hits: first=%d second=%d", first.total.Load(), second.total.Load())
@@ -358,7 +358,7 @@ func TestAdminTokens(t *testing.T) {
 		Token string `json:"token"`
 	}
 	e.do(e.super, "POST", "/api/admin/tokens", map[string]any{"name": "ci", "scope": "read"}, 201, &out)
-	if !strings.HasPrefix(out.Token, "cogadm_") {
+	if !strings.HasPrefix(out.Token, "acnadm_") {
 		t.Fatalf("token %q", out.Token)
 	}
 	bearer := "Bearer " + out.Token
@@ -366,7 +366,7 @@ func TestAdminTokens(t *testing.T) {
 	e.do(http.DefaultClient, "POST", "/api/admin/services", map[string]any{"provider": "generic", "slug": "x", "base_url": "https://x.example"}, 403, nil, "Authorization", bearer)
 	e.do(http.DefaultClient, "POST", "/api/admin/tokens", map[string]any{"name": "more", "scope": "admin"}, 403, nil, "Authorization", bearer)
 	e.do(http.DefaultClient, "PATCH", "/api/admin/me", map[string]any{"name": "pwned"}, 403, nil, "Authorization", bearer)
-	e.do(http.DefaultClient, "GET", "/api/admin/services", nil, 401, nil, "Authorization", "Bearer cogadm_nope")
+	e.do(http.DefaultClient, "GET", "/api/admin/services", nil, 401, nil, "Authorization", "Bearer acnadm_nope")
 
 	var w struct {
 		Token string `json:"token"`

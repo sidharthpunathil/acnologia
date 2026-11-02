@@ -3,7 +3,7 @@
 require "minitest/autorun"
 require "json"
 require "uri"
-require_relative "../lib/cogito"
+require_relative "../lib/acnologia"
 
 class FakeServer
   attr_reader :log, :reports, :lease_bodies
@@ -35,45 +35,45 @@ class FakeServer
     @log << [method, url, headers, body]
     path = URI(url).path
     json = body ? JSON.parse(body) : nil
-    return Cogito::Response.new(401, {}, "{}") unless headers["Authorization"] == "Bearer cog_x"
+    return Acnologia::Response.new(401, {}, "{}") unless headers["Authorization"] == "Bearer acn_x"
 
     if path == "/api/v1/lease"
       @lease_bodies << json
       if @busy
-        return Cogito::Response.new(503, {}, '{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}')
+        return Acnologia::Response.new(503, {}, '{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}')
       end
 
       l = lease_json(json["exclude_key_ids"] || [])
-      return Cogito::Response.new(503, {}, '{"error":{"code":"no_key_available","message":"drained"},"retry_after_sec":7}') unless l
+      return Acnologia::Response.new(503, {}, '{"error":{"code":"no_key_available","message":"drained"},"retry_after_sec":7}') unless l
 
-      Cogito::Response.new(200, {}, JSON.generate(l))
+      Acnologia::Response.new(200, {}, JSON.generate(l))
     elsif (m = path.match(%r{\A/api/v1/leases/(.+)/report\z}))
       id = URI.decode_www_form_component(m[1])
       @reports << json.merge("_id" => id)
       key = @leases.fetch(id)
       @bad << key unless json["outcome"] == "ok"
       nxt = json["rotate"] ? lease_json([key]) : nil
-      Cogito::Response.new(200, {}, JSON.generate("ok" => true, "next" => nxt))
+      Acnologia::Response.new(200, {}, JSON.generate("ok" => true, "next" => nxt))
     elsif path == "/api/v1/services"
-      Cogito::Response.new(200, {}, '{"services":[{"slug":"serpapi","available":true}]}')
+      Acnologia::Response.new(200, {}, '{"services":[{"slug":"serpapi","available":true}]}')
     else
-      Cogito::Response.new(200, { "x-cogito-key-id" => "1" }, JSON.generate("url" => url, "body" => body))
+      Acnologia::Response.new(200, { "x-acnologia-key-id" => "1" }, JSON.generate("url" => url, "body" => body))
     end
   end
 end
 
-class CogitoTest < Minitest::Test
+class AcnologiaTest < Minitest::Test
   def setup
     @srv = FakeServer.new
-    @cog = Cogito::Client.new("http://cogito.test/", "cog_x", transport: @srv.method(:call))
+    @acn = Acnologia::Client.new("http://acnologia.test/", "acn_x", transport: @srv.method(:call))
   end
 
   def test_services
-    assert_equal "serpapi", @cog.services.first["slug"]
+    assert_equal "serpapi", @acn.services.first["slug"]
   end
 
   def test_lease_and_report
-    l = @cog.lease("serpapi", ttl_sec: 60)
+    l = @acn.lease("serpapi", ttl_sec: 60)
     assert_equal({ "service" => "serpapi", "ttl_sec" => 60 }, @srv.lease_bodies.last)
     assert_equal 1, l.key_id
     refute_includes l.inspect, "s1"
@@ -85,19 +85,19 @@ class CogitoTest < Minitest::Test
   end
 
   def test_apply
-    l = @cog.lease("serpapi")
+    l = @acn.lease("serpapi")
     q, h = l.apply(query: { "q" => "a" })
     assert_equal({ "q" => "a", "api_key" => "s1" }, q)
     assert_equal({}, h)
     assert_equal "https://serpapi.com/search.json?q=a", l.url("/search.json", "q" => "a")
-    b = Cogito::Lease.new(@cog, "secret" => "z", "auth" => { "type" => "bearer", "name" => "" })
+    b = Acnologia::Lease.new(@acn, "secret" => "z", "auth" => { "type" => "bearer", "name" => "" })
     assert_equal "Bearer z", b.apply[1]["Authorization"]
-    hd = Cogito::Lease.new(@cog, "secret" => "z", "auth" => { "type" => "header", "name" => "xi-api-key" })
+    hd = Acnologia::Lease.new(@acn, "secret" => "z", "auth" => { "type" => "header", "name" => "xi-api-key" })
     assert_equal "z", hd.apply[1]["xi-api-key"]
   end
 
   def test_apply_prefix
-    mk = ->(auth) { Cogito::Lease.new(@cog, "secret" => "sk", "auth" => auth) }
+    mk = ->(auth) { Acnologia::Lease.new(@acn, "secret" => "sk", "auth" => auth) }
     assert_equal "", mk.call("type" => "query", "name" => "api_key").auth["prefix"]
     q, h = mk.call("type" => "query", "name" => "key", "prefix" => "pk_").apply(query: { "q" => "a" })
     assert_equal({ "q" => "a", "key" => "pk_sk" }, q)
@@ -114,20 +114,20 @@ class CogitoTest < Minitest::Test
   def test_scrub_message
     secret = "a b+c/d~*"
     msg = "GET /x?key=#{secret}&k2=#{URI.encode_www_form_component(secret)}&k3=a%20b%2Bc%2Fd~%2A"
-    assert_equal "GET /x?key=[key]&k2=[key]&k3=[key]", Cogito.scrub_message(msg, secret)
-    assert_equal 500, Cogito.scrub_message("x" * 600, "sk").length
-    assert_equal "plain", Cogito.scrub_message("plain", "")
-    assert_equal "plain", Cogito.scrub_message("plain", nil)
+    assert_equal "GET /x?key=[key]&k2=[key]&k3=[key]", Acnologia.scrub_message(msg, secret)
+    assert_equal 500, Acnologia.scrub_message("x" * 600, "sk").length
+    assert_equal "plain", Acnologia.scrub_message("plain", "")
+    assert_equal "plain", Acnologia.scrub_message("plain", nil)
   end
 
   def test_with_key_scrubs_report_messages
     assert_raises(RuntimeError) do
-      @cog.with_key("serpapi") { |l| raise "GET https://serpapi.com/search?api_key=#{l.secret} failed" }
+      @acn.with_key("serpapi") { |l| raise "GET https://serpapi.com/search?api_key=#{l.secret} failed" }
     end
     assert_equal "error", @srv.reports.last["outcome"]
     assert_equal "RuntimeError: GET https://serpapi.com/search?api_key=[key] failed", @srv.reports.last["message"]
-    @cog.with_key("serpapi") do |l|
-      raise Cogito::RateLimited.new("429 for #{l.secret}") if l.key_id == 2
+    @acn.with_key("serpapi") do |l|
+      raise Acnologia::RateLimited.new("429 for #{l.secret}") if l.key_id == 2
 
       "ok"
     end
@@ -137,10 +137,10 @@ class CogitoTest < Minitest::Test
 
   def test_with_key_rotates
     seen = []
-    out = @cog.with_key("serpapi") do |lease|
+    out = @acn.with_key("serpapi") do |lease|
       seen << lease.key_id
-      raise Cogito::RateLimited.new(retry_after: 5) if lease.key_id == 1
-      raise Cogito::QuotaExhausted if lease.key_id == 2
+      raise Acnologia::RateLimited.new(retry_after: 5) if lease.key_id == 1
+      raise Acnologia::QuotaExhausted if lease.key_id == 2
 
       "done"
     end
@@ -151,36 +151,36 @@ class CogitoTest < Minitest::Test
   end
 
   def test_with_key_max_attempts
-    assert_raises(Cogito::InvalidKey) do
-      @cog.with_key("serpapi", max_attempts: 2) { raise Cogito::InvalidKey }
+    assert_raises(Acnologia::InvalidKey) do
+      @acn.with_key("serpapi", max_attempts: 2) { raise Acnologia::InvalidKey }
     end
     assert_equal [true, false], @srv.reports.map { |r| r["rotate"] }
   end
 
   def test_with_key_other_error
-    assert_raises(ZeroDivisionError) { @cog.with_key("serpapi") { 1 / 0 } }
+    assert_raises(ZeroDivisionError) { @acn.with_key("serpapi") { 1 / 0 } }
     assert_equal "error", @srv.reports.last["outcome"]
   end
 
   def test_no_key_available
     @srv.keys = []
-    err = assert_raises(Cogito::NoKeyAvailable) { @cog.lease("serpapi") }
+    err = assert_raises(Acnologia::NoKeyAvailable) { @acn.lease("serpapi") }
     assert_equal 7, err.retry_after
   end
 
   def test_lease_sends_wait_sec
-    @cog.lease("elevenlabs", ttl_sec: 60, wait_sec: 20).report("ok")
+    @acn.lease("elevenlabs", ttl_sec: 60, wait_sec: 20).report("ok")
     assert_equal({ "service" => "elevenlabs", "ttl_sec" => 60, "wait_sec" => 20 }, @srv.lease_bodies.last)
-    @cog.lease("elevenlabs", wait_sec: 0).report("ok")
+    @acn.lease("elevenlabs", wait_sec: 0).report("ok")
     assert_equal({ "service" => "elevenlabs" }, @srv.lease_bodies.last)
-    assert_raises(ArgumentError) { @cog.lease("elevenlabs", wait_sec: 61) }
+    assert_raises(ArgumentError) { @acn.lease("elevenlabs", wait_sec: 61) }
     assert_equal 2, @srv.lease_bodies.size
   end
 
   def test_with_key_sends_wait_sec
     @srv.keys = [1]
-    assert_raises(Cogito::NoKeyAvailable) do
-      @cog.with_key("elevenlabs", wait_sec: 15) { raise Cogito::RateLimited }
+    assert_raises(Acnologia::NoKeyAvailable) do
+      @acn.with_key("elevenlabs", wait_sec: 15) { raise Acnologia::RateLimited }
     end
     assert_equal([15, 15], @srv.lease_bodies.map { |b| b["wait_sec"] })
     assert_equal ["rate_limited"], @srv.reports.map { |r| r["outcome"] }
@@ -188,8 +188,8 @@ class CogitoTest < Minitest::Test
 
   def test_all_keys_busy
     @srv.busy = true
-    err = assert_raises(Cogito::AllKeysBusy) { @cog.lease("elevenlabs", wait_sec: 5) }
-    assert_kind_of Cogito::NoKeyAvailable, err
+    err = assert_raises(Acnologia::AllKeysBusy) { @acn.lease("elevenlabs", wait_sec: 5) }
+    assert_kind_of Acnologia::NoKeyAvailable, err
     assert err.busy?
     assert_equal "all_keys_busy", err.code
     assert_equal 503, err.status
@@ -199,46 +199,46 @@ class CogitoTest < Minitest::Test
 
   def test_no_key_available_is_not_busy
     @srv.keys = []
-    err = assert_raises(Cogito::NoKeyAvailable) { @cog.lease("serpapi") }
+    err = assert_raises(Acnologia::NoKeyAvailable) { @acn.lease("serpapi") }
     refute err.busy?
-    refute_kind_of Cogito::AllKeysBusy, err
+    refute_kind_of Acnologia::AllKeysBusy, err
   end
 
   def test_with_key_busy_does_not_yield
     @srv.busy = true
     yielded = false
-    assert_raises(Cogito::AllKeysBusy) { @cog.with_key("elevenlabs", wait_sec: 2) { yielded = true } }
+    assert_raises(Acnologia::AllKeysBusy) { @acn.with_key("elevenlabs", wait_sec: 2) { yielded = true } }
     refute yielded
     assert_empty @srv.reports
   end
 
   def test_with_key_reports_on_break_and_throw
-    @cog.with_key("serpapi") { break }
+    @acn.with_key("serpapi") { break }
     assert_equal ["ok"], @srv.reports.map { |r| r["outcome"] }
-    catch(:done) { @cog.with_key("serpapi") { throw :done } }
+    catch(:done) { @acn.with_key("serpapi") { throw :done } }
     assert_equal %w[ok ok], @srv.reports.map { |r| r["outcome"] }
     assert_equal 2, @srv.reports.map { |r| r["_id"] }.uniq.size
   end
 
   def test_lease_wait_read_timeout
-    uri = URI("http://cogito.test/api/v1/lease")
-    assert_equal 30, @cog.send(:lease_wait, uri, JSON.generate("service" => "x", "wait_sec" => 30))
-    assert_equal 0, @cog.send(:lease_wait, uri, JSON.generate("service" => "x"))
-    assert_equal 0, @cog.send(:lease_wait, URI("http://cogito.test/api/v1/services"), nil)
+    uri = URI("http://acnologia.test/api/v1/lease")
+    assert_equal 30, @acn.send(:lease_wait, uri, JSON.generate("service" => "x", "wait_sec" => 30))
+    assert_equal 0, @acn.send(:lease_wait, uri, JSON.generate("service" => "x"))
+    assert_equal 0, @acn.send(:lease_wait, URI("http://acnologia.test/api/v1/services"), nil)
   end
 
   def test_bad_token
-    cog = Cogito::Client.new("http://cogito.test", "cog_bad", transport: @srv.method(:call))
-    err = assert_raises(Cogito::Error) { cog.services }
+    acn = Acnologia::Client.new("http://acnologia.test", "acn_bad", transport: @srv.method(:call))
+    err = assert_raises(Acnologia::Error) { acn.services }
     assert_equal 401, err.status
   end
 
   def test_proxy
-    res = @cog.proxy("serpapi").get("/search.json", "q" => "coffee")
+    res = @acn.proxy("serpapi").get("/search.json", "q" => "coffee")
     assert res.ok?
-    assert_equal "http://cogito.test/proxy/serpapi/search.json?q=coffee", res.json["url"]
-    assert_equal "1", res["X-Cogito-Key-Id"]
-    res = @cog.proxy("elevenlabs").post("v1/text-to-speech/v", { "text" => "hi" }, headers: { "Accept" => "audio/mpeg" })
+    assert_equal "http://acnologia.test/proxy/serpapi/search.json?q=coffee", res.json["url"]
+    assert_equal "1", res["X-Acnologia-Key-Id"]
+    res = @acn.proxy("elevenlabs").post("v1/text-to-speech/v", { "text" => "hi" }, headers: { "Accept" => "audio/mpeg" })
     assert_equal '{"text":"hi"}', res.json["body"]
     assert_equal "application/json", @srv.log.last[2]["Content-Type"]
   end

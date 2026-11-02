@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cogito-keys/cogito/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 )
 
 // pinKeyHost decides whether the operator's test key may be sent to baseURL.

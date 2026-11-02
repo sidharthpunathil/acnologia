@@ -1,13 +1,15 @@
 import { create } from "zustand";
+import { migrateLegacyStorage } from "@/lib/legacyStorage";
 
 export type ThemePref = "system" | "light" | "dark";
 export type Theme = "light" | "dark";
 
-const STORAGE_KEY = "cogito.theme";
+const STORAGE_KEY = "acn.theme";
 /** Matches the canvas color of each theme, for the browser and status bar. */
 const THEME_COLOR: Record<Theme, string> = { light: "#eeede9", dark: "#151412" };
 
 function readPref(): ThemePref {
+  migrateLegacyStorage();
   try {
     const v = localStorage.getItem(STORAGE_KEY);
     if (v === "light" || v === "dark" || v === "system") return v;

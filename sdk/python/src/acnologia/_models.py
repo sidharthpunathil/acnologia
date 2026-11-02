@@ -8,7 +8,7 @@ from urllib.parse import quote
 from ._errors import KeyProblem
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ._client import AsyncCogito, Cogito
+    from ._client import AsyncAcnologia, Acnologia
 
 OUTCOMES = ("ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error")
 
@@ -172,13 +172,13 @@ class _LeaseBase:
 
 @dataclass
 class Lease(_LeaseBase):
-    """A key handed out by Cogito. Use it as a context manager to report automatically:
+    """A key handed out by Acnologia. Use it as a context manager to report automatically:
     a clean exit reports `ok`, an exception reports the matching outcome."""
 
-    _client: Optional["Cogito"] = field(default=None, repr=False, compare=False)
+    _client: Optional["Acnologia"] = field(default=None, repr=False, compare=False)
 
     @classmethod
-    def from_json(cls, data: Mapping[str, Any], client: Optional["Cogito"] = None) -> "Lease":
+    def from_json(cls, data: Mapping[str, Any], client: Optional["Acnologia"] = None) -> "Lease":
         return cls(**cls._fields_from_json(data), _client=client)
 
     def report(
@@ -226,10 +226,10 @@ class Lease(_LeaseBase):
 class AsyncLease(_LeaseBase):
     """Async variant of Lease. Use with `async with`."""
 
-    _client: Optional["AsyncCogito"] = field(default=None, repr=False, compare=False)
+    _client: Optional["AsyncAcnologia"] = field(default=None, repr=False, compare=False)
 
     @classmethod
-    def from_json(cls, data: Mapping[str, Any], client: Optional["AsyncCogito"] = None) -> "AsyncLease":
+    def from_json(cls, data: Mapping[str, Any], client: Optional["AsyncAcnologia"] = None) -> "AsyncLease":
         return cls(**cls._fields_from_json(data), _client=client)
 
     async def report(

@@ -13,12 +13,12 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cogito-keys/cogito/internal/agent"
-	"github.com/cogito-keys/cogito/internal/catalog"
-	"github.com/cogito-keys/cogito/internal/config"
-	"github.com/cogito-keys/cogito/internal/crypto"
-	"github.com/cogito-keys/cogito/internal/pool"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/agent"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/config"
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // fakeSerp behaves like SerpAPI: some keys are out of searches, some hourly capped.
@@ -34,9 +34,12 @@ func (f *fakeSerp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.hits[k]++
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if r.URL.Query().Get("cogito_token") != "" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer cog_") {
+	q := r.URL.Query()
+	auth := r.Header.Get("Authorization")
+	if q.Get("acn_token") != "" || q.Get("cogito_token") != "" || r.Header.Get("X-Acnologia-Token") != "" || r.Header.Get("X-Cogito-Token") != "" ||
+		strings.HasPrefix(auth, "Bearer acn_") || strings.HasPrefix(auth, "Bearer cog_") {
 		w.WriteHeader(500)
-		_, _ = w.Write([]byte(`{"error":"cogito token leaked upstream"}`))
+		_, _ = w.Write([]byte(`{"error":"acnologia token leaked upstream"}`))
 		return
 	}
 	if msg, ok := f.bad[k]; ok && (r.URL.Path != "/account.json" || strings.Contains(msg, "Invalid")) {
@@ -83,7 +86,7 @@ func newEnv(t *testing.T) *env {
 	}
 	ag := agent.New(agent.Config{}, st, cat, box)
 	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20}, st, pool.New(st, box), cat, ag,
-		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Cogito {{BASE_URL}}"))
+		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Acnologia {{BASE_URL}}"))
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)
 	e := &env{t: t, srv: srv, up: up, upURL: ups.URL, super: client(), st: st, api: s}
@@ -154,12 +157,12 @@ func TestProxyRotatesOnRateLimit(t *testing.T) {
 	_, tok := e.app(map[string]any{"name": "site"})
 
 	var body map[string]any
-	resp := e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=coffee&cogito_token="+tok, nil, 200, &body)
+	resp := e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=coffee&acn_token="+tok, nil, 200, &body)
 	if body["key"] != "k3" || body["q"] != "coffee" {
 		t.Fatalf("expected k3 to answer, got %v", body)
 	}
-	if resp.Header.Get("X-Cogito-Attempts") != "3" {
-		t.Fatalf("attempts header = %q", resp.Header.Get("X-Cogito-Attempts"))
+	if resp.Header.Get("X-Acnologia-Attempts") != "3" {
+		t.Fatalf("attempts header = %q", resp.Header.Get("X-Acnologia-Attempts"))
 	}
 	var keys struct{ Keys []store.Key }
 	e.do(e.super, "GET", "/api/admin/services/1/keys", nil, 200, &keys)
@@ -445,7 +448,7 @@ func TestRoundRobinSpreadsBursts(t *testing.T) {
 	seen := map[string]int{}
 	for i := 0; i < 9; i++ {
 		resp := e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=x", nil, 200, nil, "Authorization", "Bearer "+tok)
-		seen[resp.Header.Get("X-Cogito-Key-Id")]++
+		seen[resp.Header.Get("X-Acnologia-Key-Id")]++
 	}
 	if len(seen) != 3 || seen["1"] != 3 || seen["2"] != 3 || seen["3"] != 3 {
 		t.Fatalf("round robin within one second should spread evenly, got %v", seen)

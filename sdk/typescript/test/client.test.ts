@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { scrubMessage } from "../src/client.js";
 import {
   AllKeysBusyError,
-  Cogito,
-  CogitoError,
+  Acnologia,
+  AcnologiaError,
   InvalidKeyError,
   NoKeyAvailableError,
   QuotaExhaustedError,
@@ -61,14 +61,14 @@ function mock(handler: Handler) {
     calls.push(call);
     return handler(call);
   };
-  const client = new Cogito({ baseUrl: "http://cogito.test/", token: "cog_test", fetch });
+  const client = new Acnologia({ baseUrl: "http://acnologia.test/", token: "acn_test", fetch });
   return { client, calls };
 }
 
-describe("Cogito client", () => {
+describe("Acnologia client", () => {
   it("requires baseUrl and token", () => {
-    expect(() => new Cogito({ baseUrl: "", token: "x" })).toThrow(/baseUrl/);
-    expect(() => new Cogito({ baseUrl: "http://x", token: "" })).toThrow(/token/);
+    expect(() => new Acnologia({ baseUrl: "", token: "x" })).toThrow(/baseUrl/);
+    expect(() => new Acnologia({ baseUrl: "http://x", token: "" })).toThrow(/token/);
   });
 
   it("lists services with auth headers and camelCase fields", async () => {
@@ -88,10 +88,10 @@ describe("Cogito client", () => {
       }),
     );
     const services = await client.services();
-    expect(calls[0].url).toBe("http://cogito.test/api/v1/services");
+    expect(calls[0].url).toBe("http://acnologia.test/api/v1/services");
     expect(calls[0].method).toBe("GET");
-    expect(calls[0].headers.authorization).toBe("Bearer cog_test");
-    expect(calls[0].headers["x-cogito-client"]).toBe("cogito-ts/0.1.0");
+    expect(calls[0].headers.authorization).toBe("Bearer acn_test");
+    expect(calls[0].headers["x-acnologia-client"]).toBe("acnologia-ts/0.1.0");
     expect(services).toEqual([
       {
         slug: "serpapi",
@@ -108,7 +108,7 @@ describe("Cogito client", () => {
   it("leases a key and omits undefined options", async () => {
     const { client, calls } = mock(() => json(leaseJSON(7)));
     const lease = await client.lease("serpapi");
-    expect(calls[0].url).toBe("http://cogito.test/api/v1/lease");
+    expect(calls[0].url).toBe("http://acnologia.test/api/v1/lease");
     expect(calls[0].method).toBe("POST");
     expect(calls[0].body).toEqual({ service: "serpapi" });
     expect(lease.leaseId).toBe("l7");
@@ -131,7 +131,7 @@ describe("Cogito client", () => {
     );
     const err = await client.lease("serpapi").catch((e) => e);
     expect(err).toBeInstanceOf(NoKeyAvailableError);
-    expect(err).toBeInstanceOf(CogitoError);
+    expect(err).toBeInstanceOf(AcnologiaError);
     expect(err.retryAfter).toBe(42);
     expect(err.status).toBe(503);
     expect(err.message).toBe("all keys cooling");
@@ -169,10 +169,10 @@ describe("Cogito client", () => {
     expect(err.retryAfter).toBeNull();
   });
 
-  it("throws CogitoError with code and status for other errors", async () => {
+  it("throws AcnologiaError with code and status for other errors", async () => {
     const { client } = mock(() => json({ error: { code: "unauthorized", message: "bad token" } }, 401));
     const err = await client.services().catch((e) => e);
-    expect(err).toBeInstanceOf(CogitoError);
+    expect(err).toBeInstanceOf(AcnologiaError);
     expect(err).not.toBeInstanceOf(NoKeyAvailableError);
     expect(err.status).toBe(401);
     expect(err.code).toBe("unauthorized");
@@ -200,7 +200,7 @@ describe("Lease", () => {
       message: "slow down",
       rotate: true,
     });
-    expect(calls[1].url).toBe("http://cogito.test/api/v1/leases/a%2Fb/report");
+    expect(calls[1].url).toBe("http://acnologia.test/api/v1/leases/a%2Fb/report");
     expect(calls[1].body).toEqual({
       outcome: "rate_limited",
       status_code: 429,
@@ -318,7 +318,7 @@ describe("withKey", () => {
       message: "key was rate limited",
       rotate: true,
     });
-    expect(calls[2].url).toBe("http://cogito.test/api/v1/leases/l11/report");
+    expect(calls[2].url).toBe("http://acnologia.test/api/v1/leases/l11/report");
     expect(calls[2].body).toEqual({ outcome: "ok" });
   });
 
@@ -343,7 +343,7 @@ describe("withKey", () => {
       if (++n === 1) throw new RateLimitedError();
       return n;
     });
-    expect(calls[2].url).toBe("http://cogito.test/api/v1/lease");
+    expect(calls[2].url).toBe("http://acnologia.test/api/v1/lease");
     expect(calls[2].body).toEqual({ service: "serpapi", exclude_key_ids: [1] });
   });
 
@@ -440,9 +440,9 @@ describe("proxy", () => {
     const { client, calls } = mock(() => json({ organic_results: [] }));
     const res = await client.proxy("serpapi").get("/search.json", { engine: "google", q: "coffee" });
     expect(res.status).toBe(200);
-    expect(calls[0].url).toBe("http://cogito.test/proxy/serpapi/search.json?engine=google&q=coffee");
+    expect(calls[0].url).toBe("http://acnologia.test/proxy/serpapi/search.json?engine=google&q=coffee");
     expect(calls[0].method).toBe("GET");
-    expect(calls[0].headers.authorization).toBe("Bearer cog_test");
+    expect(calls[0].headers.authorization).toBe("Bearer acn_test");
   });
 
   it("POST JSON encodes plain objects", async () => {
@@ -450,7 +450,7 @@ describe("proxy", () => {
     const res = await client
       .proxy("elevenlabs")
       .post("v1/text-to-speech/voice123", { text: "hi", model_id: "eleven_multilingual_v2" });
-    expect(calls[0].url).toBe("http://cogito.test/proxy/elevenlabs/v1/text-to-speech/voice123");
+    expect(calls[0].url).toBe("http://acnologia.test/proxy/elevenlabs/v1/text-to-speech/voice123");
     expect(calls[0].method).toBe("POST");
     expect(calls[0].headers["content-type"]).toBe("application/json");
     expect(calls[0].body).toEqual({ text: "hi", model_id: "eleven_multilingual_v2" });
@@ -474,7 +474,7 @@ describe("proxy", () => {
     const res = await client.proxy("serpapi").request("patch", "/a/b", { query: { x: 1 } });
     expect(res.status).toBe(429);
     expect(calls[0].method).toBe("PATCH");
-    expect(calls[0].url).toBe("http://cogito.test/proxy/serpapi/a/b?x=1");
+    expect(calls[0].url).toBe("http://acnologia.test/proxy/serpapi/a/b?x=1");
     const del = await client.proxy("serpapi").delete("thing");
     expect(del.status).toBe(429);
     expect(calls[1].method).toBe("DELETE");
@@ -483,7 +483,7 @@ describe("proxy", () => {
   it("our token wins over a caller Authorization header", async () => {
     const { client, calls } = mock(() => new Response("ok"));
     await client.proxy("s").get("x", undefined, { headers: { Authorization: "Bearer nope", "X-Extra": "1" } });
-    expect(calls[0].headers.authorization).toBe("Bearer cog_test");
+    expect(calls[0].headers.authorization).toBe("Bearer acn_test");
     expect(calls[0].headers["x-extra"]).toBe("1");
   });
 });
@@ -491,7 +491,7 @@ describe("proxy", () => {
 describe("fetch resolution", () => {
   it("uses globalThis.fetch lazily when none is passed", async () => {
     const original = globalThis.fetch;
-    const client = new Cogito({ baseUrl: "http://c", token: "cog_x" });
+    const client = new Acnologia({ baseUrl: "http://c", token: "acn_x" });
     let hit = "";
     globalThis.fetch = (async (url: string) => {
       hit = url;
@@ -554,6 +554,6 @@ describe("secret hygiene", () => {
     // Node's util.inspect (console.log) calls this symbol; no @types/node here to import it.
     const view = (o: object) => JSON.stringify((o as any)[Symbol.for("nodejs.util.inspect.custom")]());
     expect(view(lease)).not.toContain("secret-1");
-    expect(view(client)).not.toContain("cog_test");
+    expect(view(client)).not.toContain("acn_test");
   });
 });

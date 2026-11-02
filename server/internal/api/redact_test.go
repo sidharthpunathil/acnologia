@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cogito-keys/cogito/internal/notify"
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // Made up secrets; none is a real key.

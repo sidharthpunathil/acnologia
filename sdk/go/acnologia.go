@@ -1,12 +1,12 @@
-// Package cogito is a Go client for Cogito, a self-hosted API key pool.
+// Package acnologia is a Go client for Acnologia, a self-hosted API key pool.
 //
-// Cogito can be consumed in two ways:
+// Acnologia can be consumed in two ways:
 //
 //   - Lease mode: Lease a key, call the provider yourself, then Report the
 //     outcome. WithKey wraps this loop and rotates keys automatically.
-//   - Proxy mode: send requests through Proxy; Cogito injects a key and
+//   - Proxy mode: send requests through Proxy; Acnologia injects a key and
 //     rotates on rate limits without ever exposing the secret.
-package cogito
+package acnologia
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ const Version = "0.1.0"
 // longer than MaxWait so a lease that waits for a free slot can still succeed.
 const DefaultTimeout = 75 * time.Second
 
-// Client talks to a Cogito server using an app token (cog_...).
+// Client talks to an Acnologia server using an app token (acn_...).
 type Client struct {
 	baseURL    string
 	token      string
@@ -41,7 +41,7 @@ type Client struct {
 
 // String redacts the app token so a logged Client does not leak it.
 func (c Client) String() string {
-	return fmt.Sprintf("cogito.Client{baseURL:%q, token:\"[redacted]\"}", c.baseURL)
+	return fmt.Sprintf("acnologia.Client{baseURL:%q, token:\"[redacted]\"}", c.baseURL)
 }
 
 // GoString redacts the app token for %#v.
@@ -58,13 +58,13 @@ func WithHTTPClient(hc *http.Client) Option {
 // WithUserAgent overrides the User-Agent header.
 func WithUserAgent(ua string) Option { return func(c *Client) { c.userAgent = ua } }
 
-// New creates a client. baseURL is the Cogito server, e.g. http://localhost:8080.
+// New creates a client. baseURL is the Acnologia server, e.g. http://localhost:8080.
 func New(baseURL, token string, opts ...Option) *Client {
 	c := &Client{
 		baseURL:     strings.TrimRight(baseURL, "/"),
 		token:       token,
 		httpClient:  &http.Client{Timeout: DefaultTimeout},
-		userAgent:   "cogito-go/" + Version,
+		userAgent:   "acnologia-go/" + Version,
 		defaultHTTP: true,
 	}
 	for _, o := range opts {
@@ -109,7 +109,7 @@ type Lease struct {
 
 // String redacts the secret so a logged Lease does not leak the key.
 func (l Lease) String() string {
-	return fmt.Sprintf("cogito.Lease{LeaseID:%q, KeyID:%d, Service:%q, Secret:\"[redacted]\", Auth:%+v, BaseURL:%q, ExpiresAt:%s}",
+	return fmt.Sprintf("acnologia.Lease{LeaseID:%q, KeyID:%d, Service:%q, Secret:\"[redacted]\", Auth:%+v, BaseURL:%q, ExpiresAt:%s}",
 		l.LeaseID, l.KeyID, l.Service, l.Auth, l.BaseURL, l.ExpiresAt.Format(time.RFC3339))
 }
 
@@ -206,7 +206,7 @@ func (c *Client) Lease(ctx context.Context, service string, opts *LeaseOptions) 
 			body["ttl_sec"] = ceilSeconds(opts.TTL)
 		}
 		if opts.Wait < 0 || opts.Wait > MaxWait {
-			return nil, fmt.Errorf("cogito: lease wait must be between 0 and %s", MaxWait)
+			return nil, fmt.Errorf("acnologia: lease wait must be between 0 and %s", MaxWait)
 		}
 		if opts.Wait > 0 {
 			body["wait_sec"] = ceilSeconds(opts.Wait)
@@ -223,7 +223,7 @@ func (c *Client) Lease(ctx context.Context, service string, opts *LeaseOptions) 
 // is available, the next lease is returned; otherwise next is nil.
 func (l *Lease) Report(ctx context.Context, r Report) (*Lease, error) {
 	if l.client == nil {
-		return nil, fmt.Errorf("cogito: lease %q has no client", l.LeaseID)
+		return nil, fmt.Errorf("acnologia: lease %q has no client", l.LeaseID)
 	}
 	outcome := r.Outcome
 	if outcome == "" {
@@ -338,7 +338,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("cogito: decode response: %w", err)
+		return fmt.Errorf("acnologia: decode response: %w", err)
 	}
 	return nil
 }

@@ -124,7 +124,7 @@ export function UsagePage() {
           <Tiles data={data} />
           {data.event_retention_days > 0 && data.days > data.event_retention_days && (
             <Callout tone="info">
-              Provider spend only goes back {plural(data.event_retention_days, "day")}, the event retention set by COGITO_EVENT_RETENTION_DAYS. Claude
+              Provider spend only goes back {plural(data.event_retention_days, "day")}, the event retention set by ACNOLOGIA_EVENT_RETENTION_DAYS. Claude
               spend is kept for the whole range.
             </Callout>
           )}

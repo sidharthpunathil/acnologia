@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
-namespace Cogito;
+namespace Acnologia;
 
-use Cogito\Exception\AllKeysBusy;
-use Cogito\Exception\CogitoException;
-use Cogito\Exception\KeyProblem;
-use Cogito\Exception\NoKeyAvailable;
+use Acnologia\Exception\AllKeysBusy;
+use Acnologia\Exception\AcnologiaException;
+use Acnologia\Exception\KeyProblem;
+use Acnologia\Exception\NoKeyAvailable;
 
 /**
- * Client for the Cogito consumer API.
+ * Client for the Acnologia consumer API.
  *
- *     $cog = new Cogito\Cogito('http://localhost:8080', 'cog_...');
- *     $res = $cog->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
+ *     $acn = new Acnologia\Acnologia('http://localhost:8080', 'acn_...');
+ *     $res = $acn->proxy('serpapi')->get('/search.json', ['q' => 'coffee']);
  */
-final class Cogito
+final class Acnologia
 {
     public const VERSION = '0.1.0';
 
@@ -222,7 +222,7 @@ final class Cogito
             if ($code === 'no_key_available' || ($res->status === 503 && $code === '')) {
                 throw new NoKeyAvailable($message, $retry);
             }
-            throw new CogitoException($message, $res->status, $code);
+            throw new AcnologiaException($message, $res->status, $code);
         }
         return is_array($data) ? $data : [];
     }
@@ -233,7 +233,7 @@ final class Cogito
      */
     public function send(string $method, string $url, array $headers, ?string $body): Response
     {
-        $headers['User-Agent'] = 'cogito-php/' . self::VERSION;
+        $headers['User-Agent'] = 'acnologia-php/' . self::VERSION;
         return ($this->transport)($method, $url, $headers, $body);
     }
 
@@ -267,7 +267,7 @@ final class Cogito
         if ($out === false) {
             $msg = curl_error($ch);
             curl_close($ch);
-            throw new CogitoException('request failed: ' . $msg);
+            throw new AcnologiaException('request failed: ' . $msg);
         }
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);

@@ -1,13 +1,13 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
-import type { CogitoEvent } from "../lib/types";
+import type { AcnologiaEvent } from "../lib/types";
 
 interface EventsStore {
   /** Global feed for the Activity page. */
-  feed: CogitoEvent[];
+  feed: AcnologiaEvent[];
   feedLoaded: boolean;
   /** Per service recent events for the service page. */
-  byService: Record<number, CogitoEvent[]>;
+  byService: Record<number, AcnologiaEvent[]>;
   fetchFeed: (params?: { service_id?: number; limit?: number }) => Promise<void>;
   fetchForService: (serviceId: number, limit?: number) => Promise<void>;
 }

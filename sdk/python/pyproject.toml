@@ -3,13 +3,13 @@ requires = ["hatchling>=1.18"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cogito-keys"
+name = "acnologia"
 version = "0.1.0"
-description = "Client for Cogito, a self-hosted API key pool with automatic rotation."
+description = "Client for Acnologia, a self-hosted API key pool with automatic rotation."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-keywords = ["api-keys", "rate-limit", "key-rotation", "serpapi", "elevenlabs", "cogito"]
+keywords = ["api-keys", "rate-limit", "key-rotation", "serpapi", "elevenlabs", "acnologia"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Typing :: Typed",
@@ -22,10 +22,10 @@ dependencies = ["httpx>=0.24"]
 test = ["pytest>=7", "pytest-asyncio>=0.21"]
 
 [project.urls]
-Homepage = "https://github.com/cogito-keys/cogito"
+Homepage = "https://github.com/sidharthpunathil/acnologia"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cogito"]
+packages = ["src/acnologia"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

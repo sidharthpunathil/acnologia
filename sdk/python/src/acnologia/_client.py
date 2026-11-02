@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ._errors import AllKeysBusy, CogitoError, KeyProblem, NoKeyAvailable
+from ._errors import AllKeysBusy, AcnologiaError, KeyProblem, NoKeyAvailable
 from ._models import AsyncLease, Lease, Service, outcome_for
 
 __version__ = "0.1.0"
@@ -15,16 +15,16 @@ __version__ = "0.1.0"
 T = TypeVar("T")
 
 DEFAULT_TIMEOUT = 30.0
-USER_AGENT = f"cogito-python/{__version__}"
+USER_AGENT = f"acnologia-python/{__version__}"
 
 
 def _resolve(base_url: Optional[str], token: Optional[str]) -> "tuple[str, str]":
-    base = base_url or os.environ.get("COGITO_URL") or ""
-    tok = token or os.environ.get("COGITO_TOKEN") or ""
+    base = base_url or os.environ.get("ACNOLOGIA_URL") or ""
+    tok = token or os.environ.get("ACNOLOGIA_TOKEN") or ""
     if not base:
-        raise ValueError("base_url is required (or set COGITO_URL)")
+        raise ValueError("base_url is required (or set ACNOLOGIA_URL)")
     if not tok:
-        raise ValueError("token is required (or set COGITO_TOKEN)")
+        raise ValueError("token is required (or set ACNOLOGIA_TOKEN)")
     return base.rstrip("/"), tok
 
 
@@ -62,7 +62,7 @@ def _raise_for(resp: httpx.Response) -> None:
         raise AllKeysBusy(message, retry_after=retry_after, status_code=resp.status_code, code=code)
     if code == "no_key_available" or (resp.status_code == 503 and not code):
         raise NoKeyAvailable(message, retry_after=retry_after, status_code=resp.status_code, code=code or "no_key_available")
-    raise CogitoError(message, status_code=resp.status_code, code=code)
+    raise AcnologiaError(message, status_code=resp.status_code, code=code)
 
 
 MAX_WAIT_SEC = 60
@@ -124,11 +124,11 @@ def _proxy_prefix(base_url: str, service: str) -> str:
 
 
 class Proxy:
-    """Calls a provider through Cogito's proxy. Cogito injects a key and rotates on
+    """Calls a provider through Acnologia's proxy. Acnologia injects a key and rotates on
     rate limits, so the secret never reaches your process. Responses are returned
     as is, including non 2xx statuses."""
 
-    def __init__(self, client: "Cogito", service: str) -> None:
+    def __init__(self, client: "Acnologia", service: str) -> None:
         self._client = client
         self.service = service
         self.prefix = _proxy_prefix(client.base_url, service)
@@ -159,7 +159,7 @@ class Proxy:
 class AsyncProxy:
     """Async variant of Proxy."""
 
-    def __init__(self, client: "AsyncCogito", service: str) -> None:
+    def __init__(self, client: "AsyncAcnologia", service: str) -> None:
         self._client = client
         self.service = service
         self.prefix = _proxy_prefix(client.base_url, service)
@@ -187,11 +187,11 @@ class AsyncProxy:
         return await self.request("DELETE", path, **kwargs)
 
 
-class Cogito:
-    """Synchronous Cogito client.
+class Acnologia:
+    """Synchronous Acnologia client.
 
-    >>> cog = Cogito("http://localhost:8080", "cog_...")
-    >>> with cog.lease("serpapi") as lease:
+    >>> acn = Acnologia("http://localhost:8080", "acn_...")
+    >>> with acn.lease("serpapi") as lease:
     ...     httpx.get(lease.url("/search.json"), params=lease.apply({"q": "coffee"}))
     """
 
@@ -213,7 +213,7 @@ class Cogito:
         if self._owns_http:
             self._http.close()
 
-    def __enter__(self) -> "Cogito":
+    def __enter__(self) -> "Acnologia":
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -312,8 +312,8 @@ class Cogito:
         return Proxy(self, service)
 
 
-class AsyncCogito:
-    """Asynchronous Cogito client built on httpx.AsyncClient."""
+class AsyncAcnologia:
+    """Asynchronous Acnologia client built on httpx.AsyncClient."""
 
     def __init__(
         self,
@@ -332,7 +332,7 @@ class AsyncCogito:
         if self._owns_http:
             await self._http.aclose()
 
-    async def __aenter__(self) -> "AsyncCogito":
+    async def __aenter__(self) -> "AsyncAcnologia":
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -360,7 +360,7 @@ class AsyncCogito:
         ttl_sec: Optional[int] = None,
         wait_sec: Optional[float] = None,
     ) -> AsyncLease:
-        """Async lease. See Cogito.lease for `wait_sec` and why you must report."""
+        """Async lease. See Acnologia.lease for `wait_sec` and why you must report."""
         body = _lease_body(service, exclude_key_ids, ttl_sec, wait_sec)
         data = await self._call("POST", "/api/v1/lease", body, timeout=_lease_timeout(self._http.timeout, wait_sec))
         return AsyncLease.from_json(data, self)

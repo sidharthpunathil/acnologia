@@ -1,4 +1,4 @@
-package cogito
+package acnologia
 
 import (
 	"errors"
@@ -7,17 +7,17 @@ import (
 )
 
 // Sentinel errors. Every typed error below reports true for its sentinel via
-// errors.Is, so callers can choose between errors.Is(err, cogito.RateLimited)
+// errors.Is, so callers can choose between errors.Is(err, acnologia.RateLimited)
 // and errors.As(err, &rl) when they also need fields such as RetryAfter.
 var (
-	RateLimited    = errors.New("cogito: rate limited")
-	QuotaExhausted = errors.New("cogito: quota exhausted")
-	InvalidKey     = errors.New("cogito: invalid key")
-	NoKeyAvailable = errors.New("cogito: no key available")
+	RateLimited    = errors.New("acnologia: rate limited")
+	QuotaExhausted = errors.New("acnologia: quota exhausted")
+	InvalidKey     = errors.New("acnologia: invalid key")
+	NoKeyAvailable = errors.New("acnologia: no key available")
 	// AllKeysBusy matches an *ErrNoKeyAvailable whose Busy field is true:
 	// every usable key is at its concurrency limit (HTTP 503 all_keys_busy).
 	// Such an error also matches NoKeyAvailable.
-	AllKeysBusy = errors.New("cogito: all keys busy")
+	AllKeysBusy = errors.New("acnologia: all keys busy")
 )
 
 // APIError is returned for any non-2xx response from the consumer API that is
@@ -30,9 +30,9 @@ type APIError struct {
 
 func (e *APIError) Error() string {
 	if e.Code != "" {
-		return fmt.Sprintf("cogito: http %d: %s: %s", e.StatusCode, e.Code, e.Message)
+		return fmt.Sprintf("acnologia: http %d: %s: %s", e.StatusCode, e.Code, e.Message)
 	}
-	return fmt.Sprintf("cogito: http %d: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("acnologia: http %d: %s", e.StatusCode, e.Message)
 }
 
 // ErrRateLimited signals that the upstream provider rate limited the key.
@@ -45,7 +45,7 @@ type ErrRateLimited struct {
 }
 
 func (e *ErrRateLimited) Error() string {
-	msg := "cogito: rate limited"
+	msg := "acnologia: rate limited"
 	if e.RetryAfter > 0 {
 		msg += fmt.Sprintf(" (retry after %s)", e.RetryAfter)
 	}
@@ -66,9 +66,9 @@ type ErrQuotaExhausted struct {
 
 func (e *ErrQuotaExhausted) Error() string {
 	if e.Message != "" {
-		return "cogito: quota exhausted: " + e.Message
+		return "acnologia: quota exhausted: " + e.Message
 	}
-	return "cogito: quota exhausted"
+	return "acnologia: quota exhausted"
 }
 func (e *ErrQuotaExhausted) Is(target error) bool { return target == QuotaExhausted }
 func (e *ErrQuotaExhausted) Unwrap() error        { return e.Err }
@@ -82,9 +82,9 @@ type ErrInvalidKey struct {
 
 func (e *ErrInvalidKey) Error() string {
 	if e.Message != "" {
-		return "cogito: invalid key: " + e.Message
+		return "acnologia: invalid key: " + e.Message
 	}
-	return "cogito: invalid key"
+	return "acnologia: invalid key"
 }
 func (e *ErrInvalidKey) Is(target error) bool { return target == InvalidKey }
 func (e *ErrInvalidKey) Unwrap() error        { return e.Err }
@@ -105,9 +105,9 @@ type ErrNoKeyAvailable struct {
 }
 
 func (e *ErrNoKeyAvailable) Error() string {
-	msg := "cogito: no key available"
+	msg := "acnologia: no key available"
 	if e.Busy {
-		msg = "cogito: all keys busy"
+		msg = "acnologia: all keys busy"
 	}
 	if e.RetryAfter > 0 {
 		msg += fmt.Sprintf(" (retry after %s)", e.RetryAfter)

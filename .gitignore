@@ -5,7 +5,7 @@ node_modules/
 /data/
 *.db
 *.db-*
-server/cogito
+server/acnologia
 .env
 __pycache__/
 *.egg-info/

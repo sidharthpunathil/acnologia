@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cogito-keys/cogito/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // slowTTS behaves like ElevenLabs: it blocks until released and fails with
@@ -74,7 +74,7 @@ func ttsCall(e *env, tok string) (int, string) {
 		return 0, err.Error()
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode, resp.Header.Get("X-Cogito-Key-Id")
+	return resp.StatusCode, resp.Header.Get("X-Acnologia-Key-Id")
 }
 
 func waitInFlight(t *testing.T, e *env, n int) {

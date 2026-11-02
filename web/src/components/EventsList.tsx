@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { Link } from "react-router-dom";
-import type { CogitoEvent, EventKind } from "../lib/types";
+import type { AcnologiaEvent, EventKind } from "../lib/types";
 import { dateTime, relTime } from "../lib/format";
 import { Chip, type ChipColor } from "@/components/base/badges/chip";
 import { cx } from "@/utils/cx";
@@ -36,7 +36,7 @@ export function EventsList({
   showService = true,
   serviceIdBySlug,
 }: {
-  events: CogitoEvent[];
+  events: AcnologiaEvent[];
   now: number;
   showService?: boolean;
   serviceIdBySlug?: Record<string, number>;

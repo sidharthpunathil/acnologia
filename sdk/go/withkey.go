@@ -1,4 +1,4 @@
-package cogito
+package acnologia
 
 import (
 	"context"
