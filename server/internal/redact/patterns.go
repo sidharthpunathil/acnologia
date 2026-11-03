@@ -35,7 +35,7 @@ var rules = []rule{
 	{name: "jwt", re: regexp.MustCompile(`eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}`)},
 	// Shorter prefixes need a boundary in front ("task-..." is not "sk-...").
 	{name: "openai", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])(sk-[A-Za-z0-9_\-]{16,})`), group: 1, ok: hasDigit},
-	{name: "prefixed", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])((?:hf|gsk|r8|acn|acnadm|acninv|cog|cogadm|whsec)_[A-Za-z0-9_\-]{20,}|(?:pplx|xai|fc)-[A-Za-z0-9_\-]{20,})`), group: 1},
+	{name: "prefixed", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])((?:hf|gsk|r8|acn|acnadm|acninv|cog|cogadm|whsec)_[A-Za-z0-9_\-]{20,}|(?:pplx|xai|fc)-[A-Za-z0-9_\-]{20,})`), group: 1, ok: notServerID},
 	// Credentials by position.
 	// The access gate's cookie (acnologia_gate=<issued>.<mac>) is hex after
 	// a timestamp, which the entropy rule leaves alone, so it gets its own.
@@ -109,6 +109,14 @@ func Patterns(s string) string {
 	b.WriteString(s[prev:])
 	return b.String()
 }
+
+// serverID is the exact shape of a server id (acn_srv_ and 20 lowercase
+// base32 characters). Server ids are public, published at
+// /.well-known/acnologia, so they are not secrets. Only that exact shape is
+// let through: a random acn_ token is longer and uses base64url.
+var serverID = regexp.MustCompile(`^acn_srv_[a-z2-7]{20}$`)
+
+func notServerID(s string) bool { return !serverID.MatchString(s) }
 
 func hasDigit(s string) bool { return strings.ContainsAny(s, "0123456789") }
 

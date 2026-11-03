@@ -166,3 +166,15 @@ func TestLogHandler(t *testing.T) {
 		t.Fatalf("log leaked: %s", out)
 	}
 }
+
+func TestServerIDIsNotRedacted(t *testing.T) {
+	id := "acn_srv_kmbq2xq7zj4ab5c6d7ef"
+	if m := Find("share redeemed by " + id + " (Partner lab)"); len(m) != 0 {
+		t.Fatalf("server id was treated as a secret: %+v", m)
+	}
+	// A real token that only starts like a server id is still caught.
+	tok := "acn_srv_kmbq2xq7zj4ab5c6d7efXYZ_longer-random-tail"
+	if m := Find("token " + tok); len(m) != 1 {
+		t.Fatalf("token with a server id prefix was not caught: %+v", m)
+	}
+}
