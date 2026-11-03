@@ -167,7 +167,8 @@ func run() error {
 	}
 	w := &worker.Worker{Store: st, Pool: p, HealthInterval: cfg.HealthInterval,
 		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour,
-		Peers:     srv.PeerSyncer(), PeerInterval: peer.SyncInterval, Refresh: srv.ProviderRefresher()}
+		Peers:     srv.PeerSyncer(), PeerInterval: peer.SyncInterval, Refresh: srv.ProviderRefresher(),
+		Sharing: srv.SharingTicker()}
 	go w.Run(ctx)
 
 	hs := &http.Server{Addr: cfg.Addr, Handler: srv.Router(), ReadHeaderTimeout: 15 * time.Second}

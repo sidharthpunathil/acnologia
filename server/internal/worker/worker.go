@@ -25,6 +25,9 @@ type Worker struct {
 	// Refresh checks once a minute whether the provider offers refresh is
 	// due, and starts or resumes it. Nil turns it off.
 	Refresh interface{ Tick(context.Context) }
+	// Sharing runs once a minute: it deletes handed over keys whose lease
+	// ended (no network needed) and applies share timers. Nil turns it off.
+	Sharing interface{ Tick(context.Context) }
 
 	lastPrune time.Time
 }
@@ -41,6 +44,9 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 	if w.Refresh != nil {
 		go w.runRefresh(ctx)
+	}
+	if w.Sharing != nil {
+		go w.runSharing(ctx)
 	}
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -67,6 +73,22 @@ func (w *Worker) runPeers(ctx context.Context) {
 			return
 		case <-t.C:
 			w.Peers.SyncAll(ctx)
+		}
+	}
+}
+
+// runSharing runs the sharing housekeeping every minute, on its own loop:
+// a timer that revokes a handover share pushes to another server.
+func (w *Worker) runSharing(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	w.Sharing.Tick(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			w.Sharing.Tick(ctx)
 		}
 	}
 }

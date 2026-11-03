@@ -77,7 +77,20 @@ func (s *Server) shareGate(ctx context.Context, shareID string) *authFail {
 		return &authFail{Status: 401, Code: "unauthenticated", Message: "invalid app token"}
 	}
 	if sh.Status == store.ShareActive && sh.Expired(time.Now()) {
-		if n, err := s.Store.SetShareStatus(ctx, sh.ID, store.ShareExpired); err == nil {
+		// The timer ended between worker ticks: apply its end action now.
+		// A revoke push may follow; it runs in the background.
+		if sh.EndAction == store.EndRevoke {
+			if n, err := s.Store.SetShareStatus(ctx, sh.ID, store.ShareRevoked); err == nil {
+				s.Store.AddAudit(ctx, nil, "share.revoked", n.Name, "timer ended")
+				s.emitShareData(notify.ShareRevoked, n, "share "+n.Name+" was revoked: its timer ended", map[string]any{"reason": "timer"})
+				selfURL := s.Cfg.PublicURL
+				if selfURL == "" {
+					selfURL = peer.SavedURL(ctx, s.Store)
+				}
+				go s.pushRevoke(context.WithoutCancel(ctx), n, selfURL)
+				sh = n
+			}
+		} else if n, err := s.endShare(ctx, sh, ""); err == nil {
 			sh = n
 		}
 	}
@@ -139,7 +152,11 @@ func (s *Server) peerPreview(w http.ResponseWriter, r *http.Request) {
 		v := sh.InviteExpires.Format(time.RFC3339)
 		exp = &v
 	}
-	writeJSON(w, 200, peer.PreviewResponse{Name: sh.Name, Services: m.Services, Providers: sh.Providers, ExpiresAt: exp})
+	pv := peer.PreviewResponse{Name: sh.Name, Services: m.Services, Providers: sh.Providers, ExpiresAt: exp, Mode: m.Mode, LeaseSec: m.LeaseSec, EndsAt: m.ExpiresAt}
+	if !sh.IsHandover() {
+		pv.LeaseSec = 0
+	}
+	writeJSON(w, 200, pv)
 }
 
 func (s *Server) peerRedeem(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +166,8 @@ func (s *Server) peerRedeem(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if _, ok := s.inviteShare(w, r, in.ShareID, in.Invite); !ok {
+	pending, ok := s.inviteShare(w, r, in.ShareID, in.Invite)
+	if !ok {
 		return
 	}
 	pub, err := peer.ParsePublicKey(in.PublicKey)
@@ -157,8 +175,26 @@ func (s *Server) peerRedeem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad_identity", "the server id does not match its public key")
 		return
 	}
-	if len(in.Nonce) < 16 || len(in.Nonce) > 128 || !peer.VerifyRedeem(pub, in.Signature, in.ShareID, peer.InviteHash(in.Invite), in.Nonce, in.ID) {
+	signed := false
+	if len(in.Nonce) >= 16 && len(in.Nonce) <= 128 {
+		if in.BoxPublicKey != "" {
+			signed = peer.VerifyRedeemBox(pub, in.Signature, in.ShareID, peer.InviteHash(in.Invite), in.Nonce, in.ID, in.BoxPublicKey)
+		} else {
+			signed = peer.VerifyRedeem(pub, in.Signature, in.ShareID, peer.InviteHash(in.Invite), in.Nonce, in.ID)
+		}
+	}
+	if !signed {
 		writeErr(w, 401, "bad_signature", "the redeem request is not signed by that server")
+		return
+	}
+	if in.BoxPublicKey != "" {
+		if _, err := peer.ParseBoxPublicKey(in.BoxPublicKey); err != nil {
+			writeErr(w, 400, "bad_box_key", err.Error())
+			return
+		}
+	}
+	if pending.IsHandover() && in.BoxPublicKey == "" {
+		writeErr(w, 400, "box_key_required", "this share hands keys over; the other server must be upgraded to a version that can take them")
 		return
 	}
 	self, _, err := s.selfIdentity(r)
@@ -174,7 +210,7 @@ func (s *Server) peerRedeem(w http.ResponseWriter, r *http.Request) {
 	url := strings.TrimRight(crypto.Truncate(in.URL, 500), "/")
 	tok, prefix, hash := newAppToken()
 	sh, err := s.Store.RedeemShare(r.Context(), in.ShareID, peer.InviteHash(in.Invite),
-		store.PeerBinding{ID: in.ID, Name: name, URL: url, PublicKey: in.PublicKey}, prefix, hash)
+		store.PeerBinding{ID: in.ID, Name: name, URL: url, PublicKey: in.PublicKey, BoxPublicKey: in.BoxPublicKey}, prefix, hash)
 	switch {
 	case errors.Is(err, store.ErrInviteUsed):
 		writeErr(w, 409, "invite_used", "that invite was already used")
@@ -230,6 +266,11 @@ func (s *Server) peerLeave(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.AddAudit(r.Context(), nil, "share.revoked", sh.Name, "left by peer "+sh.PeerID)
 	s.emitShare(notify.ShareRevoked, sh, "share "+sh.Name+" was left by "+sh.PeerName)
+	if sh.IsHandover() {
+		// A receiver that disconnects deletes the handed over keys first.
+		gone, _ := s.Store.MarkHandoversWiped(r.Context(), sh.ID, nil, "the other server disconnected", time.Now())
+		s.recordWiped(r.Context(), sh, gone, "the other server disconnected and deleted them")
+	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -237,7 +278,10 @@ func (s *Server) peerLeave(w http.ResponseWriter, r *http.Request) {
 // specs. It never carries key data.
 func (s *Server) buildManifest(ctx context.Context, sh *store.Share) peer.Manifest {
 	m := peer.Manifest{ShareID: sh.ID, Name: sh.Name, Status: sh.Status, Limits: sh.Limits,
-		Services: []peer.ManifestService{}, Providers: []peer.ManifestProvider{}}
+		Services: []peer.ManifestService{}, Providers: []peer.ManifestProvider{}, Mode: sh.Mode, EndAction: sh.EndAction}
+	if sh.IsHandover() {
+		m.LeaseSec = sh.LeaseSec
+	}
 	if sh.ExpiresAt != nil {
 		v := sh.ExpiresAt.Format(time.RFC3339)
 		m.ExpiresAt = &v
