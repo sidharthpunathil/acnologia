@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/agent"
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
@@ -182,6 +184,10 @@ func TestProxyRotatesOnRateLimit(t *testing.T) {
 	e.up.bad["k2"] = "Your searches for the past hour have exceeded the limit."
 	e.addKeys(map[string]any{"secret": "k1", "priority": 1}, map[string]any{"secret": "k2", "priority": 2}, map[string]any{"secret": "k3", "priority": 3})
 	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"strategy": "fill_first"}, 200, nil)
+	// Adding keys checks them in the background. Let those checks finish
+	// before the account page starts saying "drained", or a late one marks
+	// k1 used up and the proxy never tries it.
+	waitCreationChecks(t, e, 1, 3)
 	e.up.mu.Lock()
 	e.up.drained = true
 	e.up.mu.Unlock()
@@ -209,6 +215,31 @@ func TestProxyRotatesOnRateLimit(t *testing.T) {
 	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=tea", nil, 200, &body, "Authorization", "Bearer "+tok)
 	if e.up.hits["k1"] != before {
 		t.Fatal("exhausted key was used again")
+	}
+}
+
+// waitCreationChecks waits until the background health checks that adding
+// keys starts have recorded a result for all n keys of the service, so a test
+// can change what the fake upstream answers without racing them.
+func waitCreationChecks(t *testing.T, e *env, serviceID int64, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var keys struct{ Keys []store.Key }
+		e.do(e.super, "GET", fmt.Sprintf("/api/admin/services/%d/keys", serviceID), nil, 200, &keys)
+		done := 0
+		for _, k := range keys.Keys {
+			if k.LastCheckedAt != nil {
+				done++
+			}
+		}
+		if done >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d creation checks finished", done, n)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
