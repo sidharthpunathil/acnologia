@@ -905,7 +905,9 @@ This reference covers the consumer API. The rest of the docs are served as raw M
 - [/docs/api.md](/docs/api.md): consumer error codes and the dashboard API with required roles.
 - [/docs/cli.md](/docs/cli.md): the acn command line client, browser sign in, commands and CI variables.
 - [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, self-hosting, Windows, the access password, backups and upgrading.
+- [/docs/deploy.md](/docs/deploy.md): every deploy option and the settings a public deploy needs.
 - [/docs/deploy-railway.md](/docs/deploy-railway.md): a public deploy on Railway behind the access password.
+- [/docs/deploy-vps.md](/docs/deploy-vps.md): one script for any Linux server, cloud-init, Hetzner and DigitalOcean.
 - [/docs/architecture.md](/docs/architecture.md): components, packages, request pipeline, data model and background work.
 - [/docs/flows.md](/docs/flows.md): diagrams of the proxy, key selection, leases, key states, health checks, sign in, MCP, the AI builder, the Assistant, sharing between servers and the provider refresh.
 - [/docs/security.md](/docs/security.md): roles, key flags, hidden keys, what the model can see, secrets at rest, web protections and outbound requests.

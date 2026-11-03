@@ -6,10 +6,12 @@ import {
   RiGitBranchLine,
   RiPuzzle2Line,
   RiRocket2Line,
+  RiServerLine,
   RiSettings3Line,
   RiShieldCheckLine,
   RiTerminalBoxLine,
   RiToolsLine,
+  RiTrainLine,
 } from "@remixicon/react";
 import type { IconComponent } from "@/components/acn/types";
 
@@ -45,7 +47,9 @@ export const DOCS: DocEntry[] = [
   { slug: "flows", title: "Request flows", blurb: "Proxy requests, leases, key states and outcomes, MCP, the AI builder, the Assistant, sharing and the provider refresh.", icon: RiGitBranchLine, group: "concepts" },
   { slug: "security", title: "Security model", blurb: "Roles, hidden keys, what the model can see, secrets at rest, outbound requests and sharing between servers.", icon: RiShieldCheckLine, group: "concepts" },
   { slug: "configuration", title: "Configuration", blurb: "Environment variables, per service settings, self-hosting, Windows, backups and upgrading.", icon: RiSettings3Line, group: "operate" },
-  { slug: "deploy-railway", title: "Deploying on Railway", blurb: "A public deploy behind the access password, with a volume, AI and sharing.", icon: RiRocket2Line, group: "operate" },
+  { slug: "deploy", title: "Deploying", blurb: "Every way to deploy: one click on Render or Railway, Fly.io, the container image and the settings any public deploy needs.", icon: RiRocket2Line, group: "operate" },
+  { slug: "deploy-railway", title: "Deploying on Railway", blurb: "A public deploy behind the access password, with a volume, a template, Infrastructure as Code, AI and sharing.", icon: RiTrainLine, group: "operate" },
+  { slug: "deploy-vps", title: "Deploying on a server", blurb: "One script for any Linux server with HTTPS, cloud-init, Hetzner and DigitalOcean in one command, backups and upgrades.", icon: RiServerLine, group: "operate" },
   { slug: "api", title: "HTTP API", blurb: "Consumer error codes and every dashboard route with its required role.", icon: RiCodeSSlashLine, group: "reference" },
   { slug: "cli", title: "Command line", blurb: "Install acn, sign in through the browser, every command and CI variables.", icon: RiTerminalBoxLine, group: "reference" },
   { slug: "sdks", title: "SDKs", blurb: "The twelve client libraries, how to install each today and how to run their tests.", icon: RiCodeBoxLine, group: "reference" },

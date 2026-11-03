@@ -1,0 +1,102 @@
+# Builds the server image for linux/amd64 and linux/arm64 and pushes it to
+# GitHub Container Registry, which the deploy scripts, Render, Fly.io and the
+# VPS installer pull from:
+#
+#   ghcr.io/<owner>/acnologia:main      every push to main
+#   ghcr.io/<owner>/acnologia:sha-abc1234
+#   ghcr.io/<owner>/acnologia:0.1.0     a v0.1.0 tag
+#   ghcr.io/<owner>/acnologia:latest    the newest v* tag, or main until
+#                                       the first release exists
+#
+# The Dockerfile cross compiles Go on the runner's own platform, so buildx
+# makes both architectures without QEMU. Only first-party actions, pinned to
+# the same commit as the other workflows; buildx and the registry login are
+# plain docker commands.
+name: release-image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "server/**"
+      - "web/**"
+      - "docs/**"
+      - "README.md"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/release-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: Pick the tags
+        id: tags
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          image="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/acnologia"
+          short="$(git rev-parse --short=7 HEAD)"
+          tags="-t $image:sha-$short"
+          if [ "$REF_TYPE" = tag ]; then
+            version="$REF_NAME"
+            tags="$tags -t $image:${REF_NAME#v} -t $image:latest"
+          else
+            version="$REF_NAME-$short"
+            tags="$tags -t $image:main"
+            # Until the first release, latest follows main so the one line
+            # installers have something to pull.
+            if [ -z "$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[].tagName')" ]; then
+              tags="$tags -t $image:latest"
+            fi
+          fi
+          {
+            echo "image=$image"
+            echo "version=$version"
+            echo "tags=$tags"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.tags.outputs.image }}
+          VERSION: ${{ steps.tags.outputs.version }}
+          TAGS: ${{ steps.tags.outputs.tags }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -eu
+          docker buildx create --name multi --driver docker-container --use
+          # shellcheck disable=SC2086
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg VERSION="$VERSION" \
+            --label org.opencontainers.image.source="$SOURCE" \
+            --label org.opencontainers.image.description="Acnologia: share your API keys without giving them away" \
+            --label org.opencontainers.image.licenses=MIT \
+            --annotation "index:org.opencontainers.image.source=$SOURCE" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            --cache-from "type=registry,ref=$IMAGE:buildcache" \
+            --cache-to "type=registry,ref=$IMAGE:buildcache,mode=max" \
+            $TAGS \
+            --push .

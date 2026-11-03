@@ -1,0 +1,52 @@
+# Fly.io: one Machine built from the Dockerfile, with a volume at /data.
+#
+#   fly launch --copy-config --no-deploy     # pick an app name and region
+#   fly secrets set ACNOLOGIA_MASTER_KEY="$(openssl rand -base64 32)" \
+#     ACNOLOGIA_ACCESS_PASSWORD="$(openssl rand -base64 24)"
+#   fly deploy
+#   fly scale count 1                        # SQLite: never more than one
+#
+# Then set ACNOLOGIA_PUBLIC_URL to https://<app>.fly.dev (or your domain)
+# under [env] below and deploy again. See docs/deploy.md.
+app = "acnologia"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+  # If the server logs "permission denied" on /data, uncomment this to run
+  # the image as root (Fly normally hands the volume to the image's user).
+  # [build.args]
+  #   ACNOLOGIA_IMAGE_USER = "root"
+
+[env]
+  ACNOLOGIA_ADDR = ":8080"
+  ACNOLOGIA_DATA_DIR = "/data"
+  ACNOLOGIA_REQUIRE_ACCESS_PASSWORD = "true"
+  ACNOLOGIA_SECURE_COOKIES = "true"
+  ACNOLOGIA_TRUST_PROXY_HEADERS = "true"
+  # ACNOLOGIA_PUBLIC_URL = "https://acnologia.fly.dev"
+
+[mounts]
+  source = "acnologia_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Keep it running: the scheduled health checks and provider refresh live
+  # in the process, and a cold start would also delay the first request.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
