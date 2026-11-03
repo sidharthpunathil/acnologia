@@ -30,11 +30,25 @@ const (
 	idempotencyTTL = 10 * time.Minute
 )
 
+// resolvedServiceKey carries a service that an in-process caller (MCP's
+// proxy_request) already looked up by slug for this request.
+type resolvedServiceKey struct{}
+
+func withResolvedService(ctx context.Context, sv *store.Service) context.Context {
+	return context.WithValue(ctx, resolvedServiceKey{}, sv)
+}
+
 // proxyTargets resolves /proxy/{slug} to the services that may serve it: one
 // service, or the members of a service group in fallback order.
 func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug string) ([]*store.Service, bool) {
 	a := appFrom(r)
-	sv, err := s.Store.GetServiceBySlug(r.Context(), slug)
+	// A service looked up earlier in this request saves a second query; the
+	// access checks below run on it all the same.
+	sv, ok := r.Context().Value(resolvedServiceKey{}).(*store.Service)
+	var err error
+	if !ok || sv == nil || sv.Slug != slug {
+		sv, err = s.Store.GetServiceBySlug(r.Context(), slug)
+	}
 	if err == nil {
 		if !a.CanUse(slug) || !s.sharedAs(r.Context(), a, sv) {
 			writeErr(w, 403, "service_not_allowed", "this app cannot use service "+slug)

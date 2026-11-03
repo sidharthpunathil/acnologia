@@ -415,3 +415,83 @@ func TestUpstreamTransportsReuseConnections(t *testing.T) {
 		}
 	}
 }
+
+// mcpBodyUpstream answers with JSON bodies the MCP proxy tool must embed,
+// decode or truncate.
+type mcpBodyUpstream struct{}
+
+func (mcpBodyUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.URL.Path {
+	case "/json":
+		_, _ = w.Write([]byte(`{"z": 1, "n": 12345678901234567890, "s": "<a>&"}`))
+	case "/badjson":
+		_, _ = w.Write([]byte(`{"x":`))
+	case "/badutf8":
+		_, _ = w.Write([]byte("{\"s\":\"\xff\"}"))
+	case "/bigjson":
+		_, _ = w.Write([]byte(`{"s":"` + strings.Repeat("a", 300<<10) + `"}`))
+	}
+}
+
+// TestMCPProxyRequestBody: proxy_request embeds a valid JSON answer as sent
+// (large integers keep every digit), decodes one with invalid UTF-8 as
+// before, and returns invalid or oversized JSON as truncated text. An app
+// that may not use the service still gets a tool error.
+func TestMCPProxyRequestBody(t *testing.T) {
+	e := newHPEnvWith(t, mcpBodyUpstream{}, "sk-mcp-body-key-0001")
+	call := func(token, path string) map[string]any {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{"name": "proxy_request", "arguments": map[string]any{"service": "gen", "path": path}}})
+		req, _ := http.NewRequest("POST", e.srv.URL+"/mcp", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := e.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var res struct {
+			Result map[string]any `json:"result"`
+		}
+		d := json.NewDecoder(resp.Body)
+		d.UseNumber()
+		if err := d.Decode(&res); err != nil {
+			t.Fatal(err)
+		}
+		return res.Result
+	}
+	sc := func(res map[string]any) map[string]any {
+		t.Helper()
+		m, ok := res["structuredContent"].(map[string]any)
+		if !ok {
+			t.Fatalf("no structured content: %v", res)
+		}
+		return m
+	}
+
+	got := sc(call(e.token, "/json"))["body"].(map[string]any)
+	if got["n"] != json.Number("12345678901234567890") || got["s"] != "<a>&" || got["z"] != json.Number("1") {
+		t.Fatalf("json body %v", got)
+	}
+	if got := sc(call(e.token, "/badjson"))["body"]; got != `{"x":` {
+		t.Fatalf("invalid json body %#v", got)
+	}
+	if got := sc(call(e.token, "/badutf8"))["body"].(map[string]any); got["s"] != "�" {
+		t.Fatalf("invalid utf-8 body %#v", got)
+	}
+	if got, _ := sc(call(e.token, "/bigjson"))["body"].(string); len(got) != 200<<10 {
+		t.Fatalf("oversized json body: %d bytes", len(got))
+	}
+
+	super := client()
+	e.call(t, super, "POST", "/api/auth/login", map[string]any{"email": "root@x.io", "password": "supersecret1"}, nil)
+	var other struct {
+		Token string `json:"token"`
+	}
+	e.call(t, super, "POST", "/api/admin/apps", map[string]any{"name": "other", "allowed_services": []string{"elsewhere"}}, &other)
+	if res := call(other.Token, "/json"); res["isError"] != true {
+		t.Fatalf("an app without the service called it: %v", res)
+	}
+}
