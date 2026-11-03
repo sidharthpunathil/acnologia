@@ -75,6 +75,27 @@ func RedeemMessage(shareID, inviteHash, nonce, receiverID string) []byte {
 	return []byte("acnologia-redeem-v1\n" + shareID + "\n" + inviteHash + "\n" + nonce + "\n" + receiverID)
 }
 
+// RedeemMessageBox is the redeem message of a receiver that can take handed
+// over keys: it also binds the receiver's box public key, so the key the
+// owner seals to is the one the receiver signed for.
+func RedeemMessageBox(shareID, inviteHash, nonce, receiverID, boxKey string) []byte {
+	return []byte("acnologia-redeem-v2\n" + shareID + "\n" + inviteHash + "\n" + nonce + "\n" + receiverID + "\n" + boxKey)
+}
+
+// SignRedeemBox signs the redeem message that binds a box public key.
+func SignRedeemBox(priv ed25519.PrivateKey, shareID, inviteHash, nonce, receiverID, boxKey string) string {
+	return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, RedeemMessageBox(shareID, inviteHash, nonce, receiverID, boxKey)))
+}
+
+// VerifyRedeemBox checks a redeem signature that binds a box public key.
+func VerifyRedeemBox(pub ed25519.PublicKey, sig, shareID, inviteHash, nonce, receiverID, boxKey string) bool {
+	b, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil || len(b) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(pub, RedeemMessageBox(shareID, inviteHash, nonce, receiverID, boxKey), b)
+}
+
 // SignRedeem signs the redeem message.
 func SignRedeem(priv ed25519.PrivateKey, shareID, inviteHash, nonce, receiverID string) string {
 	return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, RedeemMessage(shareID, inviteHash, nonce, receiverID)))
@@ -99,6 +120,9 @@ type RedeemRequest struct {
 	PublicKey string `json:"public_key"`
 	Nonce     string `json:"nonce"`
 	Signature string `json:"signature"`
+	// BoxPublicKey is sent by servers that can take handed over keys; the
+	// signature then covers it (RedeemMessageBox).
+	BoxPublicKey string `json:"box_public_key,omitempty"`
 }
 
 // RedeemResponse answers a redeem: the share token, shown once.
@@ -121,6 +145,10 @@ type PreviewResponse struct {
 	Services  []ManifestService `json:"services"`
 	Providers []string          `json:"providers"`
 	ExpiresAt *string           `json:"invite_expires_at"`
+	// Mode is proxy or handover; LeaseSec is the handover renewal window.
+	Mode     string  `json:"mode,omitempty"`
+	LeaseSec int     `json:"lease_sec,omitempty"`
+	EndsAt   *string `json:"ends_at,omitempty"`
 }
 
 // Manifest is what a share gives, as GET /api/peer/v1/manifest answers it.
@@ -133,6 +161,12 @@ type Manifest struct {
 	ExpiresAt *string            `json:"expires_at"`
 	Services  []ManifestService  `json:"services"`
 	Providers []ManifestProvider `json:"providers"`
+	// Mode is proxy (the default, and what an owner from before modes
+	// means) or handover. LeaseSec is how long a handed over key stays valid
+	// without renewal; EndAction is what the share's timer does.
+	Mode      string `json:"mode,omitempty"`
+	LeaseSec  int    `json:"lease_sec,omitempty"`
+	EndAction string `json:"end_action,omitempty"`
 }
 
 // ManifestService is one shared service.

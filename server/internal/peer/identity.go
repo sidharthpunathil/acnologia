@@ -38,6 +38,8 @@ type Identity struct {
 	Version   string `json:"version"`
 	PublicKey string `json:"public_key"`
 	URL       string `json:"url"`
+	// BoxPublicKey is the X25519 key other servers seal handed over keys to.
+	BoxPublicKey string `json:"box_public_key,omitempty"`
 }
 
 // Fingerprint is a short form of the identity's public key for people to compare.
@@ -129,10 +131,14 @@ func Self(ctx context.Context, st *store.Store, box *crypto.Box, version, url st
 	if err != nil {
 		return Identity{}, nil, err
 	}
+	bk, err := BoxKeys(ctx, st, box)
+	if err != nil {
+		return Identity{}, nil, err
+	}
 	pub := priv.Public().(ed25519.PublicKey)
 	return Identity{
 		ID: ServerID(pub), Name: Name(ctx, st), Version: version,
-		PublicKey: base64.StdEncoding.EncodeToString(pub), URL: url,
+		PublicKey: base64.StdEncoding.EncodeToString(pub), URL: url, BoxPublicKey: BoxPublicKey(bk),
 	}, priv, nil
 }
 
