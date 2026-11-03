@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,29 +41,46 @@ const (
 	userCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ"
 )
 
-// Global limits, like the access gate's: behind a proxy a per address limit
-// is one header away from no limit.
+// Limits, each per client (clientLimit) under a global ceiling, so one
+// source cannot spend everyone's budget.
 const (
-	deviceCreateLimit = 30 // new requests a minute
-	deviceCreateDaily = 1000
-	devicePollLimit   = 600 // polls a minute, about 50 CLIs waiting at once
-	devicePollDaily   = 50000
-	// Wrong user codes typed or looked up. 20^8 codes, 10 a minute and 200 a
-	// day: guessing a live one is hopeless.
-	deviceLookupLimit = 10
-	deviceLookupDaily = 200
+	// New requests: 5 a minute and 50 a day from one address, 30 a minute
+	// from all. No global daily cap, so a flood can delay sign ins for a
+	// minute but not lock them out for a day.
+	deviceCreateClientLimit = 5
+	deviceCreateClientDaily = 50
+	deviceCreateLimit       = 30
+	// devicePendingPerClient bounds the live requests one address holds, so
+	// one source cannot fill devicePendingCap.
+	devicePendingPerClient = 10
+	// Polls with an unknown device code. A poll for a live request never
+	// counts; its own interval paces it (slow_down).
+	devicePollClientLimit = 60
+	devicePollClientDaily = 1000
+	devicePollLimit       = 600
+	devicePollDaily       = 50000
+	// Wrong user codes typed or looked up, per signed in user: 20^8 codes,
+	// 10 a minute and 200 a day, so guessing a live one is hopeless. A user
+	// past their own limit is refused unseen. Misses from all users have a
+	// ceiling too, but it never refuses a right code.
+	deviceLookupLimit       = 10
+	deviceLookupDaily       = 200
+	deviceLookupGlobalLimit = 30
+	deviceLookupGlobalDaily = 1000
 )
 
 type deviceRequest struct {
 	deviceHash string
 	userCode   string
-	client     string
-	hostname   string
-	os         string
-	created    time.Time
-	expires    time.Time
-	interval   time.Duration
-	lastPoll   time.Time
+	// source is the client address that started it (clientKey).
+	source   string
+	client   string
+	hostname string
+	os       string
+	created  time.Time
+	expires  time.Time
+	interval time.Duration
+	lastPoll time.Time
 
 	// state is pending, approved or denied.
 	state string
@@ -132,9 +150,10 @@ type deviceStore struct {
 	now      func() time.Time
 	interval time.Duration
 	ttl      time.Duration
-	create   windowLimit
-	poll     windowLimit
-	lookup   windowLimit
+	// create and poll are keyed by client address, lookup by user.
+	create *clientLimit
+	poll   *clientLimit
+	lookup *clientLimit
 }
 
 func newDeviceStore() *deviceStore {
@@ -144,10 +163,21 @@ func newDeviceStore() *deviceStore {
 		now:      time.Now,
 		interval: deviceInterval,
 		ttl:      deviceTTL,
-		create:   windowLimit{perMin: deviceCreateLimit, perDay: deviceCreateDaily},
-		poll:     windowLimit{perMin: devicePollLimit, perDay: devicePollDaily},
-		lookup:   windowLimit{perMin: deviceLookupLimit, perDay: deviceLookupDaily},
+		create:   newClientLimit(deviceCreateClientLimit, deviceCreateClientDaily, deviceCreateLimit, 0),
+		poll:     newClientLimit(devicePollClientLimit, devicePollClientDaily, devicePollLimit, devicePollDaily),
+		lookup:   newClientLimit(deviceLookupLimit, deviceLookupDaily, deviceLookupGlobalLimit, deviceLookupGlobalDaily),
 	}
+}
+
+// pendingFrom counts the live requests started from client. Caller holds mu.
+func (d *deviceStore) pendingFrom(client string) int {
+	n := 0
+	for _, r := range d.byHash {
+		if r.source == client {
+			n++
+		}
+	}
+	return n
 }
 
 // sweep drops expired requests. Caller holds mu.
@@ -242,20 +272,23 @@ func (s *Server) cliDeviceCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	deviceCode := base64.RawURLEncoding.EncodeToString(raw)
 
+	source := clientKey(r)
 	d := s.devices
 	d.mu.Lock()
 	now := d.now()
 	d.sweep(now)
-	if !d.create.take(now) {
-		d.mu.Unlock()
-		w.Header().Set("Retry-After", "60")
-		writeErr(w, 429, "too_many_requests", "too many sign in requests, wait a minute")
-		return
-	}
-	if len(d.byHash) >= devicePendingCap {
+	// The pending caps come first, so a refused request does not spend the
+	// rate limit.
+	if len(d.byHash) >= devicePendingCap || d.pendingFrom(source) >= devicePendingPerClient {
 		d.mu.Unlock()
 		w.Header().Set("Retry-After", "60")
 		writeErr(w, 429, "too_many_requests", "too many sign ins are waiting, try again in a few minutes")
+		return
+	}
+	if !d.create.take(source, now) {
+		d.mu.Unlock()
+		w.Header().Set("Retry-After", "60")
+		writeErr(w, 429, "too_many_requests", "too many sign in requests, wait a minute")
 		return
 	}
 	code := newUserCode()
@@ -265,6 +298,7 @@ func (s *Server) cliDeviceCreate(w http.ResponseWriter, r *http.Request) {
 	req := &deviceRequest{
 		deviceHash: crypto.SHA256(deviceCode),
 		userCode:   code,
+		source:     source,
 		client:     clip(in.Client, 40),
 		hostname:   clip(in.Hostname, 80),
 		os:         clip(in.OS, 40),
@@ -308,16 +342,18 @@ func (s *Server) cliDeviceToken(w http.ResponseWriter, r *http.Request) {
 	d := s.devices
 	d.mu.Lock()
 	now := d.now()
-	if !d.poll.take(now) {
-		d.mu.Unlock()
-		w.Header().Set("Retry-After", "60")
-		writeErr(w, 429, "slow_down", "too many polls, slow down")
-		return
-	}
 	d.sweep(now)
 	req := d.byHash[crypto.SHA256(in.DeviceCode)]
 	if req == nil || in.DeviceCode == "" {
+		// Only unknown codes count: a CLI with a live request is paced by
+		// its interval, not by everyone else's polls.
+		limited := !d.poll.take(clientKey(r), now)
 		d.mu.Unlock()
+		if limited {
+			w.Header().Set("Retry-After", "60")
+			writeErr(w, 429, "slow_down", "too many polls, slow down")
+			return
+		}
 		writeErr(w, 400, "expired_token", "this sign in request expired or does not exist; run acn login again")
 		return
 	}
@@ -357,17 +393,21 @@ func (s *Server) cliDeviceToken(w http.ResponseWriter, r *http.Request) {
 	writeErr(w, 400, "authorization_pending", "waiting for approval in the browser")
 }
 
-// findUserCode returns the live request for a typed code, counting misses
-// against the lookup limit. limited means the lookup was refused unseen.
-func (d *deviceStore) findUserCode(code string) (req *deviceRequest, limited bool) {
+// findUserCode returns the live request for a code typed by user, counting
+// misses against that user's lookup limit and the global one. limited means
+// the lookup was refused: unseen when the user spent their own budget, so a
+// guesser learns nothing even when right. Other users' misses never stop a
+// right code. Caller holds mu.
+func (d *deviceStore) findUserCode(code string, user int64) (req *deviceRequest, limited bool) {
 	now := d.now()
-	if !d.lookup.ok(now) {
+	who := "user:" + strconv.FormatInt(user, 10)
+	if !d.lookup.allow(who, now) {
 		return nil, true
 	}
 	d.sweep(now)
 	req = d.byCode[normalUserCode(code)]
-	if req == nil {
-		d.lookup.take(now)
+	if req == nil && !d.lookup.take(who, now) {
+		return nil, true
 	}
 	return req, false
 }
@@ -398,7 +438,7 @@ func (s *Server) cliDeviceLookup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	d := s.devices
 	d.mu.Lock()
-	req, limited := d.findUserCode(r.URL.Query().Get("user_code"))
+	req, limited := d.findUserCode(r.URL.Query().Get("user_code"), userFrom(r).ID)
 	if req == nil {
 		d.mu.Unlock()
 		writeDeviceLookupErr(w, limited)
@@ -432,7 +472,7 @@ func (s *Server) cliDeviceApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	d := s.devices
 	d.mu.Lock()
-	req, limited := d.findUserCode(in.UserCode)
+	req, limited := d.findUserCode(in.UserCode, userFrom(r).ID)
 	if req == nil {
 		d.mu.Unlock()
 		writeDeviceLookupErr(w, limited)
@@ -486,7 +526,7 @@ func (s *Server) cliDeviceDeny(w http.ResponseWriter, r *http.Request) {
 	}
 	d := s.devices
 	d.mu.Lock()
-	req, limited := d.findUserCode(in.UserCode)
+	req, limited := d.findUserCode(in.UserCode, userFrom(r).ID)
 	if req == nil {
 		d.mu.Unlock()
 		writeDeviceLookupErr(w, limited)

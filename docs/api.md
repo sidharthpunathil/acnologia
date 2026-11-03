@@ -92,9 +92,9 @@ dashboard session (not an API token).
 
 | Route | Role | Purpose |
 |---|---|---|
-| `POST /api/cli/device` | public | `{client, hostname, os}` returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}`. 30 a minute across all clients. |
-| `POST /api/cli/device/token` | public | `{device_code}`. 400 `authorization_pending`, `slow_down` (with `interval`), `access_denied` or `expired_token`; 200 `{token, token_id, user, scope, expires_at}` once after approval. |
-| `GET /api/cli/device/lookup?user_code=` | m, session | `{request: {user_code, client, hostname, os, created_at, expires_at, state}}`. Wrong codes: 10 a minute, 200 a day, then 429. |
+| `POST /api/cli/device` | public | `{client, hostname, os}` returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}`. 5 a minute and 50 a day per client address, 30 a minute across all, and 10 waiting at once per address. |
+| `POST /api/cli/device/token` | public | `{device_code}`. 400 `authorization_pending`, `slow_down` (with `interval`), `access_denied` or `expired_token`; 429 `slow_down` past 60 unknown codes a minute from one address or 600 from all; 200 `{token, token_id, user, scope, expires_at}` once after approval. |
+| `GET /api/cli/device/lookup?user_code=` | m, session | `{request: {user_code, client, hostname, os, created_at, expires_at, state}}`. Wrong codes: 10 a minute, 200 a day per user, then 429. |
 | `POST /api/cli/device/approve` | m, session | `{user_code, scope, label}`. Creates a 90 day admin token named `acn on <hostname>` (or `label`), scope capped at your role. |
 | `POST /api/cli/device/deny` | m, session | `{user_code}`. The CLI's next poll gets `access_denied`. |
 
@@ -307,12 +307,14 @@ the scope on every pick, so a scope that leaves no usable key answers 503
 `no_key_available`, and the manifest's `available` counts only keys in the
 scope.
 
-Preview and redeem share a global limit of 20 calls a minute and 500 a day
-(429 `rate_limited`). A share token route called with an ordinary app token gets 403
+Preview and redeem count only refused invites: 10 a minute and 100 a day
+from one client address, and 20 a minute and 500 a day from all, then 429
+`rate_limited`. A valid invite never spends the budget, so a flood of junk
+cannot block a real one. A share token route called with an ordinary app token gets 403
 `not_a_share`; with the token of a revoked, paused or expired share, 403
 `share_revoked`, `share_paused` or `share_expired`. All these routes, and the well-known identity, are open
-through the access password lock. Revoke pushes share their own limit of
-20 a minute and 500 a day.
+through the access password lock. Revoke pushes have their own budget of
+the same size, spent only by refused pushes.
 
 ### Sharing with people
 
@@ -341,8 +343,10 @@ audit and webhooks work as for a server share.
 Both answer 404 `claim_invalid` for an unknown code, 409 `already_claimed`
 once redeemed, 410 `claim_expired` when the link ran out or the share ended
 (revoked, or its timer passed) before the claim, and 429 `rate_limited` past
-a global 20 calls a minute or 500 a day (their own bucket, sized like the
-invite routes). They send `Cache-Control: no-store`. Both, the `/claim/<code>`
+10 refused codes a minute or 100 a day from one address, or 20 a minute or
+500 a day from all (their own budget, sized like the invite routes). A code
+that opens a link never counts, and a malformed one costs no lookup and is
+not counted. They send `Cache-Control: no-store`. Both, the `/claim/<code>`
 and `/me` pages, and the person's own calls with the token (`/proxy`,
 `/api/v1`, `/mcp`) work through the access password lock; nothing else does.
 

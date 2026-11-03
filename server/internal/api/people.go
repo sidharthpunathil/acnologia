@@ -266,12 +266,14 @@ func (s *Server) revealEnded(ctx context.Context, sh *store.Share, why string) {
 // ---- public claim routes ----
 
 // claimShare finds the share a claim code opens, after the rate limit,
-// writing the error when there is none. It never burns the link.
+// writing the error when there is none. It never burns the link. Only a
+// code that opens nothing counts against the limit (secretLimit), so junk
+// cannot spend the budget a real link needs; malformed input costs no
+// lookup and is not counted either.
 func (s *Server) claimShare(w http.ResponseWriter, r *http.Request) (*store.Share, string, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.claimLimit.take() {
-		w.Header().Set("Retry-After", "60")
-		writeErr(w, 429, "rate_limited", "too many claim attempts, try again in a minute")
+	if !s.claimLimit.allow(r) {
+		writeRateLimited(w, "claim")
 		return nil, "", false
 	}
 	var in struct {
@@ -296,7 +298,11 @@ func (s *Server) claimShare(w http.ResponseWriter, r *http.Request) (*store.Shar
 		err = sh.CheckClaim(time.Now())
 	}
 	if err != nil {
-		writeClaimErr(w, err)
+		if !s.claimLimit.miss(r) {
+			writeRateLimited(w, "claim")
+		} else {
+			writeClaimErr(w, err)
+		}
 		return nil, "", false
 	}
 	return sh, hash, true

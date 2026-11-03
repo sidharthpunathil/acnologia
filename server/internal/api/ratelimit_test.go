@@ -85,6 +85,33 @@ func TestLoginLimiterNeverFailsOpen(t *testing.T) {
 	}
 }
 
+// spendGlobal spends l's whole global budget, for the minute and the day,
+// as a flood from rotating addresses would.
+func spendGlobal(l *secretLimit) {
+	l.c.mu.Lock()
+	defer l.c.mu.Unlock()
+	l.c.all.ok(time.Now()) // start the windows now
+	l.c.all.n, l.c.all.day = l.c.all.perMin, l.c.all.perDay
+}
+
+// TestInviteLimitSparesRealInvites: junk spending the whole global invite
+// budget does not stop a server from redeeming a real invite.
+func TestInviteLimitSparesRealInvites(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	a.addKeys(map[string]any{"secret": "invkey1"})
+	sh := a.newShare(map[string]any{"name": "Real", "services": []string{"serpapi"}})
+	spendGlobal(a.api.peerLimit)
+	resp, err := http.Post(a.srv.URL+"/api/peer/v1/preview", "application/json", strings.NewReader(`{"share_id":"nope","invite":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 429 {
+		t.Fatalf("junk after the global budget: %d", resp.StatusCode)
+	}
+	b.connect(sh.Invite, 201)
+}
+
 func TestClientKeyGroupsIPv6By64(t *testing.T) {
 	for addr, want := range map[string]string{
 		"203.0.113.9:4000":               "203.0.113.9",

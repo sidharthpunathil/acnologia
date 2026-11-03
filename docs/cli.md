@@ -276,10 +276,15 @@ The flow follows the OAuth device authorization grant
   Pending requests live in memory for 10 minutes, so a restart drops them.
 - The user code is 8 letters from an alphabet without vowels or look alike
   characters (20^8 combinations).
-- Limits are global, like the site lock's: 30 new requests a minute, 600
-  polls a minute, and 10 wrong user codes a minute (200 a day), after which
-  lookups are refused unseen. A poll sooner than the interval gets
-  `slow_down` and a longer interval.
+- Limits are per client address under a global ceiling, so one source
+  cannot block everyone's sign in. New requests: 5 a minute and 50 a day
+  from one address, 30 a minute from all, and at most 10 waiting at once
+  from one address. Polls with an unknown device code: 60 a minute from one
+  address, 600 from all; a poll for a live request never counts. Wrong user
+  codes: 10 a minute and 200 a day per signed in user, after which that
+  user's lookups are refused unseen; other users' misses never stop a right
+  code. A poll sooner than the interval gets `slow_down` and a longer
+  interval.
 - Approve and deny need a dashboard session past the site lock. An API
   token cannot approve a sign in, so one token cannot mint another.
 - The CLI opens `verification_uri_complete` only when it is http or https

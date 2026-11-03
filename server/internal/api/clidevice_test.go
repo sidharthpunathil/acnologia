@@ -245,20 +245,86 @@ func TestCLIDeviceRateLimits(t *testing.T) {
 	e.api.devices.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
 	e.do(e.super, "GET", "/api/cli/device/lookup?user_code="+st.UserCode, nil, 200, nil)
 
-	// Creating requests is limited too.
+	// Creating requests is limited too, per address.
 	e2 := newEnv(t)
-	for i := 0; i < deviceCreateLimit; i++ {
+	for i := 0; i < deviceCreateClientLimit; i++ {
 		e2.deviceStart()
 	}
 	e2.do(http.DefaultClient, "POST", "/api/cli/device", map[string]any{"hostname": "x"}, 429, nil)
 
-	// And polling.
+	// And polling with unknown codes.
 	e3 := newEnv(t)
-	e3.api.devices.poll.perMin = 3
+	e3.api.devices.poll = newClientLimit(3, 100, 100, 0)
 	for i := 0; i < 3; i++ {
 		e3.devicePoll("nope", 400)
 	}
 	e3.devicePoll("nope", 429)
+}
+
+// TestCLIDeviceLimitsArePerSource: one source that spends the create, poll
+// or lookup budget cannot stop anyone else's sign in.
+func TestCLIDeviceLimitsArePerSource(t *testing.T) {
+	e := newEnv(t)
+	clock := useFakeClock(e)
+	d := e.api.devices
+
+	// Another member burns their lookups (and the global miss ceiling) on
+	// wrong codes; the superadmin still finds and approves a live one.
+	e.do(e.super, "POST", "/api/admin/users", map[string]any{"email": "m@x.io", "password": "memberpass1", "role": "member"}, 201, nil)
+	m := client()
+	e.do(m, "POST", "/api/auth/login", map[string]any{"email": "m@x.io", "password": "memberpass1"}, 200, nil)
+	d.lookup = newClientLimit(deviceLookupLimit, deviceLookupDaily, deviceLookupLimit, deviceLookupLimit)
+	st := e.deviceStart()
+	for i := 0; i < deviceLookupLimit; i++ {
+		e.do(m, "GET", "/api/cli/device/lookup?user_code=BBBB-BBBB", nil, 404, nil)
+	}
+	e.do(m, "GET", "/api/cli/device/lookup?user_code="+st.UserCode, nil, 429, nil)
+	e.do(e.super, "GET", "/api/cli/device/lookup?user_code="+st.UserCode, nil, 200, nil)
+	e.do(e.super, "POST", "/api/cli/device/approve", map[string]any{"user_code": st.UserCode, "scope": "read"}, 200, nil)
+
+	// A live request's polls never spend the poll budget, even once unknown
+	// codes have spent all of it.
+	d.poll = newClientLimit(2, 2, 2, 2)
+	st2 := e.deviceStart()
+	e.devicePoll("nope", 400)
+	e.devicePoll("nope", 400)
+	e.devicePoll("nope", 429)
+	clock.add(deviceInterval)
+	e.devicePoll(st2.DeviceCode, 400) // authorization_pending, not 429
+
+	// Creates: a source that spent its daily budget waits alone.
+	d.mu.Lock()
+	for i := 0; i < deviceCreateClientDaily; i++ {
+		if i%deviceCreateClientLimit == 0 {
+			clock.add(time.Minute)
+		}
+		if !d.create.take("203.0.113.9", clock.now()) {
+			d.mu.Unlock()
+			t.Fatalf("create %d refused early", i)
+		}
+	}
+	clock.add(time.Minute)
+	spent := d.create.take("203.0.113.9", clock.now())
+	d.mu.Unlock()
+	if spent {
+		t.Fatal("a source past its daily budget could still create")
+	}
+	e.deviceStart() // 127.0.0.1 is unaffected
+
+	// One source cannot hold every pending slot.
+	e2 := newEnv(t)
+	useFakeClock(e2)
+	e2.api.devices.create = newClientLimit(1000, 1000, 1000, 0)
+	for i := 0; i < devicePendingPerClient; i++ {
+		e2.deviceStart()
+	}
+	e2.do(http.DefaultClient, "POST", "/api/cli/device", map[string]any{"hostname": "x"}, 429, nil)
+	e2.api.devices.mu.Lock()
+	n := len(e2.api.devices.byHash)
+	e2.api.devices.mu.Unlock()
+	if n != devicePendingPerClient {
+		t.Fatalf("pending = %d, want %d", n, devicePendingPerClient)
+	}
 }
 
 func TestNormalUserCode(t *testing.T) {

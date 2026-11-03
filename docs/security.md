@@ -291,7 +291,9 @@ any client you would not hand a key to.
 | Assistant | 24 model steps and 15 minutes per message, messages up to 1 MB (a dropped file of keys), one message at a time per chat |
 
 The client IP comes from the socket unless `ACNOLOGIA_TRUST_PROXY_HEADERS=true`.
-Behind a reverse proxy, enable it, or every client shares one login limit.
+Behind a reverse proxy, enable it, or every client shares one budget on each
+per address limit: sign in, the lock screen, the CLI sign in, invites, claim
+links and revoke pushes. An IPv6 address counts by its /64.
 
 ## Outbound requests
 
@@ -343,8 +345,11 @@ random bytes kept only as a SHA-256 hash, in memory, for 10 minutes; the
 person approves the 8 letter user code on `/cli/authorize` with a dashboard
 session past the site lock, picking a scope no higher than their role, and the
 token (90 days, named `acn on <hostname>`) is audit logged as `token.create`.
-Creating, polling and wrong user codes are rate limited globally (30, 600 and
-10 a minute), and an API token cannot approve a sign in. See
+Creating, polling and wrong user codes are rate limited per client address
+or per user under a global ceiling: one address creates 5 a minute (30 from
+all, with no daily cap) and holds at most 10 waiting requests, only polls
+for unknown codes count, and one user gets 10 wrong codes a minute, after
+which only that user is refused. An API token cannot approve a sign in. See
 [Command line](cli.md#how-the-sign-in-works).
 
 The CLI treats the server it talks to as untrusted input:
@@ -422,8 +427,9 @@ section.
 - **Invites are one time and short lived.** `acninv_` codes carry the owner URL,
   the share id and 32 random bytes; only the SHA-256 of the secret is stored and
   it is compared in constant time. Redeeming burns it in the same transaction
-  that binds the peer. Preview and redeem are limited globally (20 a minute,
-  500 a day).
+  that binds the peer. Preview and redeem count only refused invites, 10 a
+  minute per client address and 20 a minute (500 a day) from all, so junk
+  can never spend the budget a real invite needs.
 - **An invite binds to the server that redeems it.** Redeem carries the
   receiver's public key and an Ed25519 signature over the share id, the
   invite hash, a nonce and its id; the owner checks the id is derived from
@@ -531,7 +537,8 @@ token, like a receiving server; in reveal mode they get the raw keys.
   and it is valid 1h, 24h or 7d. Redeem burns it in the same transaction
   that mints the token or records the reveal, so it works once even under
   parallel redeems; a new link kills the old one. Preview and redeem are
-  limited globally (20 a minute, 500 a day), answer with
+  limited like invites (only codes that open nothing count, per address and
+  globally), answer with
   `Cache-Control: no-store`, and say only which of unknown (404), used (409)
   or expired (410) applies. A share revoked or past its timer before the
   claim refuses the link. `acnclaim_` is a redactor pattern, and the request

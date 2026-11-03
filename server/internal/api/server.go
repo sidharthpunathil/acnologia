@@ -73,11 +73,11 @@ type Server struct {
 	// peers is the receiver side of sharing between servers (peer.Syncer).
 	peers *peer.Syncer
 	// peerLimit bounds invite preview and redeem calls (peer_public.go).
-	peerLimit *peerLimiter
+	peerLimit *secretLimit
 	// revokeLimit bounds revoke pushes from other servers (handover.go).
-	revokeLimit *peerLimiter
+	revokeLimit *secretLimit
 	// claimLimit bounds claim link preview and redeem calls (people.go).
-	claimLimit *peerLimiter
+	claimLimit *secretLimit
 	// Refresh keeps providers' offers current (refresh.go).
 	Refresh *refresh.Refresher
 	// ctlAppMu makes the control MCP create its app once (mcp_control.go).
@@ -93,9 +93,9 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 		limiter:  newLoginLimiter(),
 		devices:  newDeviceStore(),
 	}
-	s.peerLimit = newPeerLimiter()
-	s.revokeLimit = newPeerLimiter()
-	s.claimLimit = newPeerLimiter()
+	s.peerLimit = newSecretLimit()
+	s.revokeLimit = newSecretLimit()
+	s.claimLimit = newSecretLimit()
 	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat, FetchSiteLogo: peer.SiteLogo}
 	s.peers.OnHandover = s.onHandover
 	s.Refresh = &refresh.Refresher{Store: st, Catalog: cat, AI: serverAI{s}}
