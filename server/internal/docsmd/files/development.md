@@ -61,7 +61,7 @@ different key and it refuses to boot rather than mix keys.
 | `server/internal/config` | Environment settings and the default data directory per OS. |
 | `server/internal/docsmd`, `llmstxt`, `webui` | Embedded copies of the docs, `llms.txt` and the built dashboard. |
 | `web/` | React, Vite, Zustand and Tailwind dashboard. Built into `server/internal/webui/dist`. |
-| `sdk/` | The twelve client libraries, see [SDKs](sdks.md). |
+| `sdk/` | The seventeen client libraries, see [SDKs](sdks.md). |
 | `e2e/` | Playwright screenshot suite for the dashboard. |
 | `scripts/build.ps1` | The Makefile's build steps for Windows PowerShell. |
 | `install.sh`, `install.ps1` | `acn` installers for macOS and Linux, and for Windows. |

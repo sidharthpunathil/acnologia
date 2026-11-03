@@ -77,6 +77,12 @@ jobs:
       gosdk: ${{ steps.diff.outputs.gosdk }}
       python: ${{ steps.diff.outputs.python }}
       ruby-sdk: ${{ steps.diff.outputs.ruby-sdk }}
+      c-sdk: ${{ steps.diff.outputs.c-sdk }}
+      cpp-sdk: ${{ steps.diff.outputs.cpp-sdk }}
+      elixir-sdk: ${{ steps.diff.outputs.elixir-sdk }}
+      haskell-sdk: ${{ steps.diff.outputs.haskell-sdk }}
+      lua-sdk: ${{ steps.diff.outputs.lua-sdk }}
+      zig-sdk: ${{ steps.diff.outputs.zig-sdk }}
       typescript: ${{ steps.diff.outputs.typescript }}
       web: ${{ steps.diff.outputs.web }}
       windows: ${{ steps.diff.outputs.windows }}
@@ -130,6 +136,12 @@ jobs:
           area gosdk "$files" '^sdk/go/'
           area python "$files" '^sdk/python/'
           area ruby-sdk "$files" '^sdk/ruby/'
+          area c-sdk "$files" '^sdk/c/'
+          area cpp-sdk "$files" '^sdk/cpp/'
+          area elixir-sdk "$files" '^sdk/elixir/'
+          area haskell-sdk "$files" '^sdk/haskell/'
+          area lua-sdk "$files" '^sdk/lua/'
+          area zig-sdk "$files" '^sdk/zig/'
           area typescript "$files" '^sdk/typescript/'
           area web "$files" '^web/'
           area windows "$files" '^scripts/|^install\.ps1$|^setup\.ps1$|^Makefile$|^server/go\.(mod|sum)$|^server/cmd/|^web/(package\.json|pnpm-lock\.yaml|vite\.config\.ts)$'
@@ -270,6 +282,179 @@ jobs:
           ruby --version
           ruby -w -Ilib -Itest test/test_acnologia.rb
           gem build acnologia.gemspec
+
+  c-sdk:
+    name: c sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.c-sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Test (Linux and macOS, with AddressSanitizer and UndefinedBehaviorSanitizer)
+        if: runner.os != 'Windows'
+        working-directory: sdk/c
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev; fi
+          cmake -S . -B build -DACN_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        working-directory: sdk/c
+        shell: pwsh
+        run: |
+          vcpkg install curl:x64-windows
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build --config Debug
+          ctest --test-dir build -C Debug --output-on-failure
+
+  cpp-sdk:
+    name: cpp sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.cpp-sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Test (Linux and macOS)
+        if: runner.os != 'Windows'
+        working-directory: sdk/cpp
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        working-directory: sdk/cpp
+        shell: pwsh
+        run: |
+          vcpkg install curl:x64-windows
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build --config Release
+          ctest --test-dir build -C Release --output-on-failure
+
+  elixir-sdk:
+    name: elixir sdk (${{ matrix.os }}, elixir ${{ matrix.elixir }}, otp ${{ matrix.otp }})
+    needs: changes
+    if: needs.changes.outputs.elixir-sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported pair uses the SDK's own HTTP client (inets before 9.6).
+          - { os: ubuntu-latest, elixir: "1.18", otp: "25" }
+          - { os: ubuntu-latest, elixir: "1.20", otp: "29" }
+          - { os: windows-latest, elixir: "1.20", otp: "29" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Test
+        working-directory: sdk/elixir
+        run: |
+          mix format --check-formatted
+          mix compile --warnings-as-errors
+          mix test
+          ACNOLOGIA_TEST_HTTP=raw mix test
+
+  haskell-sdk:
+    name: haskell sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.haskell-sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: sdk/haskell
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.18.2.0"
+
+      - run: cabal update
+      - run: cabal build all --dry-run
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('sdk/haskell/dist-newstyle/cache/plan.json') }}
+          restore-keys: ${{ runner.os }}-ghc-9.14.1-
+
+      - run: cabal build all --only-dependencies
+      - run: cabal build all
+      - run: cabal test --test-show-details=direct
+
+  lua-sdk:
+    name: lua sdk (${{ matrix.os }}, ${{ matrix.lua }})
+    needs: changes
+    if: needs.changes.outputs.lua-sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        lua: ["5.1", "5.4", "luajit-2.1"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: leafo/gh-actions-lua@v11
+        with:
+          luaVersion: ${{ matrix.lua }}
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      - name: Test
+        working-directory: sdk/lua
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update && sudo apt-get install -y libssl-dev; fi
+          luarocks install luasocket
+          if [ "$RUNNER_OS" = macOS ]; then luarocks install luasec OPENSSL_DIR="$(brew --prefix openssl@3)"; else luarocks install luasec; fi
+          luarocks install busted
+          busted
+
+  zig-sdk:
+    name: zig sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.zig-sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: Test
+        working-directory: sdk/zig
+        run: zig build test --summary all
 
   typescript-sdk:
     name: typescript sdk (${{ matrix.os }})

@@ -84,7 +84,7 @@ Every page of the docs is also served as raw Markdown. Fetch these when you need
 - [Overview](/docs/overview.md): what Acnologia does, quick start and features.
 - [HTTP API](/docs/api.md): consumer error codes and every dashboard route with its required role.
 - [Command line](/docs/cli.md): install the acn CLI, sign in through the browser, commands and CI variables.
-- [SDKs](/docs/sdks.md): the twelve client libraries, how to install each today, the shared surface and running their tests.
+- [SDKs](/docs/sdks.md): the seventeen client libraries, how to install each today, the shared surface and running their tests.
 - [Configuration](/docs/configuration.md): environment variables, per service settings, self-hosting, Windows, the access password, backups and upgrading.
 - [Deploying](/docs/deploy.md): every deploy option, one click on Render or Railway, Fly.io, the container image and the settings a public deploy needs.
 - [Deploying on Railway](/docs/deploy-railway.md): a public deploy behind the access password, with a volume, AI and sharing.

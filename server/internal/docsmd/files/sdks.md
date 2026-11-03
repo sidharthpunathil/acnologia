@@ -1,6 +1,6 @@
 # SDKs
 
-The SDKs call Acnologia's consumer API (`/proxy/...` and `/api/v1/...`) with an app token, so your code never has to store a provider key. There are twelve, one per folder under [`sdk/`](../sdk), and they all have the same shape: once you know one, the others differ mostly in naming.
+The SDKs call Acnologia's consumer API (`/proxy/...` and `/api/v1/...`) with an app token, so your code never has to store a provider key. There are seventeen, one per folder under [`sdk/`](../sdk), and they all have the same shape: once you know one, the others differ mostly in naming.
 
 None is on a package registry yet. The package column below is the name each one will publish under; [Install today](#install-today) shows how to add each one now.
 
@@ -11,7 +11,7 @@ None is on a package registry yet. The package column below is the name each one
 | [Go](../sdk/go/README.md) | [`sdk/go`](../sdk/go) | `github.com/sidharthpunathil/acnologia/sdk/go` | Go 1.22 | `WithKey` |
 | [Python](../sdk/python/README.md) | [`sdk/python`](../sdk/python) | `acnologia` (PyPI) | Python 3.9 | `with_key` |
 | [TypeScript and JavaScript](../sdk/typescript/README.md) | [`sdk/typescript`](../sdk/typescript) | `@acnologia/keys` (npm) | Node 18, Bun, Deno, browsers | `withKey` |
-| [Ruby](../sdk/ruby/README.md) | [`sdk/ruby`](../sdk/ruby) | `acnologia` (gem) | Ruby 2.6 | `with_key` |
+| [Ruby](../sdk/ruby/README.md) | [`sdk/ruby`](../sdk/ruby) | `acnologia` (gem) | Ruby 3.1 | `with_key` |
 | [PHP](../sdk/php/README.md) | [`sdk/php`](../sdk/php) | `acnologia/keys` (Composer) | PHP 8.1 with curl | `withKey` |
 | [Rust](../sdk/rust/README.md) | [`sdk/rust`](../sdk/rust) | `acnologia` (crate) | Rust 1.75 | `with_key` |
 | [Java](../sdk/java/README.md) | [`sdk/java`](../sdk/java) | `dev.acnologia:acnologia` | Java 17 | `withKey` |
@@ -20,6 +20,11 @@ None is on a package registry yet. The package column below is the name each one
 | [Swift](../sdk/swift/README.md) | [`sdk/swift`](../sdk/swift) | `Acnologia` library | Swift 5.9, macOS 13, iOS 16 | `withKey` |
 | [Dart and Flutter](../sdk/dart/README.md) | [`sdk/dart`](../sdk/dart) | `acnologia` (pub) | Dart 3.0 | `withKey` |
 | [C++](../sdk/cpp/README.md) | [`sdk/cpp`](../sdk/cpp) | `acnologia::acnologia` CMake target | C++17, CMake 3.16, libcurl | `with_key` |
+| [C](../sdk/c/README.md) | [`sdk/c`](../sdk/c) | `acnologia::acnologia` CMake target | C11, libcurl, CMake 3.16 or make | `acn_with_key` |
+| [Zig](../sdk/zig/README.md) | [`sdk/zig`](../sdk/zig) | `acnologia` Zig module | Zig 0.17.0 | none |
+| [Elixir](../sdk/elixir/README.md) | [`sdk/elixir`](../sdk/elixir) | `acnologia` (Hex) | Elixir 1.18, OTP 25 | `with_key` |
+| [Haskell](../sdk/haskell/README.md) | [`sdk/haskell`](../sdk/haskell) | `acnologia` (Hackage) | GHC 9.4, cabal 3.0 | `withKey` |
+| [Lua](../sdk/lua/README.md) | [`sdk/lua`](../sdk/lua) | `acnologia` (luarocks) | Lua 5.1 to 5.5 or LuaJIT, with luasocket and luasec or lua-curl | `with_key` |
 
 Each README opens with a quick start, then covers install, the full API, errors and tests.
 
@@ -38,7 +43,8 @@ A service that another Acnologia server shares with yours is proxy only. A lease
 ## Where they differ
 
 - **Environment variables.** Most clients can be built from `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` (for example `Client.new` in Ruby, `Acnologia.fromEnvironment()` in Dart, `Client::from_env()` in C++). The Go, TypeScript and PHP clients do not read them: pass the values to the constructor yourself.
-- **Auth errors.** Rust, Java, Kotlin, C#, Swift, Dart and C++ have their own types for 401 (unauthenticated) and 403 (forbidden). Go, Python, TypeScript, Ruby and PHP raise their generic API error, so check its status and code.
+- **Auth errors.** Rust, Java, Kotlin, C#, Swift, Dart, C++ and Ruby have their own types for 401 (unauthenticated) and 403 (forbidden). Go, Python, TypeScript and PHP raise their generic API error, so check its status and code.
+- **The newer API (Ruby, C++, C, Zig, Elixir, Haskell and Lua).** These seven also have `me` for `GET /api/v1/me`, their own errors for `app_limit_reached` (with `limit`, `reset_at` and `retry_after`), `share_revoked`, `share_paused`, `share_expired`, `lease_not_allowed`, `upstream_blocked` and `loop_detected`, an `Idempotency-Key` on proxied POSTs, `Retry-After` from the header when the body has none, and the `X-Acnologia-Access` header for a deploy behind the access password. They also tell Acnologia's own refusals on the proxy apart from the provider's answers. The other SDKs report those errors as their generic API error. Ruby adds opt in retries that sleep the server's `Retry-After`.
 
 ## Install today
 
@@ -131,6 +137,49 @@ FetchContent_MakeAvailable(acnologia)
 target_link_libraries(my_app PRIVATE acnologia::acnologia)
 ```
 
+**C**
+
+```cmake
+add_subdirectory(path/to/acnologia/sdk/c)
+target_link_libraries(my_app PRIVATE acnologia::acnologia)
+```
+
+Or FetchContent as for C++, with `SOURCE_SUBDIR sdk/c`.
+
+**Zig**
+
+```sh
+zig fetch --save=acnologia git+https://github.com/sidharthpunathil/acnologia#main
+```
+
+Then build a module from `dep.path("sdk/zig/src/acnologia.zig")` in `build.zig`. The [Zig README](../sdk/zig/README.md) shows the lines.
+
+**Elixir**
+
+```elixir
+{:acnologia, git: "https://github.com/sidharthpunathil/acnologia.git", sparse: "sdk/elixir", branch: "main"}
+```
+
+**Haskell**
+
+In `cabal.project`:
+
+```
+source-repository-package
+  type: git
+  location: https://github.com/sidharthpunathil/acnologia.git
+  tag: main
+  subdir: sdk/haskell
+```
+
+Then depend on `acnologia`.
+
+**Lua**
+
+```sh
+luarocks install --local https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/sdk/lua/acnologia-scm-1.rockspec
+```
+
 ## Run the tests
 
 Every suite runs offline against a stub or fake server. Run each one from its folder:
@@ -149,12 +198,17 @@ Every suite runs offline against a stub or fake server. Run each one from its fo
 | Swift | `sdk/swift` | `swift test` |
 | Dart | `sdk/dart` | `dart pub get && dart test` |
 | C++ | `sdk/cpp` | `cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure` |
+| C | `sdk/c` | `cmake -S . -B build -DACN_SANITIZE=ON && cmake --build build && ctest --test-dir build --output-on-failure` |
+| Zig | `sdk/zig` | `zig build test` |
+| Elixir | `sdk/elixir` | `mix test` (add `ACNOLOGIA_TEST_HTTP=raw` to test the built in HTTP client used before inets 9.6) |
+| Haskell | `sdk/haskell` | `cabal update && cabal build all && cabal test` |
+| Lua | `sdk/lua` | `luarocks install --local busted && busted` (or `lua spec/run.lua`) |
 
 Without a local toolchain, the Java, Kotlin, C#, Dart and PHP READMEs show how to run the same suite in Docker (`maven:3-eclipse-temurin-17`, `gradle:8-jdk17`, `mcr.microsoft.com/dotnet/sdk:8.0`, `dart:stable`, `php:8.1-cli`). The Swift suite also runs with `swift test` at the repository root, through the root `Package.swift`.
 
 ### On Windows
 
-The SDKs read no files and keep no config of their own, so they behave the same on Windows. CI runs the Go, Python and TypeScript suites on `windows-latest` as well as Linux and macOS.
+The SDKs read no files and keep no config of their own, so they behave the same on Windows. CI runs the Go, Python, Ruby and TypeScript suites on `windows-latest` as well as Linux and macOS.
 
 For the SDKs that read the environment, set the token for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only).
 

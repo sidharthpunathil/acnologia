@@ -1,6 +1,6 @@
 # SDKs
 
-Client libraries for twelve languages. Each one calls Acnologia with an app token (`acn_...`), so your code gets a working key, or a proxied response, without holding the key pool itself. They all speak the same consumer API (`/api/v1/...` and `/proxy/...`) and share one shape, so moving between them is mostly a matter of naming.
+Client libraries for seventeen languages. Each one calls Acnologia with an app token (`acn_...`), so your code gets a working key, or a proxied response, without holding the key pool itself. They all speak the same consumer API (`/api/v1/...` and `/proxy/...`) and share one shape, so moving between them is mostly a matter of naming.
 
 None is on a package registry yet. The package column is the name each one will publish under, and the install column says how to get it today.
 
@@ -18,6 +18,11 @@ None is on a package registry yet. The package column is the name each one will 
 | [Swift](swift/README.md) | [`sdk/swift`](swift) | `Acnologia` library | Swift 5.9, macOS 13, iOS 16 | SwiftPM repository URL |
 | [Dart and Flutter](dart/README.md) | [`sdk/dart`](dart) | `acnologia` (pub name) | Dart 3.0 | pub git dependency |
 | [C++](cpp/README.md) | [`sdk/cpp`](cpp) | `acnologia::acnologia` CMake target | C++17, CMake 3.16, libcurl | CMake FetchContent |
+| [C](c/README.md) | [`sdk/c`](c) | `acnologia::acnologia` CMake target | C11, libcurl | CMake `add_subdirectory` or FetchContent |
+| [Zig](zig/README.md) | [`sdk/zig`](zig) | `acnologia` Zig module | Zig 0.17.0 | `zig fetch` |
+| [Elixir](elixir/README.md) | [`sdk/elixir`](elixir) | `acnologia` (Hex name) | Elixir 1.18, OTP 25 | Mix git dependency |
+| [Haskell](haskell/README.md) | [`sdk/haskell`](haskell) | `acnologia` (Hackage name) | GHC 9.4 | cabal `source-repository-package` |
+| [Lua](lua/README.md) | [`sdk/lua`](lua) | `acnologia` (luarocks name) | Lua 5.1 to 5.5, LuaJIT | luarocks from the rockspec URL |
 
 ## What every SDK does
 

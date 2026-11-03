@@ -195,7 +195,7 @@ On Windows: `irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/ma
 
 Each service's **Integrate** tab has ready snippets in curl, Python,
 TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart, and
-there are [SDKs](sdk/README.md) for the same twelve languages.
+there are [SDKs](sdk/README.md) for seventeen languages, including C, Zig, Elixir, Haskell and Lua.
 
 ## Also included
 

@@ -14,7 +14,7 @@ it. Each doc below answers one kind of question.
 | [Deploying on a VPS](deploy-vps.md) | operators | One script for any Linux server with HTTPS, cloud-init, and a one command setup on Hetzner or DigitalOcean. |
 | [HTTP API](api.md) | integrators | Consumer error codes, and every dashboard route with the role it needs. |
 | [Command line](cli.md) | operators, CI | Installing `acn` on macOS, Linux and Windows, browser sign in, every command, CI variables and the device flow. |
-| [SDKs](sdks.md) | app authors | The twelve client libraries, how to install each, the surface they share and how to run their tests. |
+| [SDKs](sdks.md) | app authors | The seventeen client libraries, how to install each, the surface they share and how to run their tests. |
 | [Provider specs](providers.md) | admins, contributors | The 27 built in providers, the spec format, offers and their refresh, usage guides, the AI builder, providers from another server and live checks. |
 | [Development](development.md) | contributors | Clone to tests and a running dashboard, the repository layout, every test suite, CI, Windows builds, screenshot tests and conventions. |
 | [llms.txt](llms.txt) / [llms-full.txt](llms-full.txt) | app and agent authors | The consumer API, proxy, MCP, SDKs, redaction guarantees and errors, written for a model to read. |

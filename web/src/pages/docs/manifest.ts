@@ -52,7 +52,7 @@ export const DOCS: DocEntry[] = [
   { slug: "deploy-vps", title: "Deploying on a server", blurb: "One script for any Linux server with HTTPS, cloud-init, Hetzner and DigitalOcean in one command, backups and upgrades.", icon: RiServerLine, group: "operate" },
   { slug: "api", title: "HTTP API", blurb: "Consumer error codes and every dashboard route with its required role.", icon: RiCodeSSlashLine, group: "reference" },
   { slug: "cli", title: "Command line", blurb: "Install acn, sign in through the browser, every command and CI variables.", icon: RiTerminalBoxLine, group: "reference" },
-  { slug: "sdks", title: "SDKs", blurb: "The twelve client libraries, how to install each today and how to run their tests.", icon: RiCodeBoxLine, group: "reference" },
+  { slug: "sdks", title: "SDKs", blurb: "The seventeen client libraries, how to install each today and how to run their tests.", icon: RiCodeBoxLine, group: "reference" },
   { slug: "providers", title: "Provider specs", blurb: "The built in providers, the spec format, offers and refresh, and adding one by hand, with AI or from another server.", icon: RiPuzzle2Line, group: "reference" },
   { slug: "development", title: "Development", blurb: "Setup, repository layout, tests and conventions.", icon: RiToolsLine, group: "contribute" },
 ];
