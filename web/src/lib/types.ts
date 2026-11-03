@@ -874,3 +874,32 @@ export interface MCPView {
   /** Full URL of the HTTP MCP endpoint, ending in /mcp. */
   endpoint: string;
 }
+
+/** What a control MCP tool does: reads, changes, or removes something. */
+export type ControlToolKind = "read" | "write" | "destructive";
+
+/** A group of control MCP tools, picked with ?groups= on the endpoint URL. */
+export interface ControlToolGroup {
+  id: string;
+  label: string;
+  /** In the tool set a client gets without ?groups=. */
+  default: boolean;
+}
+
+export interface ControlTool {
+  name: string;
+  title: string;
+  description: string;
+  group: string;
+  kind: ControlToolKind;
+  /** False when the caller's role cannot use it. */
+  available: boolean;
+}
+
+/** GET /api/admin/mcp/control: the control MCP endpoint and every tool it can expose. */
+export interface ControlMcpView {
+  /** Full URL of the endpoint, ending in /mcp/control. */
+  url: string;
+  groups: ControlToolGroup[];
+  tools: ControlTool[];
+}
