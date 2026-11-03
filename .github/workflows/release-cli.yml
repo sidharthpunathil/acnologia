@@ -1,5 +1,6 @@
 # Builds the acn command line client for every platform and attaches it to
-# the GitHub release of a cli-v* tag. install.sh downloads from there.
+# the GitHub release of a cli-v* tag. install.sh (macOS, Linux) and
+# install.ps1 (Windows) download from there.
 #
 #   git tag cli-v0.1.0 && git push origin cli-v0.1.0
 #
@@ -35,7 +36,7 @@ jobs:
           set -eu
           version="${TAG#cli-}"
           mkdir -p dist
-          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64; do
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
             os="${target%/*}"
             arch="${target#*/}"
             work="build/acn_${os}_${arch}"
@@ -45,7 +46,7 @@ jobs:
             (cd server && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
               go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "../${work}/${bin}" ./cmd/acn)
             if [ "$os" = windows ]; then
-              (cd "$work" && zip -q "../../dist/acn_${os}_${arch}.zip" "$bin")
+              (cd "$work" && zip -q -X "../../dist/acn_${os}_${arch}.zip" "$bin")
             else
               tar -C "$work" -czf "dist/acn_${os}_${arch}.tar.gz" "$bin"
             fi
@@ -61,6 +62,6 @@ jobs:
           set -eu
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --title "acn ${TAG#cli-}" \
-              --notes "The acn command line client. Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh"
+              --notes "The acn command line client. Install on macOS and Linux: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh. On Windows, in PowerShell: irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.ps1 | iex"
           fi
           gh release upload "$TAG" dist/* --clobber
