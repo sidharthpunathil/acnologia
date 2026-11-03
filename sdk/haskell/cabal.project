@@ -1,0 +1,7 @@
+-- Used when building from sdk/haskell. Warnings are errors here, and only
+-- here: a project that pulls this package in keeps its own flags.
+packages: .
+tests: True
+
+package acnologia
+  ghc-options: -Werror
