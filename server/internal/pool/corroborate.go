@@ -137,6 +137,6 @@ func (p *Pool) corroborated(ctx context.Context, svc *store.Service, k *store.Ke
 	case providers.QuotaExhausted:
 		return fresh.Status == store.StatusExhausted || fresh.Status == store.StatusInvalid
 	default:
-		return fresh.Status == store.StatusInvalid
+		return fresh.Status == store.StatusInvalid || fresh.Status == store.StatusBanned
 	}
 }

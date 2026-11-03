@@ -26,9 +26,9 @@ the rules that apply to it, then lists the dashboard API.
 | `GET /api/v1/services/{slug}/guide` | The service's usage guide, only for a service the token may use (403 `service_not_allowed` otherwise). `Accept: text/markdown` or `?format=md` returns raw Markdown; otherwise `{markdown, guide, generated}` (see [usage guides](providers.md#usage-guides)). |
 | `GET /api/v1/me` | The token's own access: `{app: {id, name}, limits: {daily_requests, monthly_requests, daily_budget, monthly_budget}, usage: {today_requests, today_cost, month_requests, month_cost, last_used_at, limit_hit}, limit_hit, services: [{slug, name, provider, category, available, logo_url}], share}` (`logo_url` is always null). `share` is null for an ordinary app; for a share's token it is `{id, name, owner: {name, id}, owner_name, owner_id, recipient, label, status, mode, ends_at}`. A share token whose share is paused, expired or revoked still gets 200 here with that `status` and no services. `available` counts keys free right now for a share's token; for an ordinary app it is 1 or 0, since apps never learn pool sizes. |
 | `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec, exclusive}`. Apps in mode `lease` or `both`. `exclusive: true` keeps the key from every other caller until you report or the lease expires. |
-| `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. |
-| `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. |
-| `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id`, `X-Acnologia-Attempts`, `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. |
+| `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. With `rotate`, `next` is null once the app reached a request or budget limit. A report never changes a key an admin disabled or a suspended (banned) key. |
+| `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. 403 `lease_revoked` ends the lease when the app may no longer hold the key: lease mode or the service was taken away, its hidden key grant or share scope no longer covers the key, or the key was disabled. |
+| `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` (not for a share's or a person's token), `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. A caller that may not lease the key gets bodies with the key replaced by `[key]`. A share's token reaches only the services it was made with: a slug that now names another service or a group answers 403 `service_not_allowed`. |
 | `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Tools depend on the app's tool sets: core (`list_services`, `pool_status`, `service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`), service tools generated from provider examples, insights (`list_keys`, `key_details`, `service_stats`) and manage (`check_keys`, `set_key_status`, `add_keys`). Also resources (including `acnologia://services/{slug}/guide`, the usage guide as Markdown) and prompts. |
 
 Status codes an app should handle:
@@ -72,7 +72,7 @@ Open while the site is locked, so the lock screen can reach them. See
 | Route | Role | Purpose |
 |---|---|---|
 | `GET /api/gate` | public | `{required, locked, password_only, unlock_ttl_sec}`. `password_only` is true when the access password is the whole login (`ACNOLOGIA_ACCESS_SIGNS_IN`). `unlock_ttl_sec` is how long an unlock lasts (`ACNOLOGIA_ACCESS_TTL`). |
-| `POST /api/gate/unlock` | public | `{password}`. Sets the `acnologia_gate` cookie and returns `{required, locked: false}`. 401 `wrong_password`; 429 `too_many_attempts` with `retry_after_sec` after 5 wrong guesses a minute or 50 a day. |
+| `POST /api/gate/unlock` | public | `{password}`. Sets the `acnologia_gate` cookie and returns `{required, locked: false}`. 401 `wrong_password`; 429 `too_many_attempts` with `retry_after_sec` after 5 wrong guesses a minute or 50 a day from one address, or 20 a minute from all addresses. Wrong `X-Acnologia-Access` headers count too. |
 | `POST /api/gate/lock` | public | Drops this browser's gate cookie. |
 
 ### Auth (`/api/auth`)
@@ -92,9 +92,9 @@ dashboard session (not an API token).
 
 | Route | Role | Purpose |
 |---|---|---|
-| `POST /api/cli/device` | public | `{client, hostname, os}` returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}`. 30 a minute across all clients. |
-| `POST /api/cli/device/token` | public | `{device_code}`. 400 `authorization_pending`, `slow_down` (with `interval`), `access_denied` or `expired_token`; 200 `{token, token_id, user, scope, expires_at}` once after approval. |
-| `GET /api/cli/device/lookup?user_code=` | m, session | `{request: {user_code, client, hostname, os, created_at, expires_at, state}}`. Wrong codes: 10 a minute, 200 a day, then 429. |
+| `POST /api/cli/device` | public | `{client, hostname, os}` returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}`. 5 a minute and 50 a day per client address, 30 a minute across all, and 10 waiting at once per address. |
+| `POST /api/cli/device/token` | public | `{device_code}`. 400 `authorization_pending`, `slow_down` (with `interval`), `access_denied` or `expired_token`; 429 `slow_down` past 60 unknown codes a minute from one address or 600 from all; 200 `{token, token_id, user, scope, expires_at}` once after approval. |
+| `GET /api/cli/device/lookup?user_code=` | m, session | `{request: {user_code, client, hostname, os, created_at, expires_at, state}}`. Wrong codes: 10 a minute, 200 a day per user, then 429. |
 | `POST /api/cli/device/approve` | m, session | `{user_code, scope, label}`. Creates a 90 day admin token named `acn on <hostname>` (or `label`), scope capped at your role. |
 | `POST /api/cli/device/deny` | m, session | `{user_code}`. The CLI's next poll gets `access_denied`. |
 
@@ -120,7 +120,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `GET /apps/{id}/usage?days=30` | m | Today's and this month's requests, spend and cache hits, limits, the limit currently hit, and daily history. |
 | `GET /services`, `GET /services/{id}` | m | Services with key counts, request totals, `target_trusted`. A service another server shares also has `peer_link_id`, `peer_name`, `peer_remote_slug` and `peer_provider` (the owner's provider slug, which names, describes and gives the logo of the service while `provider` stays `acnologia-peer`). |
 | `POST /services` | a | Create from a provider's defaults. |
-| `PATCH /services/{id}` | a | Edit. Also takes `egress_id` (0 for direct), `cache_ttl_sec` and `cost_per_request` (-1 for the provider default). A non-superadmin changing `base_url`, auth, provider or egress proxy sets `target_trusted=false`; a superadmin submitting those fields sets it true. On a service holding keys another server handed over, those fields follow the owner and a change is refused (409 `handover_service`). |
+| `PATCH /services/{id}` | a | Edit. Also takes `egress_id` (0 for direct), `cache_ttl_sec` and `cost_per_request` (-1 for the provider default). Changing `base_url`, auth, provider or egress proxy sets `target_trusted=false` unless the request also sends `target_trusted: true`, which only a superadmin may send (403 otherwise, and always 403 from an Assistant tool call). Anyone may send `target_trusted: false`. On a service holding keys another server handed over, those fields follow the owner and a change is refused (409 `handover_service`). |
 | `DELETE /services/{id}` | a | Delete with its keys. Admins cannot delete a service holding hidden keys. |
 | `POST /services/{id}/check` | a | Health check every key in the service. |
 | `GET /services/{id}/keys` | m | Keys (hidden ones only for superadmins). Never includes secrets. A key this server handed over to another server has `handed_over: [{share_id, share_name, peer_id, peer_name, live, handed_at, valid_until, wiped_at, reported_status}]`; a key a reveal share showed to a person has `revealed_to: [{share_id, share_name, label, revealed_at}]` (for good: revoke cannot take it back); a key another server handed over to this one has `peer_link_id`, `peer_valid_until` (deleted then unless renewed) and `peer_remote_key_id`. |
@@ -281,15 +281,15 @@ model in [security.md](security.md#sharing-between-servers).
 
 | Route | Auth | Purpose |
 |---|---|---|
-| `GET /.well-known/acnologia` | none | `{id, name, version, public_key (base64 Ed25519), url, box_public_key (base64 X25519, what handed over keys are sealed to)}`. The id is `acn_srv_` and the first 20 characters of the lowercase base32 SHA-256 of the key. |
+| `GET /.well-known/acnologia` | none | `{id, name, version, public_key (base64 Ed25519), url, box_public_key (base64 X25519, what handed over keys are sealed to), redeem (the newest redeem message version it checks, 3)}`. The id is `acn_srv_` and the first 20 characters of the lowercase base32 SHA-256 of the key. |
 | `POST /api/peer/v1/preview` | invite | `{invite, share_id}`: the share's name, services and providers. Does not use the invite up. |
-| `POST /api/peer/v1/redeem` | invite and signature | `{invite, share_id, id, name, url, public_key, nonce, signature, box_public_key}`. The signature is Ed25519 over `acnologia-redeem-v1\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>`, or, when `box_public_key` is sent, over `acnologia-redeem-v2\n...\n<receiver id>\n<box public key>`. A handover share needs `box_public_key` (400 `box_key_required`). Returns `{token, owner, manifest}` once. 409 `invite_used`, 410 `invite_expired`, 404 `invite_invalid`, 401 `bad_signature`, 400 `bad_identity`, 400 `self_redeem` when a server redeems its own invite. |
+| `POST /api/peer/v1/redeem` | invite and signature | `{invite, share_id, id, name, url, public_key, nonce, signature, box_public_key, owner_id}`. Current receivers send `owner_id` and sign `acnologia-redeem-v3\n<owner id>\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>\n<box public key or empty>`; the owner refuses an `owner_id` that is not its own. Without `owner_id` the older messages still redeem: Ed25519 over `acnologia-redeem-v1\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>`, or, when `box_public_key` is sent, over `acnologia-redeem-v2\n...\n<receiver id>\n<box public key>`. A handover share needs `box_public_key` (400 `box_key_required`). Returns `{token, owner, manifest}` once. 409 `invite_used`, 410 `invite_expired`, 404 `invite_invalid`, 401 `bad_signature`, 400 `bad_identity`, 400 `self_redeem` when a server redeems its own invite. |
 | `GET /api/peer/v1/manifest` | share token | `{share_id, name, status, mode, lease_sec, end_action, limits, expires_at, services: [{slug, name, provider, category, description, logo_url, available}], providers: [{slug, name, version, shared, spec, ...}]}`. No key data. |
 | `POST /api/peer/v1/leave` | share token | The receiver disconnected; the share is revoked and shows as left by the peer. |
 | `GET /api/peer/v1/providers/{slug}/logo` | share token | The logo of a provider in this share's manifest (shared, or used by a shared service). 404 for any other provider or when it has none. |
 | `GET /api/peer/v1/keys` | share token | Handover shares only (409 `not_handover` for a proxy share; 403 while paused, expired or revoked): `{share_id, lease_sec, services: [{slug, name, provider, base_url, auth_type, auth_name}], keys: [{id, service, label, tier, sealed_secret, valid_until}]}`. Each `sealed_secret` is `acnseal1_` + base64url(HPKE enc and ciphertext), sealed to the receiver's box key. Every call renews the lease (`valid_until = now + lease`). |
 | `POST /api/peer/v1/report` | share token | `{keys: [{id, requests, status}]}`: the receiver says which handed over keys it holds, requests made with each and its pool status. The owner stores it as reported; a key missing from the list is recorded as deleted there. |
-| `POST /api/peer/v1/revoke` | owner signature | `{share_id, owner_id, receiver_id, ts, nonce, signature}`, sent by the owner to the receiver. The signature is Ed25519 over `acnologia-revoke-v1\n<share id>\n<receiver id>\n<ts>\n<nonce>`, checked against the owner key pinned on the link. Deletes every key handed over through that link and marks it revoked: `{ok, wiped}`. 401 `bad_signature`, 400 `stale` (more than 5 minutes off), 409 `replay`, 404 `unknown_share`, 429 `rate_limited`. |
+| `POST /api/peer/v1/revoke` | owner signature | `{share_id, owner_id, receiver_id, ts, nonce, signature}`, sent by the owner to the receiver. The signature is Ed25519 over `acnologia-revoke-v1\n<share id>\n<receiver id>\n<ts>\n<nonce>`, checked against the owner key pinned on the link. Deletes every key handed over through that link and marks it revoked: `{ok, wiped}`. 401 `bad_signature`, 400 `stale` (more than 5 minutes off), 409 `replay`, 404 `unknown_share`, 429 `rate_limited` (too many failed attempts from one address). |
 
 **Key scopes.** `key_scopes` maps a shared service's slug to which of its keys
 the share may use. A service without an entry uses every key, as before.
@@ -307,12 +307,14 @@ the scope on every pick, so a scope that leaves no usable key answers 503
 `no_key_available`, and the manifest's `available` counts only keys in the
 scope.
 
-Preview and redeem share a global limit of 20 calls a minute and 500 a day
-(429 `rate_limited`). A share token route called with an ordinary app token gets 403
+Preview and redeem count only refused invites: 10 a minute and 100 a day
+from one client address, and 20 a minute and 500 a day from all, then 429
+`rate_limited`. A valid invite never spends the budget, so a flood of junk
+cannot block a real one. A share token route called with an ordinary app token gets 403
 `not_a_share`; with the token of a revoked, paused or expired share, 403
 `share_revoked`, `share_paused` or `share_expired`. All these routes, and the well-known identity, are open
-through the access password lock. Revoke pushes share their own limit of
-20 a minute and 500 a day.
+through the access password lock. Revoke pushes have their own budget of
+the same size, spent only by refused pushes.
 
 ### Sharing with people
 
@@ -341,8 +343,10 @@ audit and webhooks work as for a server share.
 Both answer 404 `claim_invalid` for an unknown code, 409 `already_claimed`
 once redeemed, 410 `claim_expired` when the link ran out or the share ended
 (revoked, or its timer passed) before the claim, and 429 `rate_limited` past
-a global 20 calls a minute or 500 a day (their own bucket, sized like the
-invite routes). They send `Cache-Control: no-store`. Both, the `/claim/<code>`
+10 refused codes a minute or 100 a day from one address, or 20 a minute or
+500 a day from all (their own budget, sized like the invite routes). A code
+that opens a link never counts, and a malformed one costs no lookup and is
+not counted. They send `Cache-Control: no-store`. Both, the `/claim/<code>`
 and `/me` pages, and the person's own calls with the token (`/proxy`,
 `/api/v1`, `/mcp`) work through the access password lock; nothing else does.
 

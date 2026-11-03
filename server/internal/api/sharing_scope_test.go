@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -214,5 +215,60 @@ func TestAppKeyScopeCache(t *testing.T) {
 	a.do(a.super, "PATCH", "/api/admin/shares/"+sh.Share.ID, map[string]any{"key_scopes": map[string]any{"serpapi": map[string]any{"mode": "count", "count": 3}}}, 200, nil)
 	if sc, _ := a.st.AppKeyScope(ctx, *sh.Share.AppID, "serpapi"); sc == nil || sc.Count != 3 {
 		t.Fatalf("scope after update %v", sc)
+	}
+}
+
+// TestShareInvalidAnswerKeepsKey: a share holder shapes its own requests, so
+// a 401 it gets does not take the key out of rotation. Otherwise it could
+// knock the owner's keys out for every app and walk a count scope onto keys
+// outside its N.
+func TestShareInvalidAnswerKeepsKey(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	keys := a.addKeys(map[string]any{"secret": "k1", "priority": 1}, map[string]any{"secret": "k2", "priority": 2})
+	sh := a.newShare(map[string]any{"name": "x", "services": []string{"serpapi"},
+		"key_scopes": map[string]any{"serpapi": map[string]any{"mode": "count", "count": 1}}})
+	_, tok := a.redeemDirect(b, sh.Invite, nil)
+	setBad := func(msg string) {
+		a.up.mu.Lock()
+		defer a.up.mu.Unlock()
+		if a.up.callerBad == nil {
+			a.up.callerBad = map[string]string{}
+		}
+		if msg == "" {
+			delete(a.up.callerBad, "k1")
+		} else {
+			a.up.callerBad["k1"] = msg
+		}
+	}
+	setBad("Invalid API key. Your API key should be here")
+	for i := 0; i < 3; i++ {
+		if code, body, _ := peerCall(t, "GET", a.srv.URL+"/proxy/serpapi/search.json?q=x", tok); code != 401 {
+			t.Fatalf("share call %d: %d %s", i, code, body)
+		}
+	}
+	ctx := context.Background()
+	if k, err := a.st.GetKey(ctx, keys[0].ID); err != nil || k.Status != store.StatusActive {
+		t.Fatalf("share call took k1 out: %+v %v", k, err)
+	}
+	setBad("")
+	onlyKeys(t, usedKeys(t, a, tok, 5), "k1")
+	// A local app gets the same treatment: one app's unconfirmed 401 keeps
+	// the key, because the health check still finds it working.
+	setBad("Invalid API key. Your API key should be here")
+	_, local := a.app(map[string]any{"name": "local"})
+	for i := 0; i < 4; i++ {
+		peerCall(t, "GET", a.srv.URL+"/proxy/serpapi/search.json?q=x", local)
+	}
+	if k, _ := a.st.GetKey(ctx, keys[0].ID); k.Status != store.StatusActive {
+		t.Fatalf("an unconfirmed local 401 took k1 out: %s", k.Status)
+	}
+	// A key the provider really refuses leaves once a health check agrees.
+	setBad("")
+	a.up.mu.Lock()
+	a.up.bad["k1"] = "Invalid API key. Your API key should be here"
+	a.up.mu.Unlock()
+	a.do(a.super, "POST", fmt.Sprintf("/api/admin/keys/%d/check", keys[0].ID), map[string]any{}, 200, nil)
+	if k, _ := a.st.GetKey(ctx, keys[0].ID); k.Status != store.StatusInvalid {
+		t.Fatalf("a confirmed bad key stayed %s", k.Status)
 	}
 }

@@ -40,7 +40,14 @@ type Identity struct {
 	URL       string `json:"url"`
 	// BoxPublicKey is the X25519 key other servers seal handed over keys to.
 	BoxPublicKey string `json:"box_public_key,omitempty"`
+	// Redeem is the newest redeem message version the server accepts.
+	// Older releases leave it out.
+	Redeem int `json:"redeem,omitempty"`
 }
+
+// RedeemVersion is the redeem message version this release signs and the
+// newest it accepts.
+const RedeemVersion = 3
 
 // Fingerprint is a short form of the identity's public key for people to compare.
 func (i Identity) Fingerprint() string {
@@ -139,6 +146,7 @@ func Self(ctx context.Context, st *store.Store, box *crypto.Box, version, url st
 	return Identity{
 		ID: ServerID(pub), Name: Name(ctx, st), Version: version,
 		PublicKey: base64.StdEncoding.EncodeToString(pub), URL: url, BoxPublicKey: BoxPublicKey(bk),
+		Redeem: RedeemVersion,
 	}, priv, nil
 }
 

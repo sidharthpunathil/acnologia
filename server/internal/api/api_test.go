@@ -28,6 +28,10 @@ type fakeSerp struct {
 	bad  map[string]string // key -> error text
 	// drained makes the account page agree with a "run out" error.
 	drained bool
+	// callerBad answers 401 with this text to search requests only: the key
+	// is fine (the account page, which health checks use, still works), the
+	// caller shaped a request the provider refuses.
+	callerBad map[string]string
 }
 
 func (f *fakeSerp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +47,14 @@ func (f *fakeSerp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		strings.HasPrefix(auth, "Bearer acn_") || strings.HasPrefix(auth, "Bearer cog_") {
 		w.WriteHeader(500)
 		_, _ = w.Write([]byte(`{"error":"acnologia token leaked upstream"}`))
+		return
+	}
+	f.mu.Lock()
+	callerMsg, callerHit := f.callerBad[k]
+	f.mu.Unlock()
+	if callerHit && r.URL.Path != "/account.json" {
+		w.WriteHeader(401)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": callerMsg})
 		return
 	}
 	if msg, ok := f.bad[k]; ok && (r.URL.Path != "/account.json" || strings.Contains(msg, "Invalid")) {

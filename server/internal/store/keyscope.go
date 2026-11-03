@@ -87,13 +87,7 @@ type ScopeResult struct {
 // Count mode takes the first N keys still in rotation by priority then id,
 // so a key that leaves rotation is replaced by the next one.
 func ResolveScope(sc *KeyScope, keys []*Key, appID int64, includeHidden bool) ScopeResult {
-	usable := make([]*Key, 0, len(keys))
-	for _, k := range keys {
-		if !k.AllowsApp(appID) || (k.Hidden && !includeHidden) {
-			continue
-		}
-		usable = append(usable, k)
-	}
+	usable := usableKeys(keys, appID, includeHidden)
 	res := ScopeResult{IDs: map[int64]bool{}, Total: len(usable)}
 	switch {
 	case sc.IsAll():
@@ -111,23 +105,76 @@ func ResolveScope(sc *KeyScope, keys []*Key, appID int64, includeHidden bool) Sc
 			}
 		}
 	case sc.Mode == ScopeCount:
-		in := make([]*Key, 0, len(usable))
-		for _, k := range usable {
-			if k.InRotation() {
-				in = append(in, k)
-			}
-		}
-		sort.SliceStable(in, func(i, j int) bool {
-			if in[i].Priority != in[j].Priority {
-				return in[i].Priority < in[j].Priority
-			}
-			return in[i].ID < in[j].ID
-		})
+		in := rotationOrder(usable)
 		for i := 0; i < len(in) && i < sc.Count; i++ {
 			res.IDs[in[i].ID] = true
 		}
 	}
 	return res
+}
+
+// ResolveHandoverScope is ResolveScope for keys that leave this server. A
+// handed over key cannot be taken back, so in count mode a key that leaves
+// rotation does not free its place: the share keeps up to N of the keys it
+// was ever given (given), and gets a new key only while fewer than N of
+// those still exist. Deleting a key frees its place.
+func ResolveHandoverScope(sc *KeyScope, keys []*Key, appID int64, includeHidden bool, given map[int64]bool) ScopeResult {
+	if sc.IsAll() || sc.Mode != ScopeCount {
+		return ResolveScope(sc, keys, appID, includeHidden)
+	}
+	usable := usableKeys(keys, appID, includeHidden)
+	res := ScopeResult{IDs: map[int64]bool{}, Total: len(usable)}
+	held := 0
+	for _, k := range keys {
+		if given[k.ID] {
+			held++
+		}
+	}
+	in := rotationOrder(usable)
+	for _, k := range in {
+		if given[k.ID] && len(res.IDs) < sc.Count {
+			res.IDs[k.ID] = true
+		}
+	}
+	for _, k := range in {
+		if held >= sc.Count || len(res.IDs) >= sc.Count {
+			break
+		}
+		if !given[k.ID] {
+			res.IDs[k.ID] = true
+			held++
+		}
+	}
+	return res
+}
+
+// usableKeys keeps the keys an app may use at all.
+func usableKeys(keys []*Key, appID int64, includeHidden bool) []*Key {
+	usable := make([]*Key, 0, len(keys))
+	for _, k := range keys {
+		if !k.AllowsApp(appID) || (k.Hidden && !includeHidden) {
+			continue
+		}
+		usable = append(usable, k)
+	}
+	return usable
+}
+
+// rotationOrder returns the keys still in rotation by priority then id.
+func rotationOrder(keys []*Key) []*Key {
+	in := make([]*Key, 0, len(keys))
+	for _, k := range keys {
+		if k.InRotation() {
+			in = append(in, k)
+		}
+	}
+	sort.SliceStable(in, func(i, j int) bool {
+		if in[i].Priority != in[j].Priority {
+			return in[i].Priority < in[j].Priority
+		}
+		return in[i].ID < in[j].ID
+	})
+	return in
 }
 
 // ScopeKeys resolves a scope against a service's keys as stored now.

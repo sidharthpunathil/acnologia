@@ -320,6 +320,11 @@ func (e *serviceDownError) Error() string {
 func (s *Server) upstreamClient(ctx context.Context, sv *store.Service, k *store.Key) (*http.Client, error) {
 	id := egress.Pick(k.EgressID, sv.EgressID)
 	if id == nil || s.Pool.Egress == nil {
+		if sv.PublicOnly() {
+			// The owner of the share controls this host's DNS: check the
+			// address on every connection, not only when the link synced.
+			return s.PublicUpClient, nil
+		}
 		return s.UpClient, nil
 	}
 	rt, err := s.Pool.Egress.Transport(ctx, id)

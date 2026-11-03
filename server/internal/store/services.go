@@ -8,7 +8,8 @@ import (
 )
 
 const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev, target_trusted, egress_id, cache_ttl_sec, cost_per_request,
-peer_link_id, peer_remote_slug, peer_provider, COALESCE((SELECT pl.peer_name FROM peer_links pl WHERE pl.id=services.peer_link_id),'')`
+peer_link_id, peer_remote_slug, peer_provider, COALESCE((SELECT pl.peer_name FROM peer_links pl WHERE pl.id=services.peer_link_id),''),
+COALESCE((SELECT pl.trusted FROM peer_links pl WHERE pl.id=services.peer_link_id),0)`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
@@ -17,7 +18,7 @@ func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var cost sql.NullFloat64
 	err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.Provider, &s.Category, &s.Description, &s.BaseURL,
 		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev, &s.TargetTrusted,
-		&egress, &ttl, &cost, &link, &s.PeerRemoteSlug, &s.PeerProvider, &s.PeerName)
+		&egress, &ttl, &cost, &link, &s.PeerRemoteSlug, &s.PeerProvider, &s.PeerName, &s.PeerTrusted)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound

@@ -361,9 +361,11 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	}
 	// The next lease is a new lease: an app at its request or budget limit
 	// gets none, as on /lease and get_key. The report itself still counts.
-	if s.appLimitHit(ctx, a) != nil {
+	hit, release := s.admitApp(ctx, a, costPerRequest(sv, providers.Get(sv.Provider), "", ""))
+	if hit != nil {
 		return nil, 200, nil
 	}
+	defer release()
 	// A rotated exclusive lease hands over an exclusive key too, so the caller
 	// keeps owning its key outright across rotations.
 	exclusive, _ := s.Store.IsLeaseExclusive(ctx, l.ID)

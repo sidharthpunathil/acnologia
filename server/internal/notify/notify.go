@@ -326,13 +326,25 @@ func Sign(secret, ts string, body []byte) string {
 // Text is the one-line human form used by chat formats.
 func Text(e Event) string { return "Acnologia: " + e.Message }
 
+// Messages carry text other people chose: peer server names, share and key
+// labels, the message an app reports with a lease. Chat formats show it as
+// text, never as markup, so it cannot ping a channel or dress a link up as
+// another. Slack reads <!channel>, <@U..> and <url|label>; Discord reads
+// markdown, and allowed_mentions already stops its pings. Telegram gets no
+// parse_mode, so it shows plain text as is.
+var (
+	slackEscape   = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	discordEscape = strings.NewReplacer("\\", "\\\\", "*", "\\*", "_", "\\_", "~", "\\~", "`", "\\`", "|", "\\|",
+		"[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "<", "\\<", ">", "\\>", "#", "\\#")
+)
+
 // Payload renders the body for a webhook format.
 func Payload(format string, e Event) ([]byte, error) {
 	switch format {
 	case "slack":
-		return json.Marshal(map[string]string{"text": Text(e)})
+		return json.Marshal(map[string]string{"text": slackEscape.Replace(Text(e))})
 	case "discord":
-		return json.Marshal(map[string]any{"content": Text(e), "allowed_mentions": map[string]any{"parse": []string{}}})
+		return json.Marshal(map[string]any{"content": discordEscape.Replace(Text(e)), "allowed_mentions": map[string]any{"parse": []string{}}})
 	case "telegram":
 		return json.Marshal(map[string]any{"text": Text(e), "disable_web_page_preview": true})
 	case "json", "":

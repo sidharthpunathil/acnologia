@@ -244,6 +244,16 @@ func (s *Server) handoverKeys(ctx context.Context, sh *store.Share) (peer.Handov
 	}
 	until := time.Now().UTC().Add(time.Duration(sh.LeaseSec) * time.Second).Truncate(time.Second)
 	var delivered []string
+	// Every key this share was ever given, wiped or not: a count scope
+	// never hands over more than N of them.
+	past, err := s.Store.ListHandovers(ctx, sh.ID)
+	if err != nil {
+		return out, err
+	}
+	given := make(map[int64]bool, len(past))
+	for _, h := range past {
+		given[h.KeyID] = true
+	}
 	for _, slug := range sh.Services {
 		sv, err := s.Store.GetServiceBySlug(ctx, slug)
 		if err != nil || sv.Provider == providers.PeerSlug || sv.PeerLinkID != nil {
@@ -257,7 +267,7 @@ func (s *Server) handoverKeys(ctx context.Context, sh *store.Share) (peer.Handov
 		if err != nil {
 			return out, err
 		}
-		res := store.ResolveScope(sc, keys, appID, sh.IncludeHidden && sv.TargetTrusted)
+		res := store.ResolveHandoverScope(sc, keys, appID, sh.IncludeHidden && sv.TargetTrusted, given)
 		out.Services = append(out.Services, peer.HandoverService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider,
 			BaseURL: sv.BaseURL, AuthType: sv.AuthType, AuthName: sv.AuthName})
 		for _, k := range keys {
@@ -415,6 +425,7 @@ func (s *Server) peerRevoke(w http.ResponseWriter, r *http.Request) {
 	var in peer.RevokeRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	if !decode(w, r, &in) {
+		s.revokeLimit.miss(r)
 		return
 	}
 	n, err := s.peers.HandleRevoke(r.Context(), in, time.Now())

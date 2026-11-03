@@ -77,21 +77,26 @@ func BlockedIP(ip netip.Addr) bool {
 	return false
 }
 
+// PublicOnly is a net.Dialer Control hook that refuses any non-public
+// address. It sees the resolved address of every connection, so a name that
+// resolves somewhere else later (DNS rebinding) is still refused.
+func PublicOnly(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || BlockedIP(ip) {
+		return fmt.Errorf("refusing to connect to non-public address %s", host)
+	}
+	return nil
+}
+
 // SafeClient refuses to connect to non-public addresses, so URLs chosen by
 // users or an AI cannot reach internal services. The check runs on the
 // resolved address at dial time, which also covers redirects and DNS rebinding.
 func SafeClient(timeout time.Duration) *http.Client {
-	d := &net.Dialer{Timeout: 10 * time.Second, Control: func(network, address string, _ syscall.RawConn) error {
-		host, _, err := net.SplitHostPort(address)
-		if err != nil {
-			return err
-		}
-		ip, err := netip.ParseAddr(host)
-		if err != nil || BlockedIP(ip) {
-			return fmt.Errorf("refusing to connect to non-public address %s", host)
-		}
-		return nil
-	}}
+	d := &net.Dialer{Timeout: 10 * time.Second, Control: PublicOnly}
 	return &http.Client{
 		Timeout:   timeout,
 		Transport: &http.Transport{DialContext: d.DialContext, TLSHandshakeTimeout: 10 * time.Second, Proxy: nil},

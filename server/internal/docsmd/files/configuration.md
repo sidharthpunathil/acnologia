@@ -13,7 +13,7 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_MASTER_KEY` | empty | 32 bytes, base64 or hex, that encrypt stored keys. Generate with `acnologia gen-master-key`. When empty, `data/master.key` is used, or created on first boot. |
 | `ACNOLOGIA_PUBLIC_URL` | empty | Base URL for links the server writes: the MCP endpoint shown on the Apps page and the `acn login` approval link. It is also the URL this server announces to other servers: in `/.well-known/acnologia` and in every share invite it makes. When empty, the URL a superadmin saved on the Sharing page is used for sharing, else the request host. Set it on any server that shares, so invites never carry an internal address. |
 | `ACNOLOGIA_SECURE_COOKIES` | `false` | Mark the session cookie `Secure`. Set `true` behind HTTPS. It is also set automatically for direct TLS. |
-| `ACNOLOGIA_TRUST_PROXY_HEADERS` | `false` | Take the client IP from `X-Forwarded-For` / `X-Real-IP`. Enable only behind a proxy that overwrites them; otherwise clients could spoof their address to dodge the login limiter. |
+| `ACNOLOGIA_TRUST_PROXY_HEADERS` | `false` | Take the client IP from `X-Forwarded-For` / `X-Real-IP`. Enable only behind a proxy that overwrites them; otherwise clients could spoof their address to dodge the per address rate limits (sign in, lock screen, CLI sign in, invites, claim links). |
 | `ACNOLOGIA_ACCESS_PASSWORD` | empty | Locks the whole site behind one shared password, in front of the user accounts. At least 12 characters. Unset, nothing changes. See [Access password](#access-password). |
 | `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `false` | When `true`, a public deploy can never come up unlocked: a set password must be at least 12 characters, and a missing one is generated into `access-password` in the data dir. |
 | `ACNOLOGIA_ACCESS_SIGNS_IN` | `true` | With an access password, that password is the whole login: unlocking signs the browser in as the owner (the first superadmin), with no email form, and signing out locks it again. Set `false` to keep separate accounts behind the lock. |
@@ -195,11 +195,18 @@ each person still signs in with an email and password after unlocking.
   Changing the password signs every browser out. "Lock this browser" in the
   account menu calls `POST /api/gate/lock`. `GET /api/gate` answers
   `{"locked": bool, "required": bool, "password_only": bool}`.
-- **Wrong guesses:** 5 a minute and 50 a day across all clients, then `429`
-  with `retry_after_sec`. The limit is global, not per IP, because a client
-  behind a proxy can claim any `X-Forwarded-For`.
+- **Wrong guesses:** 5 a minute and 50 a day per client address (an IPv6
+  address counts by its /64), then `429` with `retry_after_sec`. A wrong
+  `X-Acnologia-Access` header counts the same as a wrong lock screen guess,
+  and a limited address is refused even with the right password. Across all
+  addresses, 20 wrong guesses a minute pause guessing for the rest of that
+  minute, which bounds a guesser that rotates addresses without locking the
+  owner out for a day. Behind a reverse proxy set
+  `ACNOLOGIA_TRUST_PROXY_HEADERS=true`, or every client shares the proxy's
+  address and so one budget.
 - **Scripts:** send the password in the `X-Acnologia-Access` header on every
-  dashboard call (it is compared in constant time and never rate limited):
+  dashboard call (it is compared in constant time; the right value never
+  counts against the limit):
 
   ```sh
   curl -H "X-Acnologia-Access: $ACNOLOGIA_ACCESS_PASSWORD" \

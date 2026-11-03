@@ -289,6 +289,9 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before, oldSlug := targetOf(sv), sv.Slug
+	// Decide from the stored row, before the edit lands: a PATCH that also
+	// switches the provider (to acnologia-peer, say) must not slip past.
+	wasHandover := isHandoverService(sv)
 	if msg := in.apply(sv); msg != "" {
 		writeErr(w, 400, "invalid", msg)
 		return
@@ -298,7 +301,7 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 	}
 	// A service holding keys another server handed over sends them where
 	// the owner said; nobody here may point them somewhere else.
-	if isHandoverService(sv) && targetOf(sv) != before {
+	if (wasHandover || isHandoverService(sv)) && targetOf(sv) != before {
 		writeErr(w, 409, "handover_service", "this service holds keys another server handed over; its base URL, auth, provider and egress follow the owner")
 		return
 	}

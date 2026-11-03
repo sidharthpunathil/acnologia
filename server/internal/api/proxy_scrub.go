@@ -2,8 +2,10 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/url"
+	"strings"
 )
 
 // Some upstreams echo the key they were called with (account endpoints, error
@@ -22,8 +24,14 @@ func keyForms(secret string) [][]byte {
 	}
 	var out [][]byte
 	seen := map[string]bool{}
-	for _, f := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
-		if !seen[f] {
+	cands := []string{secret, url.QueryEscape(secret), url.PathEscape(secret)}
+	// JSON escaped, as encoding/json writes it and with "/" escaped as "\/".
+	if b, err := json.Marshal(secret); err == nil && len(b) >= 2 {
+		js := string(b[1 : len(b)-1])
+		cands = append(cands, js, strings.ReplaceAll(js, "/", `\/`))
+	}
+	for _, f := range cands {
+		if f != "" && !seen[f] {
 			seen[f] = true
 			out = append(out, []byte(f))
 		}

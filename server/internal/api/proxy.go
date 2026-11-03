@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
@@ -99,10 +101,21 @@ func authPrefix(sv *store.Service) string {
 	return a.Prefix
 }
 
-func newUpstreamClient() *http.Client {
+func newUpstreamClient() *http.Client { return upstreamClientWith(nil) }
+
+// newPublicUpstreamClient connects only to public addresses, checked on the
+// resolved address of each connection. It never uses an environment proxy,
+// which would hide the real target from the check.
+func newPublicUpstreamClient() *http.Client { return upstreamClientWith(catalog.PublicOnly) }
+
+func upstreamClientWith(control func(network, address string, c syscall.RawConn) error) *http.Client {
+	proxy := http.ProxyFromEnvironment
+	if control != nil {
+		proxy = nil
+	}
 	t := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		Proxy:                 proxy,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: control}).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,
@@ -437,6 +450,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		cancel()
 		picked.Release()
 		res := prov.Classify(resp.StatusCode, resp.Header, rb)
+		if !mayReadKey(a, sv) {
+			rb = scrubBytes(rb, keyForms(picked.Secret))
+		}
 		if sv.Provider == providers.PeerSlug && sv.PeerLinkID != nil && resp.StatusCode == 403 {
 			// The owner says the share is revoked, paused or expired: mark
 			// the link and disable its services now, not at the next sync.
@@ -594,12 +610,13 @@ func relayStream(w http.ResponseWriter, resp *http.Response, v relayView, cancel
 	rc := http.NewResponseController(w)
 	idle := time.AfterFunc(proxyIdleTimeout, cancel)
 	defer idle.Stop()
+	var out io.Writer = w
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			idle.Reset(proxyIdleTimeout)
-			if _, werr := w.Write(buf[:n]); werr != nil {
+			if _, werr := out.Write(buf[:n]); werr != nil {
 				return
 			}
 			_ = rc.Flush()

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -104,6 +105,32 @@ func TestChatFormats(t *testing.T) {
 	}
 	if _, err := Payload("carrier-pigeon", e); err == nil {
 		t.Fatal("unknown formats must fail")
+	}
+}
+
+// TestChatFormatsEscapeMarkup: text a peer or an app chose cannot ping a
+// channel or show a link under a label it picked.
+func TestChatFormatsEscapeMarkup(t *testing.T) {
+	e := Event{Type: ShareRedeemed, Message: "redeemed by <!channel> R&D <https://evil.example|https://good.example> [open](https://evil.example) **now**"}
+	text := func(format, field string) string {
+		b, err := Payload(format, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		return m[field].(string)
+	}
+	sl := text("slack", "text")
+	if strings.ContainsAny(sl, "<>") || !strings.Contains(sl, "&lt;!channel&gt;") || !strings.Contains(sl, "R&amp;D ") || strings.Contains(sl, "&amp;lt;") {
+		t.Fatalf("slack text %q", sl)
+	}
+	dc := text("discord", "content")
+	if !strings.Contains(dc, `\[open\]\(https://evil.example\)`) || !strings.Contains(dc, `\*\*now\*\*`) || !strings.Contains(dc, `\<!channel\>`) {
+		t.Fatalf("discord content %q", dc)
+	}
+	if tg := text("telegram", "text"); tg != Text(e) {
+		t.Fatalf("telegram text %q", tg)
 	}
 }
 

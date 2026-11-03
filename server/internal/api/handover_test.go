@@ -133,7 +133,7 @@ func hasAudit(t *testing.T, e *env, action string) bool {
 // delete it at once.
 func TestHandoverEndToEndRevokePush(t *testing.T) {
 	a, b := newEnv(t), newEnv(t)
-	a.addKeys(map[string]any{"secret": "ownerkey1"})
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
 	sh := a.newShare(map[string]any{"name": "Keys for B", "services": []string{"serpapi"}, "mode": "handover",
 		"lease": "6h", "private_network": true,
 		"limits": map[string]any{"daily_requests": nil, "monthly_requests": nil, "daily_budget": nil, "monthly_budget": nil}})
@@ -160,10 +160,20 @@ func TestHandoverEndToEndRevokePush(t *testing.T) {
 	}
 
 	// A local app on B calls the provider directly: A's proxy sees nothing.
+	// The upstream echoes the key, and B masks it in the body.
 	_, btok := b.app(map[string]any{"name": "b-app"})
+	a.up.mu.Lock()
+	hitsBefore := a.up.hits["ownerkey1-handover"]
+	a.up.mu.Unlock()
 	code, body, _ := peerCall(t, "GET", b.srv.URL+"/proxy/a-serpapi/search.json?q=coffee", btok)
-	if code != 200 || !strings.Contains(body, `"who":"OWNERKEY1"`) || strings.Contains(body, "ownerkey1") {
+	if code != 200 || !strings.Contains(body, `"who":"OWNERKEY1-HANDOVER"`) || strings.Contains(body, "ownerkey1") {
 		t.Fatalf("direct call from B: %d %s", code, body)
+	}
+	a.up.mu.Lock()
+	hitsAfter := a.up.hits["ownerkey1-handover"]
+	a.up.mu.Unlock()
+	if hitsAfter != hitsBefore+1 {
+		t.Fatalf("upstream got %d calls with the key", hitsAfter-hitsBefore)
 	}
 	if v := a.shareView(sh.Share.ID); v.Handover == nil || len(v.Handover.Keys) != 1 || !v.Handover.Keys[0].Live {
 		t.Fatalf("owner view %+v", v.Handover)
@@ -179,6 +189,11 @@ func TestHandoverEndToEndRevokePush(t *testing.T) {
 	b.do(b.super, "PATCH", "/api/admin/keys/"+itoa(int(keys[0].ID)), map[string]any{"secret": "other"}, 403, nil)
 	b.do(b.super, "PATCH", "/api/admin/keys/"+itoa(int(keys[0].ID)), map[string]any{"hidden": false}, 403, nil)
 	b.do(b.super, "PATCH", "/api/admin/services/"+itoa(int(lv.LocalServices[0].ID)), map[string]any{"base_url": "https://evil.example"}, 409, nil)
+	// Switching the provider in the same PATCH does not lift the lock.
+	b.do(b.super, "PATCH", "/api/admin/services/"+itoa(int(lv.LocalServices[0].ID)), map[string]any{"provider": "acnologia-peer", "base_url": "https://evil.example", "auth_type": "header", "auth_name": "X-Key"}, 409, nil)
+	if sv, _ := b.st.GetServiceBySlug(context.Background(), "a-serpapi"); sv.Provider != "serpapi" || sv.BaseURL != a.upURL {
+		t.Fatalf("service after provider switch %+v", sv)
+	}
 	b.do(b.super, "POST", "/api/admin/shares", map[string]any{"name": "onward", "services": []string{"a-serpapi"}}, 400, nil)
 	b.do(b.super, "POST", "/api/admin/shares", map[string]any{"name": "onward", "services": []string{"a-serpapi"}, "mode": "handover"}, 400, nil)
 
@@ -202,7 +217,7 @@ func TestHandoverEndToEndRevokePush(t *testing.T) {
 	for _, path := range []string{"/api/admin/keys", "/api/admin/services/" + itoa(int(lv.LocalServices[0].ID)) + "/keys", "/api/admin/peers"} {
 		var raw json.RawMessage
 		b.do(b.super, "GET", path, nil, 200, &raw)
-		if strings.Contains(string(raw), "ownerkey1") || strings.Contains(string(raw), peer.SealPrefix) {
+		if strings.Contains(string(raw), "ownerkey1-handover") || strings.Contains(string(raw), peer.SealPrefix) {
 			t.Fatalf("%s leaks: %s", path, raw)
 		}
 	}
@@ -239,8 +254,8 @@ func TestHandoverEndToEndRevokePush(t *testing.T) {
 			t.Fatalf("receiver audit lacks %s", act)
 		}
 	}
-	noSecretsIn(t, a, "ownerkey1")
-	noSecretsIn(t, b, "ownerkey1")
+	noSecretsIn(t, a, "ownerkey1-handover")
+	noSecretsIn(t, b, "ownerkey1-handover")
 }
 
 // shareViewUsage is today's proxied requests of a share on its owner.
@@ -258,7 +273,7 @@ func (e *env) shareViewUsage(id string) int64 {
 // B, cut off from A, deletes the key when its lease ends.
 func TestHandoverPushFailsLeaseWipes(t *testing.T) {
 	a, b := newEnv(t), newEnv(t)
-	a.addKeys(map[string]any{"secret": "ownerkey1"})
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
 	sh := a.newShare(map[string]any{"name": "Keys for B", "services": []string{"serpapi"}, "mode": "handover", "lease": "1h"})
 	link := b.connect(sh.Invite, 201)
 	if ks := handedKeys(t, b, link.ID); len(ks) != 1 {
@@ -300,14 +315,14 @@ func TestHandoverPushFailsLeaseWipes(t *testing.T) {
 	if len(rows) != 1 || rows[0].Live() || !strings.Contains(rows[0].WipeReason, "lease") {
 		t.Fatalf("owner exposure after lease %+v", rows)
 	}
-	noSecretsIn(t, b, "ownerkey1")
+	noSecretsIn(t, b, "ownerkey1-handover")
 }
 
 // TestHandoverPauseScopeAndDisconnectWipe covers the other wipes and that
 // resume hands the keys over again.
 func TestHandoverPauseScopeAndDisconnectWipe(t *testing.T) {
 	a, b := newEnv(t), newEnv(t)
-	ks := a.addKeys(map[string]any{"secret": "ownerkey1"}, map[string]any{"secret": "ownerkey2"})
+	ks := a.addKeys(map[string]any{"secret": "ownerkey1-handover"}, map[string]any{"secret": "ownerkey2-handover"})
 	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover"})
 	link := b.connect(sh.Invite, 201)
 	if n := len(handedKeys(t, b, link.ID)); n != 2 {
@@ -348,13 +363,13 @@ func TestHandoverPauseScopeAndDisconnectWipe(t *testing.T) {
 // share and an inactive handover share.
 func TestHandoverDeliveryOnlyForActiveHandover(t *testing.T) {
 	a, b := newEnv(t), newEnv(t)
-	a.addKeys(map[string]any{"secret": "ownerkey1"})
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
 	proxy := a.newShare(map[string]any{"name": "Proxy", "services": []string{"serpapi"}})
 	code, tok := a.redeemDirect(b, proxy.Invite, nil)
 	if code != 200 {
 		t.Fatal(code)
 	}
-	if c, body, _ := peerCall(t, "GET", a.srv.URL+"/api/peer/v1/keys", tok); c != 409 || strings.Contains(body, "ownerkey1") {
+	if c, body, _ := peerCall(t, "GET", a.srv.URL+"/api/peer/v1/keys", tok); c != 409 || strings.Contains(body, "ownerkey1-handover") {
 		t.Fatalf("proxy share keys: %d %s", c, body)
 	}
 	ho := a.newShare(map[string]any{"name": "Handover", "services": []string{"serpapi"}, "mode": "handover"})
@@ -366,7 +381,7 @@ func TestHandoverDeliveryOnlyForActiveHandover(t *testing.T) {
 	l, _ := b.st.GetPeerLink(context.Background(), link.ID)
 	htok, _ := b.api.Pool.Box.Decrypt(l.TokenEnc)
 	c, body, _ := peerCall(t, "GET", a.srv.URL+"/api/peer/v1/keys", htok)
-	if c != 200 || strings.Contains(body, "ownerkey1") || !strings.Contains(body, peer.SealPrefix) {
+	if c != 200 || strings.Contains(body, "ownerkey1-handover") || !strings.Contains(body, peer.SealPrefix) {
 		t.Fatalf("handover keys: %d %s", c, body)
 	}
 	a.do(a.super, "POST", "/api/admin/shares/"+ho.Share.ID+"/pause", nil, 200, nil)
@@ -406,7 +421,7 @@ func TestHandoverLimitsRefused(t *testing.T) {
 // an expired share back.
 func TestShareTimers(t *testing.T) {
 	a, b := newEnv(t), newEnv(t)
-	a.addKeys(map[string]any{"secret": "ownerkey1"})
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
 	ends := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	sh := a.newShare(map[string]any{"name": "Timed", "services": []string{"serpapi"}, "ends_at": ends})
 	link := b.connect(sh.Invite, 201)
@@ -450,7 +465,7 @@ func TestShareTimers(t *testing.T) {
 // wipes; bad signatures, stale timestamps and replays are refused.
 func TestRevokePushChecks(t *testing.T) {
 	a, b := newEnv(t), newEnv(t)
-	a.addKeys(map[string]any{"secret": "ownerkey1"})
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
 	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover"})
 	link := b.connect(sh.Invite, 201)
 	ctx := context.Background()
@@ -513,6 +528,45 @@ func TestRevokePushChecks(t *testing.T) {
 	}
 }
 
+// TestRevokePushJunkDoesNotBlockOwner: anyone can call the revoke route, so
+// junk from one address is limited for that address only and an owner's
+// signed revoke still gets through.
+func TestRevokePushJunkDoesNotBlockOwner(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
+	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover"})
+	link := b.connect(sh.Invite, 201)
+	ctx := context.Background()
+	ownerPriv, err := peer.Keys(ctx, a.st, a.api.Pool.Box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _, _ := peer.Self(ctx, a.st, a.api.Pool.Box, "test", a.srv.URL)
+	recv, recvPriv, _ := peer.Self(ctx, b.st, b.api.Pool.Box, "test", b.srv.URL)
+	post := func(from string, req peer.RevokeRequest) int {
+		body, _ := json.Marshal(req)
+		r := httptest.NewRequest("POST", "/api/peer/v1/revoke", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.RemoteAddr = from + ":4000"
+		w := httptest.NewRecorder()
+		b.srv.Config.Handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	last := 0
+	for i := 0; i < 30; i++ {
+		last = post("203.0.113.5", peer.SignRevoke(recvPriv, owner.ID, sh.Share.ID, recv.ID, time.Now()))
+	}
+	if last != 429 {
+		t.Fatalf("junk address not limited: %d", last)
+	}
+	if c := post("198.51.100.7", peer.SignRevoke(ownerPriv, owner.ID, sh.Share.ID, recv.ID, time.Now())); c != 200 {
+		t.Fatalf("owner's revoke: %d", c)
+	}
+	if n := len(handedKeys(t, b, link.ID)); n != 0 {
+		t.Fatalf("revoke left %d keys", n)
+	}
+}
+
 // TestHandoverWebhooksCarryNoSecret checks the new event types exist and
 // the handover events name keys by label only.
 func TestHandoverWebhooksCarryNoSecret(t *testing.T) {
@@ -536,7 +590,7 @@ func TestHandoverWebhooksCarryNoSecret(t *testing.T) {
 	go a.api.Pool.Notify.Run(ctx)
 	a.do(a.super, "POST", "/api/admin/webhooks", map[string]any{"name": "h", "url": hook.URL, "format": "json",
 		"events": []string{notify.ShareHandover, notify.ShareRevokePush, notify.ShareHandoverWiped}}, 201, nil)
-	a.addKeys(map[string]any{"secret": "ownerkey1"})
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
 	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover", "private_network": true})
 	b.connect(sh.Invite, 201)
 	a.do(a.super, "POST", "/api/admin/shares/"+sh.Share.ID+"/revoke", nil, 200, nil)
@@ -545,7 +599,7 @@ func TestHandoverWebhooksCarryNoSecret(t *testing.T) {
 	for len(seen) < 3 {
 		select {
 		case body := <-got:
-			if strings.Contains(body, "ownerkey1") || strings.Contains(body, peer.SealPrefix) {
+			if strings.Contains(body, "ownerkey1-handover") || strings.Contains(body, peer.SealPrefix) {
 				t.Fatalf("secret in webhook: %s", body)
 			}
 			var ev notify.Event
@@ -554,5 +608,106 @@ func TestHandoverWebhooksCarryNoSecret(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("webhooks seen %v", seen)
 		}
+	}
+}
+
+// TestHandoverUntrustedLinkDialsPublicOnly: on a link that is not on a
+// private network the owner's base URL passed the public address check at
+// sync, but its name now points at a private address (DNS rebinding). The
+// proxy and the health check refuse to connect there.
+func TestHandoverUntrustedLinkDialsPublicOnly(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
+	sh := a.newShare(map[string]any{"name": "Keys for B", "services": []string{"serpapi"}, "mode": "handover", "lease": "6h",
+		"limits": map[string]any{"daily_requests": nil, "monthly_requests": nil, "daily_budget": nil, "monthly_budget": nil}})
+	a.up.mu.Lock()
+	before := a.up.hits["ownerkey1-handover"]
+	a.up.mu.Unlock()
+	// The owner's server and base URL looked public when B synced.
+	b.api.peers.Client = func(bool) *http.Client { return &http.Client{Timeout: 20 * time.Second} }
+	b.api.peers.CheckHost = func(context.Context, string) error { return nil }
+	var link linkResp
+	b.do(b.super, "POST", "/api/admin/peers", map[string]any{"invite": sh.Invite, "prefix": "a", "trusted": false}, 201, &link)
+	keys := handedKeys(t, b, link.ID)
+	if len(keys) != 1 {
+		t.Fatalf("handed keys %+v", keys)
+	}
+	_, btok := b.app(map[string]any{"name": "b-app"})
+	if code, body, _ := peerCall(t, "GET", b.srv.URL+"/proxy/a-serpapi/search.json?q=coffee", btok); code == 200 {
+		t.Fatalf("proxy reached a private address: %s", body)
+	}
+	sv, err := b.st.GetServiceBySlug(context.Background(), "a-serpapi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.api.Pool.Check(context.Background(), sv, keys[0]); err == nil || !strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("health check: %v", err)
+	}
+	a.up.mu.Lock()
+	hits := a.up.hits["ownerkey1-handover"]
+	a.up.mu.Unlock()
+	if hits != before {
+		t.Fatalf("private upstream got %d requests", hits-before)
+	}
+}
+
+// TestHandoverRefusesPhraseSecrets: every key a server holds is masked in
+// its records and prompts, so an owner handing over a phrase or a word as a
+// key could blank that text on the receiver. Such keys are refused, also
+// when an owner rotates a key it handed over into one.
+func TestHandoverRefusesPhraseSecrets(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	ks := a.addKeys(map[string]any{"secret": "ownerkey1-handover"}, map[string]any{"secret": "Handed over by"})
+	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover", "private_network": true})
+	link := b.connect(sh.Invite, 201)
+	if keys := handedKeys(t, b, link.ID); len(keys) != 1 {
+		t.Fatalf("handed %d keys", len(keys))
+	}
+	if lv := b.linkView(link.ID); !strings.Contains(lv.LastError, "too short") {
+		t.Fatalf("link error %q", lv.LastError)
+	}
+	ctx := context.Background()
+	if got := b.st.Scrub(ctx, "Handed over by Mac"); got != "Handed over by Mac" {
+		t.Fatalf("phrase masked: %q", got)
+	}
+	// The owner rotates the good key into a phrase.
+	a.do(a.super, "PATCH", "/api/admin/keys/"+itoa(int(ks[0].ID)), map[string]any{"secret": "the quarterly report draft"}, 200, nil)
+	lv := b.syncLink(link.ID)
+	if !strings.Contains(lv.LastError, "characters a key does not have") {
+		t.Fatalf("link error %q", lv.LastError)
+	}
+	if got := b.st.Scrub(ctx, "see the quarterly report draft"); got != "see the quarterly report draft" {
+		t.Fatalf("phrase masked: %q", got)
+	}
+}
+
+// TestHandoverCountScopeSticky: a count scope of N never hands over more than
+// N distinct keys. A handed over key that leaves rotation keeps its place, so
+// a receiver cannot collect every key by getting each one marked invalid; the
+// owner frees the place by deleting the key.
+func TestHandoverCountScopeSticky(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	ks := a.addKeys(map[string]any{"secret": "ownerkey1-handover", "priority": 1}, map[string]any{"secret": "ownerkey2-handover", "priority": 2})
+	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover", "private_network": true,
+		"key_scopes": map[string]any{"serpapi": map[string]any{"mode": "count", "count": 1}}})
+	link := b.connect(sh.Invite, 201)
+	held := handedKeys(t, b, link.ID)
+	if len(held) != 1 || *held[0].PeerRemoteKeyID != ks[0].ID {
+		t.Fatalf("handed %+v", held)
+	}
+	if _, err := a.st.DB.Exec(`UPDATE keys SET status=? WHERE id=?`, store.StatusInvalid, ks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	b.syncLink(link.ID)
+	for _, k := range handedKeys(t, b, link.ID) {
+		if *k.PeerRemoteKeyID == ks[1].ID {
+			t.Fatal("second key handed over past the count scope")
+		}
+	}
+	a.do(a.super, "DELETE", "/api/admin/keys/"+itoa(int(ks[0].ID)), nil, 200, nil)
+	b.syncLink(link.ID)
+	held = handedKeys(t, b, link.ID)
+	if len(held) != 1 || *held[0].PeerRemoteKeyID != ks[1].ID {
+		t.Fatalf("after delete %+v", held)
 	}
 }

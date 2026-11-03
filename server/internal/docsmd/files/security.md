@@ -54,14 +54,20 @@ remains.
 
 Each app has its own token (stored as a hash), a list of services it may use
 (empty means all) and a mode: `proxy`, `lease` or `both`. An app learns
-whether a service has a key available, never how many keys exist.
+whether a service has a key available, never how many keys exist. Renewing a
+lease checks the app's access again, so an app whose mode, services, hidden
+key grant or share scope changed cannot keep a key (or an exclusive hold on
+it) by renewing; the lease ends. A lease that rotates through a report is a
+new lease and obeys the app's request and budget limits.
 
 Each key can carry flags:
 
 - `hidden`: visible only to superadmins, and handed only to apps a superadmin
   cleared with `lease_hidden` (below).
 - `restricted`: serves only the apps you name on the key.
-- `disabled`: stays stored but is never handed out.
+- `disabled`: stays stored but is never handed out. Only a person moves a key
+  out of it (or out of `banned`): proxy results, health checks and app
+  reports never change its status.
 - `backup` tier: serves only when every primary key is cooling, busy or out
   of quota.
 
@@ -76,12 +82,16 @@ must never see. Two flags enforce this:
 - **`apps.lease_hidden`**: only apps a superadmin marked may use hidden keys,
   through a lease or the proxy. Admins cannot set it. When anyone other than a
   superadmin rotates the app's tokens or adds a token, the flag is cleared,
-  because that person now holds a working token.
-- **`services.target_trusted`**: when anyone other than a superadmin changes a
-  service's base URL, auth placement or provider, the service becomes
-  untrusted, and hidden keys are not sent to it by the proxy, leases or health
-  checks. A superadmin confirms the target by saving those fields again. The
-  dashboard shows a banner while hidden keys are paused.
+  because that person now holds a working token. An app edit writes only the
+  fields it sends, so a slow edit cannot bring the flag back after that.
+- **`services.target_trusted`**: when a service's base URL, auth placement,
+  provider or egress proxy changes without a superadmin confirming it, the
+  service becomes untrusted, and hidden keys are not sent to it by the proxy,
+  leases or health checks. A superadmin confirms the target by saving the edit
+  form, which sends `target_trusted: true`; nothing sets the flag implicitly.
+  An Assistant tool call carries the superadmin's session but the model's
+  choice, so it can never confirm a target. The dashboard shows a banner while
+  hidden keys are paused.
 
 ```mermaid
 flowchart TD
@@ -99,7 +109,12 @@ flowchart TD
 
 Hidden keys and their traffic are also left out of everything a non-superadmin
 sees: key lists, counts, events, request totals, and the events of a deleted
-hidden key.
+hidden key. A hidden key's events are deleted with it however it goes (its own
+delete, its service's delete, or a peer link revoke or disconnect removing it),
+since nothing would mark them hidden once the key row is gone.
+
+A health check sends the secret to the service's base URL, so a key is only
+ever checked against its own service, and MCP `check_keys` needs a service.
 
 ## Secrets at rest
 
@@ -151,6 +166,11 @@ Windows ignores those modes, so there the folder's ACL does the job:
   audit log under your name. Members are offered read tools only.
 - Deleting keys, services or apps, rotating app tokens and revoking an app
   token run only after you press Confirm; a confirmation expires when you send another message.
+- So do changes that decide where keys go or who may use them, since text the
+  model reads (an event detail an app reported, a key note) could ask for
+  them: an app's mode or allowed services, a service's base URL, auth or
+  egress proxy, a key's egress proxy, and creating or changing webhooks and
+  egress proxies. The card states the result in full, such as "all services".
 - There is no tool that reveals a stored key secret. Tool results sent to
   Claude never contain secrets, and new app tokens are shown to you once and
   never sent to Claude or stored.
@@ -251,8 +271,11 @@ any client you would not hand a key to.
   `/robots.txt`, the app token routes and the CLI sign in's create and poll
   calls stay open. A valid admin API token passes the lock on its own. The `acnologia_gate`
   cookie is an issue time plus an HMAC keyed by the master key and the
-  password, refused after 30 days; wrong guesses are limited to 5 a minute
-  and 50 a day globally. See [configuration](configuration.md#access-password).
+  password, refused after 30 days. Wrong guesses, on the lock screen or in
+  `X-Acnologia-Access`, are limited to 5 a minute and 50 a day per client
+  address, under a global ceiling of 20 a minute, so a flood makes the owner
+  wait a minute at most unless it comes from the owner's own address. See
+  [configuration](configuration.md#access-password).
 - **No indexing**: every response carries `X-Robots-Tag: noindex, nofollow,
   noarchive, nosnippet` and `/robots.txt` disallows everything.
 - **CSRF**: every mutating dashboard call must send `Content-Type:
@@ -275,8 +298,9 @@ any client you would not hand a key to.
 
 | Limit | Value |
 |---|---|
-| Failed logins | 10 per 10 minutes per client IP and per existing account |
-| Dashboard JSON body | 4 MB |
+| Sign in attempts | 10 per 10 minutes per client address (an IPv6 /64 counts as one) and per existing account, counted before the password check so a parallel burst gets no more; a success clears them. Account counters are never dropped to make room |
+| Dashboard JSON body | 4 MB, read within 30 s or the connection closes |
+| Connections | headers within 15 s; an idle keep-alive closes after 2 minutes. No overall read or write timeout, so long streams are not cut |
 | Proxy request body | `ACNOLOGIA_MAX_BODY_MB` (default 50) |
 | Proxy methods | GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS |
 | Proxy idle stream | 5 minutes without bytes ends the response and frees the slot |
@@ -288,7 +312,9 @@ any client you would not hand a key to.
 | Assistant | 24 model steps and 15 minutes per message, messages up to 1 MB (a dropped file of keys), one message at a time per chat |
 
 The client IP comes from the socket unless `ACNOLOGIA_TRUST_PROXY_HEADERS=true`.
-Behind a reverse proxy, enable it, or every client shares one login limit.
+Behind a reverse proxy, enable it, or every client shares one budget on each
+per address limit: sign in, the lock screen, the CLI sign in, invites, claim
+links and revoke pushes. An IPv6 address counts by its /64.
 
 ## Outbound requests
 
@@ -317,18 +343,67 @@ flowchart LR
 Webhook deliveries carry no key and go through `SafeClient` unless
 `ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE=true`. Webhook URLs are encrypted at rest (Slack,
 Discord and Telegram URLs are secrets) and only a host hint is ever returned.
-Hidden keys never produce webhook events.
+Hidden keys never produce webhook events. Messages carry text other people
+chose (peer server names, share and key labels, an app's lease report), so
+Slack messages escape `<`, `>` and `&` and Discord messages escape markdown:
+that text cannot ping a channel or show a link under a label it picked.
+Telegram messages are sent without a parse mode, as plain text.
 
 An egress proxy sees which hosts keys travel to, and the keys themselves when
 a service's base URL is plain `http`. Assigning one is therefore part of a
-service's target: a non-superadmin assigning or changing it clears
-`target_trusted`, so hidden keys stop flowing until a superadmin confirms.
+service's target: assigning or changing it without an explicit superadmin
+confirm clears `target_trusted`, so hidden keys stop flowing until a
+superadmin confirms.
 Proxy URLs are encrypted at rest and shown without credentials.
 
 The response cache is shared by the apps of a service, so Acnologia never caches
 a response made with a hidden or restricted key, a response the upstream marks
-`private` or `no-store`, or a body that contains the key. Idempotent replays
-are stored per app.
+`private` or `no-store`, a partial (206) answer, or a body that contains the
+key. An entry is keyed by the service id and slug, the method, path, query and
+`Accept`, and a hash of every other forwarded header and the body, so one app
+cannot plant an answer for a request that differs from its own. A share's app
+gets entries of its own and never reads or writes what other apps see.
+Idempotent replays are stored per app. Deleting a service or an app drops its
+cached answers and replays, since SQLite can give the id to the next row.
+
+## What a proxied caller sees and can change
+
+The caller shapes a proxied request (path, query, headers, body) and reads
+what the upstream says back, so the proxy treats both directions as the
+caller's:
+
+- **The key stays out of answers.** A caller that may not lease the key (a
+  share's or a person's token, a proxy only app, any caller of a peer or
+  handover service) gets bodies with every spelling of the injected key
+  (raw, query escaped, path escaped) replaced by `[key]`, whether streamed,
+  buffered, cached, replayed or relayed as an error. Response headers are
+  scrubbed for every caller. An app that may lease the key gets the body as is.
+- **No key ids for shares.** Share and person tokens get no
+  `X-Acnologia-Key-Id` or `X-Acnologia-Attempts`, and the MCP `proxy_request`
+  tool leaves `key_id` out for them.
+- **No made up Acnologia headers.** Upstream `X-Acnologia-*` and `X-Cogito-*`
+  headers are dropped, except from the owner of a shared service. A receiver
+  marks its link revoked, paused or expired only when the owner's 403 carries
+  both the header and the matching `share_*` error code, which an answer the
+  owner relays from its upstream cannot.
+- **Limits hold under bursts.** An app's or share's request and budget limits
+  are checked and one request (and its estimated cost) reserved in one step
+  before the upstream call, for the proxy, MCP `proxy_request`, leases and
+  `get_key`, and released once the usage is recorded. Concurrent requests
+  cannot pass a limit that has one request left.
+- **Operators win over late results.** A request picked before an admin
+  disabled a key, or before a key was banned, cannot write `invalid` or
+  `exhausted` over that status when its answer lands.
+- **One caller cannot retire a shared key.** An answer classified as invalid,
+  banned or exhausted only lands on the key when something the caller does
+  not shape agrees: the provider's health check, run right then on that key
+  (at most once a minute per key), finds it invalid or out of quota, or a
+  second app got the same verdict for the key within 10 minutes. Until then
+  the request moves on to the next key, the key keeps serving everyone else,
+  and its last error reads `unconfirmed invalid: ...`. A success on the key
+  clears the suspicion. Providers without a health check therefore need two
+  apps to agree before a key is marked dead; check such keys from the
+  dashboard if a single app reports trouble.
 
 Admin API tokens (`acnadm_`) are stored as SHA-256 hashes, carry a scope that
 never exceeds their owner's role, stop working when the owner is disabled, and
@@ -340,8 +415,11 @@ random bytes kept only as a SHA-256 hash, in memory, for 10 minutes; the
 person approves the 8 letter user code on `/cli/authorize` with a dashboard
 session past the site lock, picking a scope no higher than their role, and the
 token (90 days, named `acn on <hostname>`) is audit logged as `token.create`.
-Creating, polling and wrong user codes are rate limited globally (30, 600 and
-10 a minute), and an API token cannot approve a sign in. See
+Creating, polling and wrong user codes are rate limited per client address
+or per user under a global ceiling: one address creates 5 a minute (30 from
+all, with no daily cap) and holds at most 10 waiting requests, only polls
+for unknown codes count, and one user gets 10 wrong codes a minute, after
+which only that user is refused. An API token cannot approve a sign in. See
 [Command line](cli.md#how-the-sign-in-works).
 
 The CLI treats the server it talks to as untrusted input:
@@ -411,20 +489,37 @@ section.
 - **Key scopes hold on every pick.** A share limited to up to N keys or a
   picked list never gets a key outside it, through any path: the pool
   applies the scope for the backing app before choosing.
+- **A share cannot take keys out of rotation.** A share holder shapes its own
+  requests, so an invalid or banned answer to one does not change the key's
+  status: the request moves on to another key in scope, and the health check
+  finds a key that really stopped working. Otherwise a share could knock the
+  owner's keys out for every app and walk an up to N scope onto the next key.
 - **The backing app never grants everything.** An app with an empty service
   list may use every service, so a share's app always lists the shared
   services, or an entry that matches nothing for a provider only share. It is
   proxy only, hidden from the Apps page, and the app routes refuse to change it
   (409 `share_app`).
+- **A share is bound to the services it was made with.** The share records
+  the service id behind each shared slug. If an admin renames a shared
+  service and gives the slug to another service or a group, the share's
+  calls to that slug get 403 `service_not_allowed` on the proxy, leases,
+  lease reports and MCP; it never reaches a group. Editing the share keeps
+  the old binding for slugs it already had; remove and add the slug again
+  to share the new service.
 - **Invites are one time and short lived.** `acninv_` codes carry the owner URL,
   the share id and 32 random bytes; only the SHA-256 of the secret is stored and
   it is compared in constant time. Redeeming burns it in the same transaction
-  that binds the peer. Preview and redeem are limited globally (20 a minute,
-  500 a day).
+  that binds the peer. Preview and redeem count only refused invites, 10 a
+  minute per client address and 20 a minute (500 a day) from all, so junk
+  can never spend the budget a real invite needs.
 - **An invite binds to the server that redeems it.** Redeem carries the
-  receiver's public key and an Ed25519 signature over the share id, the
-  invite hash, a nonce and its id; the owner checks the id is derived from
-  the key and records that server on the share. The invite is then spent, so
+  receiver's public key and an Ed25519 signature over the owner's server id,
+  the share id, the invite hash, a nonce and its id; the owner checks the id
+  is derived from the key, refuses a signature made for another owner, and
+  records that server on the share. An owner therefore cannot relay a
+  receiver's signed redeem to a third server. Owners still accept the older
+  messages without the owner id from receivers that predate it, and a
+  receiver refuses to redeem at an owner too old to check the owner id. The invite is then spent, so
   a leaked code is worthless after the first redeem, and a share serves one
   receiver. The receiver checks that the owner's identity at redeem matches
   the one previewed.
@@ -440,7 +535,21 @@ section.
   or Claude.
 - **Outbound calls.** Preview, redeem, sync and leave use `SafeClient` unless the
   superadmin ticked "this server is on my private network" for that link.
-  Proxied calls go to the service's base URL like any other service.
+  Proxied calls and health checks go to the service's base URL, and for a
+  link not on a private network they use a client that refuses non public
+  addresses on every dial, so an owner whose host looked public at sync
+  cannot rebind it to this server's network later.
+- **Syncs never wait on the owner under a lock.** The manifest, handed over
+  keys, usage reports and logos are fetched with their own timeouts and
+  without the sync lock, which covers only local changes; logo fetches share
+  a budget per sync and a missing logo is retried at most daily. A manifest
+  is capped at 200 services and 200 providers. A slow or hostile owner
+  cannot hold up other links, disconnect or revoke handling.
+- **Names and slugs from a peer are checked.** Service slugs in a manifest
+  must be valid slugs, and a new local service never takes a slug a local
+  service group uses, so a share cannot shadow a group at `/proxy/{slug}`.
+  The owner's server name and a receiver's name at redeem are kept to one
+  line of up to 100 bytes without control characters.
 - **Imported specs never change on their own.** A provider spec from a peer,
   whether shared on purpose or pulled in because a shared service uses it, is
   imported once with source `peer:<owner id>` and only when this server has no
@@ -490,7 +599,10 @@ docs say so plainly.
   timestamp and a nonce; the receiver verifies it against the owner key it
   pinned when it connected, refuses timestamps more than 5 minutes off and
   remembers nonces until they would be stale anyway, so it cannot be forged
-  or replayed. It is best effort; its outcome is recorded on the share.
+  or replayed. It is best effort; its outcome is recorded on the share. The
+  route is public, so only failed attempts are rate limited, per client
+  address (20 a minute, 500 a day): junk from one address cannot hold back
+  an owner's signed revoke.
 - **Rotate after revoke.** Because the push and the lease only bind a
   cooperating receiver, the owner should rotate every handed over key at its
   provider after revoking. The revoked share carries a rotate checklist of
@@ -502,14 +614,25 @@ docs say so plainly.
   as another key does not open. Sealed blobs (`acnseal1_...`) are a redactor
   pattern and never appear in a manifest, log, event, audit detail, webhook
   or anything sent to Claude; handed over secrets on the receiver are in its
-  redactor's list like any stored key.
+  redactor's list like any stored key. Because that list masks text
+  everywhere, the receiver refuses a handed over secret shorter than 16
+  characters or with spaces or non printable characters, so an owner cannot
+  blank arbitrary words in the receiver's records.
+- **An up to N scope hands over at most N keys, ever.** A key handed over
+  cannot be taken back, so for a handover share a key that leaves rotation
+  keeps its place in the scope: the receiver gets a new key only while fewer
+  than N of the keys it was ever given still exist. Deleting a key frees its
+  place.
 - **On the receiver the key stays inside the proxy.** A handed over key is a
   hidden key of a service whose target the owner chose. Local apps use it
   only through the proxy; `/keys/{id}/reveal` refuses it, leases (REST and
   MCP `get_key`) refuse it even for apps with `lease_hidden`, it cannot be
   shared onward (its service is a peer service), and its secret, hidden flag
   and egress, and its service's base URL, auth, provider and egress, cannot
-  be changed to send it elsewhere. The assistant reaches keys only through
+  be changed to send it elsewhere, also in the same request that changes the
+  provider. Any local app may proxy it, so the proxy masks the key in
+  response bodies of those services as well as in headers, in case the
+  upstream echoes it. The assistant reaches keys only through
   these routes. A base URL from an owner that is not on a private network
   must resolve to public addresses, so an owner cannot aim the receiver's
   apps at its internal network.
@@ -528,7 +651,8 @@ token, like a receiving server; in reveal mode they get the raw keys.
   and it is valid 1h, 24h or 7d. Redeem burns it in the same transaction
   that mints the token or records the reveal, so it works once even under
   parallel redeems; a new link kills the old one. Preview and redeem are
-  limited globally (20 a minute, 500 a day), answer with
+  limited like invites (only codes that open nothing count, per address and
+  globally), answer with
   `Cache-Control: no-store`, and say only which of unknown (404), used (409)
   or expired (410) applies. A share revoked or past its timer before the
   claim refuses the link. `acnclaim_` is a redactor pattern, and the request

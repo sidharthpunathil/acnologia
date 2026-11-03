@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
@@ -52,8 +53,33 @@ type Syncer struct {
 	// a link that is not on a private network. Nil uses PublicHost.
 	CheckHost func(ctx context.Context, host string) error
 
-	mu sync.Mutex // one sync at a time, so two cannot both create a service
+	// mu lets one sync at a time change local state, so two cannot both
+	// create a service. It is never held across a call to another server:
+	// a slow or hostile owner must not block disconnects, revoke pushes or
+	// the other links.
+	mu sync.Mutex
+
+	// logoMu guards logoTried, when each imported provider's logo was last
+	// asked for, so a missing logo is not fetched again on every sync.
+	logoMu    sync.Mutex
+	logoTried map[string]time.Time
 }
+
+// Limits on what one owner can make a receiver do in a sync.
+const (
+	// maxManifestEntries caps the services and the providers taken from one
+	// manifest.
+	maxManifestEntries = 200
+	// callTimeout bounds each call to the owner.
+	callTimeout = 20 * time.Second
+	// logoBudget bounds all logo fetches of one sync, maxLogoFetches their
+	// number, logoTimeout each one, and logoRetry how soon a missing logo is
+	// asked for again.
+	logoBudget     = 60 * time.Second
+	maxLogoFetches = 20
+	logoTimeout    = 10 * time.Second
+	logoRetry      = 24 * time.Hour
+)
 
 // DefaultClient is SafeClient for untrusted links and a plain client for
 // trusted ones.
@@ -72,6 +98,19 @@ func (y *Syncer) client(trusted bool) *http.Client {
 }
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
+
+// CleanName keeps a server name another server sent to one line of up to
+// 100 bytes with no control or formatting characters, which could break or
+// disguise the dashboard, the audit log and notifications.
+func CleanName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return ' '
+		}
+		return r
+	}, name)
+	return strings.TrimSpace(crypto.Truncate(strings.Join(strings.Fields(name), " "), 100))
+}
 
 // SlugPrefix turns a server name into a service slug prefix.
 func SlugPrefix(name string) string {
@@ -109,17 +148,19 @@ func (y *Syncer) Connect(ctx context.Context, code, prefix string, trusted bool,
 	if owner.ID == self.ID {
 		return nil, errors.New("that invite is from this server")
 	}
+	// Only the owner-bound message is ever signed: an older one could be
+	// passed on to another server. An owner that cannot check it must
+	// upgrade first.
+	if owner.Redeem < RedeemVersion {
+		return nil, errors.New("the owner's server runs an older release that cannot check this server's signature; ask its owner to upgrade")
+	}
 	nb := make([]byte, 16)
 	_, _ = rand.Read(nb)
 	nonce := base64.RawURLEncoding.EncodeToString(nb)
 	req := RedeemRequest{
 		Invite: inv.Secret, ShareID: inv.ShareID, ID: self.ID, Name: self.Name, URL: self.URL,
-		PublicKey: self.PublicKey, Nonce: nonce,
-		Signature: SignRedeem(priv, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID),
-	}
-	if self.BoxPublicKey != "" {
-		req.BoxPublicKey = self.BoxPublicKey
-		req.Signature = SignRedeemBox(priv, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID, self.BoxPublicKey)
+		PublicKey: self.PublicKey, Nonce: nonce, BoxPublicKey: self.BoxPublicKey, OwnerID: owner.ID,
+		Signature: SignRedeemV3(priv, owner.ID, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID, self.BoxPublicKey),
 	}
 	res, err := Redeem(ctx, c, inv, req)
 	if err != nil {
@@ -135,19 +176,18 @@ func (y *Syncer) Connect(ctx context.Context, code, prefix string, trusted bool,
 	if err != nil {
 		return nil, err
 	}
+	ownerName := CleanName(owner.Name)
 	if prefix == "" {
-		prefix = SlugPrefix(owner.Name)
+		prefix = SlugPrefix(ownerName)
 	}
 	link, err := y.Store.CreatePeerLink(ctx, &store.PeerLink{
-		PeerID: owner.ID, PeerName: owner.Name, PeerURL: inv.URL, PeerPublicKey: owner.PublicKey,
+		PeerID: owner.ID, PeerName: ownerName, PeerURL: inv.URL, PeerPublicKey: owner.PublicKey,
 		RemoteShareID: inv.ShareID, TokenEnc: enc, Status: LinkActive, Prefix: prefix, Trusted: trusted,
 		Mode: res.Manifest.Mode,
 	}, userID)
 	if err != nil {
 		return nil, err
 	}
-	y.mu.Lock()
-	defer y.mu.Unlock()
 	if err := y.apply(ctx, link, res.Token, &res.Manifest); err != nil {
 		return link, err
 	}
@@ -156,8 +196,6 @@ func (y *Syncer) Connect(ctx context.Context, code, prefix string, trusted bool,
 
 // Sync refreshes one link from its owner.
 func (y *Syncer) Sync(ctx context.Context, id int64) (*store.PeerLink, error) {
-	y.mu.Lock()
-	defer y.mu.Unlock()
 	link, err := y.Store.GetPeerLink(ctx, id)
 	if err != nil {
 		return nil, err
@@ -169,9 +207,23 @@ func (y *Syncer) Sync(ctx context.Context, id int64) (*store.PeerLink, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, err := FetchManifest(ctx, y.client(link.Trusted), link.PeerURL, token)
-	now := time.Now().UTC()
+	// Ask the owner without the lock.
+	mctx, cancel := context.WithTimeout(ctx, callTimeout)
+	m, err := FetchManifest(mctx, y.client(link.Trusted), link.PeerURL, token)
+	cancel()
 	if err != nil {
+		y.mu.Lock()
+		defer y.mu.Unlock()
+		// The link may have changed while the owner answered.
+		cur, lerr := y.Store.GetPeerLink(ctx, id)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if len(cur.TokenEnc) == 0 {
+			return cur, nil
+		}
+		link = cur
+		now := time.Now().UTC()
 		if re := AsRemote(err); re != nil && re.ShareState() != "" {
 			return y.setStatus(ctx, link, re.ShareState())
 		}
@@ -249,9 +301,9 @@ func (y *Syncer) setStatus(ctx context.Context, link *store.PeerLink, state stri
 // holding it, and leaves the local services in place with no key.
 func (y *Syncer) Disconnect(ctx context.Context, id int64) (*store.PeerLink, error) {
 	y.mu.Lock()
-	defer y.mu.Unlock()
 	link, err := y.Store.GetPeerLink(ctx, id)
 	if err != nil {
+		y.mu.Unlock()
 		return nil, err
 	}
 	// Handed over keys go before the owner hears about it, so "left" on
@@ -259,48 +311,123 @@ func (y *Syncer) Disconnect(ctx context.Context, id int64) (*store.PeerLink, err
 	if link.Mode == ModeHandover {
 		y.wipeLink(ctx, link, WipeDisconnected)
 	}
+	token := ""
 	if len(link.TokenEnc) > 0 {
-		if token, err := y.Box.Decrypt(link.TokenEnc); err == nil {
-			lctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			if err := Leave(lctx, y.client(link.Trusted), link.PeerURL, token); err != nil {
-				slog.Info("could not tell the owner about the disconnect", "peer", link.PeerID, "err", err)
-			}
-			cancel()
-		}
+		token, _ = y.Box.Decrypt(link.TokenEnc)
 	}
 	if link.Mode != ModeHandover {
 		for _, sid := range link.Services {
 			_ = y.Store.DeleteServiceKeys(ctx, sid)
 		}
 	}
-	if err := y.Store.ClearPeerLinkToken(ctx, id, LinkDisconnected); err != nil {
+	err = y.Store.ClearPeerLinkToken(ctx, id, LinkDisconnected)
+	y.mu.Unlock()
+	if err != nil {
 		return nil, err
+	}
+	// Tell the owner (best effort) once nothing here waits on the answer.
+	if token != "" {
+		lctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := Leave(lctx, y.client(link.Trusted), link.PeerURL, token); err != nil {
+			slog.Info("could not tell the owner about the disconnect", "peer", link.PeerID, "err", err)
+		}
+		cancel()
 	}
 	return y.Store.GetPeerLink(ctx, id)
 }
 
-// apply brings local services and providers in line with a manifest. New
-// services are created; removed ones lose their key's use (disabled, not
-// deleted, so events and app settings survive); status changes apply.
+// manifestStatus is the link status a manifest asks for.
+func manifestStatus(m *Manifest) string {
+	switch m.Status {
+	case LinkActive, LinkPaused, LinkExpired, LinkRevoked:
+		return m.Status
+	}
+	return LinkActive
+}
+
+// handoverFetch is the owner's answer for a handover link's keys, fetched
+// before the lock is taken.
+type handoverFetch struct {
+	keys HandoverKeys
+	err  error
+}
+
+// prefetch asks the owner for a handover link's keys when the manifest
+// says the share is active. It holds no lock.
+func (y *Syncer) prefetch(ctx context.Context, link *store.PeerLink, token string, m *Manifest) *handoverFetch {
+	if link.Mode != ModeHandover || manifestStatus(m) != LinkActive {
+		return nil
+	}
+	hctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	hk, err := FetchHandoverKeys(hctx, y.client(link.Trusted), link.PeerURL, token)
+	return &handoverFetch{keys: hk, err: err}
+}
+
+// syncFollowUp is the network work left after a manifest is applied: logos
+// to fetch and, for a handover link, the usage report.
+type syncFollowUp struct {
+	logos  []logoJob
+	report bool
+}
+
+// apply brings a link in line with a manifest. It asks the owner for what
+// the manifest needs first, takes the lock only for the local changes, and
+// does the rest of the network work after letting go.
 func (y *Syncer) apply(ctx context.Context, link *store.PeerLink, token string, m *Manifest) error {
+	pre := y.prefetch(ctx, link, token, m)
+	y.mu.Lock()
+	cur, err := y.Store.GetPeerLink(ctx, link.ID)
+	if err != nil {
+		y.mu.Unlock()
+		return err
+	}
+	if cur.Status == LinkDisconnected || cur.Status == LinkRevoked {
+		// Disconnected or revoked while the owner answered: leave it so.
+		y.mu.Unlock()
+		return nil
+	}
+	*link = *cur
+	fu, err := y.applyLocked(ctx, link, token, m, pre)
+	y.mu.Unlock()
+	if fu.report {
+		y.report(ctx, link, token)
+	}
+	y.fetchLogos(ctx, link, token, fu.logos)
+	return err
+}
+
+// applyLocked brings local services and providers in line with a manifest.
+// New services are created; removed ones lose their key's use (disabled,
+// not deleted, so events and app settings survive); status changes apply.
+// The caller holds y.mu; nothing here calls the owner.
+func (y *Syncer) applyLocked(ctx context.Context, link *store.PeerLink, token string, m *Manifest, pre *handoverFetch) (syncFollowUp, error) {
 	now := time.Now().UTC()
 	var problems []string
+	var fu syncFollowUp
 	prevActive := link.Status == LinkActive
-	status := m.Status
-	switch status {
-	case LinkActive, LinkPaused, LinkExpired, LinkRevoked:
-	default:
-		status = LinkActive
+	status := manifestStatus(m)
+	if len(m.Services) > maxManifestEntries {
+		problems = append(problems, fmt.Sprintf("the owner shares %d services; only the first %d are taken", len(m.Services), maxManifestEntries))
+		m.Services = m.Services[:maxManifestEntries]
+	}
+	if len(m.Providers) > maxManifestEntries {
+		problems = append(problems, fmt.Sprintf("the owner sent %d providers; only the first %d are taken", len(m.Providers), maxManifestEntries))
+		m.Providers = m.Providers[:maxManifestEntries]
 	}
 	// Providers first, so a service made below already has its provider's
-	// name, logo and examples. A failed import never blocks the service: it
-	// works through the owner's proxy either way.
+	// name and examples. A failed import never blocks the service: it works
+	// through the owner's proxy either way.
 	if status == LinkActive {
-		problems = append(problems, y.syncProviders(ctx, link, token, m)...)
+		var p []string
+		p, fu.logos = y.syncProviders(ctx, link, m)
+		problems = append(problems, p...)
 	}
 	if link.Mode == ModeHandover {
-		problems = append(problems, y.applyHandover(ctx, link, token, status)...)
-		return y.saveApplied(ctx, link, m, status, now, problems)
+		var p []string
+		p, fu.report = y.applyHandover(ctx, link, status, pre)
+		problems = append(problems, p...)
+		return fu, y.saveApplied(ctx, link, m, status, now, problems)
 	}
 	present := map[string]bool{}
 	for _, ms := range m.Services {
@@ -338,7 +465,7 @@ func (y *Syncer) apply(ctx context.Context, link *store.PeerLink, token string, 
 			_ = y.Store.SetServiceKeysStatus(ctx, id, store.StatusDisabled, why)
 		}
 	}
-	return y.saveApplied(ctx, link, m, status, now, problems)
+	return fu, y.saveApplied(ctx, link, m, status, now, problems)
 }
 
 func (y *Syncer) saveApplied(ctx context.Context, link *store.PeerLink, m *Manifest, status string, now time.Time, problems []string) error {
@@ -363,6 +490,9 @@ func (y *Syncer) keysDisabled(ctx context.Context, serviceID int64) bool {
 }
 
 func (y *Syncer) createService(ctx context.Context, link *store.PeerLink, ms ManifestService, token string) (int64, error) {
+	if !catalog.ValidSlug(ms.Slug) {
+		return 0, errors.New("the owner sent an invalid service slug")
+	}
 	prov, err := y.Store.GetProvider(ctx, providers.PeerSlug)
 	if err != nil {
 		return 0, err
