@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/agent"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
@@ -260,4 +263,59 @@ func modelsDiff(old, next agent.ModelSettings) string {
 		}
 	}
 	return strings.Join(parts, "; ")
+}
+
+// aiSetPrice saves a price override for one model.
+func (s *Server) aiSetPrice(w http.ResponseWriter, r *http.Request) {
+	model := chi.URLParam(r, "model")
+	var body agent.PriceOverride
+	if !decode(w, r, &body) {
+		return
+	}
+	body.Source, body.UpdatedAt, body.UpdatedBy = "manual", nil, ""
+	if body.CheckedAt == "" {
+		body.CheckedAt = time.Now().UTC().Format("2006-01-02")
+	}
+	u := userFrom(r)
+	old, err := s.Agent.SetPrice(r.Context(), model, body, u.Email)
+	if err != nil {
+		if errors.Is(err, agent.ErrInvalidPrice) {
+			writeErr(w, 400, "invalid_price", err.Error())
+			return
+		}
+		writeStoreErr(w, err)
+		return
+	}
+	s.Store.AddAudit(r.Context(), u, "ai.prices", model, priceAudit(old, &body))
+	s.aiModels(w, r)
+}
+
+// aiResetPrice drops a model's override, back to the built in price.
+func (s *Server) aiResetPrice(w http.ResponseWriter, r *http.Request) {
+	model := chi.URLParam(r, "model")
+	u := userFrom(r)
+	old, err := s.Agent.ResetPrice(r.Context(), model)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if old != nil {
+		s.Store.AddAudit(r.Context(), u, "ai.prices", model, "reset to built in, was "+priceText(old))
+	}
+	s.aiModels(w, r)
+}
+
+func priceText(o *agent.PriceOverride) string {
+	if o == nil {
+		return "built in"
+	}
+	t := fmt.Sprintf("in $%g, out $%g, cache write $%g, cache read $%g per MTok", o.Input, o.Output, o.CacheWrite, o.CacheRead)
+	if o.ContextWindow > 0 {
+		t += fmt.Sprintf(", %d token window", o.ContextWindow)
+	}
+	return t
+}
+
+func priceAudit(old, next *agent.PriceOverride) string {
+	return priceText(old) + " -> " + priceText(next)
 }

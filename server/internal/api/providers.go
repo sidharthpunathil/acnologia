@@ -27,6 +27,9 @@ type providerDTO struct {
 	DefaultCooldownSec     int    `json:"default_cooldown_sec"`
 	DefaultMaxConcurrency  int    `json:"default_max_concurrency"`
 	DefaultQueueTimeoutSec int    `json:"default_queue_timeout_sec"`
+	// Refresh is when the offers refresh last checked and changed this
+	// provider, and any proposal waiting for review. Nil when never checked.
+	Refresh *store.ProviderRefresh `json:"refresh,omitempty"`
 }
 
 func providerLogoURL(slug string, rev int) *string {
@@ -73,9 +76,12 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	states, _ := s.Store.ProviderRefreshStates(r.Context())
 	out := make([]providerDTO, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, toDTO(p))
+		d := toDTO(p)
+		d.Refresh = states[p.Slug]
+		out = append(out, d)
 	}
 	writeJSON(w, 200, map[string]any{"providers": out, "strategies": pool.Strategies})
 }
@@ -91,10 +97,14 @@ func (s *Server) getProvider(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	d := toDTO(p)
+	if states, err := s.Store.ProviderRefreshStates(r.Context()); err == nil {
+		d.Refresh = states[p.Slug]
+	}
 	writeJSON(w, 200, struct {
 		providerDTO
 		Versions []store.ProviderVersion `json:"versions"`
-	}{toDTO(p), versions})
+	}{d, versions})
 }
 
 type providerBody struct {

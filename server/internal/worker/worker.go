@@ -22,6 +22,9 @@ type Worker struct {
 	// PeerInterval. Nil turns it off.
 	Peers        interface{ SyncAll(context.Context) }
 	PeerInterval time.Duration
+	// Refresh checks once a minute whether the provider offers refresh is
+	// due, and starts or resumes it. Nil turns it off.
+	Refresh interface{ Tick(context.Context) }
 
 	lastPrune time.Time
 }
@@ -35,6 +38,9 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 	if w.Peers != nil && w.PeerInterval > 0 {
 		go w.runPeers(ctx)
+	}
+	if w.Refresh != nil {
+		go w.runRefresh(ctx)
 	}
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -61,6 +67,21 @@ func (w *Worker) runPeers(ctx context.Context) {
 			return
 		case <-t.C:
 			w.Peers.SyncAll(ctx)
+		}
+	}
+}
+
+// runRefresh asks the offers refresh every minute whether a run is due. A
+// run itself goes on in the background, so this never waits on Claude.
+func (w *Worker) runRefresh(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			w.Refresh.Tick(ctx)
 		}
 	}
 }

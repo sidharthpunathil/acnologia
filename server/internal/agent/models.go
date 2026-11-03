@@ -189,6 +189,17 @@ type ModelInfo struct {
 	PricingKnown bool    `json:"pricing_known"`
 	// Builtin is set for models in Acnologia's own table.
 	Builtin bool `json:"builtin"`
+	// Cache prices, USD per million tokens.
+	CacheWritePrice float64 `json:"cache_write_price"`
+	CacheReadPrice  float64 `json:"cache_read_price"`
+	// PriceSource is builtin, manual (edited in Settings) or refresh (the
+	// price refresh); PriceURL and PriceChecked say where and when the
+	// price was read.
+	PriceSource  string `json:"price_source,omitempty"`
+	PriceURL     string `json:"price_url,omitempty"`
+	PriceChecked string `json:"price_checked,omitempty"`
+	// Override is the saved override, when there is one.
+	Override *PriceOverride `json:"override,omitempty"`
 }
 
 // ModelCatalog is the list of models to pick from.
@@ -227,14 +238,37 @@ func modelInfo(id, name string, window int, builtin bool) ModelInfo {
 	m := ModelInfo{ID: id, DisplayName: name, ContextWindow: window, Builtin: builtin}
 	if p, ok := KnownPrice(id); ok {
 		m.InputPrice, m.OutputPrice, m.PricingKnown = p.Input, p.Output, true
+		m.CacheWritePrice, m.CacheReadPrice = p.CacheWrite, p.CacheRead
+		m.PriceSource, m.PriceURL, m.PriceChecked = "builtin", PricesSourceURL, BuiltinPricesChecked
 	}
 	return m
 }
 
-func builtinCatalog(note string) ModelCatalog {
+// withPrices lays the saved overrides and the last price check over a
+// model's built in facts.
+func (a *Agent) withPrices(ctx context.Context, m ModelInfo) ModelInfo {
+	ps := a.Prices(ctx)
+	if m.PricingKnown && m.PriceSource == "builtin" && ps.CheckedAt > m.PriceChecked {
+		m.PriceChecked, m.PriceURL = ps.CheckedAt, ps.CheckedURL
+	}
+	o, ok := a.override(m.ID)
+	if !ok {
+		return m
+	}
+	p, _ := a.PriceOf(m.ID)
+	m.InputPrice, m.OutputPrice, m.CacheWritePrice, m.CacheReadPrice, m.PricingKnown = p.Input, p.Output, p.CacheWrite, p.CacheRead, true
+	if o.ContextWindow > 0 {
+		m.ContextWindow = o.ContextWindow
+	}
+	m.PriceSource, m.PriceURL, m.PriceChecked = o.Source, o.SourceURL, o.CheckedAt
+	m.Override = &o
+	return m
+}
+
+func (a *Agent) builtinCatalog(ctx context.Context, note string) ModelCatalog {
 	out := ModelCatalog{Source: "builtin", Note: note}
 	for _, b := range builtinModels {
-		out.Models = append(out.Models, modelInfo(b.id, b.name, b.window, true))
+		out.Models = append(out.Models, a.withPrices(ctx, modelInfo(b.id, b.name, b.window, true)))
 	}
 	return out
 }
@@ -281,18 +315,18 @@ func (a *Agent) cachedListing() []anthropic.ModelInfo {
 // models are left out.
 func (a *Agent) ListModels(ctx context.Context) ModelCatalog {
 	if !a.enabled {
-		return builtinCatalog("ANTHROPIC_API_KEY is not set, so this is Acnologia's built in list.")
+		return a.builtinCatalog(ctx, "ANTHROPIC_API_KEY is not set, so this is Acnologia's built in list.")
 	}
 	listed, err := a.fetchModels(ctx)
 	if err != nil {
-		return builtinCatalog("Could not reach Anthropic's Models API, so this is Acnologia's built in list.")
+		return a.builtinCatalog(ctx, "Could not reach Anthropic's Models API, so this is Acnologia's built in list.")
 	}
 	out := ModelCatalog{Source: "api"}
 	seen := map[string]bool{}
 	// The built in models first, in their order, then the rest as listed.
 	for _, b := range builtinModels {
 		m, _ := builtinInfo(b.id)
-		out.Models = append(out.Models, m)
+		out.Models = append(out.Models, a.withPrices(ctx, m))
 		seen[b.id] = true
 	}
 	for _, l := range listed {
@@ -308,7 +342,7 @@ func (a *Agent) ListModels(ctx context.Context) ModelCatalog {
 		if name == "" {
 			name = l.ID
 		}
-		out.Models = append(out.Models, modelInfo(l.ID, name, window, false))
+		out.Models = append(out.Models, a.withPrices(ctx, modelInfo(l.ID, name, window, false)))
 	}
 	return out
 }
@@ -316,6 +350,9 @@ func (a *Agent) ListModels(ctx context.Context) ModelCatalog {
 // ContextWindowOf is a model's context window in tokens: the built in
 // table, then what the Models API reported, then the ContextWindow guess.
 func (a *Agent) ContextWindowOf(model string) int {
+	if o, ok := a.override(model); ok && o.ContextWindow > 0 {
+		return o.ContextWindow
+	}
 	if m, ok := builtinInfo(model); ok {
 		return m.ContextWindow
 	}

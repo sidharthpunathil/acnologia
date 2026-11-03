@@ -32,6 +32,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/peer"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/redact"
+	"github.com/sidharthpunathil/acnologia/server/internal/refresh"
 	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
@@ -73,6 +74,8 @@ type Server struct {
 	peers *peer.Syncer
 	// peerLimit bounds invite preview and redeem calls (peer_public.go).
 	peerLimit *peerLimiter
+	// Refresh keeps providers' offers current (refresh.go).
+	Refresh *refresh.Refresher
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -86,6 +89,7 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 	}
 	s.peerLimit = newPeerLimiter()
 	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat, FetchSiteLogo: peer.SiteLogo}
+	s.Refresh = &refresh.Refresher{Store: st, Catalog: cat, AI: serverAI{s}}
 	s.Breakers.OnChange = func(id int64, down bool, reason string) { go s.onBreakerChange(id, down, reason) }
 	// main wires these up with their workers; tests and embedders get working defaults.
 	if p.Egress == nil {
@@ -94,6 +98,7 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 	if p.Notify == nil {
 		p.Notify = notify.New(st, p.Box, catalog.SafeClient(15*time.Second))
 	}
+	s.Refresh.Notify = p.Notify
 	if st.Redactor() == nil {
 		st.SetRedactor(NewRedactor(st, p.Box))
 	}
@@ -253,6 +258,11 @@ func (s *Server) Router() http.Handler {
 			// Settings: the read only configuration the environment sets.
 			r.Get("/settings", s.settingsSummary)
 			r.Get("/ai/models", s.aiModels)
+			// Provider offers refresh (refresh.go): admins read.
+			r.Get("/providers/refresh/settings", s.getRefreshSettings)
+			r.Get("/providers/refresh/runs", s.listRefreshRuns)
+			r.Get("/providers/refresh/runs/{id}", s.getRefreshRun)
+			r.Get("/providers/refresh/reviews", s.listRefreshReviews)
 			// Sharing: admins may look.
 			r.Get("/identity", s.getIdentity)
 			r.Get("/shares", s.listShares)
@@ -299,6 +309,14 @@ func (s *Server) Router() http.Handler {
 			r.Get("/audit", s.listAudit)
 			r.Put("/ai/rules", s.aiSetRules)
 			r.Put("/ai/models", s.aiSetModels)
+			r.Put("/ai/prices/{model}", s.aiSetPrice)
+			r.Delete("/ai/prices/{model}", s.aiResetPrice)
+			// Provider offers refresh: only a superadmin changes anything.
+			r.Put("/providers/refresh/settings", s.putRefreshSettings)
+			r.Post("/providers/refresh/run", s.runRefresh)
+			r.Post("/providers/refresh/reviews/{id}/apply", s.applyRefreshReview)
+			r.Post("/providers/refresh/reviews/{id}/dismiss", s.dismissRefreshReview)
+			r.Post("/providers/{slug}/refresh", s.checkProviderOffers)
 			// Sharing: only a superadmin changes anything.
 			r.Patch("/identity", s.patchIdentity)
 			r.Post("/shares", s.createShare)

@@ -38,5 +38,5 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 		AIPrice   agent.Price `json:"ai_price"`
 		// EventRetentionDays bounds how far back provider spend goes; 0 keeps events forever.
 		EventRetentionDays int `json:"event_retention_days"`
-	}{rep, st.Enabled, st.Model, agent.PriceFor(st.Model), s.Cfg.EventRetentionDays})
+	}{rep, st.Enabled, st.Model, s.Agent.EffectivePrice(st.Model), s.Cfg.EventRetentionDays})
 }

@@ -98,9 +98,11 @@ func TokensOf(u anthropic.BetaUsage) Tokens {
 		Output: u.OutputTokens, WebSearches: u.ServerToolUse.WebSearchRequests}
 }
 
-// Cost is the USD cost of usage at a model's price.
-func Cost(model string, t Tokens) float64 {
-	p := PriceFor(model)
+// Cost is the USD cost of usage at a model's built in price. Agent.CostOf
+// also applies the price overrides saved in Settings.
+func Cost(model string, t Tokens) float64 { return costAt(PriceFor(model), t) }
+
+func costAt(p Price, t Tokens) float64 {
 	f := 1.0
 	if p.LongPromptAbove > 0 && t.Input+t.CacheWrite+t.CacheRead > p.LongPromptAbove {
 		f = p.LongPromptFactor
@@ -135,7 +137,7 @@ func (a *Agent) Record(ctx context.Context, feature string, by Caller, ref strin
 		model = a.ModelFor(ctx, feature).Model
 	}
 	t := TokensOf(resp.Usage)
-	cost := Cost(model, t)
+	cost := a.CostOf(model, t)
 	err := a.Store.RecordAICall(context.WithoutCancel(ctx), store.AICall{Feature: feature, UserID: by.ID, UserEmail: by.Email, Model: model,
 		InputTokens: t.Input, CacheWriteTokens: t.CacheWrite, CacheReadTokens: t.CacheRead, OutputTokens: t.Output,
 		WebSearches: t.WebSearches, CostUSD: cost, Ref: ref})

@@ -61,10 +61,12 @@ type Agent struct {
 	// envModel is ACNOLOGIA_AI_MODEL; models holds the saved model settings.
 	envModel string
 	models   modelState
-	enabled  bool
-	github   string
-	sem      chan struct{}
-	cancels  sync.Map // run id -> context.CancelFunc
+	// prices holds the saved price overrides (prices.go).
+	prices  priceState
+	enabled bool
+	github  string
+	sem     chan struct{}
+	cancels sync.Map // run id -> context.CancelFunc
 	// pendingLogos holds logos for runs waiting for review (not persisted).
 	pendingLogos sync.Map
 }
