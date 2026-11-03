@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden, daily_requests, monthly_requests, daily_budget, monthly_budget,
+const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden, daily_requests, monthly_requests, daily_budget, monthly_budget, share_id,
 (SELECT COUNT(*) FROM app_tokens t WHERE t.app_id=apps.id AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>CAST(strftime('%s','now') AS INTEGER)))`
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
@@ -18,7 +18,8 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var created int64
 	var last, dr, mr sql.NullInt64
 	var db, mb sql.NullFloat64
-	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden, &dr, &mr, &db, &mb, &a.TokenCount); err != nil {
+	var share sql.NullString
+	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden, &dr, &mr, &db, &mb, &share, &a.TokenCount); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -30,6 +31,9 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	a.LeaseHidden = leaseHidden == 1
 	a.CreatedAt = time.Unix(created, 0).UTC()
 	a.LastUsedAt = toTime(last)
+	if share.Valid && share.String != "" {
+		a.ShareID = &share.String
+	}
 	a.Limits.DailyRequests, a.Limits.MonthlyRequests = toInt(dr), toInt(mr)
 	if db.Valid {
 		a.Limits.DailyBudget = &db.Float64
@@ -138,8 +142,10 @@ func (s *Store) GetApp(ctx context.Context, id int64) (*App, error) {
 	return scanApp(s.DB.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=?`, id))
 }
 
+// ListApps lists the apps people manage on the Apps page. Apps backing a
+// share are managed on the Sharing page and left out.
 func (s *Store) ListApps(ctx context.Context) ([]*App, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+appCols+` FROM apps ORDER BY name`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+appCols+` FROM apps WHERE share_id IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

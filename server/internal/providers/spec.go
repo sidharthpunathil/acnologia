@@ -94,12 +94,15 @@ type RetryAfter struct {
 }
 
 type Health struct {
-	Method   string            `json:"method"`
-	Path     string            `json:"path"`
-	Query    map[string]string `json:"query,omitempty"`
-	Invalid  *Match            `json:"invalid,omitempty"`
-	OKAnyway *Match            `json:"ok_anyway,omitempty"`
-	Quota    *QuotaPaths       `json:"quota,omitempty"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	// FromOrigin resolves Path against the scheme and host of the base URL
+	// instead of the whole base URL.
+	FromOrigin bool              `json:"from_origin,omitempty"`
+	Query      map[string]string `json:"query,omitempty"`
+	Invalid    *Match            `json:"invalid,omitempty"`
+	OKAnyway   *Match            `json:"ok_anyway,omitempty"`
+	Quota      *QuotaPaths       `json:"quota,omitempty"`
 }
 
 type QuotaPaths struct {

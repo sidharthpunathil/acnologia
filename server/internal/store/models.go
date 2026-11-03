@@ -88,6 +88,11 @@ type Service struct {
 	CacheTTLSec *int64 `json:"cache_ttl_sec"`
 	// CostPerRequest overrides the provider's USD price per request; nil uses the spec.
 	CostPerRequest *float64 `json:"cost_per_request"`
+	// PeerLinkID is set on a service made for another server's share; it
+	// proxies through that server. PeerName names that server.
+	PeerLinkID     *int64 `json:"peer_link_id"`
+	PeerName       string `json:"peer_name,omitempty"`
+	PeerRemoteSlug string `json:"peer_remote_slug,omitempty"`
 }
 
 const (
@@ -213,6 +218,9 @@ type App struct {
 	TokenCount int `json:"token_count"`
 	// TokenID is the token the current request authenticated with.
 	TokenID int64 `json:"-"`
+	// ShareID is set on an app that backs a share to another server. Such
+	// apps are managed on the Sharing page, not the Apps page.
+	ShareID *string `json:"share_id,omitempty"`
 }
 
 func (a *App) CanUse(slug string) bool {

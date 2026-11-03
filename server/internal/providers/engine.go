@@ -54,6 +54,11 @@ func (s *Spec) ClassifyExplain(status int, h http.Header, body []byte) (Result, 
 		}
 		res := Result{Outcome: r.Outcome, Message: errorMessage(body, parse()), Quota: s.ReadQuota(h)}
 		res.RetryAfter = r.RetryAfter.resolve(h, parse)
+		if res.Outcome == QuotaExhausted && res.RetryAfter > 0 {
+			// A retry time on exhaustion is when the quota comes back.
+			t := time.Now().Add(res.RetryAfter)
+			res.ResetAt = &t
+		}
 		return res, r.Name
 	}
 	if status >= 500 {
@@ -160,7 +165,15 @@ func (s *Spec) Check(ctx context.Context, c *http.Client, baseURL, secret string
 	if method == "" {
 		method = http.MethodGet
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(baseURL, "/")+h.Path, nil)
+	target := strings.TrimRight(baseURL, "/") + h.Path
+	if h.FromOrigin {
+		u, err := url.Parse(baseURL)
+		if err != nil {
+			return nil, err
+		}
+		target = u.Scheme + "://" + u.Host + h.Path
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
 		return nil, err
 	}
