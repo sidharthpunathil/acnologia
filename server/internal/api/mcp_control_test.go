@@ -419,7 +419,8 @@ func TestControlMCPCallService(t *testing.T) {
 		t.Fatalf("call_service: %s", text)
 	}
 	body := sc["body"].(map[string]any)
-	if body["key"] != "k2" || body["q"] != "coffee" {
+	// The Control MCP app is proxy only: the echoed key is scrubbed.
+	if body["who"] != "K2" || body["key"] != "[key]" || body["q"] != "coffee" {
 		t.Fatalf("body: %v", body)
 	}
 	h := sc["headers"].(map[string]any)

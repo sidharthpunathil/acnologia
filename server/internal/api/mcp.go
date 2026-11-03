@@ -343,7 +343,11 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type"), "key_id": rec.Header().Get("X-Acnologia-Key-Id")}
+	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type")}
+	// Share and person principals get no key id header, so no key_id either.
+	if id := rec.Header().Get("X-Acnologia-Key-Id"); id != "" {
+		out["key_id"] = id
+	}
 	b := rec.Body.Bytes()
 	ct := rec.Header().Get("Content-Type")
 	switch {

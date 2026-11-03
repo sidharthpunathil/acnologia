@@ -162,7 +162,7 @@ func TestPersonShareProxy(t *testing.T) {
 	// The token works for the shared service and only the scoped key.
 	for i := 0; i < 2; i++ {
 		code, body, _ := peerCall(t, "GET", e.srv.URL+"/proxy/serpapi/search.json?q=tea", tok)
-		if code != 200 || !strings.Contains(body, `"key":"personkey2"`) {
+		if code != 200 || !strings.Contains(body, `"who":"PERSONKEY2"`) || strings.Contains(body, "personkey2") {
 			t.Fatalf("proxy: %d %s", code, body)
 		}
 	}

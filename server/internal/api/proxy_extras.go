@@ -1,14 +1,12 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -172,15 +170,15 @@ func cacheable(resp *http.Response, body []byte, k *store.Key, secret string) bo
 	if strings.Contains(cc, "no-store") || strings.Contains(cc, "private") {
 		return false
 	}
-	if secret != "" && (bytes.Contains(body, []byte(secret)) || bytes.Contains(body, []byte(url.QueryEscape(secret)))) {
+	if at, _ := firstForm(body, keyForms(secret)); at >= 0 {
 		return false
 	}
 	return true
 }
 
 // writeCached replays a stored response. mode is hit or replay.
-func writeCached(w http.ResponseWriter, e *respcache.Entry, mode string) {
-	copyResponseHeaders(w, &http.Response{Header: e.Header}, e.KeyID, 0)
+func writeCached(w http.ResponseWriter, e *respcache.Entry, mode string, hideKey bool) {
+	copyResponseHeaders(w, &http.Response{Header: e.Header}, relayView{keyID: e.KeyID, hideKey: hideKey})
 	if mode == "replay" {
 		w.Header().Set("Idempotent-Replayed", "true")
 	}

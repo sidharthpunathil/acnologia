@@ -55,7 +55,9 @@ func (f *fakeSerp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"searches_per_month": 100, "total_searches_left": 42})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"search_metadata": map[string]string{"status": "Success"}, "key": k, "q": r.URL.Query().Get("q")})
+	// key echoes the key as given, which the proxy hides from callers that
+	// may not lease it; who names it in a form the proxy leaves alone.
+	_ = json.NewEncoder(w).Encode(map[string]any{"search_metadata": map[string]string{"status": "Success"}, "key": k, "who": strings.ToUpper(k), "q": r.URL.Query().Get("q")})
 }
 
 type env struct {
