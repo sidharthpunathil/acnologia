@@ -35,7 +35,11 @@ function metaParts(s: Service): MetaPart[] {
   if (c.exhausted) parts.push({ text: `${c.exhausted} out of quota`, tone: "amber" });
   if (c.cooling) parts.push({ text: `${c.cooling} cooling`, tone: "amber" });
   if (c.busy) parts.push({ text: `${c.busy} busy`, tone: "violet" });
-  if (c.total > 0) parts.push({ text: `${Math.max(0, c.available - (c.busy ?? 0))} of ${plural(c.total, "key")} available` });
+  if (s.peer_link_id) {
+    // A shared service has one key, the share token; the owner holds the real ones.
+    parts.push({ text: `from ${s.peer_name || "another server"}` });
+    if (c.disabled) parts.push({ text: "paused or removed", tone: "amber" });
+  } else if (c.total > 0) parts.push({ text: `${Math.max(0, c.available - (c.busy ?? 0))} of ${plural(c.total, "key")} available` });
   else parts.push({ text: "No keys yet" });
   return parts;
 }

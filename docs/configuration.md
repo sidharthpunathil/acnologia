@@ -11,7 +11,7 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_ADDR` | `:8080` | Listen address. When unset and the host sets `PORT` (Railway, Render, Fly), the server listens on `0.0.0.0:$PORT`. |
 | `ACNOLOGIA_DATA_DIR` | `./data` | Holds `acnologia.db` (plus WAL files) and, when no env key is set, `master.key`. Created with mode 0700. |
 | `ACNOLOGIA_MASTER_KEY` | empty | 32 bytes, base64 or hex, that encrypt stored keys. Generate with `acnologia gen-master-key`. When empty, `data/master.key` is used, or created on first boot. |
-| `ACNOLOGIA_PUBLIC_URL` | empty | Base URL written into `/llms.txt`. When empty it is derived from the request host. |
+| `ACNOLOGIA_PUBLIC_URL` | empty | Base URL written into `/llms.txt`, and the URL this server announces to other servers: in `/.well-known/acnologia` and in every share invite it makes. When empty, the URL a superadmin saved on the Sharing page is used, else the request host. Set it on any server that shares, so invites never carry an internal address. |
 | `ACNOLOGIA_SECURE_COOKIES` | `false` | Mark the session cookie `Secure`. Set `true` behind HTTPS. It is also set automatically for direct TLS. |
 | `ACNOLOGIA_TRUST_PROXY_HEADERS` | `false` | Take the client IP from `X-Forwarded-For` / `X-Real-IP`. Enable only behind a proxy that overwrites them; otherwise clients could spoof their address to dodge the login limiter. |
 | `ACNOLOGIA_ACCESS_PASSWORD` | empty | Locks the whole site behind one shared password, in front of the user accounts. At least 12 characters. Unset, nothing changes. See [Access password](#access-password). |

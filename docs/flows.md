@@ -13,6 +13,7 @@ Mermaid and render on GitHub.
 - [MCP](#mcp)
 - [AI provider builder](#ai-provider-builder)
 - [Assistant chat](#assistant-chat)
+- [Sharing between servers](#sharing-between-servers)
 
 ## Proxy request
 
@@ -470,3 +471,75 @@ flowchart TD
 - The thread's menu (the dots at the top right of the chat) has **Compact now**,
   which calls `POST /chat/threads/{id}/compact` whatever the chat's size. Open
   the divider to read the summary.
+
+## Sharing between servers
+
+One Acnologia (the **owner**) can let another (the **receiver**) use some of
+its services and give it provider specs. Keys never leave the owner: the
+receiver calls the owner's proxy with a share token, and the owner picks and
+injects its own key. Pairing is by invite only.
+
+Every server has an identity: an Ed25519 keypair made on first start (the
+private key encrypted with the master key, in `meta`), an id `acn_srv_` plus
+20 characters derived from the public key, a name (the hostname until a
+superadmin renames it) and a public URL (`ACNOLOGIA_PUBLIC_URL`, else the one
+saved on the Sharing page, else the request origin). It is published at
+`/.well-known/acnologia`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SA as Owner superadmin
+    participant A as Owner (A)
+    participant B as Receiver (B)
+    participant SB as Receiver superadmin
+
+    SA->>A: New share: services, provider specs, limits, expiry
+    A->>A: store share (pending) + backing app (proxy only),<br/>keep SHA-256 of the invite secret
+    A-->>SA: invite acninv_... (shown once, 1h / 24h / 7d)
+    SA-->>SB: send the invite privately
+    SB->>B: paste invite
+    B->>A: GET /.well-known/acnologia
+    B->>A: POST /api/peer/v1/preview (invite)
+    B-->>SB: owner id, name, fingerprint, what is shared
+    SB->>B: Connect (prefix, private network?)
+    B->>A: POST /api/peer/v1/redeem<br/>B's identity, nonce, Ed25519 signature
+    A->>A: id matches key, signature valid,<br/>invite pending, unexpired, hash matches
+    A->>A: bind share to B, burn invite,<br/>mint share token (stored as a hash)
+    A-->>B: token, owner identity, manifest
+    B->>B: store token encrypted, create services<br/>prefix-slug -> A/proxy/slug with the token as a hidden key,<br/>import shared provider specs
+```
+
+**Using a shared service.** A local app on B calls `/proxy/a-serpapi/...` like
+any other service. B injects the share token as a bearer token and adds
+`X-Acnologia-Hop: n+1`; A authenticates the token, checks the share is active
+and unexpired, applies its limits and proxies with its own keys. The service's
+provider is `acnologia-peer`, whose rules count only A's own refusals against
+the token: 403 `share_revoked` or `share_paused` and 401 mark it invalid, 429
+`app_limit_reached` makes it exhausted until the reset, 503 `no_key_available`,
+`all_keys_busy` or `service_unavailable` cool it for `retry_after_sec`, and
+anything A relays from the upstream is passed on untouched (A already rotated).
+Shared services are proxy only: a lease would hand out the token.
+
+**Sync.** B reads each link's manifest every 10 minutes and on Sync now. New
+services are created; services no longer shared keep their row (events and app
+settings survive) but their key is disabled; a status change applies at once.
+Provider specs are imported once with source `peer:<owner id>`. A slug that
+already exists is skipped and reported, and later edits on the owner are not
+pulled, so an owner cannot redirect keys B adds to an imported provider.
+
+**Revoke, pause, expire.** Revoking deactivates the backing app and revokes
+its token in the same transaction, so the very next request through A gets
+403 `share_revoked` with `X-Acnologia-Share: revoked`. B marks the link
+revoked as soon as it sees that answer (from the proxy or the manifest),
+deletes the token and the services' key, and the services stop. Pause is the
+same with `share_paused` and can be undone; B turns its services back on at
+the next sync after a resume. Expiry is checked on every request.
+
+**Disconnect.** B tells A (`POST /api/peer/v1/leave`, best effort), deletes the
+token and the keys holding it and leaves the services in place without a key.
+A shows the share as left by the peer.
+
+**Loops.** A service whose provider is `acnologia-peer` can never be shared
+onward, and a request that already passed through more than 3 servers gets 508
+`loop_detected`.

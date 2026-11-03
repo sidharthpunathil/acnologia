@@ -214,6 +214,17 @@ export function ServicePage() {
             >
               {provider?.name ?? service.provider}
             </RouterLink>
+            {service.peer_link_id && (
+              <>
+                <span aria-hidden="true">·</span>
+                <RouterLink
+                  to="/sharing"
+                  className="rounded-sm underline-offset-2 outline-none hover:text-text-primary hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+                >
+                  from {service.peer_name || "another server"}
+                </RouterLink>
+              </>
+            )}
             <span aria-hidden="true">·</span>
             <span>{STRATEGY_LABEL[service.strategy]}</span>
             {service.max_concurrency > 0 && (

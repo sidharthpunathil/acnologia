@@ -33,7 +33,8 @@ func (s *Store) Scrub(ctx context.Context, text string) string {
 func (s *Store) keysChanged() { s.Redactor().Invalidate() }
 
 // SecretBlobs returns every encrypted secret the redactor should know: pool
-// keys, webhook URLs and signing secrets, and egress proxy URLs.
+// keys, webhook URLs and signing secrets, egress proxy URLs, and the share
+// tokens this server holds for other servers.
 func (s *Store) SecretBlobs(ctx context.Context) ([][]byte, error) {
 	out := [][]byte{}
 	for _, q := range []string{
@@ -41,6 +42,7 @@ func (s *Store) SecretBlobs(ctx context.Context) ([][]byte, error) {
 		`SELECT url_enc FROM webhooks`,
 		`SELECT secret_enc FROM webhooks WHERE secret_enc IS NOT NULL`,
 		`SELECT url_enc FROM egress_proxies`,
+		`SELECT token_enc FROM peer_links WHERE token_enc IS NOT NULL`,
 	} {
 		rows, err := s.DB.QueryContext(ctx, q)
 		if err != nil {

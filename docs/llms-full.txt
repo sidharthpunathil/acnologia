@@ -28,9 +28,10 @@ GET /docs/{slug}.md      -> one doc as Markdown (see Docs as Markdown)
 GET /docs/assets/{name}  -> an image the docs show
 GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
+GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url}, for sharing between servers
 ```
 
-When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz and /robots.txt stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp) are not affected.
+When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia and the server to server routes under /api/peer/v1 stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp) are not affected.
 
 ## GET /api/v1/services
 
@@ -713,6 +714,13 @@ The signing secret (`whsec_...`) is shown once when the webhook is created. Reje
 | 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit or at a rate limit their provider publishes. Retry after `retry_after_sec` or lease with `wait_sec`. |
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
+| 403 | `share_revoked`, `share_paused`, `share_expired` | A service another Acnologia shares with this one was revoked, paused or expired by its owner. Also sent as `X-Acnologia-Share`. Revoked is final; paused may come back. |
+| 403 | `lease_not_allowed` | Leasing a service another Acnologia shares with this one. Use the proxy. |
+| 508 | `loop_detected` | The request passed through more than 3 Acnologia servers. |
+
+## Services shared by another Acnologia
+
+A service in `GET /api/v1/services` whose provider is `acnologia-peer` is shared by another Acnologia server: this server forwards your proxied call to that server, which injects one of its own keys. Use it through `/proxy/{service}/{path}` like any other service. It cannot be leased, because a lease would hand out the share token. Errors the other server relays from the provider reach you unchanged; when the owner pauses or revokes the share you get 403 `share_paused` or `share_revoked`.
 
 ## Admin API tokens and the acn CLI
 

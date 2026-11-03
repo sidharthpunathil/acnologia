@@ -119,6 +119,8 @@ var hopHeaders = []string{
 	"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
 	"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Host", "Cookie", "X-Acnologia-Token", "X-Cogito-Token", "X-Acnologia-Access",
 	"X-Forwarded-For", "X-Real-Ip", "Content-Length",
+	// The hop count goes only to another Acnologia, set in proxyService.
+	hopHeader,
 	// Let the Go transport negotiate gzip so error bodies can be classified.
 	"Accept-Encoding",
 }
@@ -176,9 +178,20 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := chi.URLParam(r, "service")
+	hops := requestHops(r)
+	if hops > maxPeerHops {
+		writeErr(w, 508, "loop_detected", "this request already passed through too many Acnologia servers")
+		return
+	}
 	targets, ok := s.proxyTargets(w, r, slug)
 	if !ok {
 		return
+	}
+	for _, sv := range targets {
+		if sv.Provider == providers.PeerSlug && hops+1 > maxPeerHops {
+			writeErr(w, 508, "loop_detected", "this request already passed through too many Acnologia servers")
+			return
+		}
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.Cfg.MaxBodyBytes))
 	if err != nil {
@@ -323,7 +336,10 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		// Upstreams can echo the key (account endpoints, redirects that keep
 		// the query), so proxying can disclose it just like a lease. Hidden
 		// keys therefore need the same superadmin grant as leasing them.
-		picked, err := s.Pool.PickFor(r.Context(), sv, a.ID, a.LeaseHidden, tried, queue, false, pr)
+		// A service shared by another server holds its share token as a
+		// hidden key, which any app may proxy through (never lease).
+		allowHidden := a.LeaseHidden || sv.Provider == providers.PeerSlug
+		picked, err := s.Pool.PickFor(r.Context(), sv, a.ID, allowHidden, tried, queue, false, pr)
 		waited := time.Since(waitStart)
 		if err != nil && r.Context().Err() != nil {
 			out.served = true // client went away while queued; nothing to write
@@ -358,6 +374,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			writeErr(w, 400, "bad_request", err.Error())
 			out.served = true
 			return out
+		}
+		if sv.Provider == providers.PeerSlug {
+			req.Header.Set(hopHeader, itoa(requestHops(r)+1))
 		}
 		start := time.Now()
 		resp, err := client.Do(req)
@@ -406,6 +425,13 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		cancel()
 		picked.Release()
 		res := prov.Classify(resp.StatusCode, resp.Header, rb)
+		if sv.Provider == providers.PeerSlug && sv.PeerLinkID != nil && resp.StatusCode == 403 {
+			// The owner says the share is revoked, paused or expired: mark
+			// the link and disable its services now, not at the next sync.
+			if st := resp.Header.Get("X-Acnologia-Share"); st == "revoked" || st == "paused" || st == "expired" {
+				s.peers.MarkRemoteState(context.WithoutCancel(r.Context()), *sv.PeerLinkID, st)
+			}
+		}
 		res.Message = scrub(res.Message, picked.Secret)
 		if res.Outcome.ProviderFault() {
 			s.Breakers.Failure(sv.ID, bcfg, fmt.Sprintf("%d: %s", resp.StatusCode, res.Message))
@@ -476,7 +502,13 @@ const proxyCSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
 
 func copyResponseHeaders(w http.ResponseWriter, resp *http.Response, keyID int64, attempts int) {
 	for k, vs := range resp.Header {
-		if droppedResponseHeaders[http.CanonicalHeaderKey(k)] {
+		ck := http.CanonicalHeaderKey(k)
+		if droppedResponseHeaders[ck] {
+			continue
+		}
+		// Another Acnologia upstream (a shared service) sends its own
+		// X-Acnologia-* headers; this server's own ones win.
+		if (strings.HasPrefix(ck, headerPrefix) || strings.HasPrefix(ck, legacyHeaderPrefix)) && w.Header().Get(ck) != "" {
 			continue
 		}
 		w.Header()[k] = vs
@@ -539,3 +571,24 @@ func scrubHeaders(h http.Header, secret string) {
 
 // scrub removes the secret from upstream messages before they are stored.
 func scrub(msg, secret string) string { return crypto.Scrub(msg, secret) }
+
+// hopHeader counts the Acnologia servers a proxied request passed through.
+const hopHeader = "X-Acnologia-Hop"
+
+// maxPeerHops is how many servers a request may pass through; a share
+// cannot be shared onward, so more means a loop.
+const maxPeerHops = 3
+
+func requestHops(r *http.Request) int {
+	n := 0
+	for _, c := range strings.TrimSpace(r.Header.Get(hopHeader)) {
+		if c < '0' || c > '9' {
+			return maxPeerHops + 1
+		}
+		n = n*10 + int(c-'0')
+		if n > 1000 {
+			return n
+		}
+	}
+	return n
+}

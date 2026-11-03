@@ -170,6 +170,21 @@ export function SettingsPage() {
             </Link>
           </Section>
 
+          {can.manage(role) && (
+            <Section title="Sharing between servers" description="This server's identity, shares to other servers and connections to theirs. Keys never leave the server that owns them.">
+              <Link
+                href="/sharing"
+                className="group inline-flex items-center gap-1 rounded-md text-body-2-medium text-text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+              >
+                Open Sharing
+                <RiArrowRightLine
+                  className="size-4 text-foreground-icon-secondary transition-transform duration-150 ease-out group-hover:translate-x-0.5 motion-reduce:transition-none rtl:-scale-x-100"
+                  aria-hidden
+                />
+              </Link>
+            </Section>
+          )}
+
           <Section title="Built in guardrails" description="Always on. Your rules add to these and cannot turn them off.">
             <ul className="flex flex-col gap-3">
               {GUARDRAILS.map((g) => (

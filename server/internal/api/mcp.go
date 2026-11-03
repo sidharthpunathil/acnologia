@@ -61,10 +61,10 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	a, code, msg := s.authApp(r)
-	if a == nil {
+	a, f := s.authAppFull(r)
+	if f != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="acnologia"`)
-		writeErr(w, code, "unauthenticated", msg)
+		f.write(w)
 		return
 	}
 	ctx := store.WithAppToken(context.WithValue(r.Context(), appKey, a), a.TokenID)
