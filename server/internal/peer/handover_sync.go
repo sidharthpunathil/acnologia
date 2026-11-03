@@ -186,6 +186,9 @@ func (y *Syncer) applyHandover(ctx context.Context, link *store.PeerLink, status
 			continue
 		}
 		secret, err := Open(priv, k.Sealed, link.RemoteShareID, k.ID, self)
+		if err == nil {
+			err = checkHandedSecret(secret)
+		}
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("key %d of %s: %v", k.ID, k.Service, err))
 			continue
@@ -248,6 +251,26 @@ func (y *Syncer) applyHandover(ctx context.Context, link *store.PeerLink, status
 	y.wipe(ctx, link, gone, WipeNotShared)
 	y.notify(ctx, HandoverEvent{Link: link, Kind: "received", Keys: received})
 	return problems, true
+}
+
+// MinHandedSecret is the shortest secret taken from an owner.
+const MinHandedSecret = 16
+
+// checkHandedSecret refuses a handed over secret that does not look like a
+// key: shorter than MinHandedSecret, or with anything but printable ASCII
+// other than a space. Every key this server holds is masked wherever it
+// shows up in logs, events and prompts, so an owner could otherwise blank any
+// text here by handing over a word or a phrase as a key.
+func checkHandedSecret(s string) error {
+	if len(s) < MinHandedSecret {
+		return errors.New("the owner sent a key too short to be one")
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] > '~' {
+			return errors.New("the owner sent a key with spaces or characters a key does not have")
+		}
+	}
+	return nil
 }
 
 // report tells the owner which of its keys this server holds, with request
