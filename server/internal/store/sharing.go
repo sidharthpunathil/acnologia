@@ -335,7 +335,7 @@ func (s *Store) GetShare(ctx context.Context, id string) (*Share, error) {
 
 // ListShares returns every share, newest first.
 func (s *Store) ListShares(ctx context.Context) ([]*Share, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+shareCols+` FROM shares s LEFT JOIN apps a ON a.id=s.app_id ORDER BY s.created_at DESC, s.id`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+shareCols+` FROM shares s LEFT JOIN apps a ON a.id=s.app_id ORDER BY s.created_at DESC, s.rowid DESC`)
 	if err != nil {
 		return nil, err
 	}

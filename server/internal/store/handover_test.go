@@ -56,3 +56,29 @@ func TestHandoverKeysWipeAndNonces(t *testing.T) {
 		t.Fatal("nonce scopes are not separate")
 	}
 }
+
+// Shares made in the same second list newest first, the same way every
+// time: share ids are random, so they cannot break the tie.
+func TestListSharesStableWithinASecond(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	ids := []string{"shr_zzz", "shr_aaa", "shr_mmm"}
+	for _, id := range ids {
+		if _, err := s.CreateShare(ctx, &Share{ID: id, Name: id, Services: []string{"svc"}}, "", 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for run := 0; run < 3; run++ {
+		got, err := s.ListShares(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 3 || got[0].ID != "shr_mmm" || got[1].ID != "shr_aaa" || got[2].ID != "shr_zzz" {
+			names := []string{}
+			for _, sh := range got {
+				names = append(names, sh.ID)
+			}
+			t.Fatalf("want newest first [shr_mmm shr_aaa shr_zzz], got %v", names)
+		}
+	}
+}
