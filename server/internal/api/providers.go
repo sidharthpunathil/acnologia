@@ -1,13 +1,18 @@
 package api
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -83,7 +88,43 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 		d.Refresh = states[p.Slug]
 		out = append(out, d)
 	}
-	writeJSON(w, 200, map[string]any{"providers": out, "strategies": pool.Strategies})
+	writeJSONGzip(w, r, map[string]any{"providers": out, "strategies": pool.Strategies})
+}
+
+// gzipWriters keeps compressors between calls: each holds about a megabyte
+// of state.
+var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
+
+// writeJSONGzip is writeJSON with status 200, gzipped when the client
+// accepts it. Only the provider list uses it: it is the largest answer the
+// dashboard loads (every provider's spec, no key material). Nothing that
+// carries a secret is compressed.
+func writeJSONGzip(w http.ResponseWriter, r *http.Request, v any) {
+	h := w.Header()
+	h.Add("Vary", "Accept-Encoding")
+	if !acceptsEncoding(r.Header.Get("Accept-Encoding"), "gzip") {
+		writeJSON(w, http.StatusOK, v)
+		return
+	}
+	var buf bytes.Buffer
+	zw := gzipWriters.Get().(*gzip.Writer)
+	defer gzipWriters.Put(zw)
+	zw.Reset(&buf)
+	if err := json.NewEncoder(zw).Encode(v); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if err := zw.Close(); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	h.Set("Content-Type", "application/json")
+	h.Set("Content-Encoding", "gzip")
+	h.Set("Content-Length", strconv.Itoa(buf.Len()))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(buf.Bytes())
+	}
 }
 
 func (s *Server) getProvider(w http.ResponseWriter, r *http.Request) {
