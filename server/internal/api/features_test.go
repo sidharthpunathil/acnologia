@@ -296,19 +296,38 @@ func TestBusyAndBannedOutcomes(t *testing.T) {
 	e.do(e.super, "POST", "/api/admin/services/1/keys", map[string]any{"keys": []map[string]any{
 		{"secret": "busy", "priority": 1}, {"secret": "gone", "priority": 2}, {"secret": "good", "priority": 3}}}, 201, nil)
 	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"strategy": "fill_first"}, 200, nil)
+	// Adding keys starts a health check of each in the background. Suspend
+	// "gone" only once those are done: a creation check that lands after the
+	// switch marks it invalid, and the proxy then never sends it a request.
+	var keys struct{ Keys []store.Key }
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		e.do(e.super, "GET", "/api/admin/services/1/keys", nil, 200, &keys)
+		checked := 0
+		for _, k := range keys.Keys {
+			if k.LastCheckedAt != nil {
+				checked++
+			}
+		}
+		if checked == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("creation checks still running: %d of 3 done", checked)
+		}
+	}
 	suspended.Store(true)
 	_, tok := e.app(map[string]any{"name": "x"})
 	if r, _ := call(t, e, "POST", "/proxy/el/v1/tts", tok); r.StatusCode != 200 {
 		t.Fatalf("good key should answer: %d", r.StatusCode)
 	}
-	var keys struct{ Keys []store.Key }
 	e.do(e.super, "GET", "/api/admin/services/1/keys", nil, 200, &keys)
 	busy, gone := keys.Keys[0], keys.Keys[1]
 	if busy.Status != "active" || busy.ConsecutiveFails != 0 || busy.CooldownUntil == nil || time.Until(*busy.CooldownUntil) > 5*time.Second {
 		t.Fatalf("busy key: status=%s fails=%d cooldown=%v", busy.Status, busy.ConsecutiveFails, busy.CooldownUntil)
 	}
-	if gone.Status != "banned" || gone.Validity != "invalid" {
-		t.Fatalf("banned key: %s %s", gone.Status, gone.Validity)
+	// The proxied answer, not a health check alone, must have banned it.
+	if gone.Status != "banned" || gone.Validity != "invalid" || !strings.HasPrefix(gone.LastError, "account suspended: ") {
+		t.Fatalf("banned key: %s %s %q", gone.Status, gone.Validity, gone.LastError)
 	}
 	// A health check never revives a banned key; a reset does.
 	e.do(e.super, "POST", fmt.Sprintf("/api/admin/keys/%d/check", gone.ID), nil, 409, nil)
