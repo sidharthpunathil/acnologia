@@ -56,7 +56,7 @@ function Copy-Docs {
 	Copy-Item (Join-Path $docs 'llms-full.txt') $llms -Force
 	New-Item -ItemType Directory -Force -Path $files, $assets | Out-Null
 	Copy-Item (Join-Path $root 'README.md') (Join-Path $files 'overview.md') -Force
-	foreach ($name in @('architecture', 'flows', 'security', 'configuration', 'api', 'providers', 'cli', 'sdks', 'development')) {
+	foreach ($name in @('architecture', 'flows', 'security', 'configuration', 'api', 'providers', 'cli', 'sdks', 'development', 'deploy-railway')) {
 		Copy-Item (Join-Path $docs "$name.md") $files -Force
 	}
 	Copy-Item (Join-Path $docs 'screenshots/*.png') $assets -Force

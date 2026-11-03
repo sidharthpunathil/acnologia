@@ -10,7 +10,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/docsmd"
 )
 
-var docSlugs = []string{"overview", "architecture", "flows", "security", "configuration", "api", "cli", "sdks", "providers", "development"}
+var docSlugs = []string{"overview", "architecture", "flows", "security", "configuration", "deploy-railway", "api", "cli", "sdks", "providers", "development"}
 
 func getDoc(t *testing.T, url string) (*http.Response, string) {
 	t.Helper()

@@ -5,6 +5,7 @@ import {
   RiCpuLine,
   RiGitBranchLine,
   RiPuzzle2Line,
+  RiRocket2Line,
   RiSettings3Line,
   RiShieldCheckLine,
   RiTerminalBoxLine,
@@ -28,7 +29,7 @@ export type DocGroupId = "start" | "concepts" | "operate" | "reference" | "contr
 export const DOC_GROUPS: Array<{ id: DocGroupId; title: string; blurb: string }> = [
   { id: "start", title: "Get started", blurb: "What Acnologia is and how to run it." },
   { id: "concepts", title: "How it works", blurb: "The server, its request paths and its security model." },
-  { id: "operate", title: "Run it", blurb: "Settings, backups and upgrades." },
+  { id: "operate", title: "Run it", blurb: "Settings, deploying, backups and upgrades." },
   { id: "reference", title: "Reference", blurb: "The HTTP API and the provider spec format." },
   { id: "contribute", title: "Contribute", blurb: "Work on Acnologia itself." },
 ];
@@ -41,13 +42,14 @@ export const DOC_GROUPS: Array<{ id: DocGroupId; title: string; blurb: string }>
 export const DOCS: DocEntry[] = [
   { slug: "overview", title: "Overview", blurb: "What Acnologia does, quick start and features.", icon: RiBookOpenLine, group: "start" },
   { slug: "architecture", title: "Server architecture", blurb: "Components, packages, request pipeline, data model and background work.", icon: RiCpuLine, group: "concepts" },
-  { slug: "flows", title: "Request flows", blurb: "Proxy requests, leases, key states and outcomes, MCP, the AI builder and the Assistant.", icon: RiGitBranchLine, group: "concepts" },
-  { slug: "security", title: "Security model", blurb: "Roles, hidden keys, what the model can see, secrets at rest and outbound requests.", icon: RiShieldCheckLine, group: "concepts" },
-  { slug: "configuration", title: "Configuration", blurb: "Environment variables, per service settings, self-hosting, backups and upgrading.", icon: RiSettings3Line, group: "operate" },
+  { slug: "flows", title: "Request flows", blurb: "Proxy requests, leases, key states and outcomes, MCP, the AI builder, the Assistant, sharing and the provider refresh.", icon: RiGitBranchLine, group: "concepts" },
+  { slug: "security", title: "Security model", blurb: "Roles, hidden keys, what the model can see, secrets at rest, outbound requests and sharing between servers.", icon: RiShieldCheckLine, group: "concepts" },
+  { slug: "configuration", title: "Configuration", blurb: "Environment variables, per service settings, self-hosting, Windows, backups and upgrading.", icon: RiSettings3Line, group: "operate" },
+  { slug: "deploy-railway", title: "Deploying on Railway", blurb: "A public deploy behind the access password, with a volume, AI and sharing.", icon: RiRocket2Line, group: "operate" },
   { slug: "api", title: "HTTP API", blurb: "Consumer error codes and every dashboard route with its required role.", icon: RiCodeSSlashLine, group: "reference" },
   { slug: "cli", title: "Command line", blurb: "Install acn, sign in through the browser, every command and CI variables.", icon: RiTerminalBoxLine, group: "reference" },
   { slug: "sdks", title: "SDKs", blurb: "The twelve client libraries, how to install each today and how to run their tests.", icon: RiCodeBoxLine, group: "reference" },
-  { slug: "providers", title: "Provider specs", blurb: "Built in providers, the spec format, and adding one by hand or with AI.", icon: RiPuzzle2Line, group: "reference" },
+  { slug: "providers", title: "Provider specs", blurb: "The built in providers, the spec format, offers and refresh, and adding one by hand, with AI or from another server.", icon: RiPuzzle2Line, group: "reference" },
   { slug: "development", title: "Development", blurb: "Setup, repository layout, tests and conventions.", icon: RiToolsLine, group: "contribute" },
 ];
 

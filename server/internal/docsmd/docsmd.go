@@ -49,6 +49,7 @@ var pages = []page{
 	{"flows", "flows.md", "docs/flows.md", ""},
 	{"security", "security.md", "docs/security.md", ""},
 	{"configuration", "configuration.md", "docs/configuration.md", ""},
+	{"deploy-railway", "deploy-railway.md", "docs/deploy-railway.md", ""},
 	{"api", "api.md", "docs/api.md", ""},
 	{"cli", "cli.md", "docs/cli.md", ""},
 	{"sdks", "sdks.md", "docs/sdks.md", ""},
