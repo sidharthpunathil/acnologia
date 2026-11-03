@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 import { RiLockLine, RiRefreshLine } from "@remixicon/react";
 import { ApiError } from "@/lib/api";
 import { formatUnlockTtl } from "@/lib/format";
@@ -17,12 +18,16 @@ import { AuthShell } from "./AuthShell";
 export function AccessGate({ children }: { children: ReactNode }) {
   const status = useGate((s) => s.status);
   const load = useGate((s) => s.load);
+  const { pathname } = useLocation();
 
   useEffect(() => {
     void load();
   }, [load]);
 
   if (status === "open") return <>{children}</>;
+  // The home page of a locked deploy is the public landing page; the lock
+  // screen waits for Sign in (/login) or a deep link into the dashboard.
+  if (status === "locked" && pathname === "/") return <Navigate to="/landing" replace />;
   if (status === "locked") return <LockScreen />;
   if (status === "error") {
     return (

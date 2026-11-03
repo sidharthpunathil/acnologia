@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/redact"
@@ -84,6 +85,57 @@ func TestGateNavigationGetsShell(t *testing.T) {
 			t.Fatalf("%s: %d %q, want the SPA shell", p, resp.StatusCode, b)
 		}
 	}
+}
+
+// The public landing page renders on a locked deploy without the lock
+// screen, so its shell and every static file it loads (script, stylesheet,
+// font, the mark) must reach a browser with no gate cookie. The data the
+// dashboard reads stays locked.
+func TestGateServesLandingAndItsAssets(t *testing.T) {
+	e := newEnv(t)
+	e.api.WebFS = fstest.MapFS{
+		"index.html":                    {Data: []byte("ui")},
+		"assets/index-abc123.js":        {Data: []byte("js")},
+		"assets/index-abc123.css":       {Data: []byte("css")},
+		"assets/inter-latin-opsz.woff2": {Data: []byte("font")},
+		"mark.png":                      {Data: []byte("png")},
+		"favicon.png":                   {Data: []byte("icon")},
+		"site.webmanifest":              {Data: []byte("{}")},
+	}
+	e.api.setAccessPassword(testAccessPassword)
+	srv := httptest.NewServer(e.api.Router())
+	t.Cleanup(srv.Close)
+	e.srv = srv
+
+	for p, want := range map[string]string{
+		"/landing":                       "ui",
+		"/":                              "ui",
+		"/assets/index-abc123.js":        "js",
+		"/assets/index-abc123.css":       "css",
+		"/assets/inter-latin-opsz.woff2": "font",
+		"/mark.png":                      "png",
+		"/favicon.png":                   "icon",
+		"/site.webmanifest":              "{}",
+	} {
+		resp, err := http.Get(srv.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || string(b) != want {
+			t.Fatalf("%s: %d %q, want 200 %q", p, resp.StatusCode, b, want)
+		}
+	}
+	// The landing page asks whether there is a lock; that stays open, and
+	// the sign in state behind it stays locked.
+	var st gateStateBody
+	e.do(client(), "GET", "/api/gate", nil, 200, &st)
+	if !st.Locked {
+		t.Fatalf("gate state = %v", st)
+	}
+	e.do(client(), "GET", "/api/auth/state", nil, 401, nil)
+	e.do(client(), "GET", "/docs/overview.md", nil, 401, nil)
 }
 
 func TestGateOpenRoutes(t *testing.T) {

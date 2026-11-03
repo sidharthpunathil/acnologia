@@ -74,6 +74,8 @@ export function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/docs/:slug" element={<DocPage />} />
+        {/* Signed out, home is the public landing page; it signs in on demand. */}
+        <Route index element={<Navigate to="/landing" replace />} />
         <Route
           path="*"
           element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />}

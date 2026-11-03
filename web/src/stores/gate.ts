@@ -50,8 +50,10 @@ export const useGate = create<GateStore>((set) => ({
     try {
       await api.gateLock();
     } finally {
-      // A full page load drops every store, so nothing stays on screen.
-      window.location.assign("/");
+      // A full page load drops every store, so nothing stays on screen. To
+      // /login, not /: home is the landing page while locked, and this shows
+      // the lock screen that was just put back.
+      window.location.assign("/login");
     }
   },
 }));
