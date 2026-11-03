@@ -75,6 +75,7 @@ All server code lives under `server/`.
 | `internal/respcache` | The in-memory response cache and idempotent replays, a byte bounded LRU with per entry expiry. |
 | `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. |
 | `internal/notify` | Delivers pool events to webhooks: Slack, Discord, Telegram or signed JSON. |
+| `internal/peer` | Sharing between servers: the server identity (Ed25519), invites and the signed redeem message, the server to server client, and the receiver's sync that turns a share's manifest into local services. The owner side handlers are `internal/api/peer_public.go` and `sharing.go`. See [flows](flows.md#sharing-between-servers). |
 | `internal/worker` | Periodic housekeeping and background health checks. |
 | `internal/ctl` | The `acnologia ctl` command line client for the admin API. |
 | `internal/webui`, `internal/llmstxt`, `internal/docsmd` | Embedded assets: the built dashboard, `llms.txt` and `llms-full.txt`, and the Markdown docs with their images. |
@@ -250,11 +251,12 @@ sequenceDiagram
 
 ## Background work
 
-`internal/worker` runs two loops.
+`internal/worker` runs three loops.
 
 | Loop | Interval | Does |
 |---|---|---|
 | Housekeeping | 30 s | Resets daily usage at UTC midnight, frees slots of expired leases, reactivates exhausted keys whose quota reset time passed, and every 10 minutes prunes expired sessions, leases older than 7 days and events past retention. |
+| Peers | 10 min | Reads the manifest of every share another server gave this one, adding new services and disabling removed ones (`internal/peer`). |
 | Health | 1 min tick | Re-checks keys whose last check is older than `ACNOLOGIA_HEALTH_INTERVAL` (exhausted keys hourly). Skips disabled keys, keys at their concurrency cap, providers without a health check, and hidden keys on services whose target is not trusted. |
 
 Health checks run in their own loop so a slow provider never delays freeing

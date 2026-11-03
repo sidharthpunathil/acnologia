@@ -15,6 +15,7 @@ Key facts for agents:
 - HTTP 429 `app_limit_reached`: your app used up its daily or monthly request or budget limit. `reset_at` says when it lifts.
 - Report every lease within 10 minutes of `expires_at`. A second report gets 409, a late one 410.
 - `{service}` can also be a service group: Acnologia tries each member in order. `X-Acnologia-Service` says which member answered.
+- A service whose provider is `acnologia-peer` is shared by another Acnologia server: proxy only. 403 `share_revoked` or `share_paused` means its owner revoked or paused it.
 - Acnologia never sends a key to Claude: requests from its own AI features pass a redactor, and keys pasted into its Assistant are vaulted.
 
 ## Auth

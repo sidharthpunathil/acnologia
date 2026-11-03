@@ -293,6 +293,51 @@ every submitted spec, a create run cannot overwrite an existing provider,
 update runs wait for review by default, and the test key only goes to the
 provider's own domain.
 
+## Sharing between servers
+
+A share lets another Acnologia use some services through this server's proxy.
+The model is that the other server is a client with a token, never a holder of
+keys:
+
+- **No secret leaves the owner.** The receiver gets a share token, a manifest
+  (service names, providers, how many keys are available, provider specs) and
+  answers to its proxied requests. Never a key, its hint or its count by
+  status. Hidden keys serve a share only when a superadmin turned on
+  `include_hidden`, which sets `lease_hidden` on the backing app.
+- **The backing app never grants everything.** An app with an empty service
+  list may use every service, so a share's app always lists the shared
+  services, or an entry that matches nothing for a provider only share. It is
+  proxy only, hidden from the Apps page, and the app routes refuse to change it
+  (409 `share_app`).
+- **Invites are one time and short lived.** `acninv_` codes carry the owner URL,
+  the share id and 32 random bytes; only the SHA-256 of the secret is stored and
+  it is compared in constant time. Redeeming burns it in the same transaction
+  that binds the peer. Preview and redeem are limited globally (20 a minute,
+  500 a day).
+- **The receiver proves who it is.** Redeem carries the receiver's public key
+  and an Ed25519 signature over the share id, the invite hash, a nonce and its
+  id; the owner checks the id is derived from the key. The receiver checks
+  that the owner's identity at redeem matches the one previewed.
+- **Revoke is immediate.** Revoke deactivates the app and revokes its tokens in
+  one transaction; the share check runs before the token check, so the next
+  request is refused with `share_revoked`. Pause and expiry are checked on every
+  request.
+- **Tokens are kept like keys.** The owner stores only the token's hash. The
+  receiver stores it encrypted with the master key (in the link and as the
+  services' hidden key), it is in the redactor's list, `/keys/{id}/reveal`
+  refuses it, and revoke or disconnect deletes it. `acninv_` codes are a
+  redactor pattern too, so neither reaches logs, events, audit detail, webhooks
+  or Claude.
+- **Outbound calls.** Preview, redeem, sync and leave use `SafeClient` unless the
+  superadmin ticked "this server is on my private network" for that link.
+  Proxied calls go to the service's base URL like any other service.
+- **No chains.** Services from a peer (provider `acnologia-peer`) cannot be
+  shared onward, cannot be leased, and `X-Acnologia-Hop` stops a request after 3
+  servers.
+- **Roles.** Only superadmins create, edit, pause, resume, revoke, connect,
+  sync and disconnect. Admins can view. Server to server routes sit outside
+  the access password lock; they need an invite or a share token.
+
 ## Operator checklist
 
 1. Serve over TLS and set `ACNOLOGIA_SECURE_COOKIES=true`.

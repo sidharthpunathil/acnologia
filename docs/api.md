@@ -7,7 +7,8 @@ There are three ways in:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt` | none |
+| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia` | none |
+| Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`) or a share token (`manifest`, `leave`); see [Sharing between servers](#sharing-between-servers) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
 | Dashboard | `/api/auth`, `/api/admin`, `/api/logos` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
 
@@ -44,6 +45,9 @@ Status codes an app should handle:
 | 409 | `report_failed` | Lease already reported. |
 | 410 | `report_failed` | Lease expired more than 10 minutes ago. |
 | 502 | `upstream_unreachable` | The provider could not be reached on the first attempt. |
+| 403 | `share_revoked`, `share_paused`, `share_expired` | Only for a share token from another server: the owner revoked, paused or let the share expire. The answer also carries `X-Acnologia-Share: revoked`, `paused` or `expired`. |
+| 403 | `lease_not_allowed` | Leasing a service another server shares with this one. Those are proxy only. |
+| 508 | `loop_detected` | The request already passed through more than 3 Acnologia servers (`X-Acnologia-Hop`). |
 
 Hidden keys are only used for apps a superadmin marked `lease_hidden`. Other
 apps simply never see them; if a service has only hidden keys, those apps get
@@ -112,7 +116,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /keys/check-all` | a | Health check every key. |
 | `POST /keys/{id}/reveal` | s | Return the secret. Audited. |
 | `GET /events` | m | Request and health events, filters `service_id`, `key_id`, `kind`, `limit` (max 500). |
-| `GET /apps` | m | Apps. Each carries `token_count` (tokens neither revoked nor expired) and `last_used_at` (the latest use by any of its tokens). Token values are never returned. |
+| `GET /apps` | m | Apps (not those backing a share; their changes answer 409 `share_app`). Each carries `token_count` (tokens neither revoked nor expired) and `last_used_at` (the latest use by any of its tokens). Token values are never returned. |
 | `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the first token once as `token`, with its record (named `Default`) as `app_token`. |
 | `GET /apps/{id}/mcp`, `PUT /apps/{id}/mcp` | m / a | An app's MCP settings: `{core, service_tools, insights, manage, resources, prompts, exclusive_default, max_result_kb, instructions, disabled_tools}`, with the tool list. `max_result_kb` defaults to 200, at most 2048; `instructions` under 8,000 characters. |
 | `GET /apps/{id}/tokens` | m | The app's tokens, revoked ones included: `{id, name, prefix, created_at, created_by, created_by_email, last_used_at, expires_at, revoked_at}`. `prefix` is the first 8 characters plus `...`. `last_used_at` is written at most once a minute per token. |
@@ -143,8 +147,39 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /chat/threads/{id}/confirm` | m | `{pending_id, approve}`. Runs or cancels an action waiting for confirmation, then lets the assistant reply. |
 | `POST /chat/threads/{id}/answer` | m | `{ask_id, names, choice, auto}`. Answers an `ask` item (label pasted keys, pick a choice, or let the assistant pick names) and continues the turn. |
 | `POST /chat/threads/{id}/compact` | m | Compact now: Claude summarizes the older messages and the summary replaces them in what the model is sent; the last 6 messages stay verbatim and the transcript keeps everything. Returns the new `compact` item. 400 `nothing_to_compact` when the chat is too short, 409 while a turn runs, 502 `compact_failed` when the summary call fails (nothing changes), 503 when AI is off. |
+| `GET /identity` | a | This server's identity: `{id, name, url, url_source: env\|saved\|request, version, public_key, fingerprint}`. |
+| `PATCH /identity` | s | `{name, url}`. `url` is ignored when `ACNOLOGIA_PUBLIC_URL` is set; `""` clears the saved one. |
+| `GET /shares`, `GET /shares/{id}` | a | Shares this server gives, each with `usage {today_requests, today_cost, month_requests, last_used_at, history (14 days), limit_hit}`; one share adds `per_service` request counts. Never carries the invite or token. |
+| `POST /shares` | s | `{name, note, services, providers, limits, expires_at, include_hidden, invite_valid: 1h\|24h\|7d}`. Returns `{share, invite}`; the invite is shown once. Services from another server (provider `acnologia-peer`) are refused. Audited as `share.created`. |
+| `PATCH /shares/{id}` | s | Same fields but `invite_valid`. Changes reach the receiver at its next sync. `expires_at: ""` clears the expiry; an expired share moved into the future turns active again. Audited as `share.updated`. |
+| `POST /shares/{id}/pause`, `/resume`, `/revoke` | s | Pause (reversible) or revoke (final). Both refuse the very next request. Audited as `share.paused`, `share.resumed`, `share.revoked`. |
+| `POST /shares/{id}/invite` | s | A new invite for a share not redeemed yet: `{invite_valid}`. The old invite stops working. |
+| `GET /peers` | a | Shares other servers gave this one: status, `local_services`, imported `providers`, `last_sync_at`, `last_error`, the owner's `fingerprint`. Never carries the token. |
+| `POST /peers/preview` | s | `{invite, trusted}`: fetch the owner's identity and what the invite shares, without redeeming it. |
+| `POST /peers` | s | `{invite, prefix, trusted, owner_id}`: redeem the invite and create the local services. `owner_id` makes the call fail if the server at the URL is not the one previewed. |
+| `POST /peers/{id}/sync` | s | Read the owner's manifest now. |
+| `DELETE /peers/{id}` | s | Disconnect: tell the owner, delete the token and the local services' key. On a link already disconnected or revoked, remove it from the list. |
 | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` | s | User management. A password reset ends that user's sessions; the last active superadmin cannot be removed. |
 | `GET /audit` | s | Audit log (max 1000 rows). |
+
+### Sharing between servers
+
+One Acnologia can let another use some of its services through its proxy,
+or give it provider specs. Keys never leave the server that owns them. The
+flow is in [flows.md](flows.md#sharing-between-servers) and the security
+model in [security.md](security.md#sharing-between-servers).
+
+| Route | Auth | Purpose |
+|---|---|---|
+| `GET /.well-known/acnologia` | none | `{id, name, version, public_key (base64 Ed25519), url}`. The id is `acn_srv_` and the first 20 characters of the lowercase base32 SHA-256 of the key. |
+| `POST /api/peer/v1/preview` | invite | `{invite, share_id}`: the share's name, services and providers. Does not use the invite up. |
+| `POST /api/peer/v1/redeem` | invite and signature | `{invite, share_id, id, name, url, public_key, nonce, signature}`. The signature is Ed25519 over `acnologia-redeem-v1\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>`. Returns `{token, owner, manifest}` once. 409 `invite_used`, 410 `invite_expired`, 404 `invite_invalid`, 401 `bad_signature`, 400 `bad_identity`. |
+| `GET /api/peer/v1/manifest` | share token | `{share_id, name, status, limits, expires_at, services: [{slug, name, provider, category, description, logo_url, available}], providers: [{slug, name, version, shared, spec, ...}]}`. No key data. |
+| `POST /api/peer/v1/leave` | share token | The receiver disconnected; the share is revoked and shows as left by the peer. |
+
+Preview and redeem share a global limit of 20 calls a minute and 500 a day
+(429 `rate_limited`). All four routes, and the well-known identity, are open
+through the access password lock.
 
 ### Logos (`/api/logos`)
 

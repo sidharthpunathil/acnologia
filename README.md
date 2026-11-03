@@ -98,6 +98,9 @@ TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 - **An [Assistant](docs/flows.md#assistant-chat)** that manages the pool in
   chat with your own permissions. Pasted keys go to an encrypted vault and the
   model only sees placeholders.
+- **[Shares between servers](docs/flows.md#sharing-between-servers).** Let a
+  teammate's or another deploy's Acnologia use some of your services through
+  your proxy, with limits, pause and revoke. Keys never leave home.
 - **Speaks to agents and scripts**: MCP at `/mcp`, `/llms.txt`,
   [SDKs](sdk/README.md) for Python, TypeScript, Go, Rust, Java, Kotlin, C#,
   Swift, Dart, C++, PHP and Ruby, and the [`acn` CLI](docs/cli.md) with
