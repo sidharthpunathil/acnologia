@@ -63,6 +63,8 @@ type Server struct {
 	// gate is the site-wide access password lock (gate.go); off when
 	// ACNOLOGIA_ACCESS_PASSWORD is unset.
 	gate *accessGate
+	// ghStars caches the landing page's GitHub star count.
+	ghStars githubStarsCache
 	// userMu serializes check-then-write user changes (first setup, keeping
 	// one superadmin) so concurrent requests cannot both pass the check.
 	userMu sync.Mutex
@@ -184,6 +186,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/redeem", s.claimRedeem)
 	})
 	r.Get("/llms-full.txt", s.serveLLMsFull)
+	// The landing page's GitHub star count (github_stars.go). Open in the gate.
+	r.Get("/api/public/github", s.githubStars)
 	s.mountDocs(r)
 
 	// The access gate's own routes: the lock screen must reach them before

@@ -218,6 +218,8 @@ var gateOpenExact = map[string]bool{
 	"/api/cli/device": true, "/api/cli/device/token": true,
 	// A server's public identity, for pairing with another server.
 	"/.well-known/acnologia": true,
+	// The landing page's GitHub star count: what github.com shows anyone.
+	"/api/public/github": true,
 }
 
 // gateOpen reports whether a path is reachable while locked. Both the decoded
