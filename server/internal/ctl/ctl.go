@@ -53,6 +53,13 @@ Commands:
   cache purge <service>          drop cached responses of a service
   usage <app-id>                 an app's requests, spend and limits
 
+Connect Claude (MCP):
+  mcp [--context name] [--groups g1,g2] [--exclude t1,t2] [--read-only] [--confirm on|off]
+                                 stdio MCP server that runs this server as you
+  mcp config [--client claude-code|claude-desktop|cursor|json] [--http] [--show-token]
+             [--name acnologia] [filters]
+                                 print the snippet that adds it to your MCP client
+
 --json prints the server's JSON instead of a table (whoami, status,
 services, keys, events, usage). ACNOLOGIA_URL and ACNOLOGIA_TOKEN override
 the saved server for one command, for CI.
@@ -95,6 +102,8 @@ type cli struct {
 	pollEvery   time.Duration
 	sleep       func(time.Duration)
 	hostname    func() (string, error)
+	// executable is the path written into mcp config snippets.
+	executable func() (string, error)
 }
 
 // context is one saved server. Logins through the browser also record who
@@ -234,6 +243,8 @@ func (c *cli) run(args []string) error {
 		return fmt.Errorf("usage: %s cache purge <service>", c.name())
 	case "usage":
 		return c.usage(args[1:])
+	case "mcp":
+		return c.mcp(args[1:])
 	}
 	return fmt.Errorf("unknown command %q; run %s help", args[0], c.name())
 }

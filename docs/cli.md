@@ -119,6 +119,8 @@ acn logout localhost:8080 # the same for another saved server
 | `acn breaker <service> [--reset]` | The service's circuit breaker, or close it. |
 | `acn cache purge <service>` | Drop the service's cached responses. |
 | `acn usage <app-id>` | An app's requests, spend and limits today and this month. |
+| `acn mcp` | A stdio MCP server for Claude and other MCP clients; see [Connect Claude](#connect-claude). |
+| `acn mcp config` | Print the snippet that adds `acn mcp` to Claude Code, Claude Desktop or Cursor. |
 | `acn version` | The client's version. |
 
 `--json` prints the server's JSON instead of a table for `whoami`, `status`,
@@ -131,6 +133,103 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 What a command may do depends on the token's scope: `read` acts as a
 member, `write` as an admin (add keys, reset breakers, purge caches) and
 `admin` as a superadmin.
+
+## Connect Claude
+
+`acn mcp` is a stdio MCP server for Claude Code, Claude Desktop, Cursor and
+any other MCP client. It bridges to the server's control MCP
+(`/mcp/control`) with the saved token, so Claude can do what you can do in
+the dashboard: add services and keys, check health, create apps and tokens,
+read usage and events, build providers. It acts as you, with the token's
+scope, and every call lands in the audit log. (`/mcp` with an app token is
+the other MCP: it hands out keys to one app.)
+
+Sign in once, then add it to Claude Code:
+
+```sh
+acn login
+claude mcp add acnologia -- "$(command -v acn)" mcp
+```
+
+`acn mcp config` prints that line for you, with the absolute path of the
+`acn` you ran:
+
+```sh
+$ acn mcp config
+claude mcp add acnologia -- /usr/local/bin/acn mcp
+```
+
+For Claude Desktop (`claude_desktop_config.json`) or Cursor
+(`~/.cursor/mcp.json`), print the `mcpServers` entry to merge into the file:
+
+```sh
+$ acn mcp config --client claude-desktop
+{
+  "mcpServers": {
+    "acnologia": {
+      "command": "/usr/local/bin/acn",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+`--client cursor` prints the same shape and `--client json` just the inner
+server object. `--name` changes the name the client shows (default
+`acnologia`), and `--context staging` pins a saved server other than the
+default one (the snippet then runs `acn mcp --context staging`).
+
+### Choose the tools
+
+By default Claude sees every tool group except `admin`, `secrets` and `raw`,
+minus the tools your token's scope cannot use. These flags work on both
+`acn mcp` and `acn mcp config`:
+
+| Flag | What it does |
+|---|---|
+| `--groups services,keys` | Only these groups: `overview`, `services`, `keys`, `apps`, `providers`, `ai`, `routing`, `sharing`, `refresh`, `admin`, `secrets`, `raw`, or `all`. |
+| `--exclude delete_service,api_request` | Drop tools by name. |
+| `--read-only` | List only read tools; the server refuses the rest. |
+| `--confirm off` | Skip the `confirm: true` step on destructive tools, for clients that ask you before each call anyway. Default `on`. |
+
+```sh
+$ acn mcp config --groups services,keys --read-only
+claude mcp add acnologia -- /usr/local/bin/acn mcp --groups services,keys --read-only
+```
+
+The bridge sends them as `X-Acnologia-MCP-Groups`, `X-Acnologia-MCP-Exclude`,
+`X-Acnologia-MCP-Read-Only` and `X-Acnologia-MCP-Confirm` headers.
+
+### Over HTTP, without acn
+
+A client can also talk to `/mcp/control` directly with an admin token in a
+header. `--http` prints that form, with the filters as query parameters:
+
+```sh
+$ acn mcp config --http --groups services,keys
+claude mcp add --transport http acnologia 'https://key.sidharth.co/mcp/control?groups=services,keys' --header "Authorization: Bearer <your acnadm_ token>"
+```
+
+The token is left out unless you pass `--show-token`, so a snippet pasted
+into a chat or a ticket leaks nothing; put in a token from Account, API
+tokens. With `--client claude-desktop`, `cursor` or `json` it prints
+`{"type": "http", "url": ..., "headers": {"Authorization": ...}}`. Claude
+Desktop may only run local commands from its config file, so the stdio form
+is the safer choice there.
+
+### When it fails
+
+If the token expired or was revoked, Claude shows `Acnologia refused the
+token (401)` with a hint to run `acn login` again, and `acn mcp` prints the
+same on stderr. Without a saved server, `acn mcp` exits with `not logged in;
+run acn login first`. `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` work here as
+for every other command.
+
+The server binary has the same bridge without a saved login: `acnologia mcp
+--control --url https://key.sidharth.co --token acnadm_...` (an `acnadm_`
+token implies `--control`), with the same filter flags.
 
 ## CI and scripts
 
