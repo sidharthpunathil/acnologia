@@ -85,7 +85,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	ag := agent.New(agent.Config{}, st, cat, box)
-	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20}, st, pool.New(st, box), cat, ag,
+	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20}, st, testPool(st, box), cat, ag,
 		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Acnologia {{BASE_URL}}"))
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)
@@ -94,6 +94,13 @@ func newEnv(t *testing.T) *env {
 	var svc store.Service
 	e.do(e.super, "POST", "/api/admin/services", map[string]any{"provider": "serpapi", "slug": "serpapi", "base_url": ups.URL}, 201, &svc)
 	return e
+}
+
+// testPool builds a pool wired like the server's.
+func testPool(st *store.Store, box *crypto.Box) *pool.Pool {
+	p := pool.New(st, box)
+	p.KeyScope = pool.StoreKeyScope(st)
+	return p
 }
 
 func client() *http.Client {

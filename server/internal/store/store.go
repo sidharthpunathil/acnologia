@@ -23,6 +23,8 @@ type Store struct {
 	DB *sql.DB
 	// red redacts secrets from text the store writes (see redact.go).
 	red atomic.Pointer[redact.Redactor]
+	// scopes caches share key scopes by app (see keyscope.go).
+	scopes scopeCache
 }
 
 const schema = `

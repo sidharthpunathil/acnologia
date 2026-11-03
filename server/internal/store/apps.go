@@ -135,6 +135,8 @@ func (s *Store) ClearLeaseHidden(ctx context.Context, id int64) error {
 
 func (s *Store) DeleteApp(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM apps WHERE id=?`, id)
+	// App ids can be reused; forget any share scopes cached for this one.
+	s.invalidateScopes()
 	return err
 }
 

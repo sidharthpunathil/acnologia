@@ -144,6 +144,7 @@ func run() error {
 		slog.Info("AI provider builder disabled", "reason", s.Reason)
 	}
 	p := pool.New(st, box)
+	p.KeyScope = pool.StoreKeyScope(st)
 	if err := p.RestoreLeases(ctx); err != nil {
 		return err
 	}

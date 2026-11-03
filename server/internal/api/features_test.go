@@ -19,7 +19,6 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/config"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
-	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
@@ -72,7 +71,7 @@ func newFeatureEnv(t *testing.T) (*env, *Server) {
 		t.Fatal(err)
 	}
 	ag := agent.New(agent.Config{}, st, cat, box)
-	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20, CacheBytes: 8 << 20}, st, pool.New(st, box), cat, ag,
+	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20, CacheBytes: 8 << 20}, st, testPool(st, box), cat, ag,
 		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Acnologia"))
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)

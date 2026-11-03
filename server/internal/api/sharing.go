@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -96,6 +98,8 @@ type shareInput struct {
 	Providers     *[]string        `json:"providers"`
 	IncludeHidden *bool            `json:"include_hidden"`
 	Limits        *store.AppLimits `json:"limits"`
+	// KeyScopes replaces the key scopes, by service slug.
+	KeyScopes *map[string]store.KeyScope `json:"key_scopes"`
 	// ExpiresAt is RFC 3339, or "" to clear.
 	ExpiresAt *string `json:"expires_at"`
 	// InviteValid is 1h, 24h or 7d (default 24h).
@@ -176,7 +180,81 @@ func (s *Server) applyShareInput(r *http.Request, in shareInput, sh *store.Share
 	if in.IncludeHidden != nil {
 		sh.IncludeHidden = *in.IncludeHidden
 	}
+	if in.KeyScopes != nil {
+		scopes, msg := s.checkKeyScopes(r, *in.KeyScopes, sh)
+		if msg != "" {
+			return msg
+		}
+		sh.KeyScopes = scopes
+	}
+	// A service that is no longer shared loses its scope.
+	shared := map[string]bool{}
+	for _, slug := range sh.Services {
+		shared[slug] = true
+	}
+	for slug := range sh.KeyScopes {
+		if !shared[slug] {
+			delete(sh.KeyScopes, slug)
+		}
+	}
 	return ""
+}
+
+// maxScopeCount bounds a count scope; no service has this many keys.
+const maxScopeCount = 100000
+
+// checkKeyScopes validates key scopes against the share's services. Pick
+// mode keys must belong to their service, and hidden ones need
+// include_hidden. It returns the cleaned scopes or a message for a 400.
+func (s *Server) checkKeyScopes(r *http.Request, in map[string]store.KeyScope, sh *store.Share) (map[string]store.KeyScope, string) {
+	shared := map[string]bool{}
+	for _, slug := range sh.Services {
+		shared[slug] = true
+	}
+	out := map[string]store.KeyScope{}
+	for slug, sc := range in {
+		if !shared[slug] {
+			return nil, "key_scopes names " + slug + ", which this share does not share"
+		}
+		switch sc.Mode {
+		case "", store.ScopeAll:
+			continue
+		case store.ScopeCount:
+			if sc.Count < 1 || sc.Count > maxScopeCount {
+				return nil, "the key count for " + slug + " must be at least 1"
+			}
+			out[slug] = store.KeyScope{Mode: store.ScopeCount, Count: sc.Count}
+		case store.ScopePick:
+			if len(sc.KeyIDs) == 0 {
+				return nil, "pick at least one key for " + slug
+			}
+			sv, err := s.Store.GetServiceBySlug(r.Context(), slug)
+			if err != nil {
+				return nil, "no service named " + slug
+			}
+			seen := map[int64]bool{}
+			ids := []int64{}
+			for _, id := range sc.KeyIDs {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				k, err := s.Store.GetKey(r.Context(), id)
+				if err != nil || k.ServiceID != sv.ID {
+					return nil, "key " + strconv.FormatInt(id, 10) + " is not a key of " + slug
+				}
+				if k.Hidden && !sh.IncludeHidden {
+					return nil, "key " + strconv.FormatInt(id, 10) + " of " + slug + " is hidden; turn on include_hidden to share it"
+				}
+				ids = append(ids, id)
+			}
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+			out[slug] = store.KeyScope{Mode: store.ScopePick, KeyIDs: ids}
+		default:
+			return nil, "key scope mode must be all, count or pick"
+		}
+	}
+	return out, ""
 }
 
 func (s *Server) newInvite(r *http.Request, sh *store.Share, valid string) (string, string, time.Time, string) {
@@ -215,11 +293,32 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "share.created", created.Name, shareSummary(created))
 	s.emitShare(notify.ShareCreated, created, "share "+created.Name+" was created")
-	writeJSON(w, 201, map[string]any{"share": created, "invite": code})
+	writeJSON(w, 201, map[string]any{"share": s.newShareView(r, created, false), "invite": code})
 }
 
+// shareSummary is the audit detail of a share: what it shares and the key
+// scope modes. Never key data.
 func shareSummary(sh *store.Share) string {
-	return "services: " + strings.Join(sh.Services, ", ") + "; providers: " + strings.Join(sh.Providers, ", ")
+	out := "services: " + strings.Join(sh.Services, ", ") + "; providers: " + strings.Join(sh.Providers, ", ")
+	if len(sh.KeyScopes) > 0 {
+		slugs := make([]string, 0, len(sh.KeyScopes))
+		for slug := range sh.KeyScopes {
+			slugs = append(slugs, slug)
+		}
+		sort.Strings(slugs)
+		parts := make([]string, 0, len(slugs))
+		for _, slug := range slugs {
+			sc := sh.KeyScopes[slug]
+			switch sc.Mode {
+			case store.ScopeCount:
+				parts = append(parts, slug+" up to "+strconv.Itoa(sc.Count))
+			case store.ScopePick:
+				parts = append(parts, slug+" "+strconv.Itoa(len(sc.KeyIDs))+" picked")
+			}
+		}
+		out += "; key scopes: " + strings.Join(parts, ", ")
+	}
+	return out
 }
 
 func (s *Server) loadShare(w http.ResponseWriter, r *http.Request) (*store.Share, bool) {
@@ -231,16 +330,55 @@ func (s *Server) loadShare(w http.ResponseWriter, r *http.Request) (*store.Share
 	return sh, true
 }
 
-// shareView adds usage to a share: today, the last 14 days and last use.
+// shareView adds usage to a share: today, the last 14 days and last use,
+// and how many keys of each shared service its scope resolves to.
 type shareView struct {
 	*store.Share
-	Usage shareUsage `json:"usage"`
+	Usage       shareUsage                 `json:"usage"`
+	ServiceKeys map[string]serviceKeyCount `json:"service_keys"`
+}
+
+// serviceKeyCount is one shared service's keys: KeysShared the scope
+// resolves to now, of KeysTotal the share could use without a scope.
+type serviceKeyCount struct {
+	KeysShared int `json:"keys_shared"`
+	KeysTotal  int `json:"keys_total"`
+}
+
+func (s *Server) newShareView(r *http.Request, sh *store.Share, perService bool) shareView {
+	return shareView{Share: sh, Usage: s.shareUsage(r, sh, perService), ServiceKeys: s.shareKeyCounts(r.Context(), sh)}
+}
+
+// shareKeyCounts resolves each shared service's key scope.
+func (s *Server) shareKeyCounts(ctx context.Context, sh *store.Share) map[string]serviceKeyCount {
+	out := map[string]serviceKeyCount{}
+	var appID int64
+	if sh.AppID != nil {
+		appID = *sh.AppID
+	}
+	for _, slug := range sh.Services {
+		sv, err := s.Store.GetServiceBySlug(ctx, slug)
+		if err != nil {
+			continue
+		}
+		var sc *store.KeyScope
+		if v, ok := sh.KeyScopes[slug]; ok {
+			sc = &v
+		}
+		res, err := s.Store.ScopeKeys(ctx, sv.ID, appID, sh.IncludeHidden && sv.TargetTrusted, sc)
+		if err != nil {
+			continue
+		}
+		out[slug] = serviceKeyCount{KeysShared: len(res.IDs), KeysTotal: res.Total}
+	}
+	return out
 }
 
 type shareUsage struct {
 	TodayRequests int64            `json:"today_requests"`
 	TodayCost     float64          `json:"today_cost"`
 	MonthRequests int64            `json:"month_requests"`
+	MonthCost     float64          `json:"month_cost"`
 	LastUsedAt    *time.Time       `json:"last_used_at"`
 	History       []store.UsageDay `json:"history"`
 	PerService    map[string]int64 `json:"per_service,omitempty"`
@@ -254,7 +392,7 @@ func (s *Server) shareUsage(r *http.Request, sh *store.Share, perService bool) s
 	}
 	ctx := r.Context()
 	if au, err := s.Store.GetAppUsage(ctx, *sh.AppID, time.Now()); err == nil {
-		u.TodayRequests, u.TodayCost, u.MonthRequests = au.TodayRequests, au.TodayCost, au.MonthRequests
+		u.TodayRequests, u.TodayCost, u.MonthRequests, u.MonthCost = au.TodayRequests, au.TodayCost, au.MonthRequests, au.MonthCost
 		u.LimitHit = store.CheckLimits(sh.Limits, au, time.Now())
 	}
 	if h, err := s.Store.AppUsageHistory(ctx, *sh.AppID, 14); err == nil {
@@ -277,7 +415,7 @@ func (s *Server) listShares(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]shareView, 0, len(shs))
 	for _, sh := range shs {
-		out = append(out, shareView{sh, s.shareUsage(r, sh, false)})
+		out = append(out, s.newShareView(r, sh, false))
 	}
 	writeJSON(w, 200, map[string]any{"shares": out})
 }
@@ -287,7 +425,7 @@ func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, 200, shareView{sh, s.shareUsage(r, sh, true)})
+	writeJSON(w, 200, s.newShareView(r, sh, true))
 }
 
 func (s *Server) updateShare(w http.ResponseWriter, r *http.Request) {
@@ -314,7 +452,7 @@ func (s *Server) updateShare(w http.ResponseWriter, r *http.Request) {
 	sh, _ = s.Store.GetShare(r.Context(), sh.ID)
 	s.Store.AddAudit(r.Context(), userFrom(r), "share.updated", sh.Name, shareSummary(sh))
 	s.emitShare(notify.ShareUpdated, sh, "share "+sh.Name+" was updated")
-	writeJSON(w, 200, shareView{sh, s.shareUsage(r, sh, true)})
+	writeJSON(w, 200, s.newShareView(r, sh, true))
 }
 
 func (s *Server) shareStatusHandler(status, event, verb string) http.HandlerFunc {
@@ -341,7 +479,7 @@ func (s *Server) shareStatusHandler(status, event, verb string) http.HandlerFunc
 		}
 		s.Store.AddAudit(r.Context(), userFrom(r), event, sh.Name, "")
 		s.emitShare(event, sh, "share "+sh.Name+" was "+verb)
-		writeJSON(w, 200, shareView{sh, s.shareUsage(r, sh, false)})
+		writeJSON(w, 200, s.newShareView(r, sh, false))
 	}
 }
 
@@ -375,7 +513,7 @@ func (s *Server) newShareInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	sh, _ = s.Store.GetShare(r.Context(), sh.ID)
 	s.Store.AddAudit(r.Context(), userFrom(r), "share.invite", sh.Name, "new invite, valid until "+exp.Format(time.RFC3339))
-	writeJSON(w, 200, map[string]any{"share": sh, "invite": code})
+	writeJSON(w, 200, map[string]any{"share": s.newShareView(r, sh, false), "invite": code})
 }
 
 // ---- peer links (receiver side) ----

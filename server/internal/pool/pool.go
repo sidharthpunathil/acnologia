@@ -59,6 +59,10 @@ type Pool struct {
 	Notify *notify.Notifier
 	// Egress routes health checks through a key's or service's proxy; nil connects directly.
 	Egress *egress.Manager
+	// KeyScope returns the key scope an app has for a service, or nil when
+	// the app may use every key. It limits the keys of a share app; nil
+	// skips scoping.
+	KeyScope func(ctx context.Context, appID int64, svc *store.Service) (*store.KeyScope, error)
 
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
@@ -123,6 +127,10 @@ func (p *Pool) Pick(ctx context.Context, svc *store.Service, appID int64, allowH
 
 func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, exclusive bool, req Request) (*Picked, error) {
 	allowHidden = allowHidden && svc.TargetTrusted
+	scoped, err := p.scopedKeys(ctx, svc, appID, allowHidden)
+	if err != nil {
+		return nil, err
+	}
 	l := p.lock(svc.ID)
 	l.Lock()
 	defer l.Unlock()
@@ -140,7 +148,7 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	busy, slotBusy := false, false
 	var paceWait time.Duration
 	for _, k := range keys {
-		if exclude[k.ID] || !allowed(k, appID) || (k.Hidden && !allowHidden) {
+		if exclude[k.ID] || !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || (scoped != nil && !scoped[k.ID]) {
 			continue
 		}
 		if !k.Available(now) {
@@ -220,16 +228,35 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	}}, nil
 }
 
-func allowed(k *store.Key, appID int64) bool {
-	if !k.Restricted {
-		return true
+// scopedKeys returns the only keys the app may use on the service, or nil
+// when its scope allows every key.
+func (p *Pool) scopedKeys(ctx context.Context, svc *store.Service, appID int64, allowHidden bool) (map[int64]bool, error) {
+	if p.KeyScope == nil || appID == 0 {
+		return nil, nil
 	}
-	for _, a := range k.AppIDs {
-		if a == appID {
-			return true
+	sc, err := p.KeyScope(ctx, appID, svc)
+	if err != nil || sc.IsAll() {
+		return nil, err
+	}
+	if sc.Mode == store.ScopePick {
+		ids := make(map[int64]bool, len(sc.KeyIDs))
+		for _, id := range sc.KeyIDs {
+			ids[id] = true
 		}
+		return ids, nil
 	}
-	return false
+	res, err := p.Store.ScopeKeys(ctx, svc.ID, appID, allowHidden, sc)
+	if err != nil {
+		return nil, err
+	}
+	return res.IDs, nil
+}
+
+// StoreKeyScope is the KeyScope hook backed by the store's share scopes.
+func StoreKeyScope(st *store.Store) func(context.Context, int64, *store.Service) (*store.KeyScope, error) {
+	return func(ctx context.Context, appID int64, svc *store.Service) (*store.KeyScope, error) {
+		return st.AppKeyScope(ctx, appID, svc.Slug)
+	}
 }
 
 func lastUsed(k *store.Key) int64 {

@@ -254,13 +254,18 @@ func (s *Server) buildManifest(ctx context.Context, sh *store.Share) peer.Manife
 		want[slug] = true
 	}
 	provs := map[string]bool{}
+	inflight := s.Pool.InFlight()
 	for _, sv := range svcs {
 		if !want[sv.Slug] || sv.Provider == providers.PeerSlug {
 			continue
 		}
+		avail := max(sv.KeyCounts.Available-sv.KeyCounts.Busy, 0)
+		if sc, ok := sh.KeyScopes[sv.Slug]; ok && !sc.IsAll() {
+			avail = s.scopedAvailable(ctx, sh, sv, &sc, inflight)
+		}
 		m.Services = append(m.Services, peer.ManifestService{
 			Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category, Description: sv.Description,
-			Available: max(sv.KeyCounts.Available-sv.KeyCounts.Busy, 0),
+			Available: avail,
 		})
 		if _, ok := provs[sv.Provider]; !ok {
 			provs[sv.Provider] = false
@@ -289,6 +294,31 @@ func (s *Server) buildManifest(ctx context.Context, sh *store.Share) peer.Manife
 		})
 	}
 	return m
+}
+
+// scopedAvailable counts the keys of a share's key scope that could serve a
+// request right now: available and not at their concurrency limit.
+func (s *Server) scopedAvailable(ctx context.Context, sh *store.Share, sv *store.Service, sc *store.KeyScope, inflight map[int64]int) int {
+	keys, err := s.Store.ListKeys(ctx, sv.ID, true)
+	if err != nil {
+		return 0
+	}
+	var appID int64
+	if sh.AppID != nil {
+		appID = *sh.AppID
+	}
+	res := store.ResolveScope(sc, keys, appID, sh.IncludeHidden && sv.TargetTrusted)
+	now, n := time.Now(), 0
+	for _, k := range keys {
+		if !res.IDs[k.ID] || !k.Available(now) {
+			continue
+		}
+		if lim := k.ConcurrencyLimit(sv); lim > 0 && inflight[k.ID] >= lim {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 func (s *Server) emitShare(typ string, sh *store.Share, msg string) {
