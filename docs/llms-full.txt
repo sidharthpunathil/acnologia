@@ -686,13 +686,17 @@ X-Acnologia-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>" with the 
 
 The signing secret (`whsec_...`) is shown once when the webhook is created. Reject deliveries whose timestamp is more than a few minutes old. Payloads pass the redactor, so they never carry a key.
 
+## AI models
+
+AI features run on a Claude model a superadmin picks under Settings, AI: a default plus optional models for `assistant`, `builder`, `fill`, `summary` (chat compaction summaries) and `refresh` (re-checking provider offers). Per call, the feature's own model wins, then the saved default, then `ACNOLOGIA_AI_MODEL`, then `claude-opus-5-5`. A switch applies on the next call with no restart; a builder run keeps the model it was queued with. `GET /api/admin/ai/models` (admin) lists the models with context window and price per million tokens, from Anthropic's Models API when a key is set or Acnologia's built in table otherwise, plus the saved and effective choice. `PUT /api/admin/ai/models` (superadmin) saves `{default, assistant, builder, fill, summary, refresh}`, each a model id or `""`. Cost on the Usage page is priced at the model that answered.
+
 ## Key secrecy and redaction
 
 - Proxy mode and MCP `proxy_request` never show a key to the caller. Response headers are scrubbed of the key, and redirects are returned, not followed.
 - Leasing (`/api/v1/lease`, MCP `get_key`) returns the secret by design. Use proxy mode for any client you would not hand a key to.
 - Every request Acnologia sends to Claude (the Assistant, the provider builder, Fill with AI, run naming) passes a redactor first. Known secrets (every pool key, webhook URLs and secrets, egress proxy URLs, `GITHUB_TOKEN`, a builder run's test keys, keys pasted in a chat) become `[key ...c21e]`. Unknown secrets found by pattern (prefixes such as `sk-`, `AIza`, `ghp_`, `tvly-`, `AKIA`, `acn_`, JWTs, `Bearer` and `Basic` values, `key=` and `token=` fields, long random tokens) become `[secret ...c21e]`.
 - Keys pasted into the Assistant go to an encrypted per thread vault; the model sees placeholders such as `[key k3 ...c21e]` and tools resolve them on the server. The stored user message keeps only the prose and a list of label plus last four characters.
-- Long Assistant chats are compacted: past 60% of the model's context window (or `ACNOLOGIA_CHAT_COMPACT_TOKENS`), Claude summarizes the older messages from the already redacted history, the summary is redacted again, and it replaces them in what the model is sent. The last 6 messages stay verbatim and the transcript keeps everything. `POST /api/admin/chat/threads/{id}/compact` compacts on request.
+- Long Assistant chats are compacted: past 60% of the Assistant model's context window (or `ACNOLOGIA_CHAT_COMPACT_TOKENS`), Claude summarizes the older messages from the already redacted history, the summary is redacted again, and it replaces them in what the model is sent. The last 6 messages stay verbatim and the transcript keeps everything. `POST /api/admin/chat/threads/{id}/compact` compacts on request.
 - The same scrub runs on events, the audit log, key `last_error`, agent steps and run errors, webhook payloads and every log line.
 - Limit: a short key with no prefix and no `key=` in front of it is caught only if it is already a pool key or the paste parser finds it.
 

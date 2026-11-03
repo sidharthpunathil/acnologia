@@ -443,8 +443,10 @@ A long chat would eventually overflow the model's context window and gets
 slower and dearer on every turn. Before each model call the server estimates
 the prompt: the input tokens Claude reported for the last call plus about one
 token per four characters added since, or a character estimate of the whole
-prompt, whichever is larger. Past 60% of the model's context window (or
-`ACNOLOGIA_CHAT_COMPACT_TOKENS`), it compacts:
+prompt, whichever is larger. Past 60% of the context window of the
+Assistant's model (or `ACNOLOGIA_CHAT_COMPACT_TOKENS`), it compacts. The
+summary runs on the chat summaries model from Settings, AI, which can be a
+smaller, cheaper one than the Assistant's:
 
 ```mermaid
 flowchart TD
