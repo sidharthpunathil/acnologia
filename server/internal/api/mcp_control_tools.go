@@ -64,6 +64,7 @@ type ctlGroup struct {
 
 var ctlGroups = []ctlGroup{
 	{"overview", "Overview", true},
+	{"power", "Search, batch and routes", true},
 	{"services", "Services", true},
 	{"keys", "Keys", true},
 	{"apps", "Apps", true},
@@ -247,7 +248,9 @@ var (
 		"label":           sProp("The person's name, for a person share"),
 		"email":           sProp("The person's email, a label only, never mailed"),
 		"invite_valid":    eProp("How long the server invite works", "1h", "24h", "7d"),
-		"claim_valid":     eProp("How long a person's claim link works", "1h", "24h", "7d"),
+		"claim_valid":     eProp("How long a person's claim link works; 30d only for a reusable link (default 7d there, 24h otherwise)", "1h", "24h", "7d", "30d"),
+		"reusable":        bProp("Anyone with the link can claim it, each claim a token of its own (recipient person, proxy only; fixed at creation)"),
+		"max_claims":      iProp("Most people who can claim a reusable link; 0 is no cap"),
 	}
 
 	refreshFields = map[string]any{
@@ -653,7 +656,7 @@ func buildCtlTools() []ctlTool {
 			Props: shareFields, Required: []string{"name"}, Body: keysOf(shareFields)},
 		{Name: "update_share", Title: "Update a share", Group: "sharing", Kind: ctlWrite, Role: sa, Method: patch, Path: "/api/admin/shares/{share_id}",
 			Desc:  "Change a share's services, limits, key scopes, timer or note. Only the fields you send change.",
-			Props: props(shareFields, map[string]any{"share_id": sProp("Share id")}), Required: []string{"share_id"}, Body: keysOf(shareFields, "recipient", "invite_valid", "claim_valid")},
+			Props: props(shareFields, map[string]any{"share_id": sProp("Share id")}), Required: []string{"share_id"}, Body: keysOf(shareFields, "recipient", "invite_valid", "claim_valid", "reusable")},
 		{Name: "pause_share", Title: "Pause a share", Group: "sharing", Kind: ctlWrite, Role: sa, Method: post, Path: "/api/admin/shares/{share_id}/pause",
 			Desc: "Pause an active share; its token stops working until resumed.", Props: map[string]any{"share_id": sProp("Share id")}, Required: []string{"share_id"}},
 		{Name: "resume_share", Title: "Resume a share", Group: "sharing", Kind: ctlWrite, Role: sa, Method: post, Path: "/api/admin/shares/{share_id}/resume",
@@ -787,5 +790,5 @@ func buildCtlTools() []ctlTool {
 				return "send " + strings.ToUpper(argStr(in, "method")) + " " + argStr(in, "path"), nil
 			}},
 	}
-	return tools
+	return append(tools, ctlFlexTools()...)
 }

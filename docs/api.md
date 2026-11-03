@@ -230,6 +230,27 @@ responses, protocol `2025-06-18`; `DELETE` answers 204, other methods 405).
 - **Results:** the route's JSON as text, plus `structuredContent` when it is
   an object. A route error is `isError: true` with its status and message.
   Results are capped at 512 KB.
+- **Shaping:** every read tool, `api_request` and each `batch` call take
+  `fields` (dot paths to keep, from the top; lists pass through, so
+  `services.slug` keeps every service's slug), `filter` (`{field: value}` on
+  the top level lists: text as a case insensitive substring, numbers and
+  booleans exactly, dot paths for nested fields), `limit` and `offset`. A
+  filtered or paged result adds `_matched: {list: count}`, the matches
+  before paging. Shaping runs before the 512 KB cap, so it can bring a big
+  result under it. `provider_guide` and `service_guide` take
+  `format: markdown` for the Markdown alone.
+- **Search, batch and routes** (the `power` group, on by default):
+  `search` `{query, types, limit}` looks through services, keys, apps,
+  providers, shares, connected servers, webhooks, egress proxies, groups and
+  users, and returns `{results: [{type, id, name, matched, value,
+  details_tool}], total, searched, skipped}`; lists the role cannot read are
+  skipped and named, and secret bearing fields (keys, webhook URLs) are
+  never searched. `batch` `{calls: [{tool, arguments}], stop_on_error}` runs
+  up to 20 tools in order and returns `{results: [{index, tool, ok, result,
+  structured}], ran, failed}`; each call is checked as if made alone (role,
+  groups, read only, and the confirm step), and a batch cannot contain
+  `batch`. `list_routes` `{contains}` lists every `/api/admin` route with
+  the tool that covers it, for `api_request`.
 - **Calling providers:** `call_service` `{service, method, path, query,
   body, headers}` runs the request through the proxy as an app named
   `Control MCP`, made on first use (mode proxy, all services). Key rotation,

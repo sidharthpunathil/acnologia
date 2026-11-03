@@ -46,6 +46,8 @@ const ctlInstructions = "This is Acnologia's control MCP: it runs the server (se
 	"as the signed in user who owns the admin API token, with that user's role (or the token's scope when lower). Every change is audited under that user. " +
 	"Tools the role cannot use are not listed. Services are named by id, slug or name. " +
 	"call_service calls a provider API through the pooled keys as the app \"Control MCP\"; the key is never shown. " +
+	"search finds anything by text; batch runs up to 20 tools in one call; list_routes lists every admin route. " +
+	"Read tools take fields, filter, limit and offset to cut big results down, and the guide tools take format: markdown. " +
 	"Destructive tools (deletes, revokes, rotate, disconnect) do nothing on the first call: they say what would happen, then run when called again with confirm: true. Ask the user before confirming. " +
 	"The app side, where an app's token leases keys and proxies calls, is the separate /mcp endpoint."
 
@@ -274,6 +276,12 @@ func (c *ctlCtx) unavailable(t *ctlTool) string {
 
 func (c *ctlCtx) toolJSON(t *ctlTool) map[string]any {
 	p := props(t.Props)
+	if t.Kind == ctlRead || t.Name == "api_request" {
+		p = props(p, shapeProps)
+	}
+	if t.Name == "provider_guide" || t.Name == "service_guide" {
+		p["format"] = eProp("json (default): the structured guide and its Markdown. markdown: only the Markdown, ready to read", "json", "markdown")
+	}
 	if t.Kind == ctlDestructive && c.opts.confirm {
 		p["confirm"] = bProp("Set true to do it. Without it nothing changes and the result says what would happen")
 	}
@@ -295,8 +303,18 @@ func (c *ctlCtx) toolJSON(t *ctlTool) map[string]any {
 	}
 }
 
-// call runs a tool and returns its MCP result.
+// call runs a tool and returns its MCP result, shaped by the fields,
+// filter, limit, offset and format inputs when given.
 func (c *ctlCtx) call(t *ctlTool, in map[string]any) map[string]any {
+	res := shapeResult(c.callRaw(t, in), in)
+	delete(res, ctlRawKey)
+	return res
+}
+
+// ctlRawKey holds a result's untrimmed text inside the server only.
+const ctlRawKey = "_untrimmed"
+
+func (c *ctlCtx) callRaw(t *ctlTool, in map[string]any) map[string]any {
 	if why := c.unavailable(t); why != "" {
 		return ctlFail(why)
 	}
@@ -467,6 +485,9 @@ func ctlFail(msg string) map[string]any {
 func ctlText(text string, isErr bool) map[string]any {
 	res := map[string]any{}
 	if len(text) > ctlResultCap {
+		// Kept for shaping, which can cut the result under the cap; call
+		// removes it before the result leaves.
+		res[ctlRawKey] = text
 		n := ctlResultCap
 		for n > 0 && !utf8.RuneStart(text[n]) {
 			n--
