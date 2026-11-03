@@ -20,6 +20,11 @@ import (
 // built in table comes from and what the price refresh reads.
 const PricesSourceURL = "https://platform.claude.com/docs/en/about-claude/pricing"
 
+// PriceSourceDomains are Anthropic's official sites: the only pages the
+// price refresh reads, and the only sources a price change may cite to
+// apply on its own. Subdomains such as platform.claude.com are included.
+var PriceSourceDomains = []string{"anthropic.com", "claude.com"}
+
 // BuiltinPricesChecked is when the built in price table was last read.
 const BuiltinPricesChecked = "2026-11-03"
 
@@ -369,7 +374,7 @@ func (a *Agent) ResearchPrices(ctx context.Context, req PricesRequest) (*PricesR
 	task := fmt.Sprintf("Today is %s.\n\nTask: re-check the prices of these Claude models.\n\nStart from %s.\n\nCurrent prices (USD per million tokens):\n```json\n%s\n```\n\nRead the page, then call submit_prices with every model above.",
 		time.Now().UTC().Format("2006-01-02"), PricesSourceURL, table)
 	loop := refreshLoop{guide: pricesGuide, task: task, tool: pricesTool, what: "price list",
-		caller: req.Caller, ref: req.Ref, maxCost: req.MaxCostUSD, progress: progress,
+		caller: req.Caller, ref: req.Ref, maxCost: req.MaxCostUSD, progress: progress, domains: PriceSourceDomains,
 		check: func(raw []byte) (string, bool) { return checkPrices(known, raw, res) }}
 	var err error
 	res.Model, res.CostUSD, err = a.runRefreshLoop(ctx, loop)

@@ -270,9 +270,12 @@ capped at $2 a run and $5 a month. Check now on a service's Offers and
 limits card or a provider's Offers tab checks one provider at once.
 
 A refresh only ever changes `offers`. A change publishes a new provider
-version on its own only when every added or changed offer cites an http(s)
-`source_url` and it does not remove every offer; anything else waits for
-review in Settings. A change to a built in provider makes it an edited
+version on its own only when it is small and sourced: existing offers whose
+price moves within 4x either way or whose limits loosen, each citing a page
+on the provider's own website, docs or API domain. Adding or removing an
+offer, changing what it matches, its notes or whether it is free, and any
+tighter limit or concurrency wait for review in Settings, as does every
+change when apply is set to review. A change to a built in provider makes it an edited
 version, so later releases stop backfilling its offers; roll back from the
 Versions tab. No change just moves `checked_at` to today. The full flow is
 in [Keeping provider offers fresh](flows.md#keeping-provider-offers-fresh).

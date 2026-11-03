@@ -223,10 +223,20 @@ any client you would not hand a key to.
   request passes the redactor above.
 - **A refresh can only change offers.** Never auth, the base URL, rules,
   health checks or tests, so a misread or hostile page cannot redirect keys.
-  A change applies on its own only when every added or changed offer cites an
-  http(s) source and it does not remove every offer; otherwise it waits for a
-  superadmin. Claude price changes follow the same rule. Each applied change
-  is a provider version you can roll back, with a webhook and an audit entry.
+  The pages it reads are untrusted, so the bounds are in code: a change
+  applies on its own only when it moves existing offers' prices within 4x or
+  loosens their limits, and every changed offer cites a page on the
+  provider's own website, docs or API domain. New or removed offers, a
+  changed match, notes or free flag, and any tighter limit or concurrency
+  wait for a superadmin, so a hostile page cannot throttle every key or zero
+  a price unseen. A no change check only moves `checked_at` and never
+  reorders the stored offers. Names and notes are stripped of control and
+  invisible characters, a `source_url` with user info is dropped, and later
+  checks start only from cited pages on the provider's own domains. Claude
+  price changes apply on their own only from an https page on anthropic.com
+  or claude.com (the only sites that refresh may read) and within 4x of the
+  current price. Each applied change is a provider version you can roll
+  back, with a webhook and an audit entry.
 - **Spend is capped**: per run (default $2) and per month (default $5) for
   the refresh feature, checked before each provider. Only one run goes at a
   time.

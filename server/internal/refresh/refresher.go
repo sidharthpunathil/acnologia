@@ -439,11 +439,14 @@ func (r *Refresher) checkProvider(ctx context.Context, run *store.RefreshRun, it
 		fail(cost, "The provider's spec is unreadable.")
 		return cost, false
 	}
+	res.Offers = cleanOffers(res.Offers)
 	d := DiffOffers(spec.Offers, res.Offers)
 	if d.Empty() {
 		// Nothing changed: move checked_at on the current version in place,
-		// with no new version, so a built in provider stays unedited.
-		if raw, err := withOffers(p.Spec, res.Offers); err == nil {
+		// with no new version, so a built in provider stays unedited. Only
+		// checked_at moves: the stored order and spelling stay, since a
+		// reorder changes which offer prices a request.
+		if raw, err := withOffers(p.Spec, keepCheckedAt(spec.Offers, res.Offers)); err == nil {
 			if ok, err := r.Store.TouchProviderSpec(ctx, p.Slug, p.Version, raw); err == nil && ok {
 				if sp, err := providers.DecodeSpec(raw); err == nil {
 					providers.Set(p.Slug, sp)
@@ -456,7 +459,7 @@ func (r *Refresher) checkProvider(ctx context.Context, run *store.RefreshRun, it
 	}
 	auto, reason := false, "Apply is set to review in Settings."
 	if s.Apply == ApplyAuto {
-		auto, reason = AutoApply(d, res.Offers)
+		auto, reason = AutoApply(d, spec.Offers, res.Offers, agent.ProviderDomains(p.Website, p.DocsURL, spec.BaseURL))
 		if !auto {
 			reason = "Not applied on its own: " + reason + "."
 		}
@@ -653,7 +656,7 @@ func (r *Refresher) checkPrices(ctx context.Context, run *store.RefreshRun, it *
 	}
 	auto, reason := false, "Apply is set to review in Settings."
 	if s.Apply == ApplyAuto {
-		auto, reason = AutoApplyPrices(changed)
+		auto, reason = AutoApplyPrices(cur, changed)
 		if !auto {
 			reason = "Not applied on its own: " + reason + "."
 		}

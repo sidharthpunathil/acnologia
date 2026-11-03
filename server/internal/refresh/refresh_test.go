@@ -479,7 +479,7 @@ func TestAutoApplyOnlyWithSources(t *testing.T) {
 
 func TestRemovingEveryOfferWaitsForReview(t *testing.T) {
 	d := DiffOffers([]providers.Offer{{Name: "A"}}, nil)
-	if ok, why := AutoApply(d, nil); ok || why == "" {
+	if ok, why := AutoApply(d, []providers.Offer{{Name: "A"}}, nil, nil); ok || why == "" {
 		t.Fatal("removing every offer must be reviewed")
 	}
 	d = DiffOffers([]providers.Offer{{Name: "A", Notes: "x  y", CheckedAt: "2026-01-01"}}, []providers.Offer{{Name: "a", Notes: "x y", CheckedAt: "2027-01-01"}})

@@ -53,7 +53,7 @@ const APPLY: { id: RefreshApply; label: string; hint: string }[] = [
   {
     id: "auto",
     label: "Apply sourced changes",
-    hint: "A change publishes a new version on its own when every changed offer cites the page it came from. Anything else waits for you.",
+    hint: "A small change publishes a new version on its own: prices moving within 4x or looser limits, each citing a page on the provider's own site. Anything else waits for you.",
   },
   { id: "review", label: "Always review", hint: "Every change waits here until a superadmin applies or dismisses it." },
 ];

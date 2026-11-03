@@ -122,6 +122,8 @@ type refreshLoop struct {
 	// refresh. The caps default to the refresh caps when zero.
 	feature                                string
 	maxTurns, searches, fetches, maxTokens int
+	// domains, when set, are the only sites web search and web fetch may read.
+	domains []string
 }
 
 func (l *refreshLoop) defaults() {
@@ -164,8 +166,8 @@ func (a *Agent) runRefreshLoop(ctx context.Context, l refreshLoop) (string, floa
 	messages := []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(l.task))}
 	tool := l.tool
 	tools := []anthropic.BetaToolUnionParam{
-		{OfWebSearchTool20260209: &anthropic.BetaWebSearchTool20260209Param{MaxUses: anthropic.Int(int64(l.searches))}},
-		{OfWebFetchTool20260209: &anthropic.BetaWebFetchTool20260209Param{MaxUses: anthropic.Int(int64(l.fetches)), MaxContentTokens: anthropic.Int(refreshFetchTokens)}},
+		{OfWebSearchTool20260209: &anthropic.BetaWebSearchTool20260209Param{MaxUses: anthropic.Int(int64(l.searches)), AllowedDomains: l.domains}},
+		{OfWebFetchTool20260209: &anthropic.BetaWebFetchTool20260209Param{MaxUses: anthropic.Int(int64(l.fetches)), MaxContentTokens: anthropic.Int(refreshFetchTokens), AllowedDomains: l.domains}},
 		{OfTool: &tool},
 	}
 	submits := 0
@@ -302,8 +304,14 @@ func refreshTask(p *store.Provider, spec *providers.Spec) string {
 			urls = append(urls, u)
 		}
 	}
+	// A cited page is listed only when it is on the provider's own site, so
+	// one bad citation cannot steer every later check to a page someone
+	// else controls.
+	own := ProviderDomains(p.Website, p.DocsURL, spec.BaseURL)
 	for _, o := range spec.Offers {
-		add(o.SourceURL)
+		if OnDomains(o.SourceURL, own) {
+			add(o.SourceURL)
+		}
 	}
 	add(p.Website)
 	add(p.DocsURL)

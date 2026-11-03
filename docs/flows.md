@@ -502,18 +502,22 @@ ones by name, ignoring `checked_at`:
 
 - No change: `checked_at` moves to today on the current version, in place,
   with no new version (so a built in provider stays unedited and keeps
-  getting the offers new releases ship).
-- A change, with apply set to Apply sourced changes (the default): if every
-  added or changed offer cites an http(s) `source_url` and the change does
-  not remove every offer, a new provider version is published with source
+  getting the offers new releases ship). Only `checked_at` moves: the stored
+  order and names stay, since order decides which offer prices a request.
+- A change, with apply set to Apply sourced changes (the default): if it only
+  moves existing offers' prices within 4x either way (same unit and
+  `per_request`) or loosens their limits and concurrency, and every changed
+  offer cites an http(s) `source_url` on the provider's own website, docs or
+  API domain, a new provider version is published with source
   `refresh` and a note listing what changed. Only `offers` changes: never
   auth, the base URL, rules, health checks or tests. A webhook
   `provider.offers_changed` fires and the audit log records it. A built in
   provider changed this way becomes an edited version, like any edit, so
   later releases no longer backfill its offers. Roll back from the provider's
   Versions tab.
-- Otherwise (no source, removing every offer, apply set to Always review, or
-  the publish failed) the change waits in Settings under Waiting for review
+- Otherwise (no source or one on another site, an added or removed offer, a
+  changed match, notes or free flag, a tighter limit, a bigger price move,
+  apply set to Always review, or the publish failed) the change waits in Settings under Waiting for review
   with a readable diff. Apply publishes it as above; Dismiss drops it. A
   proposal made against a version that has since changed cannot be applied:
   dismiss it and check again. A newer proposal for the same provider replaces
@@ -525,9 +529,10 @@ ones by name, ignoring `checked_at`:
 
 **Claude's own prices.** With Claude model prices on (the default), every run
 also re-reads Anthropic's pricing page for the models Acnologia prices and
-proposes new input, output and cache prices. The same rule applies: a change
-saves as price overrides on its own only when every changed price cites its
-page, else it waits for review. The model picker shows each price's source
+proposes new input, output and cache prices. Its web search and fetch may
+only read anthropic.com and claude.com. A change saves as price overrides on
+its own only when every changed price cites an https page on those sites and
+each price moves within 4x either way, else it waits for review. The model picker shows each price's source
 and the date it was checked. Superadmins can also edit a model's price and
 context window by hand under Settings, AI, Model prices, and reset it to the
 built in table (see [Model prices](#choosing-the-ai-model)).

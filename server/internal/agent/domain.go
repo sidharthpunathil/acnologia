@@ -70,6 +70,39 @@ func HostWithin(host, domain string) bool {
 	return strings.HasSuffix(host, "."+domain)
 }
 
+// ProviderDomains are the registrable domains of a provider's website, docs
+// URL and base URL: the sites that speak for it.
+func ProviderDomains(website, docsURL, baseURL string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, raw := range []string{website, docsURL, baseURL} {
+		raw = strings.TrimSpace(raw)
+		if raw != "" && !strings.Contains(raw, "://") {
+			raw = "https://" + raw
+		}
+		h := URLHost(raw)
+		if h == "github.com" || strings.HasSuffix(h, ".github.com") {
+			continue // a repo host is not the provider's site
+		}
+		if d := RegistrableDomain(h); d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// OnDomains reports whether raw is an http(s) URL on one of domains.
+func OnDomains(raw string, domains []string) bool {
+	h := URLHost(raw)
+	for _, d := range domains {
+		if HostWithin(h, d) {
+			return true
+		}
+	}
+	return false
+}
+
 // URLHost is the lower case host of an absolute http(s) URL with no user
 // info, or "" when raw is anything else.
 func URLHost(raw string) string {

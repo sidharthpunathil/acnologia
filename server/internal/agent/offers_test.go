@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // A draft as the builder would submit it, with offers read from a pricing page.
@@ -108,5 +110,20 @@ func TestBuilderDraftGuideIsValidated(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}
+	}
+}
+
+func TestRefreshTaskListsOnlyTheProvidersOwnSources(t *testing.T) {
+	p := &store.Provider{Slug: "fish", Name: "Fish", Website: "https://fish.example", DocsURL: "https://docs.fish.example"}
+	spec := &providers.Spec{BaseURL: "https://api.fish.example", Offers: []providers.Offer{
+		{Name: "Search", SourceURL: "https://attacker.example/pricing"},
+		{Name: "Fetch", SourceURL: "https://fish.example/pricing"},
+	}}
+	task := refreshTask(p, spec)
+	if strings.Contains(task, "- https://attacker.example") {
+		t.Fatalf("an off site source is a start page:\n%s", task)
+	}
+	if !strings.Contains(task, "- https://fish.example/pricing") || !strings.Contains(task, "- https://docs.fish.example") {
+		t.Fatalf("the provider's own pages are missing:\n%s", task)
 	}
 }
