@@ -70,6 +70,8 @@ test("sharing with a person: claim and My access work on a locked deploy", async
   await expect(page.getByRole("heading", { name: "This instance is private" })).toHaveCount(0);
   const get = page.getByRole("button", { name: "Get my access" });
   await expect(get).toBeVisible();
+  // The provider's logo shows (inlined, since a person has no dashboard session).
+  await expect(page.locator('img[src^="data:image/"]').first()).toBeVisible();
   await get.click();
   await expect(page.getByText("This is shown once. Save it now.")).toBeVisible();
 
@@ -98,6 +100,7 @@ test("sharing with a person: claim and My access work on a locked deploy", async
   await page.getByLabel("Your token").fill(token!);
   await page.getByRole("button", { name: "Show my access" }).click();
   await expect(page.getByText("Contractor").first()).toBeVisible();
+  await expect(page.locator('img[src^="data:image/"]').first()).toBeVisible();
 
   // Revoke: the next call is refused and My access says so.
   await admin(request, base, "POST", `/api/admin/shares/${created.share.id}/revoke`);

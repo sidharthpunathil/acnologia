@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -382,8 +383,8 @@ type claimService struct {
 	Provider    string `json:"provider"`
 	Category    string `json:"category"`
 	Description string `json:"description"`
-	// LogoURL is always null: logos sit behind the dashboard session, and
-	// the claim page shows initials instead.
+	// LogoURL is the logo inlined as a data: URI (see logoDataURI), since
+	// the logo routes need a dashboard session; null shows initials.
 	LogoURL *string `json:"logo_url"`
 }
 
@@ -399,7 +400,8 @@ func (s *Server) claimServices(ctx context.Context, sh *store.Share) ([]claimSer
 		if err != nil || sv.Provider == providers.PeerSlug {
 			continue
 		}
-		out = append(out, claimService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category, Description: sv.Description})
+		out = append(out, claimService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category, Description: sv.Description,
+			LogoURL: s.logoDataURI(ctx, sv)})
 		svcs = append(svcs, sv)
 	}
 	return out, svcs
@@ -548,7 +550,7 @@ type meService struct {
 	// Available counts keys that could serve a request now. For an app that
 	// backs no share it is 1 or 0: ordinary apps never learn pool sizes.
 	Available int `json:"available"`
-	// LogoURL is always null here (logos need a dashboard session).
+	// LogoURL is the logo inlined as a data: URI, or null.
 	LogoURL *string `json:"logo_url"`
 }
 
@@ -625,7 +627,11 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		if f == nil {
 			svcs := []meService{}
 			for _, ms := range s.buildManifest(ctx, sh).Services {
-				svcs = append(svcs, meService{Slug: ms.Slug, Name: ms.Name, Provider: ms.Provider, Category: ms.Category, Available: ms.Available})
+				var logo *string
+				if sv, err := s.Store.GetServiceBySlug(ctx, ms.Slug); err == nil {
+					logo = s.logoDataURI(ctx, sv)
+				}
+				svcs = append(svcs, meService{Slug: ms.Slug, Name: ms.Name, Provider: ms.Provider, Category: ms.Category, Available: ms.Available, LogoURL: logo})
 			}
 			out["services"] = svcs
 		}
@@ -649,8 +655,44 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		if sv.KeyCounts.Available > sv.KeyCounts.Busy {
 			avail = 1
 		}
-		list = append(list, meService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category, Available: avail})
+		list = append(list, meService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category, Available: avail,
+			LogoURL: s.logoDataURI(ctx, sv)})
 	}
 	out["services"] = list
 	writeJSON(w, 200, out)
+}
+
+// maxInlineLogo caps a logo inlined into a claim or My access answer. The
+// seeded provider logos are a few kilobytes; a larger upload shows initials.
+const maxInlineLogo = 48 << 10
+
+// inlineLogoTypes are the image types inlined. They render in an <img> only,
+// where an SVG cannot run script.
+var inlineLogoTypes = map[string]bool{
+	"image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true,
+	"image/svg+xml": true, "image/x-icon": true, "image/vnd.microsoft.icon": true,
+}
+
+// logoDataURI returns the logo a person should see for a service as a data:
+// URI: the service's own logo, else its provider's (for a peer service, the
+// owner's provider first). People hold a claim link or a share token, not a
+// dashboard session, so they cannot load the /api/logos routes.
+func (s *Server) logoDataURI(ctx context.Context, sv *store.Service) *string {
+	try := func(data []byte, mime string, err error) *string {
+		mime = strings.ToLower(strings.TrimSpace(strings.SplitN(mime, ";", 2)[0]))
+		if err != nil || len(data) == 0 || len(data) > maxInlineLogo || !inlineLogoTypes[mime] {
+			return nil
+		}
+		u := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+		return &u
+	}
+	if u := try(s.Store.ServiceLogo(ctx, sv.ID)); u != nil {
+		return u
+	}
+	for _, slug := range []string{sv.DocProvider(), sv.Provider} {
+		if u := try(s.Store.ProviderLogo(ctx, slug)); u != nil {
+			return u
+		}
+	}
+	return nil
 }

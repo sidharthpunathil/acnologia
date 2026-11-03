@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -680,5 +681,66 @@ func TestClaimCodeRedacted(t *testing.T) {
 	peerCall(t, "GET", e.srv.URL+"/claim/"+code, "")
 	if strings.Contains(buf.String(), code) || !strings.Contains(buf.String(), "/claim/[code]") {
 		t.Fatalf("log: %s", buf.String())
+	}
+}
+
+// TestClaimAndMeShowLogos: a person has no dashboard session, so the claim
+// preview and My access inline the provider logo as a data: URI; an
+// oversized logo falls back to initials (null).
+func TestClaimAndMeShowLogos(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "logokey1"})
+	ctx := context.Background()
+	png := []byte("\x89PNG\r\n\x1a\nfake-logo")
+	if err := e.st.SetProviderLogo(ctx, "serpapi", png, "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	_, code := e.newPersonShare(map[string]any{"name": "Logos", "services": []string{"serpapi"}})
+	want := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+
+	st, pv, raw := e.claim("preview", code)
+	if st != 200 {
+		t.Fatalf("preview: %d %s", st, raw)
+	}
+	svc := pv["share"].(map[string]any)["services"].([]any)[0].(map[string]any)
+	if svc["logo_url"] != want {
+		t.Fatalf("preview logo_url = %v", svc["logo_url"])
+	}
+
+	st, rd, raw := e.claim("redeem", code)
+	if st != 200 {
+		t.Fatalf("redeem: %d %s", st, raw)
+	}
+	tok := rd["token"].(string)
+	req, _ := http.NewRequest("GET", e.srv.URL+"/api/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var me struct {
+		Services []struct {
+			Slug    string  `json:"slug"`
+			LogoURL *string `json:"logo_url"`
+		} `json:"services"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		t.Fatal(err)
+	}
+	if len(me.Services) != 1 || me.Services[0].LogoURL == nil || *me.Services[0].LogoURL != want {
+		t.Fatalf("me services %+v", me.Services)
+	}
+
+	// Too large to inline: initials instead.
+	if err := e.st.SetProviderLogo(ctx, "serpapi", bytes.Repeat([]byte{1}, maxInlineLogo+1), "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	sv, err := e.st.GetServiceBySlug(ctx, "serpapi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.api.logoDataURI(ctx, sv); got != nil {
+		t.Fatalf("oversized logo inlined: %d bytes", len(*got))
 	}
 }

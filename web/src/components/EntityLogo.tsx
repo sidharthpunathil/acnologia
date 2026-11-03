@@ -39,7 +39,9 @@ function readableOn(hex: string): string {
 }
 
 function withVersion(url: string, v: number): string {
-  if (!v) return url;
+  // Inlined (data:) and local (blob:) images never change and a query would
+  // corrupt them, so they are used as they are.
+  if (!v || /^(data|blob):/i.test(url)) return url;
   return url + (url.includes("?") ? "&" : "?") + `v=${v}`;
 }
 
