@@ -307,7 +307,11 @@ flowchart LR
 Webhook deliveries carry no key and go through `SafeClient` unless
 `ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE=true`. Webhook URLs are encrypted at rest (Slack,
 Discord and Telegram URLs are secrets) and only a host hint is ever returned.
-Hidden keys never produce webhook events.
+Hidden keys never produce webhook events. Messages carry text other people
+chose (peer server names, share and key labels, an app's lease report), so
+Slack messages escape `<`, `>` and `&` and Discord messages escape markdown:
+that text cannot ping a channel or show a link under a label it picked.
+Telegram messages are sent without a parse mode, as plain text.
 
 An egress proxy sees which hosts keys travel to, and the keys themselves when
 a service's base URL is plain `http`. Assigning one is therefore part of a
@@ -366,6 +370,11 @@ section.
 - **Key scopes hold on every pick.** A share limited to up to N keys or a
   picked list never gets a key outside it, through any path: the pool
   applies the scope for the backing app before choosing.
+- **A share cannot take keys out of rotation.** A share holder shapes its own
+  requests, so an invalid or banned answer to one does not change the key's
+  status: the request moves on to another key in scope, and the health check
+  finds a key that really stopped working. Otherwise a share could knock the
+  owner's keys out for every app and walk an up to N scope onto the next key.
 - **The backing app never grants everything.** An app with an empty service
   list may use every service, so a share's app always lists the shared
   services, or an entry that matches nothing for a provider only share. It is
@@ -377,9 +386,13 @@ section.
   that binds the peer. Preview and redeem are limited globally (20 a minute,
   500 a day).
 - **An invite binds to the server that redeems it.** Redeem carries the
-  receiver's public key and an Ed25519 signature over the share id, the
-  invite hash, a nonce and its id; the owner checks the id is derived from
-  the key and records that server on the share. The invite is then spent, so
+  receiver's public key and an Ed25519 signature over the owner's server id,
+  the share id, the invite hash, a nonce and its id; the owner checks the id
+  is derived from the key, refuses a signature made for another owner, and
+  records that server on the share. An owner therefore cannot relay a
+  receiver's signed redeem to a third server. Owners still accept the older
+  messages without the owner id from receivers that predate it, and a
+  receiver refuses to redeem at an owner too old to check the owner id. The invite is then spent, so
   a leaked code is worthless after the first redeem, and a share serves one
   receiver. The receiver checks that the owner's identity at redeem matches
   the one previewed.
@@ -395,7 +408,21 @@ section.
   or Claude.
 - **Outbound calls.** Preview, redeem, sync and leave use `SafeClient` unless the
   superadmin ticked "this server is on my private network" for that link.
-  Proxied calls go to the service's base URL like any other service.
+  Proxied calls and health checks go to the service's base URL, and for a
+  link not on a private network they use a client that refuses non public
+  addresses on every dial, so an owner whose host looked public at sync
+  cannot rebind it to this server's network later.
+- **Syncs never wait on the owner under a lock.** The manifest, handed over
+  keys, usage reports and logos are fetched with their own timeouts and
+  without the sync lock, which covers only local changes; logo fetches share
+  a budget per sync and a missing logo is retried at most daily. A manifest
+  is capped at 200 services and 200 providers. A slow or hostile owner
+  cannot hold up other links, disconnect or revoke handling.
+- **Names and slugs from a peer are checked.** Service slugs in a manifest
+  must be valid slugs, and a new local service never takes a slug a local
+  service group uses, so a share cannot shadow a group at `/proxy/{slug}`.
+  The owner's server name and a receiver's name at redeem are kept to one
+  line of up to 100 bytes without control characters.
 - **Imported specs never change on their own.** A provider spec from a peer,
   whether shared on purpose or pulled in because a shared service uses it, is
   imported once with source `peer:<owner id>` and only when this server has no
@@ -445,7 +472,10 @@ docs say so plainly.
   timestamp and a nonce; the receiver verifies it against the owner key it
   pinned when it connected, refuses timestamps more than 5 minutes off and
   remembers nonces until they would be stale anyway, so it cannot be forged
-  or replayed. It is best effort; its outcome is recorded on the share.
+  or replayed. It is best effort; its outcome is recorded on the share. The
+  route is public, so only failed attempts are rate limited, per client
+  address (20 a minute, 500 a day): junk from one address cannot hold back
+  an owner's signed revoke.
 - **Rotate after revoke.** Because the push and the lease only bind a
   cooperating receiver, the owner should rotate every handed over key at its
   provider after revoking. The revoked share carries a rotate checklist of
@@ -457,14 +487,25 @@ docs say so plainly.
   as another key does not open. Sealed blobs (`acnseal1_...`) are a redactor
   pattern and never appear in a manifest, log, event, audit detail, webhook
   or anything sent to Claude; handed over secrets on the receiver are in its
-  redactor's list like any stored key.
+  redactor's list like any stored key. Because that list masks text
+  everywhere, the receiver refuses a handed over secret shorter than 16
+  characters or with spaces or non printable characters, so an owner cannot
+  blank arbitrary words in the receiver's records.
+- **An up to N scope hands over at most N keys, ever.** A key handed over
+  cannot be taken back, so for a handover share a key that leaves rotation
+  keeps its place in the scope: the receiver gets a new key only while fewer
+  than N of the keys it was ever given still exist. Deleting a key frees its
+  place.
 - **On the receiver the key stays inside the proxy.** A handed over key is a
   hidden key of a service whose target the owner chose. Local apps use it
   only through the proxy; `/keys/{id}/reveal` refuses it, leases (REST and
   MCP `get_key`) refuse it even for apps with `lease_hidden`, it cannot be
   shared onward (its service is a peer service), and its secret, hidden flag
   and egress, and its service's base URL, auth, provider and egress, cannot
-  be changed to send it elsewhere. The assistant reaches keys only through
+  be changed to send it elsewhere, also in the same request that changes the
+  provider. Any local app may proxy it, so the proxy masks the key in
+  response bodies of those services as well as in headers, in case the
+  upstream echoes it. The assistant reaches keys only through
   these routes. A base URL from an owner that is not on a private network
   must resolve to public addresses, so an owner cannot aim the receiver's
   apps at its internal network.
