@@ -171,7 +171,7 @@ func run() error {
 		Sharing: srv.SharingTicker()}
 	go w.Run(ctx)
 
-	hs := &http.Server{Addr: cfg.Addr, Handler: srv.Router(), ReadHeaderTimeout: 15 * time.Second}
+	hs := newHTTPServer(cfg.Addr, srv.Router())
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -183,6 +183,22 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// newHTTPServer is the listening server. Headers must arrive within 15
+// seconds and an idle keep-alive connection closes after 2 minutes, so slow
+// or idle clients cannot pile up connections. There is deliberately no
+// ReadTimeout or WriteTimeout: either would cut long streaming responses
+// (chat, MCP, proxied streams), since Go cancels a request's context when a
+// ReadTimeout passes. JSON bodies get their own read deadline instead (the
+// api package's decode).
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 }
 
 // checkMasterKey refuses to start with a master key that differs from the

@@ -279,7 +279,8 @@ any client you would not hand a key to.
 | Limit | Value |
 |---|---|
 | Sign in attempts | 10 per 10 minutes per client address (an IPv6 /64 counts as one) and per existing account, counted before the password check so a parallel burst gets no more; a success clears them. Account counters are never dropped to make room |
-| Dashboard JSON body | 4 MB |
+| Dashboard JSON body | 4 MB, read within 30 s or the connection closes |
+| Connections | headers within 15 s; an idle keep-alive closes after 2 minutes. No overall read or write timeout, so long streams are not cut |
 | Proxy request body | `ACNOLOGIA_MAX_BODY_MB` (default 50) |
 | Proxy methods | GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS |
 | Proxy idle stream | 5 minutes without bytes ends the response and frees the slot |
