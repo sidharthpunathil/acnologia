@@ -158,7 +158,7 @@ func (a *Agent) runRefreshLoop(ctx context.Context, l refreshLoop) (string, floa
 			Tools:     tools,
 		})
 		if err != nil {
-			return model, cost, fmt.Errorf("AI request failed: %w", err)
+			return model, cost, refreshCallErr(err)
 		}
 		cost += a.Record(ctx, FeatureRefresh, l.caller, l.ref, resp)
 		if string(resp.Model) != "" {
@@ -311,3 +311,22 @@ func refreshTask(p *store.Provider, spec *providers.Spec) string {
 
 // RefreshRef is the ledger ref of a refresh run.
 func RefreshRef(runID int64) string { return fmt.Sprintf("refresh:%d", runID) }
+
+// refreshCallErr turns a failed Claude call into one short line for the run
+// history, without the raw response body.
+func refreshCallErr(err error) error {
+	var apiErr *anthropic.Error
+	if !errors.As(err, &apiErr) {
+		return fmt.Errorf("AI request failed: %w", err)
+	}
+	why := ""
+	switch apiErr.StatusCode {
+	case 401, 403:
+		why = ": check ANTHROPIC_API_KEY"
+	case 404:
+		why = ": the refresh model may not exist; pick another in Settings"
+	case 429, 529:
+		why = ": Anthropic is busy or rate limited; the next run tries again"
+	}
+	return fmt.Errorf("AI request failed: Anthropic answered %d%s", apiErr.StatusCode, why)
+}
