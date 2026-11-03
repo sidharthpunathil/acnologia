@@ -152,6 +152,11 @@ type KeyHandoverRef struct {
 
 var ErrDuplicate = errors.New("duplicate")
 
+// keysHighWater is the highest key id ever used: by a stored key, an event
+// or lease of a deleted one, or the keys_seq counter.
+const keysHighWater = `SELECT MAX(COALESCE((SELECT CAST(v AS INTEGER) FROM meta WHERE k='keys_seq'),0), COALESCE((SELECT MAX(id) FROM keys),0),
+		COALESCE((SELECT MAX(key_id) FROM events),0), COALESCE((SELECT MAX(key_id) FROM leases),0))`
+
 func (s *Store) CreateKey(ctx context.Context, nk NewKey) (*Key, error) {
 	keys, dups, err := s.CreateKeys(ctx, []NewKey{nk})
 	if err != nil {
@@ -175,8 +180,7 @@ func (s *Store) CreateKeys(ctx context.Context, nks []NewKey) ([]*Key, []int, er
 	// Never reuse a deleted key's id: events, leases and in-memory slots are
 	// keyed by it, and a reused id would inherit another key's history.
 	var hw sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT MAX(COALESCE((SELECT CAST(v AS INTEGER) FROM meta WHERE k='keys_seq'),0), COALESCE((SELECT MAX(id) FROM keys),0),
-		COALESCE((SELECT MAX(key_id) FROM events),0), COALESCE((SELECT MAX(key_id) FROM leases),0))`).Scan(&hw); err != nil {
+	if err := tx.QueryRowContext(ctx, keysHighWater).Scan(&hw); err != nil {
 		return nil, nil, err
 	}
 	next := hw.Int64 + 1
