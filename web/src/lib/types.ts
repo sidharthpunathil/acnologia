@@ -135,6 +135,23 @@ export interface Key {
   account_phone?: string;
   /** Any other identifier, such as a username, account ID or workspace. */
   account_ref?: string;
+  /**
+   * TODO(server): the spec's owner side exposure record has no key field yet.
+   * Expected as `handed_over: [{share_id, peer_id, peer_name, live, wiped_at}]`
+   * on key responses. Until then HandoverChip derives it from the shares list
+   * (share.handover.keys).
+   */
+  handed_over?: KeyHandover[] | null;
+}
+
+/** One share that handed this key to another server. */
+export interface KeyHandover {
+  share_id: string;
+  peer_id: string;
+  peer_name: string;
+  /** True while the other server holds it (share active, not wiped). */
+  live: boolean;
+  wiped_at?: string | null;
 }
 
 export type Validity = "valid" | "invalid" | "unknown";

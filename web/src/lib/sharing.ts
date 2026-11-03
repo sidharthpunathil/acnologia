@@ -29,6 +29,47 @@ export interface KeyScope {
 
 export type ShareStatus = "pending" | "active" | "paused" | "revoked" | "expired";
 
+/** proxy: requests go through this server. handover: the keys go to the other server. */
+export type ShareMode = "proxy" | "handover";
+
+/** What happens when ends_at passes: expire (can be extended) or revoke for good. */
+export type EndAction = "expire" | "revoke";
+
+/** Renewal window for handed over keys. */
+export type Lease = "1h" | "6h" | "24h" | "72h" | "7d";
+
+/** One key handed over to the other server (no secret). */
+export interface HandoverKey {
+  key_id: number;
+  service: string;
+  label: string;
+  handed_at?: string | null;
+  renewed_at?: string | null;
+  valid_until?: string | null;
+  wiped_at?: string | null;
+  /** Counted by the other server and reported on sync. */
+  reported_requests?: number | null;
+  /** Pool status the other server reported, such as "invalid" or "banned". */
+  reported_status?: string | null;
+}
+
+/** Outcome of the signed revoke sent to the other server. */
+export interface RevokePush {
+  at?: string | null;
+  ok: boolean;
+  detail?: string;
+}
+
+/** A key to rotate at the provider after a handover share is revoked. */
+export interface RotateItem {
+  key_id: number;
+  service: string;
+  label: string;
+  /** Optional: the provider spec slug, and the provider's key page when the spec knows it. */
+  provider?: string;
+  key_page_url?: string;
+}
+
 export interface Share {
   id: string;
   name: string;
@@ -62,6 +103,17 @@ export interface Share {
     per_service?: Record<string, number>;
     limit_hit: { limit: string; reset_at: string } | null;
   };
+  // Share modes and timers. Optional so the page still works against a
+  // server that does not send them yet: read them through the helpers below.
+  mode?: ShareMode;
+  /** Handover only. A duration such as "24h"; a number is read as seconds. */
+  lease?: Lease | string | number | null;
+  /** RFC 3339 or null. Maps to expires_at on the server. */
+  ends_at?: string | null;
+  end_action?: EndAction;
+  handover?: { keys?: HandoverKey[] | null; last_revoke_push?: RevokePush | null } | null;
+  /** Set once a handover share is revoked. */
+  rotate_checklist?: RotateItem[] | null;
 }
 
 export interface ShareInput {
@@ -72,9 +124,14 @@ export interface ShareInput {
   include_hidden?: boolean;
   limits?: AppLimits;
   key_scopes?: Record<string, KeyScope>;
-  /** RFC 3339, or "" for no expiry. */
+  /** RFC 3339, or "" for no expiry. Sent alongside ends_at for older servers. */
   expires_at?: string;
   invite_valid?: InviteValidity;
+  mode?: ShareMode;
+  lease?: Lease;
+  /** RFC 3339, or "" for never. */
+  ends_at?: string;
+  end_action?: EndAction;
 }
 
 export type InviteValidity = "1h" | "24h" | "7d";
@@ -107,6 +164,22 @@ export interface PeerLink {
   fingerprint: string;
   local_services: Service[];
   manifest: { name?: string; services?: ManifestService[] };
+  /** Optional until the server sends it; missing means proxy. */
+  mode?: ShareMode;
+  /** Keys this server holds for the link (no secrets). Read through linkHandoverKeys. */
+  handover?: { keys?: PeerHandoverKey[] | null } | null;
+  /** Flat spelling, also accepted. */
+  handover_keys?: PeerHandoverKey[] | null;
+}
+
+/** A key the other server handed to this one, as the link reports it. */
+export interface PeerHandoverKey {
+  key_id?: number;
+  /** Local service slug the key lives in. */
+  service?: string;
+  label?: string;
+  valid_until?: string | null;
+  renewed_at?: string | null;
 }
 
 export interface PeerPreview {
@@ -128,6 +201,8 @@ export const sharing = {
   pauseShare: (id: string) => request<Share>("POST", `/api/admin/shares/${id}/pause`),
   resumeShare: (id: string) => request<Share>("POST", `/api/admin/shares/${id}/resume`),
   revokeShare: (id: string) => request<Share>("POST", `/api/admin/shares/${id}/revoke`),
+  /** ends_at is RFC 3339, or "" for never. */
+  extendShare: (id: string, ends_at: string) => request<Share>("POST", `/api/admin/shares/${id}/extend`, { ends_at }),
   newInvite: (id: string, invite_valid: InviteValidity) =>
     request<{ share: Share; invite: string }>("POST", `/api/admin/shares/${id}/invite`, { invite_valid }),
 
@@ -138,6 +213,53 @@ export const sharing = {
   syncPeer: (id: number) => request<PeerLink>("POST", `/api/admin/peers/${id}/sync`),
   disconnectPeer: (id: number) => request<PeerLink | { ok: boolean; removed: boolean }>("DELETE", `/api/admin/peers/${id}`),
 };
+
+export function shareMode(s: { mode?: ShareMode | null }): ShareMode {
+  return s.mode === "handover" ? "handover" : "proxy";
+}
+
+/** When the share ends: ends_at, or the older expires_at. */
+export function shareEndsAt(s: Share): string | null {
+  return s.ends_at || s.expires_at || null;
+}
+
+export function shareEndAction(s: Share): EndAction {
+  return s.end_action === "revoke" ? "revoke" : "expire";
+}
+
+export const LEASES: { id: Lease; label: string; ms: number }[] = [
+  { id: "1h", label: "1 hour", ms: 3600e3 },
+  { id: "6h", label: "6 hours", ms: 6 * 3600e3 },
+  { id: "24h", label: "24 hours", ms: 24 * 3600e3 },
+  { id: "72h", label: "72 hours", ms: 72 * 3600e3 },
+  { id: "7d", label: "7 days", ms: 7 * 86400e3 },
+];
+
+/** The share's lease as one of the choices, tolerating seconds or an hours spelling. */
+export function shareLease(s: Share): Lease {
+  const v = s.lease;
+  if (typeof v === "number") return LEASES.find((l) => l.ms === v * 1000)?.id ?? "24h";
+  if (typeof v === "string") {
+    const hit = LEASES.find((l) => l.id === v);
+    if (hit) return hit.id;
+    if (v === "168h") return "7d";
+  }
+  return "24h";
+}
+
+export function handoverKeys(s: Share): HandoverKey[] {
+  return s.handover?.keys ?? [];
+}
+
+export function linkHandoverKeys(l: PeerLink): PeerHandoverKey[] {
+  return l.handover?.keys ?? l.handover_keys ?? [];
+}
+
+/** The rotate checklist after revoke, or else every key that was handed over. */
+export function rotateChecklist(s: Share): RotateItem[] {
+  if (s.rotate_checklist?.length) return s.rotate_checklist;
+  return handoverKeys(s).map((k) => ({ key_id: k.key_id, service: k.service, label: k.label }));
+}
 
 /** The last `days` UTC days of a usage history, oldest first, zero filled. */
 export function lastDays(history: UsageDay[] | undefined, days = 14): { day: string; requests: number }[] {
