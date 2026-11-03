@@ -403,8 +403,8 @@ the controls, the history and the changes waiting for review. It needs
 **When.** A run starts in one of three ways:
 
 - On the schedule: off, weekly, every 2 weeks, monthly (on the 1st, the
-  default) or every N days (1–365), at a chosen UTC hour (03:00 by default). The worker asks once a minute whether
-  a run is due. The first run is the first time the clock reaches the hour
+  default) or every N days (1–365), at a chosen UTC hour (03:00 by
+  default). The worker asks once a minute whether a run is due. The first run is the first time the clock reaches the hour
   after the schedule was saved; weekly and every N days count from the day of
   the last scheduled run; monthly runs on the 1st of the next month. A run
   missed while the server was off starts as soon as it is back.
