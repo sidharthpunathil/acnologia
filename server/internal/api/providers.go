@@ -131,6 +131,19 @@ func nonNilStrings(s []string) []string {
 	return s
 }
 
+// publisherOf is the person behind a provider edit. Only a superadmin acting
+// in person vouches for where the spec sends keys; an admin's (or the
+// Assistant's) change to auth or the health check revokes trust in the
+// provider's services (Catalog.publish).
+func publisherOf(r *http.Request) catalog.Publisher {
+	u := userFrom(r)
+	p := catalog.Publisher{User: u, Super: isSuper(r) && !fromAssistant(r)}
+	if u != nil {
+		p.Name = u.Email
+	}
+	return p
+}
+
 func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	var body providerBody
 	if !decode(w, r, &body) {
@@ -140,7 +153,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "duplicate", "a provider with that slug already exists")
 		return
 	}
-	p, rep, err := s.Catalog.Publish(r.Context(), body.Input, "manual", userFrom(r).Email, body.Note)
+	p, rep, err := s.Catalog.Publish(r.Context(), body.Input, "manual", publisherOf(r), body.Note)
 	if err != nil {
 		s.writePublishErr(w, err)
 		return
@@ -165,7 +178,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	if source == "builtin" || source == "ai" {
 		source = "manual"
 	}
-	p, rep, err := s.Catalog.Publish(r.Context(), body.Input, source, userFrom(r).Email, body.Note)
+	p, rep, err := s.Catalog.Publish(r.Context(), body.Input, source, publisherOf(r), body.Note)
 	if err != nil {
 		s.writePublishErr(w, err)
 		return
@@ -207,7 +220,7 @@ func (s *Server) rollbackProvider(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	p, err := s.Catalog.Rollback(r.Context(), chi.URLParam(r, "slug"), body.Version, userFrom(r).Email)
+	p, err := s.Catalog.Rollback(r.Context(), chi.URLParam(r, "slug"), body.Version, publisherOf(r))
 	if err != nil {
 		s.writePublishErr(w, err)
 		return

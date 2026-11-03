@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -170,9 +171,11 @@ func (s *Spec) Check(ctx context.Context, c *http.Client, baseURL, secret string
 		return nil, err
 	}
 	// The request carries the key, so its path may only add to base_url:
-	// "@host" or ".host" would move it to another host.
-	if !strings.HasPrefix(h.Path, "/") {
-		return nil, fmt.Errorf("health.path must start with /")
+	// "@host" or ".host" would move it to another host, and dot segments or
+	// from_origin would leave a base path prefix. Checked again here on the
+	// service's own base URL, for specs saved before these rules.
+	if msg := h.PathProblem(baseURL); msg != "" {
+		return nil, errors.New(msg)
 	}
 	target := strings.TrimRight(baseURL, "/") + h.Path
 	if h.FromOrigin {

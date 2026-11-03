@@ -154,7 +154,9 @@ func (y *Syncer) importProvider(ctx context.Context, link *store.PeerLink, mp Ma
 	}
 	in := catalog.Input{Slug: mp.Slug, Name: mp.Name, Category: mp.Category, Description: mp.Description,
 		Website: mp.Website, DocsURL: mp.DocsURL, Color: mp.Color, Status: "active", Spec: mp.Spec}
-	p, _, err := y.Catalog.Publish(ctx, in, "peer:"+link.PeerID, "peer "+link.PeerName, fmt.Sprintf("%s from %s (v%d)", verb, link.PeerName, mp.Version))
+	// A first import or a superadmin's PullProvider: the owner's spec over a
+	// link a superadmin confirmed, so it may keep services trusted.
+	p, _, err := y.Catalog.Publish(ctx, in, "peer:"+link.PeerID, catalog.Publisher{Name: "peer " + link.PeerName, Super: true}, fmt.Sprintf("%s from %s (v%d)", verb, link.PeerName, mp.Version))
 	return p, err
 }
 

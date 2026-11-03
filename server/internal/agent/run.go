@@ -314,7 +314,7 @@ func (a *Agent) publish(ctx context.Context, run *store.AgentRun, d *draft, by s
 	if run.Kind == "update_provider" {
 		note = "improved by AI"
 	}
-	p, rep, err := a.Catalog.Publish(ctx, d.Input, "ai", by, note+" (run "+fmt.Sprint(id)+")")
+	p, rep, err := a.Catalog.Publish(ctx, d.Input, "ai", catalog.Publisher{Name: by}, note+" (run "+fmt.Sprint(id)+")")
 	if err != nil {
 		return err
 	}

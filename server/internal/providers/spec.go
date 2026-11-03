@@ -145,6 +145,42 @@ type Health struct {
 	Quota      *QuotaPaths       `json:"quota,omitempty"`
 }
 
+// PathProblem says why the health check cannot run against baseURL, or ""
+// when it can. The check carries the key, so its path may only add to the
+// base URL: no dot segments (raw or percent encoded), which would climb out
+// of a base path prefix, and from_origin, which drops the prefix, only when
+// there is none. The built in peer provider's manifest is the one exception:
+// it lives at the owner's origin, beside the /proxy/<service> base URL.
+func (h *Health) PathProblem(baseURL string) string {
+	if !strings.HasPrefix(h.Path, "/") {
+		return "health.path must start with /"
+	}
+	p := h.Path
+	if i := strings.IndexAny(p, "?#"); i >= 0 {
+		p = p[:i]
+	}
+	if strings.Contains(p, `\`) {
+		return `health.path must not contain \`
+	}
+	for _, sg := range strings.Split(p, "/") {
+		dec, err := url.PathUnescape(sg)
+		if err != nil {
+			return "health.path is not a valid URL path"
+		}
+		for _, part := range strings.FieldsFunc(dec, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if part == "." || part == ".." {
+				return "health.path must not contain . or .. segments"
+			}
+		}
+	}
+	if h.FromOrigin && h.Path != PeerManifestPath {
+		if u, err := url.Parse(baseURL); err == nil && strings.Trim(u.Path, "/") != "" {
+			return "health.from_origin needs a base_url without a path: it would leave the base path"
+		}
+	}
+	return ""
+}
+
 type QuotaPaths struct {
 	Limit       []string     `json:"limit,omitempty"`
 	Remaining   []string     `json:"remaining,omitempty"`
@@ -277,8 +313,8 @@ func (s *Spec) Validate() []string {
 		if h.Method != "GET" && h.Method != "POST" {
 			add("health.method must be GET or POST")
 		}
-		if !strings.HasPrefix(h.Path, "/") {
-			add("health.path must start with /")
+		if msg := h.PathProblem(s.BaseURL); msg != "" {
+			add("%s", msg)
 		}
 		if h.Invalid != nil {
 			errs = append(errs, h.Invalid.validate("health.invalid")...)

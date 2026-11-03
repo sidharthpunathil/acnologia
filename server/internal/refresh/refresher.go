@@ -509,7 +509,7 @@ func (r *Refresher) publish(ctx context.Context, p *store.Provider, offers []pro
 	}
 	in := catalog.Input{Slug: p.Slug, Name: p.Name, Category: p.Category, Description: p.Description, Website: p.Website,
 		DocsURL: p.DocsURL, Color: p.Color, Status: p.Status, Spec: raw}
-	np, _, err := r.Catalog.PublishVersion(ctx, in, "refresh", by, note)
+	np, _, err := r.Catalog.PublishVersion(ctx, in, "refresh", catalog.Publisher{Name: by}, note)
 	return np, err
 }
 

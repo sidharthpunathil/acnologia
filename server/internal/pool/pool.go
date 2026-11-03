@@ -88,13 +88,24 @@ func New(s *store.Store, box *crypto.Box) *Pool {
 	return &Pool{
 		Store: s, Box: box, locks: map[int64]*sync.Mutex{}, slots: newSlots(), pacer: newPacer(),
 		Client: &http.Client{
-			Timeout: 20 * time.Second,
+			Timeout:   20 * time.Second,
+			Transport: checkTransport(),
 			// Never follow a redirect with a key attached: Go forwards custom
 			// auth headers (x-api-key and friends) to the new host.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 		PublicClient: publicClient(),
 	}
+}
+
+// checkTransport reaches any address a base URL resolves to but link local
+// and cloud metadata ones, like the proxy does. Loopback and private
+// addresses stay allowed for model servers on the same network.
+func checkTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = catalog.UpstreamDialer().DialContext
+	t.Proxy = catalog.GuardProxy(http.ProxyFromEnvironment)
+	return t
 }
 
 func publicClient() *http.Client {

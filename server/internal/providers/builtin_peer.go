@@ -5,6 +5,10 @@ package providers
 // /proxy/<service>. Such services can never be shared onward.
 const PeerSlug = "acnologia-peer"
 
+// PeerManifestPath is the peer provider's health check, at the owner's
+// origin rather than under its /proxy/<service> base URL.
+const PeerManifestPath = "/api/peer/v1/manifest"
+
 // peerBuiltin describes another Acnologia proxy. The owner already rotated
 // its own keys before answering, so anything it relays from the upstream
 // provider is not the share token's fault. Only the owner's own refusals
@@ -31,7 +35,7 @@ func peerBuiltin() Builtin {
 			Quota:    QuotaInfo{Unit: "requests"},
 			Rules:    rules,
 			Guide:    peerGuide(),
-			Health: &Health{Method: "GET", Path: "/api/peer/v1/manifest", FromOrigin: true,
+			Health: &Health{Method: "GET", Path: PeerManifestPath, FromOrigin: true,
 				Invalid: &Match{BodyContains: []string{"share_revoked", "share_paused", "share_expired"}}},
 			Tests: []Fixture{
 				{Name: "success", Status: 200, Body: `{"ok":true}`, Expect: OK},
