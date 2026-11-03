@@ -416,17 +416,24 @@ func (s *Server) pushRevoke(ctx context.Context, sh *store.Share, selfURL string
 // handed over. Public; the signature is the authentication.
 func (s *Server) peerRevoke(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.revokeLimit.take() {
+	// Only failed attempts count, per address: anyone can call this route,
+	// and junk from one address must not hold back an owner's signed revoke.
+	ip := clientIP(r)
+	if s.revokeLimit.blocked(ip) {
 		w.Header().Set("Retry-After", "60")
-		writeErr(w, 429, "rate_limited", "too many revoke attempts, try again in a minute")
+		writeErr(w, 429, "rate_limited", "too many failed revoke attempts, try again in a minute")
 		return
 	}
 	var in peer.RevokeRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	if !decode(w, r, &in) {
+		s.revokeLimit.fail(ip)
 		return
 	}
 	n, err := s.peers.HandleRevoke(r.Context(), in, time.Now())
+	if err != nil {
+		s.revokeLimit.fail(ip)
+	}
 	switch {
 	case errors.Is(err, peer.ErrRevokeUnknown):
 		writeErr(w, 404, "unknown_share", err.Error())

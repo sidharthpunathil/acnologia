@@ -77,8 +77,8 @@ type Server struct {
 	peers *peer.Syncer
 	// peerLimit bounds invite preview and redeem calls (peer_public.go).
 	peerLimit *peerLimiter
-	// revokeLimit bounds revoke pushes from other servers (handover.go).
-	revokeLimit *peerLimiter
+	// revokeLimit bounds failed revoke pushes per address (handover.go).
+	revokeLimit *failLimiter
 	// claimLimit bounds claim link preview and redeem calls (people.go).
 	claimLimit *peerLimiter
 	// Refresh keeps providers' offers current (refresh.go).
@@ -98,7 +98,7 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 		devices:        newDeviceStore(),
 	}
 	s.peerLimit = newPeerLimiter()
-	s.revokeLimit = newPeerLimiter()
+	s.revokeLimit = newFailLimiter()
 	s.claimLimit = newPeerLimiter()
 	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat, FetchSiteLogo: peer.SiteLogo}
 	s.peers.OnHandover = s.onHandover

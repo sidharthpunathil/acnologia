@@ -43,6 +43,43 @@ func (p *peerLimiter) take() bool {
 	return p.l.take(time.Now())
 }
 
+// failLimiter counts failed attempts per client address. Only failures
+// count, so junk from one address cannot lock out a caller that gets it
+// right, the way one shared counter would.
+type failLimiter struct {
+	mu sync.Mutex
+	by map[string]*windowLimit
+}
+
+// failLimiterMax caps the addresses a failLimiter tracks; it starts over
+// when full.
+const failLimiterMax = 4096
+
+func newFailLimiter() *failLimiter { return &failLimiter{by: map[string]*windowLimit{}} }
+
+// blocked reports whether the address has used up its failures.
+func (f *failLimiter) blocked(addr string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l := f.by[addr]
+	return l != nil && !l.ok(time.Now())
+}
+
+// fail counts one failure from the address.
+func (f *failLimiter) fail(addr string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l := f.by[addr]
+	if l == nil {
+		if len(f.by) >= failLimiterMax {
+			f.by = map[string]*windowLimit{}
+		}
+		l = &windowLimit{perMin: peerInviteLimit, perDay: peerInviteDaily}
+		f.by[addr] = l
+	}
+	l.take(time.Now())
+}
+
 // publicURL is how this server names itself to others: ACNOLOGIA_PUBLIC_URL,
 // else the URL a superadmin saved, else the request origin.
 func (s *Server) publicURL(r *http.Request) string {

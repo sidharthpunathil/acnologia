@@ -504,6 +504,45 @@ func TestRevokePushChecks(t *testing.T) {
 	}
 }
 
+// TestRevokePushJunkDoesNotBlockOwner: anyone can call the revoke route, so
+// junk from one address is limited for that address only and an owner's
+// signed revoke still gets through.
+func TestRevokePushJunkDoesNotBlockOwner(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	a.addKeys(map[string]any{"secret": "ownerkey1-handover"})
+	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover"})
+	link := b.connect(sh.Invite, 201)
+	ctx := context.Background()
+	ownerPriv, err := peer.Keys(ctx, a.st, a.api.Pool.Box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _, _ := peer.Self(ctx, a.st, a.api.Pool.Box, "test", a.srv.URL)
+	recv, recvPriv, _ := peer.Self(ctx, b.st, b.api.Pool.Box, "test", b.srv.URL)
+	post := func(from string, req peer.RevokeRequest) int {
+		body, _ := json.Marshal(req)
+		r := httptest.NewRequest("POST", "/api/peer/v1/revoke", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.RemoteAddr = from + ":4000"
+		w := httptest.NewRecorder()
+		b.srv.Config.Handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	last := 0
+	for i := 0; i < 30; i++ {
+		last = post("203.0.113.5", peer.SignRevoke(recvPriv, owner.ID, sh.Share.ID, recv.ID, time.Now()))
+	}
+	if last != 429 {
+		t.Fatalf("junk address not limited: %d", last)
+	}
+	if c := post("198.51.100.7", peer.SignRevoke(ownerPriv, owner.ID, sh.Share.ID, recv.ID, time.Now())); c != 200 {
+		t.Fatalf("owner's revoke: %d", c)
+	}
+	if n := len(handedKeys(t, b, link.ID)); n != 0 {
+		t.Fatalf("revoke left %d keys", n)
+	}
+}
+
 // TestHandoverWebhooksCarryNoSecret checks the new event types exist and
 // the handover events name keys by label only.
 func TestHandoverWebhooksCarryNoSecret(t *testing.T) {
