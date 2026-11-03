@@ -122,6 +122,15 @@ and limits) need `ANTHROPIC_API_KEY` in `.env`. Everything else works without
 it. Every setting is in [.env.example](.env.example) and
 [configuration](docs/configuration.md).
 
+## Deploy
+
+Run it anywhere a container or a Linux machine runs. Each guide ends with
+the server behind HTTPS and the access password, so it never comes up open.
+
+- [Every option](docs/deploy.md): one click on Render or Railway, Fly.io, or the container image
+- [Railway](docs/deploy-railway.md): a hosted deploy with a volume, step by step
+- [Any Linux server](docs/deploy-vps.md): one script with HTTPS, cloud-init, and one command setups on Hetzner and DigitalOcean
+
 ## Use it
 
 **Proxy.** Send the request you would send to the API, minus the key.
@@ -187,7 +196,7 @@ there are [SDKs](sdk/README.md) for the same twelve languages.
 - [Request flows](docs/flows.md): the proxy, leases, key states, MCP, sharing, the AI builder, offer refresh and the assistant
 - [Security model](docs/security.md): roles, hidden keys, what each kind of share can see, what the model can see
 - [Configuration](docs/configuration.md): every setting, self-hosting, backups, upgrading
-- [Deploying publicly](docs/deploy-railway.md): a hosted deploy behind the access password
+- [Deploying](docs/deploy.md): every way to run a public server, with [Railway](docs/deploy-railway.md) and [any Linux server](docs/deploy-vps.md) step by step
 - [HTTP API](docs/api.md): consumer error codes and every dashboard route with its role
 - [Command line](docs/cli.md) and [SDKs](docs/sdks.md)
 - [Provider specs](docs/providers.md): the spec format, offers, building one with AI
