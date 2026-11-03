@@ -101,18 +101,21 @@ func authPrefix(sv *store.Service) string {
 	return a.Prefix
 }
 
-func newUpstreamClient() *http.Client { return upstreamClientWith(nil) }
+// newUpstreamClient connects to any address the base URL resolves to but
+// link local and cloud metadata ones, checked on every connection. Loopback
+// and private addresses stay allowed for model servers on the same network.
+// An operator's HTTP(S)_PROXY still applies; the dialer then sees only the
+// proxy, so a literal metadata address in the URL is refused before it.
+func newUpstreamClient() *http.Client {
+	return upstreamClientWith(catalog.NoMetadata, catalog.GuardProxy(http.ProxyFromEnvironment))
+}
 
 // newPublicUpstreamClient connects only to public addresses, checked on the
 // resolved address of each connection. It never uses an environment proxy,
 // which would hide the real target from the check.
-func newPublicUpstreamClient() *http.Client { return upstreamClientWith(catalog.PublicOnly) }
+func newPublicUpstreamClient() *http.Client { return upstreamClientWith(catalog.PublicOnly, nil) }
 
-func upstreamClientWith(control func(network, address string, c syscall.RawConn) error) *http.Client {
-	proxy := http.ProxyFromEnvironment
-	if control != nil {
-		proxy = nil
-	}
+func upstreamClientWith(control func(network, address string, c syscall.RawConn) error, proxy func(*http.Request) (*url.URL, error)) *http.Client {
 	t := &http.Transport{
 		Proxy:                 proxy,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: control}).DialContext,
@@ -302,6 +305,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", itoa(retry))
 		writeJSON(w, 503, map[string]any{"error": apiError{Code: "service_unavailable",
 			Message: down.Service + " keeps failing, so Acnologia paused traffic to it"}, "retry_after_sec": retry})
+	case errors.Is(failErr, errUpstreamBlocked):
+		writeErr(w, 502, "upstream_blocked", "could not reach "+targets[len(targets)-1].Name+": "+catalog.ErrMetadataAddr)
 	case errors.Is(failErr, errUpstreamUnreachable):
 		writeErr(w, 502, "upstream_unreachable", "could not reach "+targets[len(targets)-1].Name)
 	case failErr != nil:
@@ -336,6 +341,10 @@ type capture struct {
 func (c capture) any() bool { return c.cacheKey != "" || c.idemKey != "" }
 
 var errUpstreamUnreachable = errors.New("upstream unreachable")
+
+// errUpstreamBlocked is a connection the dialer refused: the base URL
+// resolves to a link local or cloud metadata address.
+var errUpstreamBlocked = fmt.Errorf("%w: %s", errUpstreamUnreachable, catalog.ErrMetadataAddr)
 
 // proxyService tries the request on one service, rotating keys on failures
 // that are a key's fault.
@@ -408,12 +417,16 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			picked.Release()
 			msg := scrub(err.Error(), picked.Secret)
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + msg})
-			if r.Context().Err() == nil {
+			blocked := strings.Contains(msg, catalog.ErrMetadataAddr)
+			if r.Context().Err() == nil && !blocked {
 				s.Breakers.Failure(sv.ID, bcfg, "could not connect: "+msg)
 				verdict = true
 			}
 			if out.resp == nil {
 				out.err = errUpstreamUnreachable
+				if blocked {
+					out.err = errUpstreamBlocked
+				}
 			}
 			return out // relay an earlier answer instead of hiding it behind a 502
 		}

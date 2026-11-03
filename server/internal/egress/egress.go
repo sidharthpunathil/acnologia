@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
@@ -48,10 +49,13 @@ func Parse(raw string) (*url.URL, string, error) {
 }
 
 // NewTransport builds the upstream transport, through proxyURL when given.
+// Its dialer refuses link local and cloud metadata addresses. Through a
+// proxy it dials only the proxy, which then reaches whatever it can; a URL
+// naming such an address literally is still refused before the proxy.
 func NewTransport(proxyURL *url.URL) *http.Transport {
 	t := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		Proxy:                 catalog.GuardProxy(http.ProxyFromEnvironment),
+		DialContext:           catalog.UpstreamDialer().DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,
@@ -59,7 +63,7 @@ func NewTransport(proxyURL *url.URL) *http.Transport {
 		ResponseHeaderTimeout: 180 * time.Second,
 	}
 	if proxyURL != nil {
-		t.Proxy = http.ProxyURL(proxyURL)
+		t.Proxy = catalog.GuardProxy(http.ProxyURL(proxyURL))
 	}
 	return t
 }

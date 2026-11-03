@@ -92,6 +92,14 @@ must never see. Two flags enforce this:
   An Assistant tool call carries the superadmin's session but the model's
   choice, so it can never confirm a target. The dashboard shows a banner while
   hidden keys are paused.
+  A provider spec decides part of the target too: its `auth` and its health
+  check's `method`, `path`, `query` and `from_origin` say where a health check
+  sends each key. When anyone other than a superadmin acting in person (an
+  admin, the Assistant, an AI run, a rollback by an admin) publishes a spec
+  that changes any of those, every service of that provider loses
+  `target_trusted`, before the new spec goes live, and each one gets a
+  `service.untrust` audit entry naming what changed. A superadmin's own edit,
+  and a peer owner's spec pulled by a superadmin, keep it.
 
 ```mermaid
 flowchart TD
@@ -115,6 +123,12 @@ since nothing would mark them hidden once the key row is gone.
 
 A health check sends the secret to the service's base URL, so a key is only
 ever checked against its own service, and MCP `check_keys` needs a service.
+Its path may only add to that base URL: a spec's `health.path` must start with
+`/` and may not hold `.` or `..` segments, raw or percent encoded, and
+`health.from_origin` (which drops the base URL's path) is refused when the
+base URL has a path, except for the built in peer provider's manifest check.
+Both rules are checked when a spec is saved and again on every check, against
+the service's own base URL.
 
 ## Secrets at rest
 
@@ -339,6 +353,22 @@ flowchart LR
     Peer -->|"owner's URL only,<br/>SafeClient unless the link<br/>is marked private network"| Owner[owner Acnologia]
     AI -->|"redacted,<br/>web search and fetch<br/>run on Anthropic's side"| Claude[Claude API]
 ```
+
+A service's base URL is the admin's choice, so the proxy and health checks
+refuse to connect to link local addresses (169.254.0.0/16, fe80::/10), the
+cloud metadata endpoints (169.254.169.254, fd00:ec2::254, 100.100.100.200)
+and unspecified addresses, including IPv4 embedded in IPv6. The check runs in
+the dialer on the resolved address of every connection, so a host name that
+resolves there, now or after a DNS change, is refused too. The proxy answers
+`502 upstream_blocked` with "refusing to connect to a link-local or metadata
+address", and a health check records the same error. Loopback and private
+(RFC 1918, fc00::/7) addresses stay allowed, because self hosters proxy to
+model servers on their own machine or network; there is no setting for this.
+Behind an egress proxy or `HTTPS_PROXY` the dialer only sees the proxy, so
+Acnologia refuses a proxy at one of those addresses and a request URL that
+names one literally, but a host name is resolved by the proxy, which reaches
+whatever it can. Admins can add egress proxies; only use proxies that cannot
+reach your metadata service.
 
 Webhook deliveries carry no key and go through `SafeClient` unless
 `ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE=true`. Webhook URLs are encrypted at rest (Slack,
