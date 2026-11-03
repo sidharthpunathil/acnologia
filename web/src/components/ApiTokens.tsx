@@ -22,13 +22,14 @@ import { Section } from "@/components/acn/section";
 import { cx } from "@/utils/cx";
 import { Modal } from "./Modal";
 
-const SCOPES_FOR: Record<Role, TokenScope[]> = {
+/** The scopes a role may give a token, lowest first. */
+export const SCOPES_FOR: Record<Role, TokenScope[]> = {
   member: ["read"],
   admin: ["read", "write"],
   superadmin: ["read", "write", "admin"],
 };
 
-const SCOPE_HELP: Record<TokenScope, string> = {
+export const SCOPE_HELP: Record<TokenScope, string> = {
   read: "Acts as a member: reads services, keys, apps and activity.",
   write: "Acts as an admin: also manages services, keys, apps and providers.",
   admin: "Acts as a superadmin: also hidden keys, secret reveals, users and the audit log.",
@@ -39,7 +40,7 @@ const SCOPE_COLOR: Record<TokenScope, ChipColor> = { read: "neutral", write: "bl
 /** Table cells carry body type from the table styles; meta text sets its own. */
 const META = "font-mono text-caption-1-regular text-text-secondary";
 
-const EXPIRY: { days: number; label: string }[] = [
+export const EXPIRY: { days: number; label: string }[] = [
   { days: 0, label: "Never" },
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },

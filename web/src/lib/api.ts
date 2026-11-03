@@ -40,7 +40,7 @@ import type {
   ProviderSaveResult,
   ValidateResult,
 } from "./types";
-import type { MCPSettingsInput, MCPView } from "./types";
+import type { ControlMcpView, MCPSettingsInput, MCPView } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -281,4 +281,6 @@ export function errorMessage(err: unknown): string {
 export const mcpApi = {
   get: (appId: number) => request<MCPView>("GET", `/api/admin/apps/${appId}/mcp`),
   put: (appId: number, body: MCPSettingsInput) => request<MCPView>("PUT", `/api/admin/apps/${appId}/mcp`, body),
+  /** The control MCP (run the server from Claude): its URL, groups and tools. Any signed in user. */
+  control: () => request<ControlMcpView>("GET", "/api/admin/mcp/control"),
 };
