@@ -62,6 +62,8 @@ type Server struct {
 	routerH    http.Handler
 	// chatModel replaces the Claude call in tests.
 	chatModel func(ctx context.Context, system string, msgs []anthropic.BetaMessageParam, tools []anthropic.BetaToolUnionParam) (*anthropic.BetaMessage, error)
+	// chatSummary replaces the compaction summary call in tests.
+	chatSummary func(ctx context.Context, system, transcript string) (*anthropic.BetaMessage, error)
 	// chatWaitFor overrides how long a chat request waits for its turn (tests).
 	chatWaitFor time.Duration
 	// buildPoll overrides how often wait_for_build polls a run (tests).
@@ -207,6 +209,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/chat/threads/{id}/messages", s.chatSend)
 		r.Post("/chat/threads/{id}/confirm", s.chatConfirm)
 		r.Post("/chat/threads/{id}/answer", s.chatAnswer)
+		r.Post("/chat/threads/{id}/compact", s.chatCompactNow)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleAdmin))

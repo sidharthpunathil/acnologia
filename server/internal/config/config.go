@@ -33,7 +33,11 @@ type Config struct {
 	Version             string
 	AnthropicAPIKey     string
 	AIModel             string
-	GitHubToken         string
+	// ChatCompactTokens is the prompt size, in tokens, at which an
+	// Assistant thread is compacted. 0 means 60% of the model's context
+	// window.
+	ChatCompactTokens int
+	GitHubToken       string
 	// AccessPassword locks the whole site behind one shared password (the
 	// access gate) when set. RequireAccessPassword makes a missing or short
 	// one a startup error, so a public deploy can never come up unlocked.
@@ -91,6 +95,7 @@ func Load(version string) Config {
 		Version:               version,
 		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:               env("ACNOLOGIA_AI_MODEL", "claude-opus-5-5"),
+		ChatCompactTokens:     envInt("ACNOLOGIA_CHAT_COMPACT_TOKENS", 0),
 		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
 		AccessPassword:        Getenv("ACNOLOGIA_ACCESS_PASSWORD"),
 		RequireAccessPassword: envBool("ACNOLOGIA_REQUIRE_ACCESS_PASSWORD", false),
