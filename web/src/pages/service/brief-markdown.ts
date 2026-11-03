@@ -1,4 +1,4 @@
-import type { Provider, Service, SpecExample } from "../../lib/types";
+import type { GuideDoc, Provider, Service, SpecExample } from "../../lib/types";
 import { limitText, matchText, offersOf, priceText } from "../../lib/offers";
 
 /*
@@ -15,6 +15,8 @@ export interface BriefInput {
   host: string;
   /** A real app token to embed, or null for a placeholder. */
   token: string | null;
+  /** The provider's written guide, from the server. Generated guides add nothing the brief lacks. */
+  guide?: Pick<GuideDoc, "summary" | "endpoints" | "notes" | "generated"> | null;
 }
 
 export const TOKEN_PLACEHOLDER = "ACNOLOGIA_TOKEN";
@@ -40,7 +42,7 @@ function curlFor(base: string, ex: SpecExample, auth: string): string {
   return lines.join(" \\\n");
 }
 
-export function buildBrief({ service, provider, host, token }: BriefInput): string {
+export function buildBrief({ service, provider, host, token, guide }: BriefInput): string {
   const base = `${host.replace(/\/$/, "")}/proxy/${service.slug}`;
   const auth = token ?? `$${TOKEN_PLACEHOLDER}`;
   const name = service.name;
@@ -53,7 +55,9 @@ export function buildBrief({ service, provider, host, token }: BriefInput): stri
   out.push(
     `You can call the ${name} API through Acnologia, a key pool. Send every ${name} request to the base URL below with the Acnologia token. Acnologia adds a working ${name} key, rotates keys on rate limits and retries up to ${service.max_attempts} times. You never see or need a ${name} key, so do not ask for one.`,
   );
-  if (service.description) out.push("", `What ${name} does: ${service.description}`);
+  const written = guide && !guide.generated ? guide : null;
+  if (written?.summary) out.push("", written.summary);
+  else if (service.description) out.push("", `What ${name} does: ${service.description}`);
   out.push("");
 
   out.push("## Connection", "");
@@ -68,6 +72,20 @@ export function buildBrief({ service, provider, host, token }: BriefInput): stri
   out.push(`- Do not send ${name}'s own auth header or key parameter. Acnologia sets it.`);
   if (provider?.docs_url) out.push(`- ${name} API reference: ${provider.docs_url}`);
   out.push("");
+
+  if (written?.endpoints?.length) {
+    out.push("## Endpoints", "");
+    for (const e of written.endpoints) {
+      out.push(`### ${e.name}`, "", `${ic(`${(e.method || "GET").toUpperCase()} ${base}${e.path}`)}${e.description ? `: ${e.description}` : ""}`, "");
+      for (const p of e.params ?? []) {
+        const bits = [p.in, p.type, p.required ? "required" : "optional"].filter(Boolean).join(", ");
+        out.push(`- ${ic(p.name)} (${bits})${p.description ? `: ${p.description}` : ""}`);
+      }
+      if (e.params?.length) out.push("");
+      if (e.body !== undefined && e.body !== null) out.push("```json", JSON.stringify(e.body, null, 2), "```", "");
+      if (e.response) out.push(`Response: ${e.response}`, "");
+    }
+  }
 
   if (examples.length) {
     out.push("## Endpoints with ready examples", "");
@@ -99,6 +117,12 @@ export function buildBrief({ service, provider, host, token }: BriefInput): stri
     if (quota.unit) out.push(`- Usage is counted in ${quota.unit}.`);
     if (quota.free_tier) out.push(`- Free tier: ${quota.free_tier}.`);
     out.push(`- Keep calls purposeful: every request spends quota from a shared pool.`, "");
+  }
+
+  if (written?.notes?.length) {
+    out.push("## Notes", "");
+    for (const n of written.notes) out.push(`- ${n}`);
+    out.push("");
   }
 
   out.push("## Responses and errors", "");

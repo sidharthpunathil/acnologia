@@ -22,13 +22,14 @@ the rules that apply to it, then lists the dashboard API.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/v1/services` | Services the token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`. |
+| `GET /api/v1/services` | Services the token may use, with `available`, `base_url`, `auth` `{type, name, prefix}` and `guide_url`. |
+| `GET /api/v1/services/{slug}/guide` | The service's usage guide, only for a service the token may use (403 `service_not_allowed` otherwise). `Accept: text/markdown` or `?format=md` returns raw Markdown; otherwise `{markdown, guide, generated}` (see [usage guides](providers.md#usage-guides)). |
 | `GET /api/v1/me` | The token's own access: `{app: {id, name}, limits: {daily_requests, monthly_requests, daily_budget, monthly_budget}, usage: {today_requests, today_cost, month_requests, month_cost, last_used_at, limit_hit}, limit_hit, services: [{slug, name, provider, category, available, logo_url}], share}` (`logo_url` is always null). `share` is null for an ordinary app; for a share's token it is `{id, name, owner: {name, id}, owner_name, owner_id, recipient, label, status, mode, ends_at}`. A share token whose share is paused, expired or revoked still gets 200 here with that `status` and no services. `available` counts keys free right now for a share's token; for an ordinary app it is 1 or 0, since apps never learn pool sizes. |
 | `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec, exclusive}`. Apps in mode `lease` or `both`. `exclusive: true` keeps the key from every other caller until you report or the lease expires. |
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. |
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. |
 | `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id`, `X-Acnologia-Attempts`, `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. |
-| `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Tools depend on the app's tool sets: core (`list_services`, `pool_status`, `get_key`, `renew_key`, `report_key`, `proxy_request`), service tools generated from provider examples, insights (`list_keys`, `key_details`, `service_stats`) and manage (`check_keys`, `set_key_status`, `add_keys`). Also resources and prompts. |
+| `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Tools depend on the app's tool sets: core (`list_services`, `pool_status`, `service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`), service tools generated from provider examples, insights (`list_keys`, `key_details`, `service_stats`) and manage (`check_keys`, `set_key_status`, `add_keys`). Also resources (including `acnologia://services/{slug}/guide`, the usage guide as Markdown) and prompts. |
 
 Status codes an app should handle:
 
@@ -143,10 +144,13 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /apps/{id}/rotate-token` | a | Kept for compatibility: creates one new token and revokes all the app's other tokens. Returns `{app, token, app_token}`; the token is shown once. Clears `lease_hidden` unless a superadmin rotates. |
 | `DELETE /apps/{id}` | a | Delete the app and its leases. |
 | `GET /providers`, `GET /providers/{slug}` | m | Provider specs, versions and metadata. Specs may carry `offers` (prices, free allowances and limits per endpoint; see [providers.md](providers.md#offers)). `refresh` (absent when never checked) is `{checked_at, trigger, outcome, run_id, changed_at, changed_version, pending_review}` from the provider refresh. |
+| `GET /providers/{slug}/guide` | m | The provider's usage guide: `{markdown, guide, generated}`. `guide` is the JSON form `{provider, name, service, summary, generated, proxy_base, docs_url, website, endpoints, examples: [{name, method, path, query, body, curl}], limits, errors, notes, markdown}`; `generated` is true when the spec has no `guide` and one was assembled from its examples and offers. `?service=<slug>` fills the proxy URL for a service built on this provider (400 otherwise). `?format=md` or `Accept: text/markdown` returns the Markdown alone. |
+| `GET /services/{id}/guide` | m | The same for one service, with its real proxy URL (for a service another server shares, the owner's provider describes it). |
 | `POST /providers/validate` | m | Validate a spec and run its fixture tests without saving. |
 | `POST /providers`, `PUT /providers/{slug}` | a | Create or publish a new version of a provider. |
 | `DELETE /providers/{slug}` | a | Delete an unused, non built-in provider. |
 | `POST /providers/{slug}/rollback` | a | Publish an earlier version again. |
+| `POST /providers/{slug}/guide/generate` | a | Write or rewrite the provider's usage guide with AI from its docs URL, examples and offers, and save it as a new version (source `ai`). Optional body `{instruction}` (up to 4,000 characters). Synchronous, up to 5 minutes. Answers `{provider, updated, verified, summary, guide, markdown, model, cost_usd}`; `updated: false` when nothing changed. 503 `ai_disabled` without AI, 422 `invalid_spec`, 400 `ai_error`. |
 | `POST /providers/{slug}/live-check` | a | Run the health check and safe GET examples with a key you supply. |
 | `PUT`, `DELETE /providers/{slug}/logo`, `POST /providers/{slug}/logo/fetch` | a | Upload, remove, or discover a logo from the website. |
 | `PUT`, `DELETE /services/{id}/logo` | a | Service logo. |
@@ -169,7 +173,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /ai/runs/{id}/cancel`, `POST /ai/runs/{id}/publish` | a | Cancel; publish a run waiting for review. |
 | `DELETE /ai/runs/{id}` | a | Delete a finished run and its steps. 409 `run_busy` while it is queued, running, testing or publishing. Audited. Spend already recorded stays in Usage. |
 | `DELETE /ai/runs` | a | Clear finished runs: deletes every failed, cancelled and published run and returns `{deleted}`. Runs waiting for review are kept. |
-| `POST /ai/assist` | a | "Fill with AI" for dashboard forms. |
+| `POST /ai/assist` | a | "Fill with AI" for dashboard forms. `form: "guide"` with `current: {provider: <slug>, ...guide}` drafts a provider's usage guide fields. |
 | `GET /chat/threads`, `POST /chat/threads` | m | Your assistant conversations (never other users'), and whether AI is enabled. |
 | `GET /chat/threads/{id}`, `DELETE /chat/threads/{id}` | m | One conversation's transcript; delete it. |
 | `POST /chat/threads/{id}/messages` | m | `{text}`, up to 1 MB. Keys in the text go to the thread's vault before anything reaches Claude. Runs the assistant until it answers; returns the new transcript items. 409 while a previous message is still running, 503 when AI is off. |

@@ -246,7 +246,7 @@ func (cs *chatSession) simple(method, path string, body any, summary string, sha
 
 func init() {
 	none := map[string]any{}
-	defer func() { chatTools = append(chatTools, opsTools()...) }()
+	defer func() { chatTools = append(append(chatTools, opsTools()...), guideTools()...) }()
 	chatTools = []*chatTool{
 		{
 			Name: "overview", Role: store.RoleMember, Props: none,

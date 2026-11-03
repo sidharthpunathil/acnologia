@@ -75,6 +75,9 @@ var coreTools = []mcpTool{
 			"message":         str("Error text from the provider"),
 			"rotate":          map[string]any{"type": "boolean", "description": "Return a new lease when the outcome is a failure"},
 		}, "lease_id", "outcome")},
+	{Name: "service_guide", Set: setCore, Annotations: readOnly("Service guide"),
+		Description: "How to call a service through Acnologia, as Markdown: endpoints with parameters, example requests, limits and pricing, and how errors are handled. Read it before calling a service you have not used.",
+		InputSchema: obj(map[string]any{"service": str("Service slug")}, "service")},
 	{Name: "proxy_request", Set: setCore, Annotations: map[string]any{"title": "Call a service", "openWorldHint": true},
 		Description: "Call any endpoint of a service through Acnologia. Acnologia picks a key, injects it, and retries with the next key on rate limits. The key is never shown to you.",
 		InputSchema: obj(map[string]any{
@@ -494,6 +497,8 @@ func (s *Server) mcpResources(ctx context.Context, a *store.App) []map[string]an
 		if a.CanUse(sv.Slug) {
 			out = append(out, map[string]any{"uri": "acnologia://services/" + sv.Slug, "name": sv.Slug, "title": sv.Name,
 				"mimeType": "application/json", "description": "How to call " + sv.Name + " through Acnologia"})
+			out = append(out, map[string]any{"uri": "acnologia://services/" + sv.Slug + "/guide", "name": sv.Slug + "_guide", "title": sv.Name + " guide",
+				"mimeType": "text/markdown", "description": "Usage guide for " + sv.Name + ": endpoints, examples, limits and errors"})
 		}
 	}
 	return out
@@ -517,6 +522,13 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 		}
 		b, _ := json.MarshalIndent(res, "", "  ")
 		return text("application/json", string(b)), nil
+	case strings.HasPrefix(uri, "acnologia://services/") && strings.HasSuffix(uri, "/guide"):
+		slug := strings.TrimSuffix(strings.TrimPrefix(uri, "acnologia://services/"), "/guide")
+		d, err := s.mcpServiceGuide(ctx, a, slug)
+		if err != nil {
+			return nil, fmt.Errorf("no resource %s", uri)
+		}
+		return text("text/markdown", d.Render(false)), nil
 	case strings.HasPrefix(uri, "acnologia://services/"):
 		slug := strings.TrimPrefix(uri, "acnologia://services/")
 		if !a.CanUse(slug) {
@@ -537,6 +549,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 			"quota_unit": spec.Quota.Unit, "max_concurrency_per_key": sv.MaxConcurrency, "examples": examples,
 			"offers":      offerRows(spec.Offers),
 			"how_to_call": "Use proxy_request with service=" + sv.Slug + " and a path, or the generated tool for an example. Acnologia adds the key.",
+			"guide":       "acnologia://services/" + sv.Slug + "/guide",
 		}
 		if p, err := s.Store.GetProvider(ctx, sv.DocProvider()); err == nil && strings.HasPrefix(p.DocsURL, "https://") {
 			doc["docs_url"] = p.DocsURL
@@ -567,7 +580,7 @@ func (s *Server) mcpGetPrompt(ctx context.Context, a *store.App, st store.MCPSet
 			return nil, fmt.Errorf("this app cannot use service %q", svc)
 		}
 		return msg(fmt.Sprintf("You can call the %q service through Acnologia, which holds a pool of API keys and rotates them on rate limits. "+
-			"First read the resource acnologia://services/%s to see its examples. Prefer the generated tools named %s_*, or proxy_request with service=%q. "+
+			"First call service_guide with service=%[4]q (or read acnologia://services/%[1]s/guide) to learn its endpoints. Prefer the generated tools named %[3]s_*, or proxy_request with service=%[4]q. "+
 			"Never ask for or print an API key. If a call returns a rate limit, try again: Acnologia already rotated keys for you. "+
 			"Only lease a key with get_key when you must call the provider yourself, and always call report_key afterwards.", svc, svc, toolName(svc), svc)), nil
 	case "key_health_report":

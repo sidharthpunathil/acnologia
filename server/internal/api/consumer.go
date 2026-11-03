@@ -49,6 +49,7 @@ func (s *Server) v1Services(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := []map[string]any{}
+	base := s.publicURL(r)
 	for _, sv := range svcs {
 		if !a.CanUse(sv.Slug) {
 			continue
@@ -57,7 +58,8 @@ func (s *Server) v1Services(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"slug": sv.Slug, "name": sv.Name, "provider": sv.Provider, "category": sv.Category,
 			"available": sv.KeyCounts.Available > sv.KeyCounts.Busy, "base_url": sv.BaseURL,
-			"auth": authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)},
+			"auth":      authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)},
+			"guide_url": guideURL(base, sv.Slug),
 		})
 	}
 	writeJSON(w, 200, map[string]any{"services": out})

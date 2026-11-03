@@ -43,12 +43,14 @@ import { PageSkeleton } from "@/components/acn/page-skeleton";
 import { Section } from "@/components/acn/section";
 import { cx } from "@/utils/cx";
 import { OfferCheckButton, OfferCheckedLine } from "../../components/OfferCheck";
-import { ConnectionTab, ExamplesTab, HealthTab, JsonTab, OffersTab, OutcomeBadge, RulesTab, TestsTab } from "./SpecTabs";
+import { ConnectionTab, ExamplesTab, GuideTab, HealthTab, JsonTab, OffersTab, OutcomeBadge, RulesTab, TestsTab } from "./SpecTabs";
 import { RouteButton, SourceBadge } from "./ProvidersPage";
 import { AddServiceModal } from "../AddServiceModal";
 import { LostPathArt } from "@/components/foundations/illustrations";
+import { GuideView } from "../../components/GuideView";
+import { GuideAiButton, GuideAiProgress, useGuideAi } from "./GuideAi";
 
-type TabId = "overview" | "connection" | "offers" | "rules" | "health" | "examples" | "tests" | "json" | "versions" | "live";
+type TabId = "overview" | "connection" | "offers" | "rules" | "health" | "examples" | "tests" | "guide" | "json" | "versions" | "live";
 
 type Validation =
   | { state: "idle" }
@@ -220,6 +222,10 @@ function OverviewTab({
       setDraft((d) => {
         const next = { ...d } as Record<string, unknown>;
         for (const k of PROVIDER_AI_FIELDS) if (typeof fields[k] === "string") next[k] = fields[k];
+        // The fill may write a usage guide, at the top level or inside a spec.
+        const spec = fields.spec && typeof fields.spec === "object" ? (fields.spec as Partial<ProviderSpec>) : null;
+        const guide = fields.guide ?? spec?.guide;
+        if (guide && typeof guide === "object") next.spec = { ...d.spec, guide: guide as ProviderSpec["guide"] };
         return next as unknown as ProviderInput;
       }),
   );
@@ -638,6 +644,7 @@ export function ProviderEditorPage() {
   }, [isNew, slugParam, load]);
 
   const dirty = !!draft && JSON.stringify(draft) !== baseline;
+  const guideAi = useGuideAi(slugParam, dirty, () => void load());
 
   // Warn before leaving the tab with unsaved edits.
   useEffect(() => {
@@ -749,6 +756,7 @@ export function ProviderEditorPage() {
     { id: "health", label: "Health check" },
     { id: "examples", label: "Examples", count: draft.spec.examples?.length ?? 0 },
     { id: "tests", label: "Tests", count: draft.spec.tests?.length ?? 0 },
+    { id: "guide", label: "Guide" },
     { id: "json", label: "JSON" },
     ...(!isNew ? [{ id: "versions" as TabId, label: "Versions", count: detail?.versions?.length }, { id: "live" as TabId, label: "Live check" }] : []),
   ];
@@ -833,6 +841,16 @@ export function ProviderEditorPage() {
               </TabList>
             </div>
             <TabPanel id="overview">
+              {!isNew && detail && detail.source !== "builtin" && !detail.spec?.guide && (
+                <Callout tone="neutral" className="mb-5" action={<GuideAiButton ai={guideAi} hasGuide={false} />}>
+                  This provider has no usage guide yet, so apps and agents get one generated from its examples. A written guide explains endpoints and parameters.
+                </Callout>
+              )}
+              {guideAi.run && (
+                <div className="mb-5">
+                  <GuideAiProgress ai={guideAi} />
+                </div>
+              )}
               <OverviewTab draft={draft} setDraft={setDraft} isNew={isNew} readOnly={readOnly} detail={detail} errors={errors} />
             </TabPanel>
             <TabPanel id="connection">
@@ -865,6 +883,23 @@ export function ProviderEditorPage() {
             </TabPanel>
             <TabPanel id="tests">
               <TestsTab {...specTab} report={report} />
+            </TabPanel>
+            <TabPanel id="guide">
+              <div className="flex flex-col gap-6">
+                {dirty && !isNew && (
+                  <Callout tone="warning">The guide below is the saved version. Save to see your changes in it.</Callout>
+                )}
+                <GuideAiProgress ai={guideAi} />
+                {!isNew && (
+                  <GuideView
+                    actions={<GuideAiButton ai={guideAi} hasGuide={!!detail?.spec?.guide} />}
+                    description="What an app or AI agent reads before calling this provider: the proxy URL, endpoints, examples, limits and how Acnologia handles errors. Copy for LLM copies it as Markdown."
+                    fetcher={() => api.providerGuide(draft.slug)}
+                    fetchKey={`${draft.slug}:${detail?.version ?? 0}`}
+                  />
+                )}
+                <GuideTab {...specTab} provider={detail ? draft.slug : undefined} />
+              </div>
             </TabPanel>
             <TabPanel id="json">
               <JsonTab {...specTab} />

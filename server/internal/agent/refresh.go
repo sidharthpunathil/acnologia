@@ -118,6 +118,28 @@ type refreshLoop struct {
 	// check validates a submit; it returns the problems and whether the
 	// submit was accepted.
 	check func(raw []byte) (string, bool)
+	// feature picks the model and labels the ledger rows; empty is the
+	// refresh. The caps default to the refresh caps when zero.
+	feature                                string
+	maxTurns, searches, fetches, maxTokens int
+}
+
+func (l *refreshLoop) defaults() {
+	if l.feature == "" {
+		l.feature = FeatureRefresh
+	}
+	if l.maxTurns == 0 {
+		l.maxTurns = RefreshMaxTurns
+	}
+	if l.searches == 0 {
+		l.searches = RefreshMaxSearches
+	}
+	if l.fetches == 0 {
+		l.fetches = RefreshMaxFetches
+	}
+	if l.maxTokens == 0 {
+		l.maxTokens = refreshMaxTokens
+	}
 }
 
 func (a *Agent) refreshProgress(ctx context.Context, f func(string)) func(string) {
@@ -132,7 +154,8 @@ func (a *Agent) refreshProgress(ctx context.Context, f func(string)) func(string
 // tool until a submit is accepted, the turns run out or the budget does. It
 // returns the model that answered and what the calls cost.
 func (a *Agent) runRefreshLoop(ctx context.Context, l refreshLoop) (string, float64, error) {
-	model := a.ModelFor(ctx, FeatureRefresh).Model
+	l.defaults()
+	model := a.ModelFor(ctx, l.feature).Model
 	cost := 0.0
 	system := []anthropic.BetaTextBlockParam{{Text: l.guide, CacheControl: anthropic.NewBetaCacheControlEphemeralParam()}}
 	if r := a.rulesBlock(ctx); r != "" {
@@ -141,18 +164,18 @@ func (a *Agent) runRefreshLoop(ctx context.Context, l refreshLoop) (string, floa
 	messages := []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(l.task))}
 	tool := l.tool
 	tools := []anthropic.BetaToolUnionParam{
-		{OfWebSearchTool20260209: &anthropic.BetaWebSearchTool20260209Param{MaxUses: anthropic.Int(RefreshMaxSearches)}},
-		{OfWebFetchTool20260209: &anthropic.BetaWebFetchTool20260209Param{MaxUses: anthropic.Int(RefreshMaxFetches), MaxContentTokens: anthropic.Int(refreshFetchTokens)}},
+		{OfWebSearchTool20260209: &anthropic.BetaWebSearchTool20260209Param{MaxUses: anthropic.Int(int64(l.searches))}},
+		{OfWebFetchTool20260209: &anthropic.BetaWebFetchTool20260209Param{MaxUses: anthropic.Int(int64(l.fetches)), MaxContentTokens: anthropic.Int(refreshFetchTokens)}},
 		{OfTool: &tool},
 	}
 	submits := 0
-	for turn := 1; turn <= RefreshMaxTurns; turn++ {
+	for turn := 1; turn <= l.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return model, cost, err
 		}
 		resp, err := a.client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
 			Model:     anthropic.Model(model),
-			MaxTokens: refreshMaxTokens,
+			MaxTokens: int64(l.maxTokens),
 			System:    system,
 			Messages:  messages,
 			Tools:     tools,
@@ -160,7 +183,7 @@ func (a *Agent) runRefreshLoop(ctx context.Context, l refreshLoop) (string, floa
 		if err != nil {
 			return model, cost, refreshCallErr(err)
 		}
-		cost += a.Record(ctx, FeatureRefresh, l.caller, l.ref, resp)
+		cost += a.Record(ctx, l.feature, l.caller, l.ref, resp)
 		if string(resp.Model) != "" {
 			model = string(resp.Model)
 		}
@@ -222,7 +245,7 @@ func (a *Agent) runRefreshLoop(ctx context.Context, l refreshLoop) (string, floa
 			messages = append(messages, anthropic.NewBetaUserMessage(blocks...))
 		}
 	}
-	return model, cost, fmt.Errorf("stopped after %d turns without a valid %s", RefreshMaxTurns, l.what)
+	return model, cost, fmt.Errorf("stopped after %d turns without a valid %s", l.maxTurns, l.what)
 }
 
 // checkOffers parses a submit_offers call and validates the offers inside

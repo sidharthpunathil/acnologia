@@ -6,6 +6,8 @@ import type { Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
 import { docProviderSlug } from "../../lib/peerProviders";
 import { CodeBlock } from "@/components/acn";
+import { api } from "../../lib/api";
+import { GuideView } from "../../components/GuideView";
 import { RadioGroup } from "@/components/base/radio/radio";
 import { RadioCard } from "@/components/base/radio/radio-card";
 import { Select, SelectItem } from "@/components/base/select/select";
@@ -369,6 +371,12 @@ export function IntegratePanel({ service }: { service: Service }) {
         {proxyOnly &&
           ` ${service.peer_name || "Another server"} shares this service, so it is proxy only: requests go through that server, which adds its own key.`}
       </p>
+
+      <GuideView
+        description={`How to call ${service.name} through this server's proxy: endpoints, examples, limits and errors. Copy for LLM copies it as Markdown for any model or agent.`}
+        fetcher={() => api.serviceGuide(service.id)}
+        fetchKey={`${service.id}:${service.slug}`}
+      />
     </div>
   );
 }

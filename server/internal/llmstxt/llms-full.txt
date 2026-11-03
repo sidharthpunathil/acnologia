@@ -4,6 +4,8 @@
 
 Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
 
+Before calling a service you have not used, fetch its usage guide: `GET /api/v1/services/{slug}/guide` (or the `service_guide` MCP tool). It lists the endpoints worth knowing with their parameters, ready curl examples through the proxy, limits and pricing, and how errors are handled. Every entry of `GET /api/v1/services` carries its `guide_url`.
+
 Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code": "string", "message": "string"}}` with a matching HTTP status.
 
 ## Authentication
@@ -55,7 +57,8 @@ Authorization: Bearer acn_xxx
       "category": "search",
       "available": true,
       "base_url": "https://serpapi.com",
-      "auth": {"type": "query", "name": "api_key"}
+      "auth": {"type": "query", "name": "api_key"},
+      "guide_url": "https://acn.example.com/api/v1/services/serpapi/guide"
     },
     {
       "slug": "elevenlabs",
@@ -64,11 +67,47 @@ Authorization: Bearer acn_xxx
       "category": "voice",
       "available": false,
       "base_url": "https://api.elevenlabs.io",
-      "auth": {"type": "header", "name": "xi-api-key"}
+      "auth": {"type": "header", "name": "xi-api-key"},
+      "guide_url": "https://acn.example.com/api/v1/services/elevenlabs/guide"
     }
   ]
 }
 ```
+
+## GET /api/v1/services/{slug}/guide
+
+The usage guide for one service the token may use (403 `service_not_allowed` otherwise). Read it before your first call to a service.
+
+```http
+GET /api/v1/services/serpapi/guide
+Authorization: Bearer acn_xxx
+Accept: text/markdown
+```
+
+With `Accept: text/markdown` or `?format=md` the answer is the guide as Markdown. Otherwise it is JSON:
+
+```json
+{
+  "markdown": "# SerpAPI usage guide\n...",
+  "generated": false,
+  "guide": {
+    "provider": "serpapi", "name": "SerpAPI", "service": "serpapi",
+    "summary": "Google and 50+ search engines as JSON.",
+    "generated": false,
+    "proxy_base": "https://acn.example.com/proxy/serpapi",
+    "docs_url": "https://serpapi.com/search-api",
+    "endpoints": [{"name": "Google search", "method": "GET", "path": "/search.json",
+                   "description": "...", "params": [{"name": "q", "in": "query", "type": "string", "required": true, "description": "..."}],
+                   "body": null, "response": "..."}],
+    "examples": [{"name": "Google search", "method": "GET", "path": "/search.json", "query": {"q": "coffee"}, "curl": "curl ..."}],
+    "limits": ["Free tier: ..."],
+    "errors": ["Rate limits (...): Acnologia cools the key down and retries on the next key ..."],
+    "notes": ["..."]
+  }
+}
+```
+
+The guide covers: how to call the service through the proxy (`proxy_base` plus the provider's own path, your app token, never a provider key), the endpoints with a parameter table and an example body, curl examples, limits and pricing from the provider's offers, how Acnologia handles this provider's errors and what you see, notes, and a link to the provider's docs. `generated: true` means the provider has no written guide and this one was assembled from its examples and offers: read the provider's docs for anything it does not cover.
 
 `available: false` means no key can be handed out right now (all cooling down, exhausted, invalid, or busy at their concurrency limit).
 
@@ -320,6 +359,7 @@ Each app chooses its tool sets on the dashboard Apps page. Core, service tools, 
 |---|---|---|---|
 | core | `list_services` | services the token may use, with availability | none |
 | core | `pool_status` | whether a service has a key available now | `service` |
+| core | `service_guide` | the service's usage guide as Markdown; read it before calling a service you have not used | `service` |
 | core | `get_key` | lease a key (lease mode apps only); always follow with `report_key` | `service`, optional `exclusive`, `exclude_key_ids`, `ttl_sec` (max 86400), `wait_sec` (0 to 60) |
 | core | `renew_key` | extend a lease for a long job | `lease_id`, optional `ttl_sec` |
 | core | `report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome` (`ok`, `rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned`, `error`), optional `retry_after_sec`, `message`, `rotate` |
@@ -328,7 +368,7 @@ Each app chooses its tool sets on the dashboard Apps page. Core, service tools, 
 | insights | `list_keys`, `key_details`, `service_stats` | read only key health, quota and recent events, never a secret | `service`, `validity`, `key_id` |
 | manage | `check_keys`, `set_key_status`, `add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
 
-Resources: `acnologia://services`, `acnologia://services/{slug}` and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `get_key` exclusive by default, add instructions and hide single tools.
+Resources: `acnologia://services`, `acnologia://services/{slug}`, `acnologia://services/{slug}/guide` (the usage guide, `text/markdown`) and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `get_key` exclusive by default, add instructions and hide single tools.
 
 Example call:
 

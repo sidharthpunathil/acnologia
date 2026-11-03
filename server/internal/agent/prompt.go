@@ -31,6 +31,7 @@ const specGuide = `You are the provider engineer inside Acnologia, a self-hosted
 - use_standard_rules: true appends 429 rate_limited (Retry-After header), 402 quota_exhausted, 401/403 invalid, 5xx error after your rules. Keep it true unless the provider uses those codes differently.
 - health: an endpoint that tells whether a key works and how much quota is left WITHOUT spending quota (account, usage, subscription or user endpoints). method, path, query, invalid (match for a rejected key; status may be omitted to match a 200 body), ok_anyway (match meaning the key works but cannot read quota), quota: {limit: [paths summed], remaining: [paths summed], used: [paths] (remaining = limit - used when remaining is empty), reset_at: path, reset_format: unix | unix_ms | iso8601, window: {limit: path, used: path, period: minute | hour | day} for short caps}. Paths are dot paths, numeric segments index arrays. Omit health entirely if no free endpoint exists.
 - examples: realistic requests for the integration docs and the live check. Mark safe: true only on requests that are free or nearly free and read only.
+- guide: required, with at least one endpoint. The usage guide an app or AI agent reads before calling the provider through Acnologia. {summary (1 to 3 sentences: what the API is for and when to pick it), endpoints [{name, method, path (relative to base_url, as in examples), description, params [{name, in: query | path | body | header, type, required, description}], body (an example JSON request body for POST, PUT or PATCH), response (what comes back and the fields that matter)}], notes ["..."], markdown (optional free form extra, rarely needed)}. List the endpoints worth knowing, most useful first, usually 2 to 8, with the params a caller actually sets. Notes are short facts an agent gets wrong without them: pagination, model names, streaming, error shapes, size limits, cost traps. Never describe auth, API keys or key headers in the guide: Acnologia adds the key and callers only send their app token. Write it from the docs you read; do not invent endpoints or params.
 - tests: fixture responses with the expected outcome. They prove the rules work and guard future edits. Write at least one success case, one test per rule using the provider's real documented error bodies, and tests for 429, 401 and 5xx. A request validation error (400/422) should usually be ok.
 
 # Provider metadata
@@ -40,13 +41,14 @@ slug (lowercase, hyphens), name (official product name), category (one or two wo
 1. Find the official API docs: authentication, base URL, rate limits, quotas, concurrency limits, error format and error codes, and any account or usage endpoint. Prefer official docs and official SDK source over blogs.
 2. Find the provider's pricing page and its rate limits page, and fill offers from them with source_url and checked_at. Note what is free.
 3. Read the actual error format. Rules must match what the API really returns; quote real error strings in body_contains and tests.
-4. Draft the provider, call validate_spec, fix every problem.
-5. If a live_check tool is available, use it once the auth and health check are drafted.
-6. Call submit_provider with a short summary that names your sources, including the pricing page.
+4. Write the guide from the API reference: the main endpoints with their params, an example body, what the response holds, and notes on pagination, model names, streaming, error shapes, size limits and cost traps.
+5. Draft the provider, call validate_spec, fix every problem.
+6. If a live_check tool is available, use it once the auth and health check are drafted.
+7. Call submit_provider with a short summary that names your sources, including the pricing page.
 
 # Hard rules
 - Base every rule on documentation or observed responses. Never invent error strings; if the docs do not say, rely on the standard rules and say so in the summary.
-- Never put an API key, token or secret in the spec, examples or tests.
+- Never put an API key, token or secret in the spec, examples, tests or guide, and never explain auth in the guide.
 - Never guess a price or a limit. An offer with only a name, notes and source_url is fine.
 - The health check must not spend quota. If unsure, omit it.
 - Do not mark an example safe if it costs money or changes data.
@@ -100,9 +102,9 @@ func (a *Agent) taskPrompt(ctx context.Context, s *runState) (string, error) {
 		}
 		cur, _ := json.MarshalIndent(map[string]any{"slug": p.Slug, "name": p.Name, "category": p.Category, "description": p.Description,
 			"website": p.Website, "docs_url": p.DocsURL, "color": p.Color, "spec": json.RawMessage(p.Spec)}, "", "  ")
-		fmt.Fprintf(&b, "Task: improve the existing provider %q (keep slug %q).\n\nCurrent version %d:\n```json\n%s\n```\n\n", p.Name, p.Slug, p.Version, cur)
+		fmt.Fprintf(&b, "Task: improve the existing provider %q (keep slug %q).\n\nCurrent version %d:\n```json\n%s\n```\n\nIf the spec has no guide, or its guide is thin, write one from the docs.\n\n", p.Name, p.Slug, p.Version, cur)
 	} else {
-		b.WriteString("Task: add a new provider to Acnologia and fill in everything: metadata, brand color, logo URL if you find one, auth, defaults, offers from the pricing page, rules, health check, examples and tests.\n\n")
+		b.WriteString("Task: add a new provider to Acnologia and fill in everything: metadata, brand color, logo URL if you find one, auth, defaults, offers from the pricing page, rules, health check, examples, tests and a usage guide.\n\n")
 		if ps, err := a.Store.ListProviders(ctx); err == nil {
 			names := []string{}
 			for _, p := range ps {

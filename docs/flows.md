@@ -265,12 +265,19 @@ password is changed (other sessions) or reset by a superadmin (all sessions).
 responses. Tools map onto the consumer API and the proxy, with the same app
 token rules. Each app picks its tool sets in the dashboard (`GET`/`PUT
 /api/admin/apps/{id}/mcp`): **core** (`list_services`, `pool_status`,
-`get_key`, `renew_key`, `report_key`, `proxy_request`), **service tools**
+`service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`), **service tools**
 generated from each provider's examples, read only **insights**
 (`list_keys`, `key_details`, `service_stats`) and **manage** (`check_keys`,
 `set_key_status`, `add_keys`). Core, service tools, resources and prompts are
 on by default. Clients that only speak stdio can use `acnologia mcp --url ...
 --token acn_...` as a bridge.
+
+The initialize instructions tell the agent to read `service_guide` before
+calling a service it has not used. The same guide is the resource
+`acnologia://services/{slug}/guide` (one per allowed service, `text/markdown`),
+and over HTTP `GET /api/v1/services/{slug}/guide`. All three apply the same
+allow check as the proxy, so an app (or a share's token) reads guides only for
+services it may call.
 
 ```mermaid
 sequenceDiagram
@@ -283,6 +290,8 @@ sequenceDiagram
     M-->>Ag: server info, capabilities
     Ag->>M: tools/list
     M-->>Ag: the tools this app's settings allow
+    Ag->>M: tools/call service_guide {service}
+    M-->>Ag: the usage guide as Markdown<br/>(endpoints, params, limits, errors)
     Ag->>M: tools/call get_key {service}
     M->>C: issue lease (same checks as /api/v1/lease)
     M-->>Ag: lease JSON
@@ -388,7 +397,7 @@ sequenceDiagram
         T-->>R: results
         R->>R: record every step for the live UI
         opt submit_provider (max 3)
-            R->>R: re-validate and re-run fixture tests itself
+            R->>R: re-validate and re-run fixture tests itself<br/>and require a usage guide with endpoints
         end
     end
     alt accepted and auto publish
@@ -423,6 +432,22 @@ ones. The test key is encrypted while the run is active and wiped when it ends.
 Every request to Claude passes the redactor first, so the model sees the test
 key only as a placeholder such as `[key ...c21e]` (see
 [security](security.md#what-the-model-can-and-cannot-see)).
+
+Every submit must carry a `guide` (summary, endpoints with params, notes)
+written from the docs the agent read; see
+[usage guides](providers.md#usage-guides). A missing or endpoint-less guide is
+sent back like a failing test, except on the last allowed submit, where the run
+is accepted with a note instead of failing a provider that otherwise works.
+
+**Writing just the guide.** `POST /api/admin/providers/{slug}/guide/generate`
+(admin, also the Assistant's `write_provider_guide`) runs a short synchronous
+loop on the builder's model: up to 12 turns, 4 web searches and 10 fetches,
+capped at 5 minutes. It sends the provider's public metadata, examples, offers
+and current guide through the redactor, asks for a guide, validates it, and
+saves only the `guide` key of the spec as a new provider version (source `ai`,
+audit `provider.guide.generate`). The answer is `{provider, updated,
+verified, summary, guide, markdown, model, cost_usd}`; `updated: false` means
+the model could not read the docs and nothing changed.
 
 Finished runs can be deleted by an admin: `DELETE /api/admin/ai/runs/{id}`
 for one run (409 `run_busy` while it is queued, running, testing or
@@ -588,8 +613,8 @@ Tools by role:
 
 | Role | Tools |
 |---|---|
-| member and up | ask_user, search_providers, provider_offers, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
-| admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), create_webhook, update_webhook, test_webhook, create_egress_proxy, update_egress_proxy, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build |
+| member and up | ask_user, search_providers, provider_offers, provider_guide, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
+| admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), create_webhook, update_webhook, test_webhook, create_egress_proxy, update_egress_proxy, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build, write_provider_guide |
 | admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, enable_app_mcp_manage |
 
 `ask_user` shows a small form in the chat (name the pasted keys, or pick one
