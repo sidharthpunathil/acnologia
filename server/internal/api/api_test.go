@@ -327,8 +327,12 @@ func TestHiddenKeysAndRoles(t *testing.T) {
 	// A superadmin changing an unrelated field does not re-trust the target.
 	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"cooldown_sec": 30}, 200, nil)
 	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 503, nil, "Authorization", "Bearer "+trusted)
-	// Submitting the target confirms it.
+	// Nor does a superadmin changing the target without saying so.
 	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"base_url": e.upURL}, 200, nil)
+	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 503, nil, "Authorization", "Bearer "+trusted)
+	// Only an explicit target_trusted from a superadmin confirms it.
+	e.do(admin, "PATCH", "/api/admin/services/1", map[string]any{"target_trusted": true}, 403, nil)
+	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"base_url": e.upURL, "target_trusted": true}, 200, nil)
 	e.do(http.DefaultClient, "GET", "/proxy/serpapi/search.json?q=a", nil, 200, nil, "Authorization", "Bearer "+trusted)
 }
 

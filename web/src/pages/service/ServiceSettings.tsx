@@ -158,7 +158,11 @@ function TrafficCard({ service, canManage, isSuper }: { service: Service; canMan
       return;
     }
     const patch: Partial<ServiceInput> = {};
-    if (egress !== (service.egress_id ?? 0)) patch.egress_id = egress;
+    if (egress !== (service.egress_id ?? 0)) {
+      patch.egress_id = egress;
+      // A superadmin picking the proxy here confirms where keys go.
+      if (isSuper) patch.target_trusted = true;
+    }
     // -1 tells the server to drop the override and follow the provider again.
     if (ttlValue !== (service.cache_ttl_sec ?? null)) patch.cache_ttl_sec = ttlValue ?? -1;
     if (costValue !== (service.cost_per_request ?? null)) patch.cost_per_request = costValue ?? -1;
@@ -418,7 +422,9 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
     setSavingEdit(true);
     try {
       const { slug: _slug, ...rest } = editing;
-      await update(service.id, rest);
+      // A superadmin saving the form has seen the target and confirms it;
+      // the server never trusts a target without this.
+      await update(service.id, isSuper ? { ...rest, target_trusted: true } : rest);
       toast.success("Service updated");
       setEditing(null);
     } catch (e) {
@@ -441,7 +447,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
     <div className="space-y-5">
       {isSuper && !service.target_trusted && (
         <Callout tone="warning" title="Hidden keys are paused for this service">
-          Someone other than a superadmin set its base URL or auth, so Acnologia will not send hidden keys to it. Open Edit, check the base URL, then save to confirm it.
+          Its base URL, auth or egress proxy changed without a superadmin confirming it, so Acnologia will not send hidden keys to it. Open Edit, check the base URL, then save to confirm it.
         </Callout>
       )}
       <Section

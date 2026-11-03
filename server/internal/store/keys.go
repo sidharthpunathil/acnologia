@@ -430,7 +430,10 @@ func (s *Store) ApplyEffect(ctx context.Context, id int64, e KeyEffect) error {
 	args := []any{}
 	add := func(q string, a ...any) { sets = append(sets, q); args = append(args, a...) }
 	if e.Status != nil {
-		add(`status=?`, *e.Status)
+		// Disabled and banned are set by a person (or a provider's
+		// suspension) and stay until a person changes them: a late proxy
+		// result, health check or app report never moves a key out of them.
+		add(`status=CASE WHEN status IN ('disabled','banned') THEN status ELSE ? END`, *e.Status)
 	}
 	if e.ClearCooldown {
 		add(`cooldown_until=NULL`)

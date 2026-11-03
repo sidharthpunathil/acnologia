@@ -128,6 +128,19 @@ type serviceInput struct {
 	CacheTTLSec *int64 `json:"cache_ttl_sec"`
 	// CostPerRequest overrides the provider's USD price; -1 goes back to the provider default.
 	CostPerRequest *float64 `json:"cost_per_request"`
+	// TargetTrusted true is a superadmin confirming where the service sends
+	// keys; false revokes that. Nothing else sets the flag to true.
+	TargetTrusted *bool `json:"target_trusted"`
+}
+
+// vouchErr refuses target_trusted=true from anyone but a superadmin acting
+// directly. An Assistant tool call carries the superadmin's session but the
+// model's choice, so it cannot confirm a target.
+func vouchErr(r *http.Request, in serviceInput) string {
+	if in.TargetTrusted != nil && *in.TargetTrusted && (!isSuper(r) || fromAssistant(r)) {
+		return "only a superadmin, from the service's edit form or the API, can confirm where a service sends keys"
+	}
+	return ""
 }
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
@@ -246,7 +259,16 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 	if !s.checkServiceRefs(w, r, sv, "") {
 		return
 	}
-	sv.TargetTrusted = isSuper(r)
+	if msg := vouchErr(r, in); msg != "" {
+		writeErr(w, 403, "forbidden", msg)
+		return
+	}
+	// A superadmin creating a service picks its target; the Assistant
+	// creating one does not count as that.
+	sv.TargetTrusted = isSuper(r) && !fromAssistant(r)
+	if in.TargetTrusted != nil {
+		sv.TargetTrusted = *in.TargetTrusted
+	}
 	created, err := s.Store.CreateService(r.Context(), sv)
 	if err != nil {
 		writeStoreErr(w, err)
@@ -280,13 +302,16 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "handover_service", "this service holds keys another server handed over; its base URL, auth, provider and egress follow the owner")
 		return
 	}
-	// Where keys are sent decides who can read them. A superadmin saving the
-	// service vouches for its target; anyone else changing it revokes that,
-	// so hidden keys stop flowing until a superadmin confirms.
-	if isSuper(r) && (in.BaseURL != nil || in.AuthType != nil || in.AuthName != nil || in.Provider != nil || in.EgressID != nil) {
-		// The superadmin submitted the target fields (the edit form sends
-		// them), so they saw and confirmed where keys go.
-		sv.TargetTrusted = true
+	// Where keys are sent decides who can read them. Only an explicit
+	// target_trusted=true from a superadmin (the edit form sends it) vouches
+	// for the target; any change to it without that revokes trust, so hidden
+	// keys stop flowing until a superadmin confirms.
+	if msg := vouchErr(r, in); msg != "" {
+		writeErr(w, 403, "forbidden", msg)
+		return
+	}
+	if in.TargetTrusted != nil {
+		sv.TargetTrusted = *in.TargetTrusted
 	} else if targetOf(sv) != before {
 		sv.TargetTrusted = false
 	}
@@ -951,28 +976,41 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a, err := s.Store.GetApp(r.Context(), id)
-	if err != nil {
-		writeStoreErr(w, err)
-		return
-	}
 	var in appInput
 	if !decode(w, r, &in) {
 		return
 	}
-	if code, msg := in.apply(r, a); code != 0 {
+	if _, err := s.Store.GetApp(r.Context(), id); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	// Validate on a scratch app, then write only the fields sent. Writing the
+	// whole row from a copy read before the body arrived could restore
+	// lease_hidden after a token rotation cleared it.
+	probe := &store.App{Name: "app", Mode: "both"}
+	if code, msg := in.apply(r, probe); code != 0 {
 		writeErr(w, code, "invalid", msg)
 		return
 	}
-	if err := s.Store.UpdateApp(r.Context(), a); err != nil {
+	patch := store.AppPatch{Description: in.Description, AllowedServices: in.AllowedServices,
+		Mode: in.Mode, Active: in.Active, LeaseHidden: in.LeaseHidden}
+	if in.Name != nil {
+		patch.Name = &probe.Name
+	}
+	if err := s.Store.PatchApp(r.Context(), id, patch); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
 	if in.Limits != nil {
-		if err := s.Store.SetAppLimits(r.Context(), a.ID, a.Limits); err != nil {
+		if err := s.Store.SetAppLimits(r.Context(), id, probe.Limits); err != nil {
 			writeStoreErr(w, err)
 			return
 		}
+	}
+	a, err := s.Store.GetApp(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "app.update", a.Name, "")
 	writeJSON(w, 200, a)

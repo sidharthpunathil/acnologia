@@ -87,8 +87,11 @@ func opsTools() []*chatTool {
 			},
 		},
 		{
-			Name: "create_webhook", Role: store.RoleAdmin, Required: []string{"name", "url"}, Props: webhookProps,
-			Desc: "Create a webhook. Its signing secret is shown to the user once; you never see it.",
+			Name: "create_webhook", Role: store.RoleAdmin, Confirm: true, Required: []string{"name", "url"}, Props: webhookProps,
+			Desc: "Create a webhook. Its signing secret is shown to the user once; you never see it. The user must confirm.",
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				return fmt.Sprintf("Create webhook %s sending events to %s", argStr(in, "name"), urlHost(argStr(in, "url"))), nil
+			},
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				code, out, msg := cs.api("POST", "/api/admin/webhooks", pick(in, "name", "url", "format", "events", "active"))
 				if code >= 400 {
@@ -102,8 +105,19 @@ func opsTools() []*chatTool {
 		},
 		{
 			Name: "update_webhook", Role: store.RoleAdmin, Required: []string{"webhook_id"},
-			Props: withProps(webhookProps, map[string]any{"webhook_id": idProp("")}),
-			Desc:  "Change a webhook's name, URL, format, events, or turn it on or off.",
+			Props:   withProps(webhookProps, map[string]any{"webhook_id": idProp("")}),
+			Desc:    "Change a webhook's name, URL, format, events, or turn it on or off. The user must confirm.",
+			Confirm: true,
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				id, _ := argNum(in, "webhook_id")
+				if _, err := cs.s.Store.GetWebhook(cs.ctx, id); err != nil {
+					return "", fmt.Errorf("no webhook %d", id)
+				}
+				if u := argStr(in, "url"); u != "" {
+					return fmt.Sprintf("Change webhook %d to send events to %s", id, urlHost(u)), nil
+				}
+				return fmt.Sprintf("Change webhook %d", id), nil
+			},
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "webhook_id")
 				return cs.simple("PATCH", fmt.Sprintf("/api/admin/webhooks/%d", id), pick(in, "name", "url", "format", "events", "active"), fmt.Sprintf("Updated webhook %d", id), nil)
@@ -118,16 +132,31 @@ func opsTools() []*chatTool {
 			},
 		},
 		{
-			Name: "create_egress_proxy", Role: store.RoleAdmin, Required: []string{"name", "url"}, Props: egressProps, SecretFields: []string{"url"},
-			Desc: "Add an egress proxy that services or keys can route through.",
+			Name: "create_egress_proxy", Role: store.RoleAdmin, Confirm: true, Required: []string{"name", "url"}, Props: egressProps, SecretFields: []string{"url"},
+			Desc: "Add an egress proxy that services or keys can route through. The user must confirm.",
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				return fmt.Sprintf("Add egress proxy %s at %s", argStr(in, "name"), urlHost(argStr(in, "url"))), nil
+			},
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				return cs.simple("POST", "/api/admin/egress", pick(in, "name", "url", "region", "notes"), "Added egress proxy "+argStr(in, "name"), nil)
 			},
 		},
 		{
 			Name: "update_egress_proxy", Role: store.RoleAdmin, Required: []string{"proxy_id"}, SecretFields: []string{"url"},
-			Props: withProps(egressProps, map[string]any{"proxy_id": idProp("")}),
-			Desc:  "Change an egress proxy.",
+			Props:   withProps(egressProps, map[string]any{"proxy_id": idProp("")}),
+			Desc:    "Change an egress proxy. The user must confirm.",
+			Confirm: true,
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				id, _ := argNum(in, "proxy_id")
+				p, err := cs.s.Store.GetEgress(cs.ctx, id)
+				if err != nil {
+					return "", fmt.Errorf("no egress proxy %d", id)
+				}
+				if u := argStr(in, "url"); u != "" {
+					return fmt.Sprintf("Point egress proxy %s at %s; traffic of every service and key using it goes there", p.Name, urlHost(u)), nil
+				}
+				return fmt.Sprintf("Change egress proxy %s", p.Name), nil
+			},
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "proxy_id")
 				return cs.simple("PATCH", fmt.Sprintf("/api/admin/egress/%d", id), pick(in, "name", "url", "region", "notes"), fmt.Sprintf("Updated egress proxy %d", id), nil)

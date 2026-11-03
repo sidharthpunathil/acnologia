@@ -182,8 +182,30 @@ func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Ser
 	}, nil
 }
 
-// renewLease extends an open lease so long jobs keep their key.
+var (
+	errLeaseNotFound = errors.New("lease not found, already reported, or expired")
+	// errLeaseRevoked ends a lease the app may no longer hold.
+	errLeaseRevoked = errors.New("this app may no longer hold this key; the lease has ended")
+)
+
+// renewLease extends an open lease so long jobs keep their key. Access is
+// checked again as for a new lease: an app whose mode, services, share scope
+// or hidden key grant changed, or whose key an admin disabled, cannot keep
+// a key (and an exclusive hold on it) by renewing. Such a lease ends.
 func (s *Server) renewLease(ctx context.Context, a *store.App, id string, ttl time.Duration) (time.Time, error) {
+	l, err := s.Store.GetLease(ctx, id)
+	if err != nil || l.AppID != a.ID || l.Outcome != "" || !time.Now().Before(l.ExpiresAt) {
+		return time.Time{}, errLeaseNotFound
+	}
+	sv, err := s.Store.GetService(ctx, l.ServiceID)
+	k, kerr := s.Store.GetKey(ctx, l.KeyID)
+	if err != nil || kerr != nil || !a.AllowsLease() || !a.CanUse(sv.Slug) || sv.Provider == providers.PeerSlug || isHandoverService(sv) ||
+		k.Status == store.StatusDisabled || k.Status == store.StatusBanned || !s.Pool.MayUse(ctx, sv, a.ID, a.LeaseHidden, k) {
+		if s.Store.ClaimLeaseOutcome(ctx, l.ID, "revoked") == nil {
+			s.Pool.ReleaseLease(l.ID)
+		}
+		return time.Time{}, errLeaseRevoked
+	}
 	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
@@ -192,7 +214,7 @@ func (s *Server) renewLease(ctx context.Context, a *store.App, id string, ttl ti
 	}
 	exp := time.Now().UTC().Add(ttl)
 	if err := s.Store.RenewLease(ctx, id, a.ID, exp); err != nil {
-		return time.Time{}, errors.New("lease not found, already reported, or expired")
+		return time.Time{}, errLeaseNotFound
 	}
 	s.Pool.RenewLease(id, exp)
 	return exp, nil
@@ -206,6 +228,10 @@ func (s *Server) v1Renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exp, err := s.renewLease(r.Context(), appFrom(r), chi.URLParam(r, "id"), time.Duration(body.TTLSec)*time.Second)
+	if errors.Is(err, errLeaseRevoked) {
+		writeErr(w, 403, "lease_revoked", err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, 404, "lease_not_found", err.Error())
 		return
@@ -270,7 +296,7 @@ const maxReportRetryAfter = 24 * 60 * 60
 func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in reportInput) (*leaseDTO, int, error) {
 	out, ok := providers.ParseOutcome(in.Outcome)
 	if !ok {
-		return nil, 400, errors.New("outcome must be ok, rate_limited, quota_exhausted, invalid or error")
+		return nil, 400, errors.New("outcome must be ok, rate_limited, busy, quota_exhausted, invalid, banned or error")
 	}
 	l, err := s.Store.GetLease(ctx, leaseID)
 	if err != nil || l.AppID != a.ID {
@@ -314,13 +340,22 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	msg = crypto.Truncate(msg, 500)
 	retry := min(max(in.RetryAfterSec, 0), maxReportRetryAfter)
 	res := providers.Result{Outcome: out, RetryAfter: time.Duration(retry) * time.Second, Message: msg}
-	if err := s.Pool.Apply(ctx, sv, k, res); err != nil {
-		return nil, 500, err
+	// A key an admin disabled (or a suspended one) keeps its state until a
+	// person changes it; the store also refuses to move its status.
+	if k.Status != store.StatusDisabled && k.Status != store.StatusBanned {
+		if err := s.Pool.Apply(ctx, sv, k, res); err != nil {
+			return nil, 500, err
+		}
 	}
 	if out != providers.OK {
 		s.Store.AddEvent(ctx, store.NewEvent{Kind: string(out), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: in.StatusCode, Detail: msg})
 	}
 	if !in.Rotate || out == providers.OK {
+		return nil, 200, nil
+	}
+	// The next lease is a new lease: an app at its request or budget limit
+	// gets none, as on /lease and get_key. The report itself still counts.
+	if s.appLimitHit(ctx, a) != nil {
 		return nil, 200, nil
 	}
 	// A rotated exclusive lease hands over an exclusive key too, so the caller

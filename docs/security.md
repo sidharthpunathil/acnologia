@@ -54,14 +54,20 @@ remains.
 
 Each app has its own token (stored as a hash), a list of services it may use
 (empty means all) and a mode: `proxy`, `lease` or `both`. An app learns
-whether a service has a key available, never how many keys exist.
+whether a service has a key available, never how many keys exist. Renewing a
+lease checks the app's access again, so an app whose mode, services, hidden
+key grant or share scope changed cannot keep a key (or an exclusive hold on
+it) by renewing; the lease ends. A lease that rotates through a report is a
+new lease and obeys the app's request and budget limits.
 
 Each key can carry flags:
 
 - `hidden`: visible only to superadmins, and handed only to apps a superadmin
   cleared with `lease_hidden` (below).
 - `restricted`: serves only the apps you name on the key.
-- `disabled`: stays stored but is never handed out.
+- `disabled`: stays stored but is never handed out. Only a person moves a key
+  out of it (or out of `banned`): proxy results, health checks and app
+  reports never change its status.
 - `backup` tier: serves only when every primary key is cooling, busy or out
   of quota.
 
@@ -76,12 +82,16 @@ must never see. Two flags enforce this:
 - **`apps.lease_hidden`**: only apps a superadmin marked may use hidden keys,
   through a lease or the proxy. Admins cannot set it. When anyone other than a
   superadmin rotates the app's tokens or adds a token, the flag is cleared,
-  because that person now holds a working token.
-- **`services.target_trusted`**: when anyone other than a superadmin changes a
-  service's base URL, auth placement or provider, the service becomes
-  untrusted, and hidden keys are not sent to it by the proxy, leases or health
-  checks. A superadmin confirms the target by saving those fields again. The
-  dashboard shows a banner while hidden keys are paused.
+  because that person now holds a working token. An app edit writes only the
+  fields it sends, so a slow edit cannot bring the flag back after that.
+- **`services.target_trusted`**: when a service's base URL, auth placement,
+  provider or egress proxy changes without a superadmin confirming it, the
+  service becomes untrusted, and hidden keys are not sent to it by the proxy,
+  leases or health checks. A superadmin confirms the target by saving the edit
+  form, which sends `target_trusted: true`; nothing sets the flag implicitly.
+  An Assistant tool call carries the superadmin's session but the model's
+  choice, so it can never confirm a target. The dashboard shows a banner while
+  hidden keys are paused.
 
 ```mermaid
 flowchart TD
@@ -99,7 +109,12 @@ flowchart TD
 
 Hidden keys and their traffic are also left out of everything a non-superadmin
 sees: key lists, counts, events, request totals, and the events of a deleted
-hidden key.
+hidden key. A hidden key's events are deleted with it however it goes (its own
+delete, its service's delete, or a peer link revoke or disconnect removing it),
+since nothing would mark them hidden once the key row is gone.
+
+A health check sends the secret to the service's base URL, so a key is only
+ever checked against its own service, and MCP `check_keys` needs a service.
 
 ## Secrets at rest
 
@@ -151,6 +166,11 @@ Windows ignores those modes, so there the folder's ACL does the job:
   audit log under your name. Members are offered read tools only.
 - Deleting keys, services or apps, rotating app tokens and revoking an app
   token run only after you press Confirm; a confirmation expires when you send another message.
+- So do changes that decide where keys go or who may use them, since text the
+  model reads (an event detail an app reported, a key note) could ask for
+  them: an app's mode or allowed services, a service's base URL, auth or
+  egress proxy, a key's egress proxy, and creating or changing webhooks and
+  egress proxies. The card states the result in full, such as "all services".
 - There is no tool that reveals a stored key secret. Tool results sent to
   Claude never contain secrets, and new app tokens are shown to you once and
   never sent to Claude or stored.
@@ -321,8 +341,9 @@ Hidden keys never produce webhook events.
 
 An egress proxy sees which hosts keys travel to, and the keys themselves when
 a service's base URL is plain `http`. Assigning one is therefore part of a
-service's target: a non-superadmin assigning or changing it clears
-`target_trusted`, so hidden keys stop flowing until a superadmin confirms.
+service's target: assigning or changing it without an explicit superadmin
+confirm clears `target_trusted`, so hidden keys stop flowing until a
+superadmin confirms.
 Proxy URLs are encrypted at rest and shown without credentials.
 
 The response cache is shared by the apps of a service, so Acnologia never caches

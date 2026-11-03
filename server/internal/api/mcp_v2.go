@@ -8,6 +8,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,8 +143,8 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 	if err != nil {
 		return nil
 	}
+	names := serviceToolNames(svcs, a)
 	out := []mcpTool{}
-	seen := map[string]bool{}
 	for _, sv := range svcs {
 		if !a.CanUse(sv.Slug) {
 			continue
@@ -150,11 +152,10 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 		spec := docSpec(sv)
 		for i := range spec.Examples {
 			ex := spec.Examples[i]
-			name := toolName(sv.Slug, ex.Name)
-			if name == "" || seen[name] {
+			name := names[toolKey{sv.ID, i}]
+			if name == "" {
 				continue
 			}
-			seen[name] = true
 			props := map[string]any{}
 			required := []string{}
 			params := []string{}
@@ -192,6 +193,62 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 		}
 	}
 	return out
+}
+
+type toolKey struct {
+	service int64
+	example int
+}
+
+// serviceToolNames gives every service example a unique tool name. A slug
+// and example can join into the same name as another service's ("google" +
+// "Maps geocode" and "google-maps" + "geocode"), and a service shared by
+// another server picks its own slug and examples. So the built in tool
+// names are reserved, this server's own services are named first, oldest
+// first, and a name already taken gets a suffix derived from the service
+// slug and example. A peer service can never take a local tool's name, and
+// the names do not depend on how the services are sorted.
+func serviceToolNames(svcs []*store.Service, a *store.App) map[toolKey]string {
+	seen := map[string]bool{}
+	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools} {
+		for _, t := range set {
+			seen[t.Name] = true
+		}
+	}
+	ordered := make([]*store.Service, 0, len(svcs))
+	for _, sv := range svcs {
+		if a.CanUse(sv.Slug) {
+			ordered = append(ordered, sv)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		li, lj := ordered[i].PeerLinkID == nil, ordered[j].PeerLinkID == nil
+		if li != lj {
+			return li
+		}
+		return ordered[i].ID < ordered[j].ID
+	})
+	names := map[toolKey]string{}
+	for _, sv := range ordered {
+		for i, ex := range docSpec(sv).Examples {
+			name := toolName(sv.Slug, ex.Name)
+			if name == "" {
+				continue
+			}
+			for n := 0; seen[name]; n++ {
+				sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", sv.Slug, ex.Name, n)))
+				suffix := "_" + hex.EncodeToString(sum[:])[:6]
+				base := toolName(sv.Slug, ex.Name)
+				if len(base) > 64-len(suffix) {
+					base = base[:64-len(suffix)]
+				}
+				name = base + suffix
+			}
+			seen[name] = true
+			names[toolKey{sv.ID, i}] = name
+		}
+	}
+	return names
 }
 
 // docSpec is the spec whose examples and offers describe a service: for a
@@ -401,14 +458,20 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 		return map[string]any{"service": sv.Slug, "name": sv.Name, "keys": sv.KeyCounts, "in_flight": sv.InFlight, "requests_24h": sv.Requests24h,
 			"strategy": sv.Strategy, "max_concurrency": sv.MaxConcurrency}, nil
 	case "check_keys":
-		keys, bySvc, err := s.appKeys(ctx, a, args.Service)
+		// Each key is checked only against its own service: a check sends
+		// the secret to the service's base URL.
+		if args.Service == "" || !a.CanUse(args.Service) {
+			return nil, fmt.Errorf("this app cannot use service %q", args.Service)
+		}
+		sv, err := s.Store.GetServiceBySlug(ctx, args.Service)
+		if err != nil {
+			return nil, fmt.Errorf("no service named %q", args.Service)
+		}
+		keys, err := s.Store.ListKeys(ctx, sv.ID, a.LeaseHidden)
 		if err != nil {
 			return nil, err
 		}
-		sv, ok := firstService(bySvc)
-		if !ok {
-			return nil, fmt.Errorf("no service named %q for this app", args.Service)
-		}
+		s.fillInFlight(keys...)
 		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		sum := s.checkKeys(cctx, sv, keys)
@@ -475,13 +538,6 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 		return map[string]any{"added": added, "skipped": skipped}, nil
 	}
 	return nil, fmt.Errorf("unknown tool %q", name)
-}
-
-func firstService(m map[int64]*store.Service) (*store.Service, bool) {
-	for _, sv := range m {
-		return sv, true
-	}
-	return nil, false
 }
 
 // ---- resources and prompts ----

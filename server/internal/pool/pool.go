@@ -257,6 +257,21 @@ func (p *Pool) scopedKeys(ctx context.Context, svc *store.Service, appID int64, 
 	return res.IDs, nil
 }
 
+// MayUse reports whether the app may still be handed the key on the
+// service, by the same rules Pick applies: the key's service, its app
+// restriction, hidden keys, and the app's share scope.
+func (p *Pool) MayUse(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, k *store.Key) bool {
+	allowHidden = allowHidden && svc.TargetTrusted
+	if k.ServiceID != svc.ID || !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || k.IsHandedOver() {
+		return false
+	}
+	scoped, err := p.scopedKeys(ctx, svc, appID, allowHidden)
+	if err != nil {
+		return false
+	}
+	return scoped == nil || scoped[k.ID]
+}
+
 // StoreKeyScope is the KeyScope hook backed by the store's share scopes.
 func StoreKeyScope(st *store.Store) func(context.Context, int64, *store.Service) (*store.KeyScope, error) {
 	return func(ctx context.Context, appID int64, svc *store.Service) (*store.KeyScope, error) {
@@ -416,6 +431,11 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 }
 
 func (p *Pool) check(ctx context.Context, svc *store.Service, k *store.Key) error {
+	// A check sends the secret to the service's base URL, so a key is only
+	// ever checked against its own service.
+	if k.ServiceID != svc.ID {
+		return ErrWrongService
+	}
 	secret, err := p.Box.Decrypt(k.SecretEnc)
 	if err != nil {
 		return err
@@ -517,7 +537,10 @@ func (e *scrubbedErr) Timeout() bool { return e.timeout }
 
 // ErrUntrustedTarget means a hidden key would be sent to a base URL that a
 // superadmin has not confirmed.
-var ErrUntrustedTarget = errors.New("hidden keys are not sent to this service until a superadmin saves its base URL")
+var ErrUntrustedTarget = errors.New("hidden keys are not sent to this service until a superadmin confirms its target")
+
+// ErrWrongService refuses to check a key against a service it does not belong to.
+var ErrWrongService = errors.New("this key belongs to another service")
 
 // ErrNoHealthCheck means the provider has no free endpoint to test keys, so
 // validity is learned from real traffic instead.

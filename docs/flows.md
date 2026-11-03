@@ -269,7 +269,11 @@ token rules. Each app picks its tool sets in the dashboard (`GET`/`PUT
 generated from each provider's examples, read only **insights**
 (`list_keys`, `key_details`, `service_stats`) and **manage** (`check_keys`,
 `set_key_status`, `add_keys`). Core, service tools, resources and prompts are
-on by default. Clients that only speak stdio can use `acnologia mcp --url ...
+on by default. A service tool is named `<slug>_<example>`. When two services
+would get the same name, this server's own services keep it (oldest first)
+and the later one gets a short suffix, so a service another server shares can
+never take a local tool's name or a built in one. `check_keys` needs a
+service and checks only that service's keys. Clients that only speak stdio can use `acnologia mcp --url ...
 --token acn_...` as a bridge.
 
 The initialize instructions tell the agent to read `service_guide` before
@@ -619,8 +623,9 @@ Tools by role:
 | Role | Tools |
 |---|---|
 | member and up | ask_user, search_providers, provider_offers, provider_guide, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
-| admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), create_webhook, update_webhook, test_webhook, create_egress_proxy, update_egress_proxy, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build, write_provider_guide |
-| admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, enable_app_mcp_manage |
+| admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), test_webhook, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build, write_provider_guide |
+| admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, enable_app_mcp_manage, create_webhook, update_webhook, create_egress_proxy, update_egress_proxy |
+| admin and up, after Confirm for some inputs | update_app with mode or allowed_services, update_service with base_url, auth, provider or egress_id, update_key with egress_id |
 
 `ask_user` shows a small form in the chat (name the pasted keys, or pick one
 of 2 to 8 choices); the answer goes to `POST /threads/{id}/answer`.
