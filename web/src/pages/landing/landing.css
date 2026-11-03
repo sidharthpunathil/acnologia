@@ -201,7 +201,7 @@ body:has(.hm-landing) {
   isolation: isolate;
   display: flex;
   align-items: center;
-  min-height: calc(100dvh - 76px - var(--space-2xl));
+  min-height: min(calc(100dvh - 76px - var(--space-2xl)), 760px);
   padding-block: var(--space-xl);
 }
 .lp-field {
@@ -319,7 +319,7 @@ body:has(.hm-landing) {
 
 /* Sections */
 .lp-section { padding-block: var(--section-gap) 0; }
-.lp-hero + .lp-section { padding-top: var(--space-xl); }
+.lp-hero + .lp-section { padding-top: var(--space-2xl); }
 .lp-section--l { padding-top: var(--section-gap-l); }
 .lp-head { display: flex; flex-direction: column; gap: var(--space-md); margin-bottom: var(--space-2xl); }
 .lp-head--split {
