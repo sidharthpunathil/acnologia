@@ -2,7 +2,7 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
 
-Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, app limits, egress proxies, webhooks, key secrecy and redaction, errors, admin tokens and the `acn` CLI, docs.
+Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
 
 Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code": "string", "message": "string"}}` with a matching HTTP status.
 
@@ -29,6 +29,7 @@ GET /docs/assets/{name}  -> an image the docs show
 GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
 GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url}, for sharing between servers
+GET /api/gate            -> {required, locked, password_only}: whether the site has an access password and this caller is past it
 ```
 
 When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia and the server to server routes under /api/peer/v1 stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp) are not affected.
@@ -248,6 +249,8 @@ curl -s -X POST "http://localhost:8080/proxy/groq/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model": "openai/gpt-oss-20b", "messages": [{"role": "user", "content": "Say hello"}]}'
 ```
+
+Cohere also takes a bearer key; call its own API (`POST /proxy/cohere/v2/chat`). Google Gemini takes the key in `x-goog-api-key` (`/proxy/gemini/v1beta/models/...`).
 
 Anthropic takes the key in `x-api-key`. Send `anthropic-version` yourself (the Anthropic SDKs do); the proxy forwards it:
 
@@ -740,8 +743,10 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 | Status | Code | Meaning |
 |---|---|---|
 | 400 | `bad_path` | Proxy path with a literal `?`, `#`, or a `.` / `..` segment. |
+| 400 | `bad_body` | The proxy could not read the request body. |
 | 401 | `unauthenticated` | Token missing or wrong. |
 | 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
+| 404 | `unknown_service` | No service or service group has that slug. |
 | 404 | `lease_not_found` | Renewing a lease that is not open. |
 | 405 | `method_not_allowed` | Proxy method other than GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. |
 | 409 | `report_failed` | Lease already reported. |
@@ -805,9 +810,10 @@ This reference covers the consumer API. The rest of the docs are served as raw M
 - [/docs/overview.md](/docs/overview.md): what Acnologia does, quick start and features.
 - [/docs/api.md](/docs/api.md): consumer error codes and the dashboard API with required roles.
 - [/docs/cli.md](/docs/cli.md): the acn command line client, browser sign in, commands and CI variables.
-- [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, self-hosting, backups and upgrading.
+- [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, self-hosting, Windows, the access password, backups and upgrading.
+- [/docs/deploy-railway.md](/docs/deploy-railway.md): a public deploy on Railway behind the access password.
 - [/docs/architecture.md](/docs/architecture.md): components, packages, request pipeline, data model and background work.
-- [/docs/flows.md](/docs/flows.md): diagrams of the proxy, key selection, leases, key states, health checks, sign in, MCP and the AI builder.
+- [/docs/flows.md](/docs/flows.md): diagrams of the proxy, key selection, leases, key states, health checks, sign in, MCP, the AI builder, the Assistant, sharing between servers and the provider refresh.
 - [/docs/security.md](/docs/security.md): roles, key flags, hidden keys, what the model can see, secrets at rest, web protections and outbound requests.
-- [/docs/providers.md](/docs/providers.md): built in providers, the spec format, and adding one by hand or with AI.
+- [/docs/providers.md](/docs/providers.md): the built in providers, the spec format, offers and how they stay fresh, and adding one by hand, with AI or from another server.
 - [/docs/development.md](/docs/development.md): setup, layout, tests and conventions.
