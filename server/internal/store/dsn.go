@@ -23,8 +23,11 @@ const commonPragmas = "&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_prag
 // bounds the work of PRAGMA optimize.
 func writerDSN(path string) string {
 	return "file:" + uriPath(path) + "?_pragma=journal_mode(WAL)" + commonPragmas +
-		"&_pragma=journal_size_limit(67108864)&_pragma=analysis_limit(1000)"
+		"&_pragma=journal_size_limit(67108864)&_pragma=analysis_limit(" + analysisLimit + ")"
 }
+
+// analysisLimit is how many index entries PRAGMA optimize samples per index.
+const analysisLimit = "1000"
 
 // readerDSN opens the read pool. query_only makes any write on it fail with
 // SQLITE_READONLY, so a write sent to the wrong pool cannot get around the

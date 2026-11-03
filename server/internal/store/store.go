@@ -407,8 +407,11 @@ func migrateIndexes(db *sql.DB) error {
 		}
 		analyze[ix.table] = true
 	}
+	// A full ANALYZE, not bounded by analysis_limit: it runs once, before
+	// the server takes requests, and full statistics plan the long range
+	// sums better than sampled ones.
 	for table := range analyze {
-		if _, err := db.Exec(`ANALYZE ` + table); err != nil {
+		if _, err := db.Exec(`PRAGMA analysis_limit=0; ANALYZE ` + table + `; PRAGMA analysis_limit=` + analysisLimit); err != nil {
 			return err
 		}
 	}

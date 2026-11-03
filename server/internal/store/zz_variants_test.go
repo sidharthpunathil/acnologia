@@ -22,7 +22,29 @@ func bestOf(f func()) time.Duration {
 // writer, on the seeded events.
 func TestZZVariants(t *testing.T) {
 	needLoad(t)
-	s := openAt(t, freshDir(t))
+	fmt.Println("== running server: statistics sampled by PRAGMA optimize")
+	timeDashboard(t, openAt(t, freshDir(t)))
+
+	// An install from before the late indexes: Open builds them and runs a
+	// full ANALYZE once, before serving.
+	dir := freshDir(t)
+	old := openAt(t, dir)
+	for _, ix := range lateIndexes {
+		if _, err := old.DB.Exec(`DROP INDEX IF EXISTS ` + ix.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := old.DB.Exec(`DROP TABLE IF EXISTS sqlite_stat1`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	st := time.Now()
+	s := openAt(t, dir)
+	fmt.Printf("== upgraded install: Open built the indexes and analyzed in %v\n", time.Since(st).Round(time.Millisecond))
+	timeDashboard(t, s)
+}
+
+func timeDashboard(t *testing.T, s *Store) {
 	ctx := context.Background()
 	d24 := time.Now().Add(-24 * time.Hour)
 	d30 := time.Now().AddDate(0, 0, -30)
