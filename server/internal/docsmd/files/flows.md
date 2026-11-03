@@ -356,6 +356,100 @@ for one run (409 `run_busy` while it is queued, running, testing or
 publishing), or `DELETE /api/admin/ai/runs` to clear every failed, cancelled
 and published run. Runs waiting for review are kept by the bulk clear.
 
+## Keeping provider offers fresh
+
+Offers (free tiers, prices, published rate limits) feed the pacer, cost
+accounting and every place that shows what is free. Prices change, so a
+superadmin can have Acnologia re-read them. Settings, Provider refresh holds
+the controls, the history and the changes waiting for review. It needs
+`ANTHROPIC_API_KEY`; with AI off nothing runs.
+
+**When.** A run starts in one of three ways:
+
+- On the schedule: off, weekly, every 2 weeks, monthly (on the 1st) or every
+  N days (1–365), at a chosen UTC hour. The worker asks once a minute whether
+  a run is due. The first run is the first time the clock reaches the hour
+  after the schedule was saved; weekly and every N days count from the day of
+  the last scheduled run; monthly runs on the 1st of the next month. A run
+  missed while the server was off starts as soon as it is back.
+- Run refresh now in Settings (superadmin): the whole scope, same rules.
+- Check now on the service page's Offers and limits card or the provider's
+  Offers tab (superadmin): one provider, whatever the scope and staleness say.
+
+**Which providers.** The scope is providers behind at least one service with
+a usable key (active, cooling or out of quota; the default), providers behind
+any service, or every provider. Always check adds providers whatever the
+scope; Never check removes them and wins. Providers copied from another
+server (source `peer:...`) are skipped unless you turn them on: their owner
+keeps them current and your copy follows theirs. Disabled providers are
+skipped unless listed under Always check. A provider whose offers were read
+within the last N days (default 25, from its last refresh check or the
+newest `checked_at` on its offers) is skipped. The rest go oldest checked
+first, at most N per run (default 10).
+
+**How one provider is checked.** The refresh model (the refresh slot in
+Settings, Models; a small model such as Haiku is enough) gets the provider's
+name, base URL, website, docs URL, the `source_url` of each offer, its
+example names and its current offers. Keys never leave the server, and every
+request passes the same redaction as the rest of the AI features. It may run
+3 web searches and 5 page fetches within 8 turns, then must call
+`submit_offers` with the full list and `verified`. The offers are validated
+like any spec edit (a failure goes back to the model once). Each call is
+recorded in the AI usage ledger under the `refresh` feature with the run as
+its ref.
+
+**What happens next.** The proposed offers are compared with the current
+ones by name, ignoring `checked_at`:
+
+- No change: `checked_at` moves to today on the current version, in place,
+  with no new version (so a built in provider stays unedited and keeps
+  getting the offers new releases ship).
+- A change, with apply set to Apply sourced changes (the default): if every
+  added or changed offer cites an http(s) `source_url` and the change does
+  not remove every offer, a new provider version is published with source
+  `refresh` and a note listing what changed. Only `offers` changes: never
+  auth, the base URL, rules, health checks or tests. A webhook
+  `provider.offers_changed` fires and the audit log records it. A built in
+  provider changed this way becomes an edited version, like any edit, so
+  later releases no longer backfill its offers. Roll back from the provider's
+  Versions tab.
+- Otherwise (no source, removing every offer, apply set to Always review, or
+  the publish failed) the change waits in Settings under Waiting for review
+  with a readable diff. Apply publishes it as above; Dismiss drops it. A
+  proposal made against a version that has since changed cannot be applied:
+  dismiss it and check again. A newer proposal for the same provider replaces
+  an older pending one.
+- The model could not read the pages, the call failed, or the offers did not
+  validate: the item fails, nothing changes, and the provider is not counted
+  as checked, so the next run tries again. One provider failing never stops
+  the others.
+
+**Claude's own prices.** With Claude model prices on (the default), every run
+also re-reads Anthropic's pricing page for the models Acnologia prices and
+proposes new input, output and cache prices. The same rule applies: a change
+saves as price overrides on its own only when every changed price cites its
+page, else it waits for review. The model picker shows each price's source
+and the date it was checked. Superadmins can also edit a model's price and
+context window by hand in Settings, Models, Model prices, and reset it to the
+built in table.
+
+**Budget and safety.** Before each provider, a run stops if it has spent its
+per run cap (default $2) or the refresh feature has spent its monthly cap
+(default $5) since the 1st, UTC; a check that crosses the cap mid way stops
+there. Providers it did not reach are marked Not reached. Only one run goes
+at a time: Run now and Check now answer 409 while one is running. A run's
+state lives in the database, so a restart resumes it on the next tick, with
+the provider that was being checked starting over.
+
+**Where to see it.** The service page's Offers and limits card says when the
+offers were checked and by what (scheduled refresh, a refresh by hand, Check
+now, or when the provider was written), when a refresh last changed them
+with a link to that version, and whether a change waits for review. Settings,
+Provider refresh shows the model, the last and next run, the month's spend
+against its cap, recent runs with each provider's outcome and cost, and the
+reviews. Settings changes, runs started by hand, applies and dismissals are
+audited (`provider.refresh.*`, `ai.prices`).
+
 ## Assistant chat
 
 The Assistant page is a chat where Claude manages Acnologia for you. Every action

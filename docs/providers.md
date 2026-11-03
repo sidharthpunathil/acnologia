@@ -159,7 +159,8 @@ How Acnologia uses offers:
 
 Built in offers come from each provider's pricing and rate limit pages,
 checked 2026-11-02. Where a page publishes nothing for a value, the value is
-left out.
+left out. The provider refresh can re-read them on a schedule, by hand or
+with Check now; see [Keeping provider offers fresh](flows.md#keeping-provider-offers-fresh).
 
 ## Building a provider with AI
 
