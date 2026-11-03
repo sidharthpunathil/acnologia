@@ -252,6 +252,9 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			return nil, fmt.Errorf("no service named %q", args.Service)
 		}
+		if !s.sharedAs(ctx, a, sv) {
+			return nil, fmt.Errorf("this app cannot use service %q", args.Service)
+		}
 		return sv, nil
 	}
 	switch name {

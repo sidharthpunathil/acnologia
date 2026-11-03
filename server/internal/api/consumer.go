@@ -80,6 +80,10 @@ func (s *Server) serviceForApp(w http.ResponseWriter, r *http.Request, slug stri
 		}
 		return nil, false
 	}
+	if !s.sharedAs(r.Context(), a, sv) {
+		writeErr(w, 403, "service_not_allowed", "this app cannot use service "+slug)
+		return nil, false
+	}
 	return sv, true
 }
 
@@ -290,7 +294,7 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 		return nil, 404, errors.New("service no longer exists")
 	}
 	// Access may have been revoked since the lease was issued.
-	if !a.AllowsLease() || !a.CanUse(sv.Slug) {
+	if !a.AllowsLease() || !a.CanUse(sv.Slug) || !s.sharedAs(ctx, a, sv) {
 		s.Pool.ReleaseLease(l.ID)
 		return nil, 403, errors.New("this app can no longer use service " + sv.Slug)
 	}

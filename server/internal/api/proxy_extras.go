@@ -36,7 +36,7 @@ func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug strin
 	a := appFrom(r)
 	sv, err := s.Store.GetServiceBySlug(r.Context(), slug)
 	if err == nil {
-		if !a.CanUse(slug) {
+		if !a.CanUse(slug) || !s.sharedAs(r.Context(), a, sv) {
 			writeErr(w, 403, "service_not_allowed", "this app cannot use service "+slug)
 			return nil, false
 		}
@@ -56,7 +56,9 @@ func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug strin
 		return nil, false
 	}
 	// Access to a group grants its members for requests made through it.
-	if !a.CanUse(slug) {
+	// A share lists only services, so a group under a shared slug is never
+	// what was shared.
+	if !a.CanUse(slug) || a.ShareID != nil {
 		writeErr(w, 403, "service_not_allowed", "this app cannot use group "+slug)
 		return nil, false
 	}
@@ -71,6 +73,16 @@ func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug strin
 		return nil, false
 	}
 	return out, true
+}
+
+// sharedAs reports whether a share app may use sv: the slug it asked for must
+// still name the service that was shared under it. Other apps pass.
+func (s *Server) sharedAs(ctx context.Context, a *store.App, sv *store.Service) bool {
+	if a.ShareID == nil {
+		return true
+	}
+	id, ok, err := s.Store.ShareServiceID(ctx, a.ID, sv.Slug)
+	return err == nil && ok && id == sv.ID
 }
 
 // appLimited writes a 429 and returns true when the app has reached one of
