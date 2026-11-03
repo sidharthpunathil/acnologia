@@ -72,8 +72,20 @@ type Share struct {
 	PrivateNetwork bool `json:"private_network"`
 	// LastRevokePush is the outcome of the last revoke push, or nil.
 	LastRevokePush *RevokePush `json:"-"`
+	// Recipient is RecipientServer (another Acnologia) or RecipientPerson
+	// (someone with a claim link). Fixed at creation.
+	Recipient string `json:"recipient"`
+	// Label names a person recipient; Email is an optional label too and
+	// is never used to send anything.
+	Label string `json:"label"`
+	Email string `json:"email"`
+	// ClaimExpires is when an unclaimed person share's claim link stops
+	// working; ClaimedAt is when the person redeemed it.
+	ClaimExpires *time.Time `json:"claim_expires_at"`
+	ClaimedAt    *time.Time `json:"claimed_at"`
 
 	inviteHash string
+	claimHash  string
 }
 
 // RevokePush is the outcome of telling a receiver to delete handed over keys.
@@ -189,7 +201,10 @@ func migrateSharing(db *sql.DB) error {
 	if err := migrateKeyScopes(db); err != nil {
 		return err
 	}
-	return migrateHandover(db)
+	if err := migrateHandover(db); err != nil {
+		return err
+	}
+	return migratePeople(db)
 }
 
 var (
@@ -204,18 +219,20 @@ var (
 const shareCols = `s.id, s.name, s.note, s.status, s.services, s.providers, s.include_hidden, s.app_id, s.peer_id, s.peer_name, s.peer_url,
 s.peer_public_key, s.invite_hash, s.invite_expires_at, s.expires_at, s.created_by, s.created_at, s.redeemed_at, s.revoked_at, s.left_at,
 s.key_scopes, a.daily_requests, a.monthly_requests, a.daily_budget, a.monthly_budget,
-s.mode, s.lease_sec, s.end_action, s.peer_box_public_key, s.private_network, s.revoke_push_at, s.revoke_push_ok, s.revoke_push_detail`
+s.mode, s.lease_sec, s.end_action, s.peer_box_public_key, s.private_network, s.revoke_push_at, s.revoke_push_ok, s.revoke_push_detail,
+s.recipient, s.label, s.email, s.claim_hash, s.claim_expires_at, s.claimed_at`
 
 func scanShare(row interface{ Scan(...any) error }) (*Share, error) {
 	var sh Share
 	var svcs, provs, scopes, pushDetail string
 	var hidden, private int
 	var created int64
-	var app, invExp, exp, by, red, rev, left, dr, mr, pushAt, pushOK sql.NullInt64
+	var app, invExp, exp, by, red, rev, left, dr, mr, pushAt, pushOK, claimExp, claimed sql.NullInt64
 	var db, mb sql.NullFloat64
 	err := row.Scan(&sh.ID, &sh.Name, &sh.Note, &sh.Status, &svcs, &provs, &hidden, &app, &sh.PeerID, &sh.PeerName, &sh.PeerURL,
 		&sh.PeerPublicKey, &sh.inviteHash, &invExp, &exp, &by, &created, &red, &rev, &left, &scopes, &dr, &mr, &db, &mb,
-		&sh.Mode, &sh.LeaseSec, &sh.EndAction, &sh.PeerBoxPublicKey, &private, &pushAt, &pushOK, &pushDetail)
+		&sh.Mode, &sh.LeaseSec, &sh.EndAction, &sh.PeerBoxPublicKey, &private, &pushAt, &pushOK, &pushDetail,
+		&sh.Recipient, &sh.Label, &sh.Email, &sh.claimHash, &claimExp, &claimed)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -234,6 +251,7 @@ func scanShare(row interface{ Scan(...any) error }) (*Share, error) {
 	sh.AppID, sh.CreatedBy = toInt(app), toInt(by)
 	sh.InviteExpires, sh.ExpiresAt = toTime(invExp), toTime(exp)
 	sh.RedeemedAt, sh.RevokedAt, sh.LeftAt = toTime(red), toTime(rev), toTime(left)
+	sh.ClaimExpires, sh.ClaimedAt = toTime(claimExp), toTime(claimed)
 	sh.CreatedAt = time.Unix(created, 0).UTC()
 	sh.Limits.DailyRequests, sh.Limits.MonthlyRequests = toInt(dr), toInt(mr)
 	if db.Valid {
@@ -257,7 +275,9 @@ func shareAllowed(services []string) string {
 }
 
 // CreateShare stores a pending share with its invite hash and creates the
-// backing app (proxy only, no tokens yet) in one transaction.
+// backing app (proxy only, no tokens yet) in one transaction. For a share
+// with a person, inviteHash is the claim code's hash and sh.ClaimExpires
+// its end; no server invite exists.
 func (s *Store) CreateShare(ctx context.Context, sh *Share, inviteHash string, createdBy int64) (*Share, error) {
 	svcs, _ := json.Marshal(nonNil(sh.Services))
 	provs, _ := json.Marshal(nonNil(sh.Providers))
@@ -287,12 +307,18 @@ func (s *Store) CreateShare(ctx context.Context, sh *Share, inviteHash string, c
 		return nil, err
 	}
 	sh.normalize()
+	invHash, claimHash := inviteHash, ""
+	invExp, claimExp := sh.InviteExpires, (*time.Time)(nil)
+	if sh.IsPerson() {
+		invHash, claimHash = "", inviteHash
+		invExp, claimExp = nil, sh.ClaimExpires
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO shares(id,name,note,status,services,providers,include_hidden,app_id,invite_hash,invite_expires_at,expires_at,created_by,created_at,key_scopes,
-		mode,lease_sec,end_action,private_network)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		sh.ID, sh.Name, sh.Note, SharePending, string(svcs), string(provs), b2i(sh.IncludeHidden), appID, inviteHash,
-		fromTime(sh.InviteExpires), fromTime(sh.ExpiresAt), nz(createdBy), t, encodeScopes(sh.KeyScopes),
-		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork)); err != nil {
+		mode,lease_sec,end_action,private_network,recipient,label,email,claim_hash,claim_expires_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		sh.ID, sh.Name, sh.Note, SharePending, string(svcs), string(provs), b2i(sh.IncludeHidden), appID, invHash,
+		fromTime(invExp), fromTime(sh.ExpiresAt), nz(createdBy), t, encodeScopes(sh.KeyScopes),
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Recipient, sh.Label, sh.Email, claimHash, fromTime(claimExp)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -343,9 +369,9 @@ func (s *Store) UpdateShare(ctx context.Context, sh *Share) error {
 	sh.normalize()
 	// The mode is fixed once redeemed: only a pending share's mode changes.
 	if _, err := tx.ExecContext(ctx, `UPDATE shares SET name=?, note=?, services=?, providers=?, include_hidden=?, expires_at=?, status=?, key_scopes=?,
-		mode=CASE WHEN status='pending' THEN ? ELSE mode END, lease_sec=?, end_action=?, private_network=? WHERE id=?`,
+		mode=CASE WHEN status='pending' THEN ? ELSE mode END, lease_sec=?, end_action=?, private_network=?, label=?, email=? WHERE id=?`,
 		sh.Name, sh.Note, string(svcs), string(provs), b2i(sh.IncludeHidden), fromTime(sh.ExpiresAt), status, encodeScopes(sh.KeyScopes),
-		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.ID); err != nil {
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Label, sh.Email, sh.ID); err != nil {
 		return err
 	}
 	if sh.AppID != nil {

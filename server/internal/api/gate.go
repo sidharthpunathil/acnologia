@@ -30,8 +30,10 @@ import (
 // request that is not a GET or HEAD. Open: the SPA shell and its static files
 // (they carry no data, and the lock screen is part of them), /healthz,
 // /robots.txt, /api/gate*, the CLI sign in's create and poll calls
-// (/api/cli/device and /api/cli/device/token), and the consumer routes (/proxy/*, /api/v1/*,
-// /mcp), which already demand an app token of their own.
+// (/api/cli/device and /api/cli/device/token), the consumer routes (/proxy/*, /api/v1/*,
+// /mcp), which already demand an app token of their own, the server to
+// server sharing routes (/api/peer/v1/*, /.well-known/acnologia) and a
+// person's claim link routes (/api/claim/v1/*), which need a claim code.
 //
 // The cookie is "<issued unix>.<mac>", the MAC keyed by the master key and
 // the password. Nothing is stored, so a restart signs nobody out; changing
@@ -200,8 +202,12 @@ func (g *accessGate) tryUnlock(secret string) (ok, limited bool, wait time.Durat
 
 // gateOpenPrefixes pass the gate untouched. The consumer routes check their
 // own app token.
-// /api/peer/v1/ is the server to server side of sharing (peer_public.go).
-var gateOpenPrefixes = []string{"/proxy/", "/api/v1/", "/api/gate/", "/api/peer/v1/"}
+// /api/peer/v1/ is the server to server side of sharing (peer_public.go);
+// /api/claim/v1/ is a person's claim link page (people.go), which needs the
+// claim code. The pages /claim/<code> and /me are SPA navigations: a locked
+// GET of them already gets the shell, and the shell skips the lock screen
+// there and calls only these open routes.
+var gateOpenPrefixes = []string{"/proxy/", "/api/v1/", "/api/gate/", "/api/peer/v1/", "/api/claim/v1/"}
 
 var gateOpenExact = map[string]bool{
 	"/healthz": true, "/robots.txt": true, "/mcp": true, "/api/gate": true, "/api/v1": true,

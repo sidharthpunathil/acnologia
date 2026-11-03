@@ -30,9 +30,11 @@ GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
 GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url, box_public_key}, for sharing between servers
 GET /api/gate            -> {required, locked, password_only}: whether the site has an access password and this caller is past it
+POST /api/claim/v1/preview {code} -> what a claim link shares (no secret); see Access shared with you by link
+POST /api/claim/v1/redeem  {code} -> the token (or, for a reveal share, the keys), once
 ```
 
-When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia and the server to server routes under /api/peer/v1 stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp) are not affected.
+When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia, the server to server routes under /api/peer/v1, the claim link routes under /api/claim/v1 and the /claim/<code> and /me pages stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp) are not affected.
 
 ## GET /api/v1/services
 
@@ -758,7 +760,7 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 | 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit or at a rate limit their provider publishes. Retry after `retry_after_sec` or lease with `wait_sec`. |
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
-| 403 | `share_revoked`, `share_paused`, `share_expired` | A service another Acnologia shares with this one was revoked, paused or expired by its owner. Also sent as `X-Acnologia-Share`. Revoked is final; paused may come back. |
+| 403 | `share_revoked`, `share_paused`, `share_expired` | A service another Acnologia shares with this one, or the share behind your claimed token, was revoked, paused or expired by its owner. Also sent as `X-Acnologia-Share`. Revoked is final; paused may come back. |
 | 403 | `lease_not_allowed` | Leasing a service another Acnologia shares with this one, or one holding keys another Acnologia handed over. Use the proxy. |
 | 508 | `loop_detected` | The request passed through more than 3 Acnologia servers. |
 
@@ -767,6 +769,43 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 A service in `GET /api/v1/services` whose provider is `acnologia-peer` is shared by another Acnologia server: this server forwards your proxied call to that server, which injects one of its own keys. Use it through `/proxy/{service}/{path}` like any other service. It cannot be leased, because a lease would hand out the share token. Errors the other server relays from the provider reach you unchanged; when the owner pauses or revokes the share you get 403 `share_paused` or `share_revoked`. The owner may limit a shared service to some of its keys, so the other server can run out of keys (503 `no_key_available`) while the owner's own apps still have some; the manifest's `available` count reflects only the keys shared with you.
 
 A share can also be a handover share: the owner seals its keys to this server, which stores them as hidden keys of a local service whose provider is the owner's (for example `a-serpapi` with provider `serpapi`). Your proxied calls then go straight to the provider with those keys, not through the owner. Use them only through `/proxy/{service}/{path}`; they are never leased, revealed or shared onward. Each one has a lease (1 hour to 7 days) that this server renews when it syncs with the owner; when the owner pauses, revokes or lets the share end, or the lease runs out, the keys are deleted and the service answers 503 `no_key_available`. Shares in both modes can have a timer (`ends_at`) that expires or revokes them.
+
+## Access shared with you by link
+
+An Acnologia owner can share services with a person who does not run Acnologia. They send a one time claim link, `https://<server>/claim/acnclaim_...`. Opening it shows what is shared; "Get my access" redeems it, and the link stops working. The same two calls work from a script:
+
+```http
+POST /api/claim/v1/preview
+Content-Type: application/json
+
+{"code": "acnclaim_..."}
+```
+
+```json
+{"owner": {"name": "Ana's server", "id": "acn_srv_...", "url": "https://keys.example.com"},
+ "share": {"name": "For Dana", "label": "Dana", "mode": "proxy", "ends_at": "2026-12-01T00:00:00Z",
+           "limits": {"daily_requests": 100, "monthly_requests": null, "daily_budget": null, "monthly_budget": null},
+           "services": [{"slug": "serpapi", "name": "SerpAPI", "provider": "serpapi", "category": "Search", "description": "...", "logo_url": null}],
+           "providers": [], "key_count": 0},
+ "claim_expires_at": "2026-11-04T10:00:00Z"}
+```
+
+`POST /api/claim/v1/redeem` with the same body answers once. For a proxy share:
+
+```json
+{"token": "acn_...", "base_url": "https://keys.example.com/proxy", "mcp_url": "https://keys.example.com/mcp",
+ "limits": {...}, "ends_at": "2026-12-01T00:00:00Z",
+ "services": [{"slug": "serpapi", "name": "SerpAPI", "provider": "serpapi", "category": "Search",
+               "proxy_url": "https://keys.example.com/proxy/serpapi",
+               "auth": {"type": "query", "name": "api_key"},
+               "examples": [{"name": "Search", "method": "GET", "path": "/search.json", "query": {"q": "coffee"}}]}]}
+```
+
+Save the token: it is shown once. Use it like any app token: `GET /proxy/serpapi/search.json?q=coffee` with `Authorization: Bearer acn_...` (Acnologia adds the provider key; you never see it), `GET /api/v1/services`, and `/mcp` (core tools that do not hand out keys plus a tool per service example). Leasing keys is not allowed, and the token opens no dashboard route. `GET /api/v1/me` shows your access: the share's name, owner, status (active, paused, expired, revoked), mode, `ends_at`, the services with how many keys are free, your limits and your use today and this month. When the owner pauses or revokes the share, or its timer ends, the next call gets 403 `share_paused`, `share_revoked` or `share_expired`; `/api/v1/me` still answers with that status.
+
+For a reveal share, redeem answers `{"keys": [{"service", "label", "secret", "provider", "base_url", "auth"}], "ends_at"}`: the provider keys themselves, shown once. Call the provider directly with them, and stop when the owner asks: they may revoke and rotate the keys at any time.
+
+Errors: 404 `claim_invalid` (unknown code), 409 `already_claimed` (used), 410 `claim_expired` (the link ran out or the share ended; ask for a new link), 429 `rate_limited`.
 
 ## Admin API tokens and the acn CLI
 

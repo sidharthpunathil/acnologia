@@ -3,12 +3,13 @@
 All bodies are JSON. Errors look like
 `{"error": {"code": "string", "message": "string"}}` with a matching status.
 
-There are four ways in:
+There are five ways in:
 
 | Surface | Prefix | Auth |
 |---|---|---|
 | Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/robots.txt`, `/.well-known/acnologia` and `/api/gate` stay open) |
 | Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`), a share token (`manifest`, `leave`, `providers/{slug}/logo`, `keys`, `report`) or the owner's signature (`revoke`); see [Sharing between servers](#sharing-between-servers) |
+| Claim links | `/api/claim/v1` | a claim code (`acnclaim_...`) from a share with a person; see [Sharing with people](#sharing-with-people) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
 | Dashboard | `/api/auth`, `/api/admin`, `/api/logos`, `/api/cli/device` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
 
@@ -21,6 +22,7 @@ the rules that apply to it, then lists the dashboard API.
 | Method and path | Purpose |
 |---|---|
 | `GET /api/v1/services` | Services the token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`. |
+| `GET /api/v1/me` | The token's own access: `{app: {id, name}, limits: {daily_requests, monthly_requests, daily_budget, monthly_budget}, usage: {today_requests, today_cost, month_requests, month_cost, last_used_at, limit_hit}, limit_hit, services: [{slug, name, provider, category, available, logo_url}], share}` (`logo_url` is always null). `share` is null for an ordinary app; for a share's token it is `{id, name, owner: {name, id}, owner_name, owner_id, recipient, label, status, mode, ends_at}`. A share token whose share is paused, expired or revoked still gets 200 here with that `status` and no services. `available` counts keys free right now for a share's token; for an ordinary app it is 1 or 0, since apps never learn pool sizes. |
 | `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec, exclusive}`. Apps in mode `lease` or `both`. `exclusive: true` keeps the key from every other caller until you report or the lease expires. |
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. |
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. |
@@ -47,7 +49,7 @@ Status codes an app should handle:
 | 409 | `report_failed` | Lease already reported. |
 | 410 | `report_failed` | Lease expired more than 10 minutes ago. |
 | 502 | `upstream_unreachable` | The provider could not be reached on the first attempt. |
-| 403 | `share_revoked`, `share_paused`, `share_expired` | Only for a share token from another server: the owner revoked, paused or let the share expire. The answer also carries `X-Acnologia-Share: revoked`, `paused` or `expired`. |
+| 403 | `share_revoked`, `share_paused`, `share_expired` | Only for a share token (another server's, or a person's from a claim link): the owner revoked, paused or let the share expire. The answer also carries `X-Acnologia-Share: revoked`, `paused` or `expired`. |
 | 403 | `lease_not_allowed` | Leasing a service another server shares with this one, or one holding keys another server handed over. Those are proxy only. |
 | 508 | `loop_detected` | The request already passed through more than 3 Acnologia servers (`X-Acnologia-Hop`). |
 
@@ -119,7 +121,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `PATCH /services/{id}` | a | Edit. Also takes `egress_id` (0 for direct), `cache_ttl_sec` and `cost_per_request` (-1 for the provider default). A non-superadmin changing `base_url`, auth, provider or egress proxy sets `target_trusted=false`; a superadmin submitting those fields sets it true. On a service holding keys another server handed over, those fields follow the owner and a change is refused (409 `handover_service`). |
 | `DELETE /services/{id}` | a | Delete with its keys. Admins cannot delete a service holding hidden keys. |
 | `POST /services/{id}/check` | a | Health check every key in the service. |
-| `GET /services/{id}/keys` | m | Keys (hidden ones only for superadmins). Never includes secrets. A key this server handed over to another server has `handed_over: [{share_id, share_name, peer_id, peer_name, live, handed_at, valid_until, wiped_at, reported_status}]`; a key another server handed over to this one has `peer_link_id`, `peer_valid_until` (deleted then unless renewed) and `peer_remote_key_id`. |
+| `GET /services/{id}/keys` | m | Keys (hidden ones only for superadmins). Never includes secrets. A key this server handed over to another server has `handed_over: [{share_id, share_name, peer_id, peer_name, live, handed_at, valid_until, wiped_at, reported_status}]`; a key a reveal share showed to a person has `revealed_to: [{share_id, share_name, label, revealed_at}]` (for good: revoke cannot take it back); a key another server handed over to this one has `peer_link_id`, `peer_valid_until` (deleted then unless renewed) and `peer_remote_key_id`. |
 | `POST /services/{id}/keys` | a | Add up to 1000 keys: `{keys: [{secret, label, tier, hidden, restricted, app_ids, weight, priority, notes, quota_limit, max_concurrency, account_name, account_email, account_phone, account_ref}]}`. `hidden` needs a superadmin. |
 | `GET /keys` | m | All keys across services, with filters `q`, `service_id`, `validity` and `sort`. |
 | `GET /keys/{id}/insights` | m | One key with recent events and 14 days of activity. |
@@ -174,12 +176,13 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /chat/threads/{id}/compact` | m | Compact now: Claude summarizes the older messages and the summary replaces them in what the model is sent; the last 6 messages stay verbatim and the transcript keeps everything. Returns the new `compact` item. 400 `nothing_to_compact` when the chat is too short, 409 while a turn runs, 502 `compact_failed` when the summary call fails (nothing changes), 503 when AI is off. |
 | `GET /identity` | a | This server's identity: `{id, name, url, url_source: env\|saved\|request, version, public_key, fingerprint}`. |
 | `PATCH /identity` | s | `{name, url}`. `url` is ignored when `ACNOLOGIA_PUBLIC_URL` is set; `""` clears the saved one. |
-| `GET /shares`, `GET /shares/{id}` | a | Shares this server gives, each with `mode`, `lease` (`1h`, `6h`, `24h`, `72h` or `7d`) and `lease_sec`, `ends_at` (the timer, the same value as `expires_at`), `end_action`, `private_network`, `key_scopes`, `service_keys {slug: {keys_shared, keys_total}}` (the keys each shared service's scope resolves to now, of the keys the share could use without a scope) and `usage {today_requests, today_cost, month_requests, month_cost, last_used_at, history (14 days), limit_hit}`; one share adds `per_service` request counts. A handover share adds `handover {keys: [{key_id, service, label, provider, live, handed_at, renewed_at, valid_until, wiped_at, wipe_reason, reported_requests, reported_status, reported_at}], last_revoke_push: {at, ok, detail} or null}` (`reported_*` is what the other server says, not measured here), and once revoked `rotate_checklist: [{key_id, service, label, provider, provider_name, provider_url, handed_at, wiped_at, key_exists}]`, every key the other server ever held. Never carries the invite, the token, a key or a sealed key. |
-| `POST /shares` | s | `{name, note, mode: proxy\|handover, lease, services, providers, key_scopes, limits, ends_at, end_action: expire\|revoke, include_hidden, private_network, invite_valid: 1h\|24h\|7d}`. `ends_at` is RFC 3339 or `""` for no end; `expires_at` is still accepted as its alias (`ends_at` wins when both are sent). `lease` (default `24h`) is how long a handed over key stays valid without renewal. A handover share refuses any request or budget limit with 400 (the other server calls the provider itself, so this server cannot count); send the limits as null or leave them out. `private_network` lets the revoke push reach a receiver on a private address (otherwise the push uses the public only client). Returns `{share, invite}`; the invite is shown once. Services from another server (provider `acnologia-peer`, or holding keys handed over to this server) are refused. Audited as `share.created` with the services, providers and key scope modes. |
+| `GET /shares`, `GET /shares/{id}` | a | Shares this server gives, each with `mode`, `lease` (`1h`, `6h`, `24h`, `72h` or `7d`) and `lease_sec`, `ends_at` (the timer, the same value as `expires_at`), `end_action`, `private_network`, `key_scopes`, `service_keys {slug: {keys_shared, keys_total}}` (the keys each shared service's scope resolves to now, of the keys the share could use without a scope) and `usage {today_requests, today_cost, month_requests, month_cost, last_used_at, history (14 days), limit_hit}`; one share adds `per_service` request counts. A handover share adds `handover {keys: [{key_id, service, label, provider, live, handed_at, renewed_at, valid_until, wiped_at, wipe_reason, reported_requests, reported_status, reported_at}], last_revoke_push: {at, ok, detail} or null}` (`reported_*` is what the other server says, not measured here), and once revoked `rotate_checklist: [{key_id, service, label, provider, provider_name, provider_url, handed_at, wiped_at, key_exists}]`, every key the other server ever held. Every share also has `recipient` (`server` or `person`), `label`, `email`, `claimed_at`, `claim_expires_at` and `revealed_keys: [{key_id, service, label, provider, revealed_at}]` (empty unless a reveal share was claimed); a reveal share that ended (revoked or expired) after its claim has `rotate_checklist` in the same shape, `handed_at` being when the key was revealed. Never carries the invite, the claim code, the token, a key or a sealed key. |
+| `POST /shares` | s | `{name, note, recipient: server\|person, label, email, mode: proxy\|handover\|reveal, lease, services, providers, key_scopes, limits, ends_at, end_action: expire\|revoke, include_hidden, private_network, invite_valid: 1h\|24h\|7d, claim_valid: 1h\|24h\|7d}`. For `recipient: person` see [Sharing with people](#sharing-with-people): it needs a `label`, takes `mode` proxy or reveal, and returns `{share, claim_url}` instead of an invite. `ends_at` is RFC 3339 or `""` for no end; `expires_at` is still accepted as its alias (`ends_at` wins when both are sent). `lease` (default `24h`) is how long a handed over key stays valid without renewal. A handover share refuses any request or budget limit with 400 (the other server calls the provider itself, so this server cannot count); send the limits as null or leave them out. `private_network` lets the revoke push reach a receiver on a private address (otherwise the push uses the public only client). Returns `{share, invite}`; the invite is shown once. Services from another server (provider `acnologia-peer`, or holding keys handed over to this server) are refused. Audited as `share.created` with the services, providers and key scope modes. |
 | `PATCH /shares/{id}` | s | Same fields but `invite_valid`. `mode` changes only while the share is pending (400 after redeem: create a new share). Changes reach the receiver at its next sync; a new key scope applies to the very next request. `ends_at: ""` clears the timer; an expired share moved into the future turns active again. Audited as `share.updated`. |
 | `POST /shares/{id}/extend` | s | `{ends_at}`: move the timer later (RFC 3339, in the future and after the current end) or `""` for no end. An expired share turns active again; a handover share's keys are handed over again at the receiver's next sync. 409 on a revoked share. Audited as `share.extended`. |
 | `POST /shares/{id}/pause`, `/resume`, `/revoke` | s | Pause (reversible) or revoke (final). Both refuse the very next request. Revoking a handover share also sends the signed revoke push and records the result in `handover.last_revoke_push` (`wiped 1 key(s) at ...`, or `not reached (...); the keys are deleted by <time> when their lease ends`). Audited as `share.paused`, `share.resumed`, `share.revoked` and `share.revoke_push`. |
-| `POST /shares/{id}/invite` | s | A new invite for a share not redeemed yet: `{invite_valid}`. The old invite stops working. |
+| `POST /shares/{id}/invite` | s | A new invite for a share not redeemed yet: `{invite_valid}`. The old invite stops working. 409 `person_share` for a share with a person. |
+| `POST /shares/{id}/claim-link` | s | A new claim link for a share with a person not claimed yet: `{valid: 1h\|24h\|7d}` (default 24h). Returns `{share, claim_url, claim_expires_at}`, shown once; the old link stops working. 409 `already_claimed` once claimed or ended, 409 `not_person_share` for a share with a server. Audited as `share.claim_link`. |
 | `GET /peers` | a | Shares other servers gave this one: status, `mode`, `local_services`, imported `providers`, `last_sync_at`, `last_error`, the owner's `fingerprint`. A handover link adds `handover {keys: [{key_id, remote_key_id, service, label, valid_until, status}]}`: the keys held here and when each is deleted unless renewed. Never carries the token or a key. |
 | `POST /peers/preview` | s | `{invite, trusted}`: fetch the owner's identity and what the invite shares, without redeeming it. |
 | `POST /peers` | s | `{invite, prefix, trusted, owner_id}`: redeem the invite and create the local services. `owner_id` makes the call fail if the server at the URL is not the one previewed. |
@@ -234,6 +237,50 @@ Preview and redeem share a global limit of 20 calls a minute and 500 a day
 `share_revoked`, `share_paused` or `share_expired`. All these routes, and the well-known identity, are open
 through the access password lock. Revoke pushes share their own limit of
 20 a minute and 500 a day.
+
+### Sharing with people
+
+A share whose `recipient` is `person` is for someone who does not run
+Acnologia. Creating one returns `claim_url`, `<public url>/claim/acnclaim_...`,
+shown once; only its hash is stored. The person opens it, the page previews
+the share and, on "Get my access", redeems the code, which works once. The
+flow is in [flows.md](flows.md#sharing-with-people) and the threat model in
+[security.md](security.md#sharing-with-people).
+
+Rules on create and edit (400 `invalid` otherwise): `label` is 1 to 80
+characters; `email` is optional and only a label (loosely checked, never
+mailed); `mode` is `proxy` (default) or `reveal` (`handover` is for servers
+only, `reveal` for people only); `recipient` cannot change. A reveal share
+takes no request or budget limits, and its key scopes must resolve to at
+least one key it can show (400 `no_revealable_keys`): hidden keys are never
+revealed, even with `include_hidden`, and nor are restricted, disabled,
+invalid, banned or handed over keys. Timers, pause, resume, extend, revoke,
+audit and webhooks work as for a server share.
+
+| Route | Auth | Purpose |
+|---|---|---|
+| `POST /api/claim/v1/preview` | claim code | `{code}` (the code, or the whole link). `{owner: {name, id, url}, share: {name, label, mode, ends_at, limits, services: [{slug, name, provider, category, description, logo_url}], providers: [{slug, name}], key_count}, claim_expires_at}`. `key_count` is how many keys a reveal share would show (0 for proxy); `logo_url` is always null (logos need a dashboard session). No secret; does not use the link up. |
+| `POST /api/claim/v1/redeem` | claim code | `{code}`. Burns the link and answers once. Proxy: `{token, base_url (the origin plus /proxy), mcp_url, limits, ends_at, services: [{slug, name, provider, category, proxy_url, auth: {type, name, prefix}, examples: [{name, method, path, query, body}]}]}`; the token is an app token on the share's backing app, proxy only, for the shared services. Reveal: `{keys: [{service, label, secret, provider, base_url, auth: {type, name, prefix}}], ends_at}`; each key is recorded as revealed. 409 `nothing_to_reveal` (the link is not used up) when the scope has no key to show right now. |
+
+Both answer 404 `claim_invalid` for an unknown code, 409 `already_claimed`
+once redeemed, 410 `claim_expired` when the link ran out or the share ended
+(revoked, or its timer passed) before the claim, and 429 `rate_limited` past
+a global 20 calls a minute or 500 a day (their own bucket, sized like the
+invite routes). They send `Cache-Control: no-store`. Both, the `/claim/<code>`
+and `/me` pages, and the person's own calls with the token (`/proxy`,
+`/api/v1`, `/mcp`) work through the access password lock; nothing else does.
+
+A person's token: works on `/proxy/{service}`, `/api/v1/services`,
+`/api/v1/me` and `/mcp`, only for the shared services and within the key
+scopes, limits and timer; cannot lease (403 `lease_not_allowed`), sees only
+the core and service MCP tools (never `get_key`, insights or manage tools,
+whatever the app's MCP settings say), gets 401 on every dashboard route and
+403 `not_a_share` on the server to server routes. Pause, revoke and an ended
+timer refuse the very next call. Audit and webhook events: `share.created`,
+`share.claim_link`, `share.claimed`, `share.revealed` (one per key, key id
+and service only), `share.paused`, `share.resumed`, `share.revoked`,
+`share.expired`, and the audit entry `share.rotate_keys` when a claimed
+reveal share ends.
 
 ### Logos (`/api/logos`)
 

@@ -68,9 +68,16 @@ func migrateHandover(db *sql.DB) error {
 	return err
 }
 
-// normalize fills the mode, lease and end action defaults.
+// normalize fills the recipient, mode, lease and end action defaults.
+// Handover is for a server only and reveal for a person only.
 func (sh *Share) normalize() {
-	if sh.Mode != ShareModeHandover {
+	if sh.Recipient != RecipientPerson {
+		sh.Recipient = RecipientServer
+	}
+	switch {
+	case sh.Mode == ShareModeHandover && sh.Recipient == RecipientServer:
+	case sh.Mode == ShareModeReveal && sh.Recipient == RecipientPerson:
+	default:
 		sh.Mode = ShareModeProxy
 	}
 	if sh.LeaseSec <= 0 {

@@ -50,8 +50,14 @@ func applyShareModeInput(in shareInput, sh *store.Share) string {
 		if m == "" {
 			m = store.ShareModeProxy
 		}
-		if m != store.ShareModeProxy && m != store.ShareModeHandover {
-			return "mode must be proxy or handover"
+		if m != store.ShareModeProxy && m != store.ShareModeHandover && m != store.ShareModeReveal {
+			return "mode must be proxy, handover or reveal"
+		}
+		if m == store.ShareModeHandover && sh.IsPerson() {
+			return "handover is for another server; a share with a person is proxy or reveal"
+		}
+		if m == store.ShareModeReveal && !sh.IsPerson() {
+			return "reveal is for a person; a share with another server is proxy or handover"
 		}
 		if sh.Status != "" && sh.Status != store.SharePending && m != sh.Mode {
 			return "the mode of a share cannot change after it is redeemed; create a new share instead"
@@ -89,6 +95,9 @@ func applyShareModeInput(in shareInput, sh *store.Share) string {
 	}
 	if sh.IsHandover() && sh.Limits.Any() {
 		return errHandoverLimits
+	}
+	if sh.IsReveal() && sh.Limits.Any() {
+		return errRevealLimits
 	}
 	return ""
 }
@@ -141,6 +150,7 @@ func (s *Server) fillModeView(ctx context.Context, v *shareView) {
 	sh := v.Share
 	v.Lease = leaseName(sh.LeaseSec)
 	v.EndsAt = sh.ExpiresAt
+	s.fillRevealView(ctx, v)
 	if !sh.IsHandover() {
 		return
 	}
@@ -155,7 +165,12 @@ func (s *Server) fillModeView(ctx context.Context, v *shareView) {
 	if sh.Status != store.ShareRevoked {
 		return
 	}
-	v.RotateChecklist = []rotateItem{}
+	v.RotateChecklist = s.rotateChecklist(ctx, rows)
+}
+
+// rotateChecklist lists handed over keys to rotate at their provider.
+func (s *Server) rotateChecklist(ctx context.Context, rows []*store.Handover) []rotateItem {
+	out := []rotateItem{}
 	for _, h := range rows {
 		it := rotateItem{KeyID: h.KeyID, Service: h.Service, Label: h.Label, Provider: h.Provider, HandedAt: h.HandedAt, WipedAt: h.WipedAt}
 		if p, err := s.Store.GetProvider(ctx, h.Provider); err == nil {
@@ -164,8 +179,9 @@ func (s *Server) fillModeView(ctx context.Context, v *shareView) {
 		if _, err := s.Store.GetKey(ctx, h.KeyID); err == nil {
 			it.KeyExists = true
 		}
-		v.RotateChecklist = append(v.RotateChecklist, it)
+		out = append(out, it)
 	}
+	return out
 }
 
 // fillHandovers marks keys this server handed over to other servers.
@@ -181,8 +197,13 @@ func (s *Server) fillHandovers(ctx context.Context, keys ...*store.Key) {
 	if err != nil {
 		return
 	}
+	rv, err := s.Store.KeyReveals(ctx, ids)
+	if err != nil {
+		return
+	}
 	for _, k := range keys {
 		k.Handovers = m[k.ID]
+		k.RevealedTo = rv[k.ID]
 	}
 }
 
@@ -449,6 +470,7 @@ func (s *Server) endShare(ctx context.Context, sh *store.Share, selfURL string) 
 		s.Store.AddAudit(ctx, nil, "share.revoked", n.Name, "timer ended")
 		s.emitShareData(notify.ShareRevoked, n, "share "+n.Name+" was revoked: its timer ended", map[string]any{"reason": "timer"})
 		s.pushRevoke(ctx, n, selfURL)
+		s.revealEnded(ctx, n, "revoked by its timer")
 		return s.Store.GetShare(ctx, n.ID)
 	}
 	n, err := s.Store.SetShareStatus(ctx, sh.ID, store.ShareExpired)
@@ -457,6 +479,7 @@ func (s *Server) endShare(ctx context.Context, sh *store.Share, selfURL string) 
 	}
 	s.Store.AddAudit(ctx, nil, "share.expired", n.Name, "timer ended")
 	s.emitShareData(notify.ShareExpired, n, "share "+n.Name+" expired: its timer ended", map[string]any{"reason": "timer"})
+	s.revealEnded(ctx, n, "expired")
 	return n, nil
 }
 
@@ -574,7 +597,7 @@ func (s *Server) emitShareData(typ string, sh *store.Share, msg string, extra ma
 	if sh.AppID != nil {
 		appID = *sh.AppID
 	}
-	data := map[string]any{"share_id": sh.ID, "peer_id": sh.PeerID, "status": sh.Status, "mode": sh.Mode}
+	data := map[string]any{"share_id": sh.ID, "peer_id": sh.PeerID, "status": sh.Status, "mode": sh.Mode, "recipient": sh.Recipient}
 	for k, v := range extra {
 		data[k] = v
 	}

@@ -76,6 +76,8 @@ type Server struct {
 	peerLimit *peerLimiter
 	// revokeLimit bounds revoke pushes from other servers (handover.go).
 	revokeLimit *peerLimiter
+	// claimLimit bounds claim link preview and redeem calls (people.go).
+	claimLimit *peerLimiter
 	// Refresh keeps providers' offers current (refresh.go).
 	Refresh *refresh.Refresher
 }
@@ -91,6 +93,7 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 	}
 	s.peerLimit = newPeerLimiter()
 	s.revokeLimit = newPeerLimiter()
+	s.claimLimit = newPeerLimiter()
 	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat, FetchSiteLogo: peer.SiteLogo}
 	s.peers.OnHandover = s.onHandover
 	s.Refresh = &refresh.Refresher{Store: st, Catalog: cat, AI: serverAI{s}}
@@ -163,6 +166,12 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireApp).Get("/keys", s.peerKeys)
 		r.With(s.requireApp).Post("/report", s.peerReport)
 		r.Post("/revoke", s.peerRevoke)
+	})
+	// Sharing with people (people.go): a claim link's page calls these.
+	// Open in the access gate; they need the claim code.
+	r.Route("/api/claim/v1", func(r chi.Router) {
+		r.Post("/preview", s.claimPreview)
+		r.Post("/redeem", s.claimRedeem)
 	})
 	r.Get("/llms-full.txt", s.serveLLMsFull)
 	s.mountDocs(r)
@@ -334,6 +343,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/shares/{id}/resume", s.shareStatusHandler(store.ShareActive, notify.ShareResumed, "resumed"))
 			r.Post("/shares/{id}/revoke", s.shareStatusHandler(store.ShareRevoked, notify.ShareRevoked, "revoked"))
 			r.Post("/shares/{id}/invite", s.newShareInvite)
+			r.Post("/shares/{id}/claim-link", s.shareClaimLink)
 			r.Post("/shares/{id}/extend", s.extendShare)
 			r.Post("/peers/preview", s.previewPeer)
 			r.Post("/peers", s.connectPeer)
@@ -350,11 +360,16 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(s.requireApp)
-		r.Get("/services", s.v1Services)
-		r.Post("/lease", s.v1Lease)
-		r.Post("/leases/{id}/report", s.v1Report)
-		r.Post("/leases/{id}/renew", s.v1Renew)
+		// me checks the token itself, so a share token whose share stopped
+		// still learns why.
+		r.Get("/me", s.v1Me)
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireApp)
+			r.Get("/services", s.v1Services)
+			r.Post("/lease", s.v1Lease)
+			r.Post("/leases/{id}/report", s.v1Report)
+			r.Post("/leases/{id}/renew", s.v1Renew)
+		})
 	})
 
 	r.With(s.requireApp).HandleFunc("/proxy/{service}/*", s.proxy)
@@ -374,7 +389,12 @@ func requestLog(next http.Handler) http.Handler {
 			return
 		}
 		// Never log query strings: they may carry provider keys or app tokens.
-		slog.Info("http", "method", r.Method, "path", r.URL.Path, "status", ww.Status(), "ms", time.Since(start).Milliseconds())
+		// A claim page's path carries its code: log the route, not the code.
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/claim/") {
+			path = "/claim/[code]"
+		}
+		slog.Info("http", "method", r.Method, "path", path, "status", ww.Status(), "ms", time.Since(start).Milliseconds())
 	})
 }
 
