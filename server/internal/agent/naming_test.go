@@ -111,8 +111,8 @@ func TestHaikuNamesTheRunAndIsRecorded(t *testing.T) {
 			haiku = &calls[i]
 		}
 	}
-	// 400 input tokens at $1 and 40 output at $5 per MTok.
-	if haiku == nil || haiku.Feature != store.AIFeatureBuilder || haiku.Ref != runRef(run.ID) || math.Abs(haiku.CostUSD-0.0006) > 1e-12 {
+	// 400 input tokens at $0.10 and 40 output at $0.50 per MTok.
+	if haiku == nil || haiku.Feature != store.AIFeatureBuilder || haiku.Ref != runRef(run.ID) || math.Abs(haiku.CostUSD-0.00006) > 1e-12 {
 		t.Fatalf("haiku ledger row: %+v", haiku)
 	}
 	a.Store.Close() // flush the fake's request log

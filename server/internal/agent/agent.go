@@ -43,7 +43,9 @@ const (
 )
 
 type Config struct {
-	APIKey      string
+	APIKey string
+	// Model is ACNOLOGIA_AI_MODEL, empty when it is not set. The model saved
+	// on the Settings page wins over it (models.go).
 	Model       string
 	GitHubToken string
 	// BaseURL overrides the Anthropic API endpoint; tests point it at a fake.
@@ -55,21 +57,20 @@ type Agent struct {
 	Catalog *catalog.Catalog
 	Box     *crypto.Box
 
-	client  anthropic.Client
-	model   string
-	enabled bool
-	github  string
-	sem     chan struct{}
-	cancels sync.Map // run id -> context.CancelFunc
+	client anthropic.Client
+	// envModel is ACNOLOGIA_AI_MODEL; models holds the saved model settings.
+	envModel string
+	models   modelState
+	enabled  bool
+	github   string
+	sem      chan struct{}
+	cancels  sync.Map // run id -> context.CancelFunc
 	// pendingLogos holds logos for runs waiting for review (not persisted).
 	pendingLogos sync.Map
 }
 
 func New(cfg Config, st *store.Store, cat *catalog.Catalog, box *crypto.Box) *Agent {
-	a := &Agent{Store: st, Catalog: cat, Box: box, model: cfg.Model, github: cfg.GitHubToken, sem: make(chan struct{}, maxConcurrent)}
-	if a.model == "" {
-		a.model = "claude-opus-5-5"
-	}
+	a := &Agent{Store: st, Catalog: cat, Box: box, envModel: strings.TrimSpace(cfg.Model), github: cfg.GitHubToken, sem: make(chan struct{}, maxConcurrent)}
 	if strings.TrimSpace(cfg.APIKey) != "" {
 		// Every request to Anthropic, from the builder, the Assistant, Fill
 		// with AI and run naming, passes through redactRequest, so a new
@@ -86,16 +87,24 @@ func New(cfg Config, st *store.Store, cat *catalog.Catalog, box *crypto.Box) *Ag
 }
 
 type Status struct {
-	Enabled bool   `json:"enabled"`
-	Model   string `json:"model"`
-	Reason  string `json:"reason"`
+	Enabled bool `json:"enabled"`
+	// Model is the effective default model; Models is the effective model of
+	// each feature (assistant, builder, fill, summary).
+	Model  string            `json:"model"`
+	Models map[string]string `json:"models"`
+	Reason string            `json:"reason"`
 }
 
 func (a *Agent) Status() Status {
-	if !a.enabled {
-		return Status{Model: a.model, Reason: "Set ANTHROPIC_API_KEY in .env (or the environment) and restart Acnologia."}
+	ctx := context.Background()
+	st := Status{Enabled: a.enabled, Model: a.ModelFor(ctx, "").Model, Models: map[string]string{}}
+	for _, f := range ModelFeatures {
+		st.Models[f] = a.ModelFor(ctx, f).Model
 	}
-	return Status{Enabled: true, Model: a.model}
+	if !a.enabled {
+		st.Reason = "Set ANTHROPIC_API_KEY in .env (or the environment) and restart Acnologia."
+	}
+	return st
 }
 
 var ErrDisabled = errors.New("AI is not configured. Set ANTHROPIC_API_KEY and restart Acnologia.")
@@ -194,7 +203,7 @@ func (a *Agent) Submit(ctx context.Context, u *store.User, req RunRequest) (*sto
 		in.CreateService = false
 	}
 	run := &store.AgentRun{Kind: req.Kind, Status: "queued", ProviderSlug: req.ProviderSlug, Input: in,
-		Title: a.fallbackTitle(ctx, req), CreatedByID: u.ID, CreatedBy: u.Email}
+		Title: a.fallbackTitle(ctx, req), CreatedByID: u.ID, CreatedBy: u.Email, Model: a.ModelFor(ctx, FeatureBuilder).Model}
 	if len(keys) > 0 {
 		enc, err := a.Box.Encrypt(keys[0])
 		if err != nil {

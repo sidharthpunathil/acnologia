@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
@@ -19,34 +19,66 @@ type Price struct {
 	CacheRead  float64 `json:"cache_read"`
 	Output     float64 `json:"output"`
 	WebSearch  float64 `json:"web_search"`
+	// LongPromptAbove, when set, is the prompt size in tokens past which
+	// every token price is multiplied by LongPromptFactor.
+	LongPromptAbove  int64   `json:"long_prompt_above,omitempty"`
+	LongPromptFactor float64 `json:"long_prompt_factor,omitempty"`
+}
+
+// price builds a Price with cache writes at 1.25x input and web search at
+// $10 per 1,000.
+func price(in, cacheRead, out float64) Price {
+	return Price{Input: in, CacheWrite: in * 1.25, CacheRead: cacheRead, Output: out, WebSearch: 10}
 }
 
 // defaultPrice is Claude Opus 5.5: $4 input, $20 output, $0.20 cache reads per
 // MTok, cache writes at 1.25x input, web search $10 per 1,000. Models not in
 // prices are charged at this rate.
-var defaultPrice = Price{Input: 4, CacheWrite: 5, CacheRead: 0.20, Output: 20, WebSearch: 10}
+var defaultPrice = price(4, 0.20, 20)
 
-// prices is the one place model prices live. Keys are model ids; a dated or
-// suffixed id (claude-opus-5-5-20261001) matches its base entry.
+// prices is the one place model prices live, Anthropic's first party list
+// prices. Keys are model ids; a dated id (claude-opus-5-5-20261001) matches
+// its base entry.
 var prices = map[string]Price{
-	"claude-opus-5-5": defaultPrice,
-	// Haiku names builder runs: $1 input, $5 output per MTok.
-	"claude-haiku-5-5": {Input: 1, CacheWrite: 1.25, CacheRead: 0.10, Output: 5},
+	"claude-opus-5-5":   defaultPrice,
+	"claude-sonnet-5-5": price(2, 0.20, 10),
+	// Haiku 5.5 also names builder runs. Prompts over 100K tokens cost 5x
+	// ($0.50 input, $2.50 output).
+	"claude-haiku-5-5": {Input: 0.10, CacheWrite: 0.125, CacheRead: 0.01, Output: 0.50, WebSearch: 10,
+		LongPromptAbove: 100_000, LongPromptFactor: 5},
+	"claude-fable-5-1": price(10, 0.25, 50),
+	// The previous generation, for models the Models API still lists.
+	"claude-fable-5":    price(10, 1, 50),
+	"claude-opus-5":     price(5, 0.50, 25),
+	"claude-opus-4-8":   price(5, 0.50, 25),
+	"claude-opus-4-7":   price(5, 0.50, 25),
+	"claude-opus-4-6":   price(5, 0.50, 25),
+	"claude-sonnet-5":   price(2, 0.20, 10),
+	"claude-sonnet-4-6": price(3, 0.30, 15),
+	"claude-haiku-4-5":  price(1, 0.10, 5),
+}
+
+// datedSuffix is the -YYYYMMDD snapshot suffix of a dated model id.
+var datedSuffix = regexp.MustCompile(`-\d{8}$`)
+
+// KnownPrice returns the price of a model in the table, matching a dated id
+// to its base entry. ok is false for a model Acnologia has no price for.
+func KnownPrice(model string) (Price, bool) {
+	if p, ok := prices[model]; ok {
+		return p, true
+	}
+	if base := datedSuffix.ReplaceAllString(model, ""); base != model {
+		if p, ok := prices[base]; ok {
+			return p, true
+		}
+	}
+	return Price{}, false
 }
 
 // PriceFor returns the price of a model, falling back to the default.
 func PriceFor(model string) Price {
-	if p, ok := prices[model]; ok {
+	if p, ok := KnownPrice(model); ok {
 		return p
-	}
-	best := ""
-	for id := range prices {
-		if strings.HasPrefix(model, id) && len(id) > len(best) {
-			best = id
-		}
-	}
-	if best != "" {
-		return prices[best]
 	}
 	return defaultPrice
 }
@@ -69,7 +101,11 @@ func TokensOf(u anthropic.BetaUsage) Tokens {
 // Cost is the USD cost of usage at a model's price.
 func Cost(model string, t Tokens) float64 {
 	p := PriceFor(model)
-	return (float64(t.Input)*p.Input+float64(t.CacheWrite)*p.CacheWrite+float64(t.CacheRead)*p.CacheRead+
+	f := 1.0
+	if p.LongPromptAbove > 0 && t.Input+t.CacheWrite+t.CacheRead > p.LongPromptAbove {
+		f = p.LongPromptFactor
+	}
+	return f*(float64(t.Input)*p.Input+float64(t.CacheWrite)*p.CacheWrite+float64(t.CacheRead)*p.CacheRead+
 		float64(t.Output)*p.Output)/1e6 + float64(t.WebSearches)*p.WebSearch/1000
 }
 
@@ -96,7 +132,7 @@ func (a *Agent) Record(ctx context.Context, feature string, by Caller, ref strin
 	}
 	model := string(resp.Model)
 	if model == "" {
-		model = a.model
+		model = a.ModelFor(ctx, feature).Model
 	}
 	t := TokensOf(resp.Usage)
 	cost := Cost(model, t)

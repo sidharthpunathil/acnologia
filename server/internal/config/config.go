@@ -32,7 +32,10 @@ type Config struct {
 	BootstrapPassword   string
 	Version             string
 	AnthropicAPIKey     string
-	AIModel             string
+	// AIModel is ACNOLOGIA_AI_MODEL, empty when unset. It is the fallback:
+	// the model saved on the Settings page wins, and with neither set the
+	// agent uses its built in default (agent.BuiltinModel).
+	AIModel string
 	// ChatCompactTokens is the prompt size, in tokens, at which an
 	// Assistant thread is compacted. 0 means 60% of the model's context
 	// window.
@@ -94,7 +97,7 @@ func Load(version string) Config {
 		BootstrapPassword:     Getenv("ACNOLOGIA_BOOTSTRAP_PASSWORD"),
 		Version:               version,
 		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
-		AIModel:               env("ACNOLOGIA_AI_MODEL", "claude-opus-5-5"),
+		AIModel:               strings.TrimSpace(Getenv("ACNOLOGIA_AI_MODEL")),
 		ChatCompactTokens:     envInt("ACNOLOGIA_CHAT_COMPACT_TOKENS", 0),
 		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
 		AccessPassword:        Getenv("ACNOLOGIA_ACCESS_PASSWORD"),

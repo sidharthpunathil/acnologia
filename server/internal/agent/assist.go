@@ -77,7 +77,7 @@ func (a *Agent) Assist(ctx context.Context, by *store.User, form, instruction st
 		system += "\n\n" + r
 	}
 	resp, err := a.client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
-		Model:     anthropic.Model(a.model),
+		Model:     anthropic.Model(a.ModelFor(ctx, FeatureFill).Model),
 		MaxTokens: 4000,
 		System:    []anthropic.BetaTextBlockParam{{Text: system}},
 		Messages: []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(

@@ -45,9 +45,12 @@ type AgentRun struct {
 	Error        string          `json:"error"`
 	ServiceID    *int64          `json:"service_id"`
 	Usage        AgentUsage      `json:"usage"`
-	CreatedBy    string          `json:"created_by"`
-	CreatedAt    time.Time       `json:"created_at"`
-	FinishedAt   *time.Time      `json:"finished_at"`
+	// Model is the Claude model the run works with, fixed when it is queued.
+	// Empty for runs from before it was recorded.
+	Model      string     `json:"model"`
+	CreatedBy  string     `json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at"`
 
 	CreatedByID int64  `json:"-"`
 	TestKeyEnc  []byte `json:"-"`
@@ -61,6 +64,7 @@ func migrateRuns(db *sql.DB) error {
 	for _, c := range []struct{ col, def string }{
 		{"description", "TEXT NOT NULL DEFAULT ''"},
 		{"test_keys_enc", "BLOB"},
+		{"model", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if _, err := addColumn(db, "agent_runs", c.col, c.def); err != nil {
 			return err
@@ -78,7 +82,7 @@ type AgentStep struct {
 }
 
 const runCols = `id, kind, status, title, provider_slug, input, test_key_enc, draft, report, live, summary, error, service_id, usage,
-COALESCE(created_by,0), created_by_email, created_at, finished_at, description, test_keys_enc`
+COALESCE(created_by,0), created_by_email, created_at, finished_at, description, test_keys_enc, model`
 
 func nullJSON(s string) json.RawMessage {
 	if s == "" {
@@ -93,7 +97,7 @@ func scanRun(row interface{ Scan(...any) error }) (*AgentRun, error) {
 	var svc, fin sql.NullInt64
 	var c int64
 	err := row.Scan(&r.ID, &r.Kind, &r.Status, &r.Title, &r.ProviderSlug, &input, &r.TestKeyEnc, &draft, &report, &live,
-		&r.Summary, &r.Error, &svc, &usage, &r.CreatedByID, &r.CreatedBy, &c, &fin, &r.Description, &r.TestKeysEnc)
+		&r.Summary, &r.Error, &svc, &usage, &r.CreatedByID, &r.CreatedBy, &c, &fin, &r.Description, &r.TestKeysEnc, &r.Model)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -115,9 +119,9 @@ func scanRun(row interface{ Scan(...any) error }) (*AgentRun, error) {
 func (s *Store) CreateRun(ctx context.Context, r *AgentRun) (*AgentRun, error) {
 	in, _ := json.Marshal(r.Input)
 	in = s.Redactor().JSON(ctx, in)
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO agent_runs(kind,status,title,description,provider_slug,input,test_key_enc,test_keys_enc,created_by,created_by_email,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.Kind, r.Status, s.Scrub(ctx, r.Title), s.Scrub(ctx, r.Description), r.ProviderSlug, string(in), r.TestKeyEnc, r.TestKeysEnc,
-		r.CreatedByID, r.CreatedBy, now())
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO agent_runs(kind,status,title,description,provider_slug,input,test_key_enc,test_keys_enc,created_by,created_by_email,created_at,model)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, r.Kind, r.Status, s.Scrub(ctx, r.Title), s.Scrub(ctx, r.Description), r.ProviderSlug, string(in), r.TestKeyEnc, r.TestKeysEnc,
+		r.CreatedByID, r.CreatedBy, now(), r.Model)
 	if err != nil {
 		return nil, err
 	}

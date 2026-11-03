@@ -102,7 +102,14 @@ func (a *Agent) loop(ctx context.Context, s *runState) error {
 	if err != nil {
 		return err
 	}
-	a.logf(ctx, id, "info", "Agent started", fmt.Sprintf("Model %s. Researching the API.", a.model))
+	// The run keeps the model it was queued with, even if the setting
+	// changes while it works. Runs from before models were recorded use
+	// the builder's current model.
+	model := s.run.Model
+	if model == "" {
+		model = a.ModelFor(ctx, FeatureBuilder).Model
+	}
+	a.logf(ctx, id, "info", "Agent started", fmt.Sprintf("Model %s. Researching the API.", model))
 
 	messages := []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(task))}
 	tools := a.tools(s)
@@ -113,7 +120,7 @@ func (a *Agent) loop(ctx context.Context, s *runState) error {
 		}
 		s.usage.Turns = turn
 		params := anthropic.BetaMessageNewParams{
-			Model:     anthropic.Model(a.model),
+			Model:     anthropic.Model(model),
 			MaxTokens: 16000,
 			System:    system,
 			Messages:  messages,
