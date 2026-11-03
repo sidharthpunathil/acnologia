@@ -515,4 +515,12 @@ func Get(slug string) *Spec {
 	return genericFallback
 }
 
+// Lookup returns the spec for a provider slug and whether it is known.
+func Lookup(slug string) (*Spec, bool) {
+	if v, ok := registry.Load(slug); ok {
+		return v.(*Spec), true
+	}
+	return nil, false
+}
+
 var genericFallback = &Spec{UseStandardRules: true, Auth: Auth{Type: "header", Name: "Authorization"}}

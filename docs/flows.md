@@ -507,7 +507,7 @@ sequenceDiagram
     A->>A: id matches key, signature valid,<br/>invite pending, unexpired, hash matches
     A->>A: bind share to B, burn invite,<br/>mint share token (stored as a hash)
     A-->>B: token, owner identity, manifest
-    B->>B: store token encrypted, create services<br/>prefix-slug -> A/proxy/slug with the token as a hidden key,<br/>import shared provider specs
+    B->>B: store token encrypted, import shared provider specs<br/>and the providers of shared services B lacks,<br/>then create services prefix-slug -> A/proxy/slug<br/>with the token as a hidden key
 ```
 
 **Using a shared service.** A local app on B calls `/proxy/a-serpapi/...` like
@@ -534,9 +534,61 @@ used today or this month against its cap.
 **Sync.** B reads each link's manifest every 10 minutes and on Sync now. New
 services are created; services no longer shared keep their row (events and app
 settings survive) but their key is disabled; a status change applies at once.
-Provider specs are imported once with source `peer:<owner id>`. A slug that
-already exists is skipped and reported, and later edits on the owner are not
-pulled, so an owner cannot redirect keys B adds to an imported provider.
+Providers are synced before services, so a new service already has its
+provider when it is made.
+
+**Providers of shared services.** The manifest carries the spec of every
+provider a shared service uses (`shared: false`) next to the ones shared on
+purpose (`shared: true`). When B has no provider with that slug, sync imports
+it too, as a dependency of the services that need it, so the service keeps
+the provider's name, logo, color, category, docs and website links, Integrate
+examples, offers and MCP tools. The local service keeps provider
+`acnologia-peer`, which classifies the share token's answers and carries the
+token, and records the owner's provider slug in `peer_provider`, which the
+dashboard, the Integrate tab, Copy for LLM, the catalog and MCP use to
+describe it (with a "via <server>" marker). When B already has a provider
+with that slug, B's own spec describes the service and is never touched.
+
+```mermaid
+flowchart TD
+    M([manifest from A]) --> P{"for each provider spec:<br/>shared, or used by a shared service?"}
+    P -->|no| Skip[skip]
+    P -->|yes| Known{"imported through<br/>this link before?"}
+    Known -->|yes| Note["note A's newest version;<br/>never change the spec"]
+    Known -->|no| Own{"B has that slug?"}
+    Own -->|yes| Keep["keep B's own provider<br/>(reported only if shared on purpose)"]
+    Own -->|no| Import["publish with source peer:A,<br/>record shared or dependency,<br/>copy A's logo"]
+    Import -->|spec invalid| Err["last_error: provider ... (for service)"]
+    Note --> S
+    Keep --> S
+    Import --> S
+    Err --> S
+    S([create or update services,<br/>peer_provider = A's provider slug])
+```
+
+Each import is done once with source `peer:<owner id>`. Later edits on the
+owner are never applied on their own, so an owner cannot redirect keys B adds
+to an imported provider. When A's version is newer than the one imported, the
+service page says so, and a superadmin can pull it (`POST
+/api/admin/peers/{id}/providers/{slug}/pull`); when the new spec moves the base
+URL, the pull needs an explicit yes. A provider edited on B since the import
+is not offered updates. If the import fails (an invalid spec, for example),
+the service is still created and works through the proxy, and the reason is
+in the link's `last_error`; the next sync tries again. Re-syncing an
+unchanged manifest changes nothing.
+
+**Logos.** After importing a provider that has no logo, B asks A for it
+(`GET /api/peer/v1/providers/{slug}/logo` with the share token, sent only to
+A's URL). A serves logos only for providers in that share's manifest. B
+accepts an allowed image type no larger than 512 KB whose bytes match the
+declared type, stores it like any provider logo and retries at each sync
+while the provider has none. When A has no logo, B tries the catalog's logo
+discovery on the provider's website once (public addresses only, no token).
+
+**Offers.** A peer service shows the owner provider's offers for reference,
+but they do not pace the share token or price its requests: B's one key is
+the token, which stands for all of A's keys, and A already paces its own keys
+under those limits and enforces the share's request and budget caps.
 
 **Revoke, pause, expire.** Revoking deactivates the backing app and revokes
 its token in the same transaction, so the very next request through A gets
@@ -548,7 +600,10 @@ the next sync after a resume. Expiry is checked on every request.
 
 **Disconnect.** B tells A (`POST /api/peer/v1/leave`, best effort), deletes the
 token and the keys holding it and leaves the services in place without a key.
-A shows the share as left by the peer.
+A shows the share as left by the peer. Providers imported from A stay on B
+after a disconnect or revoke, whether or not B added keys to them: they are
+plain specs with no secret, B's own services may use them, and a superadmin
+can delete one B does not use from the Providers page.
 
 **Loops.** A service whose provider is `acnologia-peer` can never be shared
 onward, and a request that already passed through more than 3 servers gets 508

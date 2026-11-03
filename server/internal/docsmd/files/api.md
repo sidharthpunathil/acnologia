@@ -101,7 +101,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /services/{id}/cache/purge`, `GET /cache` | a / m | Drop a service's cached responses; cache totals. |
 | `GET /usage?days=30` | m | The Usage page: requests, provider spend and cache hits, plus Claude calls, tokens, web searches and cost, for today, 7 and 30 days and the requested range (1 to 366 days). Hidden key traffic only for superadmins. Also `ai_enabled`, `ai_model`, `ai_price` and `event_retention_days`. |
 | `GET /apps/{id}/usage?days=30` | m | Today's and this month's requests, spend and cache hits, limits, the limit currently hit, and daily history. |
-| `GET /services`, `GET /services/{id}` | m | Services with key counts, request totals, `target_trusted`. |
+| `GET /services`, `GET /services/{id}` | m | Services with key counts, request totals, `target_trusted`. A service another server shares also has `peer_link_id`, `peer_name`, `peer_remote_slug` and `peer_provider` (the owner's provider slug, which names, describes and gives the logo of the service while `provider` stays `acnologia-peer`). |
 | `POST /services` | a | Create from a provider's defaults. |
 | `PATCH /services/{id}` | a | Edit. Also takes `egress_id` (0 for direct), `cache_ttl_sec` and `cost_per_request` (-1 for the provider default). A non-superadmin changing `base_url`, auth, provider or egress proxy sets `target_trusted=false`; a superadmin submitting those fields sets it true. |
 | `DELETE /services/{id}` | a | Delete with its keys. Admins cannot delete a service holding hidden keys. |
@@ -158,6 +158,8 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /peers/preview` | s | `{invite, trusted}`: fetch the owner's identity and what the invite shares, without redeeming it. |
 | `POST /peers` | s | `{invite, prefix, trusted, owner_id}`: redeem the invite and create the local services. `owner_id` makes the call fail if the server at the URL is not the one previewed. |
 | `POST /peers/{id}/sync` | s | Read the owner's manifest now. |
+| `GET /peers/{id}/providers` | a | Provider specs imported through the link: `{providers: [{provider, name, kind: shared\|dependency, for_services, services (remote slug to local id), imported_version, remote_version, local_version, imported_at, edited_here, update_available, base_url, remote_base_url, missing}]}`. Versions named `imported` and `remote` are the owner's; `local_version` is this server's right after the import. |
+| `POST /peers/{id}/providers/{slug}/pull` | s | Update an imported provider to the owner's current spec: `{allow_base_url_change}`. 409 `base_url_changes` (with `from` and `to`) when the new spec moves the base URL and `allow_base_url_change` is not set; 409 `edited_here` when the provider was edited on this server since the import. Audited as `provider.pulled`. Returns the same list as the GET. |
 | `DELETE /peers/{id}` | s | Disconnect: tell the owner, delete the token and the local services' key. On a link already disconnected or revoked, remove it from the list. |
 | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` | s | User management. A password reset ends that user's sessions; the last active superadmin cannot be removed. |
 | `GET /audit` | s | Audit log (max 1000 rows). |
@@ -176,6 +178,7 @@ model in [security.md](security.md#sharing-between-servers).
 | `POST /api/peer/v1/redeem` | invite and signature | `{invite, share_id, id, name, url, public_key, nonce, signature}`. The signature is Ed25519 over `acnologia-redeem-v1\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>`. Returns `{token, owner, manifest}` once. 409 `invite_used`, 410 `invite_expired`, 404 `invite_invalid`, 401 `bad_signature`, 400 `bad_identity`. |
 | `GET /api/peer/v1/manifest` | share token | `{share_id, name, status, limits, expires_at, services: [{slug, name, provider, category, description, logo_url, available}], providers: [{slug, name, version, shared, spec, ...}]}`. No key data. |
 | `POST /api/peer/v1/leave` | share token | The receiver disconnected; the share is revoked and shows as left by the peer. |
+| `GET /api/peer/v1/providers/{slug}/logo` | share token | The logo of a provider in this share's manifest (shared, or used by a shared service). 404 for any other provider or when it has none. |
 
 **Key scopes.** `key_scopes` maps a shared service's slug to which of its keys
 the share may use. A service without an entry uses every key, as before.
@@ -201,7 +204,7 @@ through the access password lock.
 
 | Route | Role | Purpose |
 |---|:-:|---|
-| `GET /providers/{slug}`, `GET /services/{id}` | m | Logo bytes, served with `nosniff` and a sandbox CSP. A service falls back to its provider's logo. |
+| `GET /providers/{slug}`, `GET /services/{id}` | m | Logo bytes, served with `nosniff` and a sandbox CSP. A service falls back to its provider's logo (for a shared service, the owner's provider's logo when this server has it). |
 
 ### Key account fields
 

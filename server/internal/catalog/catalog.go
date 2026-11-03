@@ -174,7 +174,11 @@ func (c *Catalog) Boot(ctx context.Context) error {
 			c.backfillOffers(ctx, cur, b)
 			// Already seeded: only fill in a logo that is still missing, so
 			// existing installs get logos added in newer releases.
-			if _, _, lerr := c.Store.ProviderLogo(ctx, b.Slug); errors.Is(lerr, store.ErrNotFound) {
+			_, cur, lerr := c.Store.ProviderLogo(ctx, b.Slug)
+			// The peer provider first shipped a drawn SVG; it now uses
+			// Acnologia's own mark.
+			stale := lerr == nil && b.Slug == providers.PeerSlug && cur == "image/svg+xml"
+			if errors.Is(lerr, store.ErrNotFound) || stale {
 				if data, mime := providers.SeedLogo(b.Slug); data != nil {
 					_ = c.Store.SetProviderLogo(ctx, b.Slug, data, mime)
 				}

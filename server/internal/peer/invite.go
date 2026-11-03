@@ -148,8 +148,9 @@ type ManifestService struct {
 }
 
 // ManifestProvider is a provider spec in a manifest. Shared is true for a
-// provider shared on its own (the receiver imports it); providers listed
-// only because a shared service uses them have Shared false.
+// provider shared on its own; providers listed only because a shared service
+// uses them have Shared false. A receiver that lacks the slug imports both
+// kinds, the second as a dependency of the service that needs it.
 type ManifestProvider struct {
 	Slug        string          `json:"slug"`
 	Name        string          `json:"name"`

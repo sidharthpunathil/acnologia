@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Provider, Service } from "../lib/types";
+import { docProviderSlug } from "../lib/peerProviders";
 import { useLogoVersion, useProviders } from "../stores/providers";
 import { cx } from "./ui";
 
@@ -100,8 +101,20 @@ export function ProviderLogo({ provider, size, className }: { provider: Pick<Pro
   return <EntityLogo src={provider.logo_url} name={provider.name} color={provider.color} size={size} className={className} />;
 }
 
-/** A service shows its own logo, then its provider's, then a lettermark in the provider color. */
-export function ServiceLogo({ service, size, className }: { service: Pick<Service, "name" | "provider" | "logo_url">; size?: LogoSize; className?: string }) {
-  const p = useProviders((s) => s.providers.find((x) => x.slug === service.provider));
+/**
+ * A service shows its own logo, then its provider's, then a lettermark in the provider color.
+ * A service shared by another server uses the owner's provider for both.
+ */
+export function ServiceLogo({
+  service,
+  size,
+  className,
+}: {
+  service: Pick<Service, "name" | "provider" | "peer_provider" | "logo_url">;
+  size?: LogoSize;
+  className?: string;
+}) {
+  const slug = docProviderSlug(service);
+  const p = useProviders((s) => s.providers.find((x) => x.slug === slug) ?? s.providers.find((x) => x.slug === service.provider));
   return <EntityLogo src={service.logo_url ?? p?.logo_url} name={service.name} color={p?.color} size={size} className={className} />;
 }

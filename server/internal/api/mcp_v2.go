@@ -144,7 +144,7 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 		if !a.CanUse(sv.Slug) {
 			continue
 		}
-		spec := providers.Get(sv.Provider)
+		spec := docSpec(sv)
 		for i := range spec.Examples {
 			ex := spec.Examples[i]
 			name := toolName(sv.Slug, ex.Name)
@@ -189,6 +189,19 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 		}
 	}
 	return out
+}
+
+// docSpec is the spec whose examples and offers describe a service: for a
+// service shared by another server, the owner's provider when this server
+// has it (imported or its own). Classification, auth and key pacing always
+// use the service's own provider.
+func docSpec(sv *store.Service) *providers.Spec {
+	if sv.PeerProvider != "" {
+		if spec, ok := providers.Lookup(sv.PeerProvider); ok {
+			return spec
+		}
+	}
+	return providers.Get(sv.Provider)
 }
 
 func orDefault(v, d string) string {
@@ -513,7 +526,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 		if err != nil {
 			return nil, fmt.Errorf("no resource %s", uri)
 		}
-		spec := providers.Get(sv.Provider)
+		spec := docSpec(sv)
 		examples := []map[string]any{}
 		for _, ex := range spec.Examples {
 			examples = append(examples, map[string]any{"name": ex.Name, "method": orDefault(ex.Method, "GET"), "path": ex.Path, "query": ex.Query, "body": ex.Body})
@@ -525,7 +538,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 			"offers":      offerRows(spec.Offers),
 			"how_to_call": "Use proxy_request with service=" + sv.Slug + " and a path, or the generated tool for an example. Acnologia adds the key.",
 		}
-		if p, err := s.Store.GetProvider(ctx, sv.Provider); err == nil && strings.HasPrefix(p.DocsURL, "https://") {
+		if p, err := s.Store.GetProvider(ctx, sv.DocProvider()); err == nil && strings.HasPrefix(p.DocsURL, "https://") {
 			doc["docs_url"] = p.DocsURL
 		}
 		b, _ := json.MarshalIndent(doc, "", "  ")

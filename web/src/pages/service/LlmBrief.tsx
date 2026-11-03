@@ -5,6 +5,7 @@ import { api, errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { useAuth } from "../../stores/auth";
 import { useProviders } from "../../stores/providers";
+import { docProviderSlug } from "../../lib/peerProviders";
 import { toast } from "../../stores/toast";
 import { Callout, CodeBlock, copyText } from "@/components/acn";
 import { Button } from "@/components/base/buttons/button";
@@ -40,7 +41,8 @@ export function LlmBriefButton({ service }: { service: Service }) {
 
 function LlmBriefModal({ service, onClose }: { service: Service; onClose: () => void }) {
   const manage = can.manage(useAuth((s) => s.user?.role));
-  const provider = useProviders((st) => st.providers.find((p) => p.slug === service.provider));
+  const slug = docProviderSlug(service);
+  const provider = useProviders((st) => st.providers.find((p) => p.slug === slug));
   const [choice, setChoice] = useState<TokenChoice>("placeholder");
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

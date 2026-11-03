@@ -85,7 +85,7 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 		devices:  newDeviceStore(),
 	}
 	s.peerLimit = newPeerLimiter()
-	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat}
+	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat, FetchSiteLogo: peer.SiteLogo}
 	s.Breakers.OnChange = func(id int64, down bool, reason string) { go s.onBreakerChange(id, down, reason) }
 	// main wires these up with their workers; tests and embedders get working defaults.
 	if p.Egress == nil {
@@ -148,6 +148,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/redeem", s.peerRedeem)
 		r.With(s.requireApp).Get("/manifest", s.peerManifest)
 		r.With(s.requireApp).Post("/leave", s.peerLeave)
+		r.With(s.requireApp).Get("/providers/{slug}/logo", s.peerProviderLogo)
 	})
 	r.Get("/llms-full.txt", s.serveLLMsFull)
 	s.mountDocs(r)
@@ -254,6 +255,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/shares", s.listShares)
 			r.Get("/shares/{id}", s.getShare)
 			r.Get("/peers", s.listPeers)
+			r.Get("/peers/{id}/providers", s.listPeerProviders)
 			r.Put("/services/{id}/logo", s.putServiceLogo)
 			r.Delete("/services/{id}/logo", s.deleteServiceLogo)
 			r.Post("/providers", s.createProvider)
@@ -304,6 +306,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/peers/preview", s.previewPeer)
 			r.Post("/peers", s.connectPeer)
 			r.Post("/peers/{id}/sync", s.syncPeer)
+			r.Post("/peers/{id}/providers/{slug}/pull", s.pullPeerProvider)
 			r.Delete("/peers/{id}", s.disconnectPeer)
 		})
 	})

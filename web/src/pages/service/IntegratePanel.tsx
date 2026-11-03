@@ -4,6 +4,7 @@ import { moreSnippets, type MoreLang } from "./snippets-more";
 import { Link } from "react-router-dom";
 import type { ProviderSpec, Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
+import { docProviderSlug } from "../../lib/peerProviders";
 import { CodeBlock } from "@/components/acn";
 import { RadioGroup } from "@/components/base/radio/radio";
 import { RadioCard } from "@/components/base/radio/radio-card";
@@ -254,7 +255,7 @@ func main() {
 }
 
 export function IntegratePanel({ service }: { service: Service }) {
-  const [mode, setMode] = useState<Mode>("proxy");
+  const [picked, setMode] = useState<Mode>("proxy");
   const [lang, setLangState] = useState<Lang>(savedLang);
   const setLang = (l: Lang) => {
     setLangState(l);
@@ -265,10 +266,14 @@ export function IntegratePanel({ service }: { service: Service }) {
     }
   };
   const host = window.location.origin;
-  const spec = useProviders((st) => st.providers.find((p) => p.slug === service.provider)?.spec);
+  const slug = docProviderSlug(service);
+  const spec = useProviders((st) => st.providers.find((p) => p.slug === slug)?.spec);
+  // A shared service is proxy only: a lease would hand out the share token.
+  const proxyOnly = !!service.peer_link_id;
+  const mode: Mode = proxyOnly ? "proxy" : picked;
   const code = snippets(service, host, spec)[mode][lang];
 
-  const modes: { id: Mode; title: string; icon: typeof AcnProxy; body: string }[] = [
+  const allModes: { id: Mode; title: string; icon: typeof AcnProxy; body: string }[] = [
     {
       id: "proxy",
       title: "Proxy mode",
@@ -282,6 +287,7 @@ export function IntegratePanel({ service }: { service: Service }) {
       body: "Lease a key, call the provider yourself, then report how it went so Acnologia can rest the key and rotate.",
     },
   ];
+  const modes = proxyOnly ? allModes.filter((m) => m.id === "proxy") : allModes;
 
   return (
     <div className="space-y-5">
@@ -290,7 +296,7 @@ export function IntegratePanel({ service }: { service: Service }) {
         aria-label={`How your app calls ${service.name}`}
         value={mode}
         onChange={(v) => setMode(v as Mode)}
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+        className={cx("grid grid-cols-1 gap-3", !proxyOnly && "sm:grid-cols-2")}
       >
         {modes.map((m) => (
           <RadioCard
@@ -336,6 +342,8 @@ export function IntegratePanel({ service }: { service: Service }) {
           Apps
         </Link>
         . The app must allow {mode} mode and the {service.slug} service.
+        {proxyOnly &&
+          ` ${service.peer_name || "Another server"} shares this service, so it is proxy only: requests go through that server, which adds its own key.`}
       </p>
     </div>
   );
