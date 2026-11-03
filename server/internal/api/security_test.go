@@ -304,7 +304,7 @@ func TestDashboardCSPAllowsShippedInlineScript(t *testing.T) {
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	csp := resp.Header.Get("Content-Security-Policy")
-	if !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
+	if !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "media-src 'self'") {
 		t.Fatalf("missing dashboard CSP: %q", csp)
 	}
 	h := inlineScriptHashes(fstestIndex(`<html><script>var a=1;</script><script type="module" src="/x.js"></script></html>`))

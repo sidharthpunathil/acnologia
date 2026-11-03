@@ -450,7 +450,7 @@ func dashboardCSP(hashes []string) string {
 		script += " 'sha256-" + h + "'"
 	}
 	return "default-src 'self'; " + script + "; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-		"font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; " +
+		"font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; " +
 		"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 }
 

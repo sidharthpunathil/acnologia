@@ -89,7 +89,8 @@ func TestGateNavigationGetsShell(t *testing.T) {
 
 // The public landing page renders on a locked deploy without the lock
 // screen, so its shell and every static file it loads (script, stylesheet,
-// font, the mark) must reach a browser with no gate cookie. The data the
+// font, the mark, the product video and its poster) must reach a browser
+// with no gate cookie. The data the
 // dashboard reads stays locked.
 func TestGateServesLandingAndItsAssets(t *testing.T) {
 	e := newEnv(t)
@@ -101,6 +102,8 @@ func TestGateServesLandingAndItsAssets(t *testing.T) {
 		"mark.png":                      {Data: []byte("png")},
 		"favicon.png":                   {Data: []byte("icon")},
 		"site.webmanifest":              {Data: []byte("{}")},
+		"video/acnologia.mp4":           {Data: []byte("mp4 bytes")},
+		"video/poster.jpg":              {Data: []byte("jpg")},
 	}
 	e.api.setAccessPassword(testAccessPassword)
 	srv := httptest.NewServer(e.api.Router())
@@ -116,6 +119,8 @@ func TestGateServesLandingAndItsAssets(t *testing.T) {
 		"/mark.png":                      "png",
 		"/favicon.png":                   "icon",
 		"/site.webmanifest":              "{}",
+		"/video/acnologia.mp4":           "mp4 bytes",
+		"/video/poster.jpg":              "jpg",
 	} {
 		resp, err := http.Get(srv.URL + p)
 		if err != nil {
@@ -126,6 +131,18 @@ func TestGateServesLandingAndItsAssets(t *testing.T) {
 		if resp.StatusCode != 200 || string(b) != want {
 			t.Fatalf("%s: %d %q, want 200 %q", p, resp.StatusCode, b, want)
 		}
+	}
+	// A video element seeks with range requests; the locked deploy answers them.
+	req, _ := http.NewRequest("GET", srv.URL+"/video/acnologia.mp4", nil)
+	req.Header.Set("Range", "bytes=4-")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent || string(b) != "bytes" {
+		t.Fatalf("range: %d %q, want 206 %q", resp.StatusCode, b, "bytes")
 	}
 	// The landing page asks whether there is a lock; that stays open, and
 	// the sign in state behind it stays locked.

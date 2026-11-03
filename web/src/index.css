@@ -276,36 +276,6 @@
   animation: fade-only 200ms ease-out 400ms both;
 }
 
-/* Landing page (/landing): a faint grid behind the hero that fades out, and
-   the dashed wire between the stops of the request path. The dashes drift
-   down slowly; reduced motion holds them still. */
-.landing-grid {
-  background-image:
-    linear-gradient(to right, var(--color-border-button-default) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--color-border-button-default) 1px, transparent 1px),
-    radial-gradient(60% 50% at 70% 30%, color-mix(in srgb, var(--color-accent-fill) 10%, transparent), transparent 70%);
-  background-size:
-    40px 40px,
-    40px 40px,
-    100% 100%;
-  mask-image: radial-gradient(80% 70% at 50% 20%, #000 30%, transparent 100%);
-}
-.landing-wire {
-  background-image: linear-gradient(to bottom, var(--color-accent-line) 50%, transparent 50%);
-  background-size: 1px 8px;
-  animation: landing-wire 1.6s linear infinite;
-}
-@keyframes landing-wire {
-  to {
-    background-position: 0 8px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .landing-wire {
-    animation: none;
-  }
-}
-
 .skeleton {
   background: linear-gradient(90deg, var(--skeleton-a) 0%, var(--skeleton-b) 50%, var(--skeleton-a) 100%);
   background-size: 200% 100%;
