@@ -1,7 +1,7 @@
 // Share modes: the proxy or handover choice, the renewal window, the handed
 // over keys (owner and receiver side) and the revoke flow for handover.
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { RiArrowDownSLine, RiExternalLinkLine, RiEyeLine, RiKey2Line, RiServerLine, RiShieldKeyholeLine, RiUserLine } from "@remixicon/react";
+import { RiArrowDownSLine, RiExternalLinkLine, RiEyeLine, RiKey2Line, RiLinkM, RiServerLine, RiShieldKeyholeLine, RiUserLine } from "@remixicon/react";
 import {
   LEASES,
   handoverKeys,
@@ -10,7 +10,7 @@ import {
   rotateChecklist,
   shareMode,
   type PersonMode,
-  type ShareRecipient,
+  type ShareAudience,
   type HandoverKey,
   type Lease,
   type PeerHandoverKey,
@@ -100,20 +100,21 @@ export function ModeChip({ mode }: { mode: ShareMode }) {
 // ---- recipient and person modes ----
 
 // How a person uses the link is the next question, so it is not repeated here.
-const RECIPIENT_CARDS: Choice<ShareRecipient>[] = [
+const RECIPIENT_CARDS: Choice<ShareAudience>[] = [
   { id: "server", title: "Another server", body: "Someone running their own Acnologia. They redeem an invite there.", icon: RiServerLine },
-  { id: "person", title: "A person", body: "Anyone with a browser. They open a one time link.", icon: RiUserLine },
+  { id: "person", title: "One person", body: "They open a link that works once, in any browser.", icon: RiUserLine },
+  { id: "link", title: "Anyone with a link", body: "Post one link for a team or a group. Everyone who opens it gets a token of their own.", icon: RiLinkM },
 ];
 
-/** "Share with": another server or a person. Fixed once the share exists. */
-export function RecipientPicker({ value, onChange }: { value: ShareRecipient; onChange: (r: ShareRecipient) => void }) {
+/** "Share with": another server, one person, or anyone with a link. Fixed once the share exists. */
+export function RecipientPicker({ value, onChange }: { value: ShareAudience; onChange: (r: ShareAudience) => void }) {
   const labelId = useId();
   return (
     <div className="flex flex-col gap-2">
       <div id={labelId} className="text-body-medium text-text-primary">
         Share with
       </div>
-      <RadioGroup aria-labelledby={labelId} value={value} onChange={(v) => onChange(v as ShareRecipient)} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <RadioGroup aria-labelledby={labelId} value={value} onChange={(v) => onChange(v as ShareAudience)} className="grid grid-cols-1 gap-3">
         {RECIPIENT_CARDS.map((c) => (
           <ChoiceCard key={c.id} choice={c} />
         ))}

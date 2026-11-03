@@ -106,6 +106,7 @@ const ERRORS: Record<Exclude<ClaimErrorKind, "other">, { icon: typeof RiTimeLine
     title: "This link was already used",
     body: (o) => `Each link works once. If that was not you, tell ${o} so they can revoke it and send you a new link.`,
   },
+  full: { icon: RiUserForbidLine, title: "This link is full", body: (o) => `It was claimed as many times as ${o} allowed. Ask them for a new link.` },
   expired: { icon: RiTimeLine, title: "This link has expired", body: (o) => `Ask ${o} to send you a new link.` },
   invalid: {
     icon: RiLinkUnlinkM,
@@ -171,8 +172,12 @@ function Preview({ p, busy, onRedeem }: { p: PreviewView; busy: boolean; onRedee
         <Facts
           rows={[
             { label: "Ends", value: <EndsLine endsAt={p.endsAt} /> },
-            ...(p.mode === "proxy" ? [{ label: "Limits", value: hasLimits(p.limits) ? limits : "No limits" }] : []),
-            ...(p.linkExpiresAt ? [{ label: "This link", value: <>Works once, until {dateTime(p.linkExpiresAt)}</> }] : []),
+            ...(p.mode === "proxy"
+              ? [{ label: "Limits", value: hasLimits(p.limits) ? (p.reusable ? `${limits}, shared by everyone with this link` : limits) : "No limits" }]
+              : []),
+            ...(p.linkExpiresAt
+              ? [{ label: "This link", value: p.reusable ? <>Shared, works until {dateTime(p.linkExpiresAt)}</> : <>Works once, until {dateTime(p.linkExpiresAt)}</> }]
+              : []),
           ]}
         />
         <div className="flex flex-col gap-2 border-t border-separator-border pt-5">
@@ -188,7 +193,9 @@ function Preview({ p, busy, onRedeem }: { p: PreviewView; busy: boolean; onRedee
             Get my access
           </Button>
           <p className="text-caption-1-regular text-text-secondary">
-            This uses up the link. {p.mode === "reveal" ? "The keys are" : "Your token is"} shown once, so have somewhere ready to save {p.mode === "reveal" ? "them" : "it"}.
+            {p.reusable
+              ? "You get a token of your own. It is shown once, so have somewhere ready to save it."
+              : <>This uses up the link. {p.mode === "reveal" ? "The keys are" : "Your token is"} shown once, so have somewhere ready to save {p.mode === "reveal" ? "them" : "it"}.</>}
           </p>
         </div>
       </div>

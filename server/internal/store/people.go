@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -14,6 +15,13 @@ import (
 // share's backing app (proxy mode) or shows the scoped keys once (reveal
 // mode). Only the claim code's hash is stored. Reveals are recorded per key
 // in share_reveals, the person side twin of share_handovers.
+//
+// A reusable share is the "anyone with the link" kind: the same claim link
+// can be redeemed again and again (up to MaxClaims when set) until it
+// expires, is replaced or the share ends. Every redemption mints another
+// token on the one backing app, so the limits, pause and revoke cover
+// everyone who claimed it at once. Reusable shares are proxy only: a link
+// that can be forwarded never shows raw keys.
 
 // Share recipients and the person only mode.
 const (
@@ -46,6 +54,9 @@ func migratePeople(db *sql.DB) error {
 		{"shares", "claim_hash", "TEXT NOT NULL DEFAULT ''"},
 		{"shares", "claim_expires_at", "INTEGER"},
 		{"shares", "claimed_at", "INTEGER"},
+		{"shares", "reusable", "INTEGER NOT NULL DEFAULT 0"},
+		{"shares", "max_claims", "INTEGER NOT NULL DEFAULT 0"},
+		{"shares", "claim_count", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if _, err := addColumn(db, c.table, c.col, c.def); err != nil {
 			return err
@@ -69,6 +80,8 @@ var (
 	ErrClaimInvalid = errors.New("claim link is not valid")
 	// ErrClaimUsed means the claim link was already redeemed.
 	ErrClaimUsed = errors.New("claim link was already used")
+	// ErrClaimFull means a reusable link was claimed MaxClaims times.
+	ErrClaimFull = errors.New("claim link reached its claim limit")
 	// ErrClaimExpired means the link ran out, or the share ended before
 	// anyone claimed it.
 	ErrClaimExpired = errors.New("claim link expired")
@@ -97,6 +110,19 @@ func (s *Store) ShareByClaim(ctx context.Context, claimHash string) (*Share, err
 
 // CheckClaim says whether a person share's link can be redeemed at t.
 func (sh *Share) CheckClaim(t time.Time) error {
+	if sh.Reusable {
+		switch {
+		case sh.Status != SharePending && sh.Status != ShareActive:
+			return ErrClaimExpired
+		case sh.ClaimExpires != nil && !sh.ClaimExpires.After(t):
+			return ErrClaimExpired
+		case sh.Expired(t):
+			return ErrClaimExpired
+		case sh.MaxClaims > 0 && sh.ClaimCount >= sh.MaxClaims:
+			return ErrClaimFull
+		}
+		return nil
+	}
 	switch {
 	case sh.ClaimedAt != nil:
 		return ErrClaimUsed
@@ -110,10 +136,13 @@ func (sh *Share) CheckClaim(t time.Time) error {
 	return nil
 }
 
-// SetShareClaim replaces an unclaimed person share's claim link.
+// SetShareClaim replaces an unclaimed person share's claim link, or a
+// live reusable share's: tokens already claimed keep working, the old link
+// stops.
 func (s *Store) SetShareClaim(ctx context.Context, id, claimHash string, expires time.Time) error {
-	res, err := s.DB.ExecContext(ctx, `UPDATE shares SET claim_hash=?, claim_expires_at=? WHERE id=? AND status=? AND recipient=? AND claimed_at IS NULL`,
-		claimHash, expires.Unix(), id, SharePending, RecipientPerson)
+	res, err := s.DB.ExecContext(ctx, `UPDATE shares SET claim_hash=?, claim_expires_at=? WHERE id=? AND recipient=?
+		AND ((reusable=0 AND status=? AND claimed_at IS NULL) OR (reusable=1 AND status IN (?,?)))`,
+		claimHash, expires.Unix(), id, RecipientPerson, SharePending, SharePending, ShareActive)
 	if err != nil {
 		return err
 	}
@@ -152,8 +181,9 @@ func (s *Store) RedeemClaim(ctx context.Context, claimHash string, in ClaimRedee
 	defer tx.Rollback()
 	var id, status, mode, label, hash string
 	var exp, ends, claimed, app sql.NullInt64
-	err = tx.QueryRowContext(ctx, `SELECT id, status, mode, label, claim_hash, claim_expires_at, expires_at, claimed_at, app_id FROM shares
-		WHERE claim_hash=? AND recipient=?`, claimHash, RecipientPerson).Scan(&id, &status, &mode, &label, &hash, &exp, &ends, &claimed, &app)
+	var reusable, maxClaims, count int
+	err = tx.QueryRowContext(ctx, `SELECT id, status, mode, label, claim_hash, claim_expires_at, expires_at, claimed_at, app_id, reusable, max_claims, claim_count FROM shares
+		WHERE claim_hash=? AND recipient=?`, claimHash, RecipientPerson).Scan(&id, &status, &mode, &label, &hash, &exp, &ends, &claimed, &app, &reusable, &maxClaims, &count)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrClaimInvalid
 	}
@@ -164,6 +194,9 @@ func (s *Store) RedeemClaim(ctx context.Context, claimHash string, in ClaimRedee
 		return nil, ErrClaimInvalid
 	}
 	t := now()
+	if reusable == 1 {
+		return s.redeemReusable(ctx, tx, id, status, mode, label, count, maxClaims, exp, ends, app.Int64, in, t)
+	}
 	switch {
 	case claimed.Valid:
 		return nil, ErrClaimUsed
@@ -203,6 +236,43 @@ func (s *Store) RedeemClaim(ctx context.Context, claimHash string, in ClaimRedee
 			app.Int64, "Person "+label, TokenPrefixHint(in.TokenPrefix), in.TokenHash, t); err != nil {
 			return nil, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	s.invalidateScopes()
+	return s.GetShare(ctx, id)
+}
+
+// redeemReusable is RedeemClaim for an "anyone with the link" share: the
+// link stays, the count goes up, and the claimer gets a token of their own
+// on the shared backing app. The count is checked and raised in one
+// statement, so parallel claims cannot overshoot MaxClaims.
+func (s *Store) redeemReusable(ctx context.Context, tx *sql.Tx, id, status, mode, label string, count, maxClaims int, exp, ends sql.NullInt64, app int64, in ClaimRedeem, t int64) (*Share, error) {
+	switch {
+	case status != SharePending && status != ShareActive:
+		return nil, ErrClaimExpired
+	case exp.Valid && exp.Int64 <= t, ends.Valid && ends.Int64 <= t:
+		return nil, ErrClaimExpired
+	case maxClaims > 0 && count >= maxClaims:
+		return nil, ErrClaimFull
+	case mode != ShareModeProxy || in.TokenHash == "":
+		return nil, errors.New("a reusable link mints a proxy token")
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE shares SET status=?, claimed_at=COALESCE(claimed_at, ?), redeemed_at=COALESCE(redeemed_at, ?), claim_count=claim_count+1
+		WHERE id=? AND status IN (?,?) AND (max_claims=0 OR claim_count<max_claims)`, ShareActive, t, t, id, SharePending, ShareActive)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrClaimFull
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE apps SET token_prefix=?, active=1 WHERE id=?`, in.TokenPrefix, app); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?)`,
+		app, fmt.Sprintf("Link %s, claim %d", label, count+1), TokenPrefixHint(in.TokenPrefix), in.TokenHash, t); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

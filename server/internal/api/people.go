@@ -40,6 +40,17 @@ func shareInputCode(msg string) string {
 
 // applyRecipientInput validates recipient, label and email onto sh.
 func applyRecipientInput(in shareInput, sh *store.Share) string {
+	if in.Reusable != nil {
+		if sh.Status != "" && *in.Reusable != sh.Reusable {
+			return "whether a link is reusable cannot change; create a new share instead"
+		}
+		sh.Reusable = *in.Reusable
+	}
+	if sh.Reusable && in.Recipient == nil && sh.Recipient == "" {
+		// A reusable link is a share with people; saying so is optional.
+		r := store.RecipientPerson
+		in.Recipient = &r
+	}
 	if in.Recipient != nil {
 		rc := strings.TrimSpace(*in.Recipient)
 		if rc == "" {
@@ -66,11 +77,31 @@ func applyRecipientInput(in shareInput, sh *store.Share) string {
 		}
 		sh.Email = e
 	}
+	if in.MaxClaims != nil {
+		if *in.MaxClaims < 0 || *in.MaxClaims > 100000 {
+			return "max_claims must be between 0 (no cap) and 100000"
+		}
+		sh.MaxClaims = *in.MaxClaims
+	}
 	if !sh.IsPerson() {
 		if sh.Label != "" || sh.Email != "" {
 			return "label and email are for a share with a person"
 		}
+		if sh.Reusable {
+			return "a reusable link is for people; a share with another server uses an invite"
+		}
 		return ""
+	}
+	if !sh.Reusable && sh.MaxClaims != 0 {
+		return "max_claims is for a reusable link; a one time link is claimed once"
+	}
+	if sh.Reusable {
+		if sh.Email != "" {
+			return "email is for a share with one person; a reusable link is for anyone who has it"
+		}
+		if sh.Label == "" {
+			sh.Label = "Anyone with the link"
+		}
 	}
 	if sh.Label == "" || len(sh.Label) > 80 {
 		return "label must be 1 to 80 characters: who the share is for"
@@ -87,14 +118,19 @@ func looseEmail(e string) bool {
 	return ok && local != "" && strings.Contains(domain, ".") && !strings.HasPrefix(domain, ".") && !strings.HasSuffix(domain, ".") && !strings.Contains(domain, "@")
 }
 
-// newClaim makes a claim code, its hash and its end.
-func newClaim(valid string) (code, hash string, exp time.Time, msg string) {
-	d, ok := inviteValidity[valid]
+// newClaim makes a claim code, its hash and its end. A reusable link may
+// also last 30 days, and defaults to 7.
+func newClaim(valid string, reusable bool) (code, hash string, exp time.Time, msg string) {
+	table, def, choices := inviteValidity, 24*time.Hour, "1h, 24h or 7d"
+	if reusable {
+		table, def, choices = reusableLinkValidity, 7*24*time.Hour, "1h, 24h, 7d or 30d"
+	}
+	d, ok := table[valid]
 	if valid == "" {
-		d, ok = 24*time.Hour, true
+		d, ok = def, true
 	}
 	if !ok {
-		return "", "", time.Time{}, "valid must be 1h, 24h or 7d"
+		return "", "", time.Time{}, "valid must be " + choices
 	}
 	code = crypto.RandomToken(store.ClaimPrefix, 24)
 	return code, crypto.SHA256(code), time.Now().Add(d).UTC(), ""
@@ -112,9 +148,9 @@ func (s *Server) createPersonShare(w http.ResponseWriter, r *http.Request, in sh
 	if valid == "" {
 		valid = in.InviteValid
 	}
-	code, hash, exp, msg := newClaim(valid)
+	code, hash, exp, msg := newClaim(valid, sh.Reusable)
 	if msg != "" {
-		writeErr(w, 400, "invalid", "claim_valid must be 1h, 24h or 7d")
+		writeErr(w, 400, "invalid", "claim_"+msg)
 		return
 	}
 	sh.ClaimExpires = &exp
@@ -123,13 +159,26 @@ func (s *Server) createPersonShare(w http.ResponseWriter, r *http.Request, in sh
 		writeStoreErr(w, err)
 		return
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "share.created", created.Name, "for "+created.Label+" ("+created.Mode+"); "+shareSummary(created))
+	who := "for " + created.Label + " (" + created.Mode + ")"
+	if created.Reusable {
+		who = "as a link anyone can claim" + maxClaimsNote(created)
+	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "share.created", created.Name, who+"; "+shareSummary(created))
 	s.emitShare(notify.ShareCreated, created, "share "+created.Name+" with "+created.Label+" was created")
 	writeJSON(w, 201, map[string]any{"share": s.newShareView(r, created, false), "claim_url": s.claimURL(r, code)})
 }
 
-// shareClaimLink issues a new claim link for an unclaimed person share.
-// The old link stops working.
+// maxClaimsNote is " (up to N claims)" for a capped reusable link.
+func maxClaimsNote(sh *store.Share) string {
+	if sh.MaxClaims > 0 {
+		return fmt.Sprintf(" (up to %d claims)", sh.MaxClaims)
+	}
+	return ""
+}
+
+// shareClaimLink issues a new claim link for an unclaimed person share, or
+// for a live reusable one. The old link stops working; tokens already
+// claimed through it keep working.
 func (s *Server) shareClaimLink(w http.ResponseWriter, r *http.Request) {
 	sh, ok := s.loadShare(w, r)
 	if !ok {
@@ -145,11 +194,15 @@ func (s *Server) shareClaimLink(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "not_person_share", "this share is for another server; issue a new invite instead")
 		return
 	}
-	if sh.ClaimedAt != nil || sh.Status != store.SharePending {
+	if sh.Reusable && sh.Status != store.SharePending && sh.Status != store.ShareActive {
+		writeErr(w, 409, "share_ended", "this share is paused or has ended; resume it before issuing a new link")
+		return
+	}
+	if !sh.Reusable && (sh.ClaimedAt != nil || sh.Status != store.SharePending) {
 		writeErr(w, 409, "already_claimed", "this share was already claimed or has ended")
 		return
 	}
-	code, hash, exp, msg := newClaim(in.Valid)
+	code, hash, exp, msg := newClaim(in.Valid, sh.Reusable)
 	if msg != "" {
 		writeErr(w, 400, "invalid", msg)
 		return
@@ -314,6 +367,8 @@ func writeClaimErr(w http.ResponseWriter, err error) {
 		writeErr(w, 404, "claim_invalid", "that claim link is not valid")
 	case errors.Is(err, store.ErrClaimUsed):
 		writeErr(w, 409, "already_claimed", "that claim link was already used; it works once")
+	case errors.Is(err, store.ErrClaimFull):
+		writeErr(w, 410, "claim_full", "that link was claimed as many times as the owner allowed; ask the owner for a new link")
 	case errors.Is(err, store.ErrClaimExpired):
 		writeErr(w, 410, "claim_expired", "that claim link expired or the share ended; ask the owner for a new link")
 	default:
@@ -373,7 +428,7 @@ func (s *Server) claimPreview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"owner": map[string]any{"name": self.Name, "id": self.ID, "url": self.URL},
 		"share": map[string]any{"name": sh.Name, "label": sh.Label, "mode": sh.Mode, "services": svcs, "providers": provs,
-			"ends_at": sh.ExpiresAt, "limits": sh.Limits, "key_count": keyCount},
+			"ends_at": sh.ExpiresAt, "limits": sh.Limits, "key_count": keyCount, "reusable": sh.Reusable},
 		"claim_expires_at": sh.ClaimExpires,
 	})
 }
@@ -423,8 +478,17 @@ func (s *Server) claimRedeem(w http.ResponseWriter, r *http.Request) {
 		writeClaimErr(w, err)
 		return
 	}
-	s.Store.AddAudit(ctx, nil, "share.claimed", claimed.Name, "claimed by "+claimed.Label+" (proxy)")
-	s.emitShare(notify.ShareClaimed, claimed, "share "+claimed.Name+" was claimed by "+claimed.Label)
+	if claimed.Reusable {
+		n := fmt.Sprintf("claim %d", claimed.ClaimCount)
+		if claimed.MaxClaims > 0 {
+			n += fmt.Sprintf(" of %d", claimed.MaxClaims)
+		}
+		s.Store.AddAudit(ctx, nil, "share.claimed", claimed.Name, "claimed through its link ("+n+", proxy) from "+clientIP(r))
+		s.emitShare(notify.ShareClaimed, claimed, "share "+claimed.Name+" was claimed through its link ("+n+")")
+	} else {
+		s.Store.AddAudit(ctx, nil, "share.claimed", claimed.Name, "claimed by "+claimed.Label+" (proxy)")
+		s.emitShare(notify.ShareClaimed, claimed, "share "+claimed.Name+" was claimed by "+claimed.Label)
+	}
 	base := s.publicURL(r)
 	_, svcs := s.claimServices(ctx, claimed)
 	out := make([]claimTokenService, 0, len(svcs))

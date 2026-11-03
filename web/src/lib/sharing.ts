@@ -38,6 +38,12 @@ export type ShareMode = "proxy" | "handover" | "reveal";
 /** Who a share is for: another Acnologia server, or a person with a claim link. */
 export type ShareRecipient = "server" | "person";
 
+/**
+ * The "Share with" choice: a server, one person with a one time link, or
+ * anyone with a reusable link (a person share with reusable set).
+ */
+export type ShareAudience = ShareRecipient | "link";
+
 /** The modes a person share can have. */
 export type PersonMode = "proxy" | "reveal";
 
@@ -139,6 +145,12 @@ export interface Share {
   email?: string;
   claimed_at?: string | null;
   claim_expires_at?: string | null;
+  /** Anyone with the link can claim it, each claim a token of its own. */
+  reusable?: boolean;
+  /** How many times a reusable link can be claimed; 0 is no cap. */
+  max_claims?: number;
+  /** How many times the link was claimed. */
+  claim_count?: number;
   /** Reveal shares: the keys the person was shown (no secrets). */
   revealed_keys?: RevealedKey[] | null;
 }
@@ -164,9 +176,14 @@ export interface ShareInput {
   email?: string;
   /** Person shares: how long the claim link works. Sent with invite_valid, which the server may read instead. */
   claim_valid?: InviteValidity;
+  /** A link anyone can claim (person shares only, fixed at creation). */
+  reusable?: boolean;
+  /** Cap on claims of a reusable link; 0 is no cap. */
+  max_claims?: number;
 }
 
-export type InviteValidity = "1h" | "24h" | "7d";
+/** 30d is for reusable links only. */
+export type InviteValidity = "1h" | "24h" | "7d" | "30d";
 
 export type LinkStatus = "active" | "paused" | "expired" | "revoked" | "disconnected";
 
@@ -258,8 +275,15 @@ export function shareRecipient(s: { recipient?: ShareRecipient | null }): ShareR
   return s.recipient === "person" ? "person" : "server";
 }
 
+/** Which "Share with" choice a share is. */
+export function shareAudience(s: { recipient?: ShareRecipient | null; reusable?: boolean | null }): ShareAudience {
+  if (shareRecipient(s) === "server") return "server";
+  return s.reusable ? "link" : "person";
+}
+
 /** The person's name on a person share, falling back to the share name. */
 export function personLabel(s: Share): string {
+  if (s.reusable) return s.name || "this link";
   return s.label?.trim() || s.name || "this person";
 }
 

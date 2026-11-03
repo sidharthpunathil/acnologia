@@ -32,6 +32,8 @@ export interface ClaimPreview {
     services?: ClaimService[] | null;
     ends_at?: string | null;
     limits?: Partial<AppLimits> | null;
+    /** A link anyone can claim: each claim gets its own token. */
+    reusable?: boolean;
   } | null;
   name?: string;
   label?: string;
@@ -81,6 +83,8 @@ export interface PreviewView {
   endsAt: string | null;
   limits: AppLimits;
   linkExpiresAt: string | null;
+  /** The link is shared: it is not used up, and the limits are shared. */
+  reusable: boolean;
 }
 
 export function limitsOf(l: Partial<AppLimits> | null | undefined): AppLimits {
@@ -108,6 +112,7 @@ export function previewView(p: ClaimPreview): PreviewView {
     endsAt: sh.ends_at ?? p.ends_at ?? null,
     limits: limitsOf(sh.limits ?? p.limits),
     linkExpiresAt: p.claim_expires_at ?? null,
+    reusable: !!sh.reusable,
   };
 }
 
@@ -118,11 +123,12 @@ export function authType(a: ClaimService["auth"]): { type: "bearer" | "header" |
   return { type: t === "query" ? "query" : t === "header" ? "header" : "bearer", name };
 }
 
-export type ClaimErrorKind = "already_claimed" | "expired" | "invalid" | "rate_limited" | "other";
+export type ClaimErrorKind = "already_claimed" | "full" | "expired" | "invalid" | "rate_limited" | "other";
 
-/** 409 already claimed, 410 expired, 404 invalid, 429 rate limited. */
+/** 409 already claimed, 410 full or expired, 404 invalid, 429 rate limited. */
 export function claimErrorKind(e: unknown): ClaimErrorKind {
   if (!(e instanceof ApiError)) return "other";
+  if (e.code === "claim_full") return "full";
   if (e.status === 409 || e.code === "already_claimed") return "already_claimed";
   if (e.status === 410 || e.code === "claim_expired") return "expired";
   if (e.status === 404 || e.code === "claim_invalid") return "invalid";

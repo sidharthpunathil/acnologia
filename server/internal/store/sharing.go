@@ -83,6 +83,12 @@ type Share struct {
 	// working; ClaimedAt is when the person redeemed it.
 	ClaimExpires *time.Time `json:"claim_expires_at"`
 	ClaimedAt    *time.Time `json:"claimed_at"`
+	// Reusable makes the claim link work for anyone who has it, each
+	// claim a token of its own, up to MaxClaims (0: no cap). ClaimCount is
+	// how many times it was redeemed. Fixed at creation.
+	Reusable   bool `json:"reusable"`
+	MaxClaims  int  `json:"max_claims"`
+	ClaimCount int  `json:"claim_count"`
 
 	inviteHash string
 	claimHash  string
@@ -223,19 +229,19 @@ const shareCols = `s.id, s.name, s.note, s.status, s.services, s.providers, s.in
 s.peer_public_key, s.invite_hash, s.invite_expires_at, s.expires_at, s.created_by, s.created_at, s.redeemed_at, s.revoked_at, s.left_at,
 s.key_scopes, a.daily_requests, a.monthly_requests, a.daily_budget, a.monthly_budget,
 s.mode, s.lease_sec, s.end_action, s.peer_box_public_key, s.private_network, s.revoke_push_at, s.revoke_push_ok, s.revoke_push_detail,
-s.recipient, s.label, s.email, s.claim_hash, s.claim_expires_at, s.claimed_at`
+s.recipient, s.label, s.email, s.claim_hash, s.claim_expires_at, s.claimed_at, s.reusable, s.max_claims, s.claim_count`
 
 func scanShare(row interface{ Scan(...any) error }) (*Share, error) {
 	var sh Share
 	var svcs, provs, scopes, pushDetail string
-	var hidden, private int
+	var hidden, private, reusable int
 	var created int64
 	var app, invExp, exp, by, red, rev, left, dr, mr, pushAt, pushOK, claimExp, claimed sql.NullInt64
 	var db, mb sql.NullFloat64
 	err := row.Scan(&sh.ID, &sh.Name, &sh.Note, &sh.Status, &svcs, &provs, &hidden, &app, &sh.PeerID, &sh.PeerName, &sh.PeerURL,
 		&sh.PeerPublicKey, &sh.inviteHash, &invExp, &exp, &by, &created, &red, &rev, &left, &scopes, &dr, &mr, &db, &mb,
 		&sh.Mode, &sh.LeaseSec, &sh.EndAction, &sh.PeerBoxPublicKey, &private, &pushAt, &pushOK, &pushDetail,
-		&sh.Recipient, &sh.Label, &sh.Email, &sh.claimHash, &claimExp, &claimed)
+		&sh.Recipient, &sh.Label, &sh.Email, &sh.claimHash, &claimExp, &claimed, &reusable, &sh.MaxClaims, &sh.ClaimCount)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -247,6 +253,7 @@ func scanShare(row interface{ Scan(...any) error }) (*Share, error) {
 	_ = json.Unmarshal([]byte(provs), &sh.Providers)
 	sh.IncludeHidden = hidden == 1
 	sh.PrivateNetwork = private == 1
+	sh.Reusable = reusable == 1
 	if pushAt.Valid {
 		sh.LastRevokePush = &RevokePush{At: time.Unix(pushAt.Int64, 0).UTC(), OK: pushOK.Int64 == 1, Detail: pushDetail}
 	}
@@ -321,11 +328,11 @@ func (s *Store) CreateShare(ctx context.Context, sh *Share, inviteHash string, c
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO shares(id,name,note,status,services,providers,include_hidden,app_id,invite_hash,invite_expires_at,expires_at,created_by,created_at,key_scopes,
-		mode,lease_sec,end_action,private_network,recipient,label,email,claim_hash,claim_expires_at,service_ids)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		mode,lease_sec,end_action,private_network,recipient,label,email,claim_hash,claim_expires_at,service_ids,reusable,max_claims)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sh.ID, sh.Name, sh.Note, SharePending, string(svcs), string(provs), b2i(sh.IncludeHidden), appID, invHash,
 		fromTime(invExp), fromTime(sh.ExpiresAt), nz(createdBy), t, encodeScopes(sh.KeyScopes),
-		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Recipient, sh.Label, sh.Email, claimHash, fromTime(claimExp), ids); err != nil {
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Recipient, sh.Label, sh.Email, claimHash, fromTime(claimExp), ids, b2i(sh.Reusable), sh.MaxClaims); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -384,9 +391,9 @@ func (s *Store) UpdateShare(ctx context.Context, sh *Share) error {
 	}
 	// The mode is fixed once redeemed: only a pending share's mode changes.
 	if _, err := tx.ExecContext(ctx, `UPDATE shares SET name=?, note=?, services=?, providers=?, include_hidden=?, expires_at=?, status=?, key_scopes=?,
-		mode=CASE WHEN status='pending' THEN ? ELSE mode END, lease_sec=?, end_action=?, private_network=?, label=?, email=?, service_ids=? WHERE id=?`,
+		mode=CASE WHEN status='pending' THEN ? ELSE mode END, lease_sec=?, end_action=?, private_network=?, label=?, email=?, service_ids=?, max_claims=? WHERE id=?`,
 		sh.Name, sh.Note, string(svcs), string(provs), b2i(sh.IncludeHidden), fromTime(sh.ExpiresAt), status, encodeScopes(sh.KeyScopes),
-		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Label, sh.Email, ids, sh.ID); err != nil {
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Label, sh.Email, ids, sh.MaxClaims, sh.ID); err != nil {
 		return err
 	}
 	if sh.AppID != nil {

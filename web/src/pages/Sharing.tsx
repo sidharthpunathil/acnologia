@@ -32,6 +32,7 @@ import {
   shareEndsAt,
   shareLease,
   shareMode,
+  shareAudience,
   shareRecipient,
   sharing,
   type EndAction,
@@ -45,7 +46,7 @@ import {
   type Share,
   type ShareInput,
   type ShareMode,
-  type ShareRecipient,
+  type ShareAudience,
   type ShareStatus,
 } from "../lib/sharing";
 import { Modal } from "../components/Modal";
@@ -80,7 +81,7 @@ import {
   RevokeResultModal,
   wipeDeadline,
 } from "./sharing/Modes";
-import { ClaimLinkModal, ClaimState, NewLinkButton, RecipientChip, type ClaimLink } from "./sharing/People";
+import { ClaimLinkModal, ClaimState, NewLinkButton, RecipientChip, REUSABLE_LINK_VALIDITY, type ClaimLink } from "./sharing/People";
 
 // Only true for proxy shares; handover shares give the keys away, so say which.
 const PROMISE = "In proxy mode, keys never leave the server that owns them.";
@@ -225,7 +226,9 @@ function UsageBars({ share }: { share: Share }) {
 }
 
 interface ShareDraft {
-  recipient: ShareRecipient;
+  recipient: ShareAudience;
+  /** Cap on claims of a link anyone can claim; empty is no cap. */
+  max_claims: string;
   label: string;
   email: string;
   name: string;
@@ -242,14 +245,15 @@ interface ShareDraft {
   end_action: EndAction;
 }
 
-function draftOf(s: Share | null, recipient: ShareRecipient = "server"): ShareDraft {
+function draftOf(s: Share | null, recipient: ShareAudience = "server"): ShareDraft {
   const limits = { daily_requests: "", monthly_requests: "", daily_budget: "", monthly_budget: "" };
   for (const k of LIMIT_KEYS) {
     const v = s?.limits?.[k];
     limits[k] = v === null || v === undefined ? "" : String(v);
   }
   return {
-    recipient: s ? shareRecipient(s) : recipient,
+    recipient: s ? shareAudience(s) : recipient,
+    max_claims: s?.max_claims ? String(s.max_claims) : "",
     label: s?.label ?? "",
     email: s?.email ?? "",
     name: s?.name ?? "",
@@ -259,7 +263,7 @@ function draftOf(s: Share | null, recipient: ShareRecipient = "server"): ShareDr
     include_hidden: s?.include_hidden ?? false,
     key_scopes: { ...(s?.key_scopes ?? {}) },
     limits,
-    invite_valid: "24h",
+    invite_valid: !s && recipient === "link" ? "7d" : "24h",
     mode: s ? shareMode(s) : "proxy",
     lease: s ? shareLease(s) : "24h",
     ends: endsDraftOf(s ? shareEndsAt(s) : null),
@@ -291,7 +295,7 @@ function ShareFormModal({
   open: boolean;
   initial: Share | null;
   /** For a new share: which "Share with" card starts selected. */
-  recipient: ShareRecipient;
+  recipient: ShareAudience;
   isSuper: boolean;
   onClose: () => void;
   onSaved: (r: { share: Share; invite?: string; claim_url?: string }) => void;
@@ -333,9 +337,11 @@ function ShareFormModal({
     }
   }, [open, d.services, services]);
 
-  const person = d.recipient === "person";
+  // A link anyone can claim is a person share too: proxy only, no label.
+  const link = d.recipient === "link";
+  const person = d.recipient !== "server";
   const handover = d.mode === "handover";
-  const reveal = person && d.mode === "reveal";
+  const reveal = person && !link && d.mode === "reveal";
   // Requests run elsewhere (the other server, or the person with the raw key), so this one cannot count them.
   const noLimits = handover || reveal;
   // Hidden keys are never shown to a person, whatever include_hidden says.
@@ -350,14 +356,24 @@ function ShareFormModal({
     .map((s) => ({ value: s.slug, label: s.name, meta: s.slug }));
   const providerOptions = providers.filter((p) => p.slug !== "acnologia-peer").map((p) => ({ value: p.slug, label: p.name, meta: p.slug }));
 
-  const setRecipient = (recipient: ShareRecipient) =>
-    // Handover is for servers and reveal for people: start each from the safe default.
-    setD((cur) => ({ ...cur, recipient, mode: "proxy" }));
+  const setRecipient = (recipient: ShareAudience) =>
+    // Handover is for servers and reveal for one person: start each from the safe
+    // default. A link is meant to be posted, so it starts at a week.
+    setD((cur) => ({
+      ...cur,
+      recipient,
+      mode: "proxy",
+      invite_valid: recipient === "link" ? "7d" : cur.invite_valid === "30d" || cur.invite_valid === "7d" ? "24h" : cur.invite_valid,
+    }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (person && !d.label.trim()) return setErr("Give the person a name or label, such as Sam (contractor).");
+    if (person && !link && !d.label.trim()) return setErr("Give the person a name or label, such as Sam (contractor).");
+    if (link && !d.name.trim()) return setErr("Give the link a name, such as the team or event it is for.");
     if (!person && !d.name.trim()) return setErr("Give the share a name, such as the server it is for.");
+    const capText = d.max_claims.trim();
+    const maxClaims = capText ? Number(capText) : 0;
+    if (link && (!Number.isInteger(maxClaims) || maxClaims < 0)) return setErr("The most people must be a whole number, or empty for no cap.");
     const providersOut = person ? [] : d.providers;
     if (!d.services.length && !providersOut.length) return setErr(person ? "Pick at least one service to share." : "Pick at least one service or provider to share.");
     const limits = noLimits ? { ...NO_LIMITS } : parseDraftLimits(d);
@@ -386,7 +402,7 @@ function ShareFormModal({
       key_scopes[slug] = { mode: "pick", key_ids: ids };
     }
     const body: ShareInput = {
-      name: person ? d.label.trim() : d.name.trim(),
+      name: person && !link ? d.label.trim() : d.name.trim(),
       note: d.note,
       services: d.services,
       providers: providersOut,
@@ -397,15 +413,17 @@ function ShareFormModal({
       expires_at: ends.iso,
       end_action: d.end_action,
     };
-    if (person) {
+    if (person && !link) {
       body.label = d.label.trim();
       body.email = d.email.trim();
     }
+    if (link) body.max_claims = maxClaims;
     if (!modeLocked) body.mode = d.mode;
     if (handover) body.lease = d.lease;
     if (isSuper) body.include_hidden = includeHidden;
     if (!initial) {
-      body.recipient = d.recipient;
+      body.recipient = person ? "person" : "server";
+      if (link) body.reusable = true;
       body.invite_valid = d.invite_valid;
       if (person) body.claim_valid = d.invite_valid;
     }
@@ -431,6 +449,7 @@ function ShareFormModal({
 
   let servicesHint: string;
   if (reveal) servicesHint = "The keys in scope are shown to them once, when they open the link. Hidden keys are never shown.";
+  else if (link) servicesHint = "Everyone who claims the link calls these through this server with a token of their own. No one sees a key.";
   else if (person) servicesHint = "They call these through this server with their own token. They never see a key.";
   else if (handover) servicesHint = "The keys in scope go to the other server, sealed to it. Keys from another server are never handed on.";
   else servicesHint = "The other server proxies through this one. It never sees a key and cannot lease one.";
@@ -438,10 +457,12 @@ function ShareFormModal({
   let limitsHint: string;
   if (reveal) limitsHint = "Not available when showing the keys: they call the provider directly, so this server cannot count or stop their requests. The timer still ends the share.";
   else if (handover) limitsHint = "Not available when handing over keys: requests run on the other server, so this one cannot count or stop them. The timer and renewal window still apply.";
+  else if (link) limitsHint = "Shared by everyone who claims the link. Leave a field empty for no limit. Calls over a limit are refused until it resets.";
   else limitsHint = "Leave a field empty for no limit. Calls over a limit are refused until it resets.";
 
   let description: string;
   if (initial) description = person ? `Changes apply to ${personLabel(initial)}'s next call.` : "Changes reach the other server at its next sync.";
+  else if (link) description = "Give a team or a group use of some services through one link.";
   else description = person ? "Give one person use of some services with nothing but a link." : "Give one other server use of some services or provider specs.";
 
   return (
@@ -470,7 +491,25 @@ function ShareFormModal({
           </div>
         )}
         {!initial && <RecipientPicker value={d.recipient} onChange={setRecipient} />}
-        {person ? (
+        {link ? (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input label="Name" isRequired value={d.name} onChange={(name) => setD({ ...d, name })} placeholder="Hackathon team" autoComplete="off" maxLength={80} />
+              <Input
+                label="Most people"
+                inputMode="numeric"
+                value={d.max_claims}
+                onChange={(max_claims) => setD({ ...d, max_claims })}
+                placeholder="no cap"
+                hint="How many can claim it. You can change this later."
+                inputClassName="font-mono tabular-nums"
+              />
+            </div>
+            <Callout tone="info" title="Anyone who has the link can claim access">
+              Each person gets a token of their own and never sees a key. Limits are shared by everyone, and revoking cuts them all off at once. Raw keys are never shown through a link.
+            </Callout>
+          </>
+        ) : person ? (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input label="Name or label" isRequired value={d.label} onChange={(label) => setD({ ...d, label })} placeholder="Sam (contractor)" autoComplete="off" maxLength={80} />
@@ -575,14 +614,20 @@ function ShareFormModal({
             label={person ? "Link works for" : "Invite valid for"}
             selectedKey={d.invite_valid}
             onSelectionChange={(k) => k != null && setD({ ...d, invite_valid: k as InviteValidity })}
-            hint={person ? "The link works once. You can make a new one while it is unclaimed." : undefined}
+            hint={
+              link
+                ? "New claims stop after this. People who already claimed keep their access until the share ends. You can make a new link any time."
+                : person
+                  ? "The link works once. You can make a new one while it is unclaimed."
+                  : undefined
+            }
             className="w-full sm:max-w-xs"
             popoverClassName="w-(--trigger-width)"
           >
-            {VALIDITY.map((v) => (
+            {(link ? REUSABLE_LINK_VALIDITY : VALIDITY).map((v) => (
               <SelectItem key={v.id} id={v.id} textValue={v.label}>
                 {v.label}
-                {v.id === "24h" ? " (default)" : ""}
+                {v.id === (link ? "7d" : "24h") ? " (default)" : ""}
               </SelectItem>
             ))}
           </Select>
@@ -592,7 +637,7 @@ function ShareFormModal({
           value={d.note}
           onChange={(note) => setD({ ...d, note })}
           rows={2}
-          placeholder={person ? "What they need it for, optional" : "Who this is for, optional"}
+          placeholder={link ? "Where you will post the link, optional" : person ? "What they need it for, optional" : "Who this is for, optional"}
           maxLength={500}
         />
         {isSuper && !reveal && (
@@ -604,7 +649,9 @@ function ShareFormModal({
               <p id="share-hidden-hint" className="mt-0.5 text-caption-1-regular text-text-secondary">
                 {handover
                   ? "Hands over hidden keys too. Turn this on only for servers you trust with those keys."
-                  : person
+                  : link
+                    ? "Lets everyone who claims the link use hidden keys too. Some upstream answers can echo a key, so leave this off for a link you post widely."
+                    : person
                     ? "Lets their requests use hidden keys too. Some upstream answers can echo a key, so turn this on only for people you trust."
                     : "Lets the other server's requests use hidden keys too. Some upstream answers can echo a key, so turn this on only for servers you trust."}
               </p>
@@ -663,6 +710,7 @@ function ShareRow({
   const mode = shareMode(share);
   const handover = mode === "handover";
   const person = shareRecipient(share) === "person";
+  const link = person && !!share.reusable;
   const reveal = person && mode === "reveal";
   const who = personLabel(share);
   const endsAt = shareEndsAt(share);
@@ -708,7 +756,8 @@ function ShareRow({
   };
   const live = share.status !== "revoked";
   // A person share waits for its claim; a server share for its invite.
-  const unclaimed = person && !share.claimed_at && live && share.status !== "expired";
+  // A link anyone can claim takes a new link any time it is live.
+  const unclaimed = link ? share.status === "pending" || share.status === "active" : person && !share.claimed_at && live && share.status !== "expired";
 
   let revokeText: string;
   if (handover)
@@ -717,6 +766,7 @@ function ShareRow({
     revokeText = share.claimed_at
       ? `The share ends now, but ${who} keeps any key they copied. Rotate those keys at the provider. This cannot be undone.`
       : "The link stops working now. This cannot be undone.";
+  else if (link) revokeText = "The link and every token claimed through it stop working at once. This cannot be undone.";
   else if (person) revokeText = `${who}'s token stops working at once. This cannot be undone.`;
   else revokeText = "The other server stops at once. This cannot be undone.";
 
@@ -729,7 +779,7 @@ function ShareRow({
             <Chip variant="caption" color={SHARE_COLOR[share.status]}>
               {share.left_at ? "left by peer" : person && unclaimed && share.status === "pending" ? "waiting" : share.status}
             </Chip>
-            {person && <RecipientChip />}
+            {person && <RecipientChip link={link} />}
             <ModeChip mode={mode} />
           </div>
           <div className="mt-1 text-caption-1-regular text-text-secondary">
@@ -1138,7 +1188,7 @@ export function SharingPage() {
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Share | null>(null);
-  const [newRecipient, setNewRecipient] = useState<ShareRecipient>("server");
+  const [newRecipient, setNewRecipient] = useState<ShareAudience>("server");
   const [invite, setInvite] = useState<{ name: string; code: string } | null>(null);
   const [claimLink, setClaimLink] = useState<ClaimLink | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -1171,7 +1221,7 @@ export function SharingPage() {
   if (!loaded) return <PageSkeleton variant="list" />;
   if (error && !identity) return <EmptyState title="Sharing is not available" body={error} />;
 
-  const openNew = (recipient: ShareRecipient = filter === "people" ? "person" : "server") => {
+  const openNew = (recipient: ShareAudience = filter === "people" ? "person" : "server") => {
     setEditing(null);
     setNewRecipient(recipient);
     setFormOpen(true);
@@ -1189,7 +1239,7 @@ export function SharingPage() {
       <div>
         <PageHeader title="Sharing" meta={`${plural(shares.length, "share")} · ${activeShares} active · ${plural(peers.length, "connection")}`} className="mb-4" />
         <p className="max-w-2xl text-body-2-regular text-text-secondary">
-          Let another Acnologia use some of your services, or use services another one shares with you. {PROMISE} Handover shares give the keys to the other server, which deletes them when the share ends. A person who does not run Acnologia gets a one time link: a personal token through this server, or the keys shown once. A share can be timed, paused and revoked at any time.
+          Let another Acnologia use some of your services, or use services another one shares with you. {PROMISE} Handover shares give the keys to the other server, which deletes them when the share ends. A person who does not run Acnologia gets a one time link: a personal token through this server, or the keys shown once. A link anyone can claim gives a whole team tokens of their own, under shared limits. A share can be timed, paused and revoked at any time.
         </p>
       </div>
 
@@ -1216,7 +1266,7 @@ export function SharingPage() {
             art={UnpluggedArt}
             icon={RiShareForwardLine}
             title="Nothing shared yet"
-            body="Share with another server by proxy or handover, or with a person through a one time link."
+            body="Share with another server by proxy or handover, with one person through a one time link, or with a team through a link anyone can claim."
             action={
               isSuper ? (
                 <div className="flex flex-wrap justify-center gap-2">
@@ -1225,6 +1275,9 @@ export function SharingPage() {
                   </Button>
                   <Button variant="secondary" leadingIcon={RiUserLine} onClick={() => openNew("person")}>
                     Share with a person
+                  </Button>
+                  <Button variant="secondary" leadingIcon={RiLinkM} onClick={() => openNew("link")}>
+                    Share a link
                   </Button>
                 </div>
               ) : undefined
@@ -1262,7 +1315,7 @@ export function SharingPage() {
                 }}
                 onInvite={(code) => setInvite({ name: s.name, code })}
                 onClaimLink={(url, expiresAt) => {
-                  setClaimLink({ label: personLabel(s), url, expiresAt, mode: shareMode(s) === "reveal" ? "reveal" : "proxy" });
+                  setClaimLink({ label: personLabel(s), url, expiresAt, mode: shareMode(s) === "reveal" ? "reveal" : "proxy", reusable: !!s.reusable, maxClaims: s.max_claims ?? 0 });
                   void load();
                 }}
                 onRevoked={(share, deadline) => setRevoked({ share, deadline })}
@@ -1327,6 +1380,8 @@ export function SharingPage() {
               url: r.claim_url,
               expiresAt: r.share.claim_expires_at ?? null,
               mode: shareMode(r.share) === "reveal" ? "reveal" : "proxy",
+              reusable: !!r.share.reusable,
+              maxClaims: r.share.max_claims ?? 0,
             });
           } else if (r.invite) setInvite({ name: r.share.name, code: r.invite });
           void load();

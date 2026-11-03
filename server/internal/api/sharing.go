@@ -122,9 +122,20 @@ type shareInput struct {
 	// ClaimValid is a person's claim link validity: 1h, 24h (default) or
 	// 7d. InviteValid is read when it is not set.
 	ClaimValid string `json:"claim_valid"`
+	// Reusable makes a person share an "anyone with the link" share: the
+	// link works for everyone who has it, each claim a token of its own.
+	// Fixed at creation; implies recipient person and mode proxy.
+	Reusable *bool `json:"reusable"`
+	// MaxClaims caps how many times a reusable link can be claimed; 0 or
+	// unset is no cap.
+	MaxClaims *int `json:"max_claims"`
 }
 
 var inviteValidity = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour}
+
+// reusableLinkValidity adds a month for "anyone with the link" shares, which
+// are meant to be posted somewhere and claimed over time.
+var reusableLinkValidity = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
 
 // apply validates the input onto sh, writing nothing. It returns a message
 // for a 400 or "".
@@ -188,6 +199,9 @@ func (s *Server) applyShareInput(r *http.Request, in shareInput, sh *store.Share
 	}
 	if msg := applyShareModeInput(in, sh); msg != "" {
 		return msg
+	}
+	if sh.Reusable && sh.Mode != store.ShareModeProxy {
+		return "a link anyone can open is proxy only: a forwarded link must never show raw keys"
 	}
 	ends, field := in.ExpiresAt, "expires_at"
 	if in.EndsAt != nil {
