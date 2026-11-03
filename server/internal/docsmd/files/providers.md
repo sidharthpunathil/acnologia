@@ -29,26 +29,56 @@ them.
 
 ## Built in providers
 
-SerpAPI, Serper, Brave Search, Tavily, Exa, Firecrawl, Jina, SearchApi,
-Linkup, You.com, TinyFish Search, TinyFish Fetch, Google Gemini, ElevenLabs,
-the LLM APIs below (OpenAI, Anthropic, xAI, Mistral AI, DeepSeek, Cohere,
-Perplexity, Together AI, Groq, Fireworks AI, Cerebras and OpenRouter),
-and a generic spec ("Custom API")
-for any API that takes a key in a header, a bearer token or a query parameter.
-They are seeded on first boot and edited like any other provider.
+Twenty seven specs ship with the server. They are seeded on first boot and
+edited like any other provider. Every health check below spends no quota;
+without one, a key's validity is learned from real traffic.
 
-Some read quota without spending it: health checks call account endpoints
-(SerpAPI `account.json`, ElevenLabs `/v1/user/subscription`), and providers
-that send quota headers on every response, such as Brave Search, update it as
-traffic flows (`quota.headers`).
+| Provider (slug) | Category | Base URL | Key | Health check | Live quota |
+|---|---|---|---|---|---|
+| SerpAPI (`serpapi`) | Search | `https://serpapi.com` | query `api_key` | `GET /account.json` | searches left this month |
+| Serper (`serper`) | Search | `https://google.serper.dev` | `X-API-KEY` | none | no |
+| Brave Search (`brave-search`) | Search | `https://api.search.brave.com` | `X-Subscription-Token` | none | from response headers |
+| Tavily (`tavily`) | Search | `https://api.tavily.com` | `Authorization: Bearer` | `GET /usage` | credits |
+| Exa (`exa`) | Search | `https://api.exa.ai` | `x-api-key` | none | no |
+| Firecrawl (`firecrawl`) | Search | `https://api.firecrawl.dev` | `Authorization: Bearer` | none | no |
+| Jina Search (`jina`) | Search | `https://s.jina.ai` | `Authorization: Bearer` | none | no |
+| SearchApi (`searchapi`) | Search | `https://www.searchapi.io` | query `api_key` | none | no |
+| Linkup (`linkup`) | Search | `https://api.linkup.so` | `Authorization: Bearer` | none | no |
+| You.com Search (`youcom`) | Search | `https://ydc-index.io` | `X-API-Key` | none | no |
+| TinyFish Search (`tinyfish-search`) | Search | `https://api.search.tinyfish.ai` | `X-API-Key` | `GET /usage` | no |
+| TinyFish Fetch (`tinyfish-fetch`) | Search | `https://api.fetch.tinyfish.ai` | `X-API-Key` | `GET /usage` | no |
+| ElevenLabs (`elevenlabs`) | Voice | `https://api.elevenlabs.io` | `xi-api-key` | `GET /v1/user/subscription` | characters left |
+| Google Gemini (`gemini`) | LLM | `https://generativelanguage.googleapis.com` | `x-goog-api-key` | `GET /v1beta/models` | no |
+| OpenAI (`openai`) | LLM | `https://api.openai.com` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Anthropic (`anthropic`) | LLM | `https://api.anthropic.com` | `x-api-key` | `GET /v1/models` | no |
+| xAI (`xai`) | LLM | `https://api.x.ai` | `Authorization: Bearer` | `GET /v1/api-key` (also catches blocked or disabled keys) | no |
+| Mistral AI (`mistral`) | LLM | `https://api.mistral.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| DeepSeek (`deepseek`) | LLM | `https://api.deepseek.com` | `Authorization: Bearer` | `GET /user/balance` | balance, USD or CNY |
+| Cohere (`cohere`) | LLM | `https://api.cohere.com` | `Authorization: Bearer` | `POST /v1/check-api-key` (`{"valid":false}` is invalid) | no |
+| Perplexity (`perplexity`) | LLM | `https://api.perplexity.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Together AI (`together`) | LLM | `https://api.together.xyz` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Groq (`groq`) | LLM | `https://api.groq.com/openai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Fireworks AI (`fireworks`) | LLM | `https://api.fireworks.ai/inference` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Cerebras (`cerebras`) | LLM | `https://api.cerebras.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| OpenRouter (`openrouter`) | LLM | `https://openrouter.ai/api` | `Authorization: Bearer` | `GET /v1/key` | credit limit and remaining, USD, for keys with a limit |
+| Custom API (`generic`) | Other | your API's | a header, a bearer token or a query parameter, set per service | none | no |
+
+Live quota comes from the health check's account endpoint, except Brave
+Search, whose quota headers on every response update it as traffic flows
+(`quota.headers`).
 
 TinyFish serves each product from its own host with one shared key
-(`X-API-Key`), so Search (`api.search.tinyfish.ai`) and Fetch
-(`api.fetch.tinyfish.ai`) are two providers. Add the same key to both
-services. Both are free within their limits (see [Offers](#offers)).
+(`X-API-Key`), so Search and Fetch are two providers. Add the same key to
+both services. Both are free within their limits (see [Offers](#offers)).
 
 Built in providers that were seeded by an older release get the offers this
 release ships on the next boot, as long as nobody has edited them (version 1).
+
+One more spec, `acnologia-peer` ("Acnologia server"), is built in for
+services that another Acnologia server shares with this one. Its one key is
+the share token and it counts only the owner's own refusals against it (see
+[Providers from another server](#providers-from-another-server)). It is not
+counted above.
 
 ### LLM APIs
 
@@ -56,21 +86,6 @@ Pool keys for model APIs the same way, including your team's Claude keys.
 Every one has a health check that spends nothing, and the invalid key
 responses below were checked against the real APIs (see
 [Testing against the real APIs](#testing-against-the-real-apis)).
-
-| Provider | Base URL | Key | Health check | Live quota |
-|---|---|---|---|---|
-| OpenAI | `https://api.openai.com` | `Authorization: Bearer` | `GET /v1/models` | no |
-| Anthropic | `https://api.anthropic.com` | `x-api-key` | `GET /v1/models` | no |
-| xAI | `https://api.x.ai` | `Authorization: Bearer` | `GET /v1/api-key` (also catches blocked or disabled keys) | no |
-| Mistral AI | `https://api.mistral.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
-| DeepSeek | `https://api.deepseek.com` | `Authorization: Bearer` | `GET /user/balance` | balance, USD or CNY |
-| Cohere | `https://api.cohere.com` | `Authorization: Bearer` | `POST /v1/check-api-key` (`{"valid":false}` is invalid) | no |
-| Perplexity | `https://api.perplexity.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
-| Together AI | `https://api.together.xyz` | `Authorization: Bearer` | `GET /v1/models` | no |
-| Groq | `https://api.groq.com/openai` | `Authorization: Bearer` | `GET /v1/models` | no |
-| Fireworks AI | `https://api.fireworks.ai/inference` | `Authorization: Bearer` | `GET /v1/models` | no |
-| Cerebras | `https://api.cerebras.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
-| OpenRouter | `https://openrouter.ai/api` | `Authorization: Bearer` | `GET /v1/key` | credit limit and remaining, USD, for keys with a limit |
 
 Paths keep their version prefix, so an OpenAI compatible client uses
 `http://<acnologia>/proxy/<service>/v1` as its base URL (DeepSeek and
@@ -241,9 +256,25 @@ How Acnologia uses offers:
   name the free offer and its limits.
 
 Built in offers come from each provider's pricing and rate limit pages,
-checked 2026-11-02. Where a page publishes nothing for a value, the value is
-left out. The provider refresh can re-read them on a schedule, by hand or
-with Check now; see [Keeping provider offers fresh](flows.md#keeping-provider-offers-fresh).
+checked 2026-11-02 (2026-11-03 for the LLM APIs). Where a page publishes
+nothing for a value, the value is left out.
+
+### Keeping offers current
+
+Prices and free tiers change, so a superadmin can have Acnologia re-read
+them (Settings, Provider refresh; needs `ANTHROPIC_API_KEY`). By default it
+runs monthly, on the 1st at 03:00 UTC, over providers behind a service with
+a usable key, at most 10 a run, skipping any checked in the last 25 days,
+capped at $2 a run and $5 a month. Check now on a service's Offers and
+limits card or a provider's Offers tab checks one provider at once.
+
+A refresh only ever changes `offers`. A change publishes a new provider
+version on its own only when every added or changed offer cites an http(s)
+`source_url` and it does not remove every offer; anything else waits for
+review in Settings. A change to a built in provider makes it an edited
+version, so later releases stop backfilling its offers; roll back from the
+Versions tab. No change just moves `checked_at` to today. The full flow is
+in [Keeping provider offers fresh](flows.md#keeping-provider-offers-fresh).
 
 ## Building a provider with AI
 
@@ -303,6 +334,25 @@ Then create a service from the catalog and add keys.
 - Rule regexes are RE2 (no catastrophic backtracking); JSON paths are depth
   limited.
 
+## Providers from another server
+
+When another Acnologia shares a service with this one (see
+[sharing](flows.md#sharing-between-servers)), the local service runs on
+`acnologia-peer` and calls the owner's proxy with the share token. The
+manifest also carries the owner's spec for the service's provider and for
+any provider shared on its own. When this server has no provider with that
+slug, sync imports it once, with source `peer:<owner id>`, so the shared
+service shows the provider's name, logo, docs, examples and offers, and you
+can add your own keys to it. A provider you already have is never touched.
+
+An imported provider never updates on its own. When the owner publishes a
+newer version, the service page says so and a superadmin can pull it
+(`POST /api/admin/peers/{id}/providers/{slug}/pull`); a pull that moves the
+base URL needs an explicit yes, and a provider edited here is not offered
+updates. The provider refresh skips imported providers unless a superadmin
+turns on checking providers copied from another server. Imports stay after a disconnect
+or revoke; delete one you do not use from the Providers page.
+
 ## Testing against the real APIs
 
 Every built in spec's fixtures run in `go test ./...`. For the LLM APIs,
@@ -321,4 +371,18 @@ cd server
 ACNOLOGIA_LIVE_PROVIDERS=1 go test ./internal/providers -run TestInferenceLiveNoKey -v
 ```
 
-It is skipped unless that variable is set.
+In PowerShell:
+
+```powershell
+cd server
+$env:ACNOLOGIA_LIVE_PROVIDERS = "1"
+go test ./internal/providers -run TestInferenceLiveNoKey -v
+Remove-Item Env:ACNOLOGIA_LIVE_PROVIDERS
+```
+
+It is skipped unless that variable is set, so CI never calls the real APIs.
+For each LLM API it runs the health check and the first POST example with
+an invalid key: the check must report the key invalid and the response must
+classify as `invalid`. When one fails, the provider changed its error;
+update the rule and the recorded response in `observed_no_key.json`
+together.

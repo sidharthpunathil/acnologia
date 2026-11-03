@@ -40,7 +40,11 @@ flowchart LR
 | See, create, hide or delete **hidden** keys | no | no | yes |
 | Let an app use hidden keys (`lease_hidden`) | no | no | yes |
 | Reveal a key's secret in the dashboard | no | no | yes |
+| See Settings, AI models and prices, provider refresh runs and reviews, shares and peers | no | yes | yes |
 | Manage users, read the audit log, set AI rules | no | no | yes |
+| Switch AI models, edit model prices | no | no | yes |
+| Change provider refresh settings, run it, Check now, apply or dismiss a review | no | no | yes |
+| Create, edit, pause, resume and revoke shares; connect, sync and disconnect peers | no | no | yes |
 
 Roles are re-read from the database on every request, so a demotion or a
 disable takes effect immediately. At least one active superadmin always
@@ -105,16 +109,27 @@ hidden key.
 | AI run test keys | Same encryption, wiped when the run ends |
 | Passwords | bcrypt (10 to 72 characters) |
 | Session and app tokens | SHA-256 of 32 random bytes. An app can hold several tokens in `app_tokens`, each revocable and optionally expiring; a revoked or expired token gets 401. |
+| Share tokens | On the owner, the SHA-256 like any app token. On the receiver, encrypted like a provider key. |
+| Server identity | Ed25519 private key, encrypted with the master key in `meta` |
 | Master key | `ACNOLOGIA_MASTER_KEY`, else `data/master.key` (0600, generated on first boot) |
 
 The server refuses to start when the master key does not match the database
 (checked through `meta.master_key_check`, or by decrypting a stored key on
 databases from before that check). It never generates a new key over an
 existing file it failed to read. The data directory is chmod 0700 and the
-database files 0600. Windows ignores those modes, so there the data
-directory's ACL does the job: the default, `%LocalAppData%\Acnologia`, is
-readable only by the user, SYSTEM and administrators (see
-[configuration](configuration.md#windows)).
+database files 0600.
+
+Windows ignores those modes, so there the folder's ACL does the job:
+
+- The default data directory, `%LocalAppData%\Acnologia`, inherits the ACL
+  of your profile, readable only by you, SYSTEM and administrators.
+- A data directory you choose elsewhere (`C:\ProgramData\Acnologia` for a
+  service, say) inherits that folder's ACL, which often lets every local
+  user read it. Restrict it with `icacls` (see
+  [configuration](configuration.md#windows)), or `master.key` and the
+  database are readable by anyone signed in to the machine.
+- `acn` keeps its token in `%AppData%\acnologia\ctl.json`, under the same
+  profile ACL.
 
 ## Keeping keys out of places people can read
 
@@ -152,8 +167,9 @@ readable only by the user, SYSTEM and administrators (see
 
 ## What the model can and cannot see
 
-Every request to Anthropic, from the Assistant, the provider builder, Fill
-with AI and run naming, goes through one HTTP middleware on the shared client
+Every request to Anthropic, from the Assistant and its compaction summaries,
+the provider builder, Fill with AI, run naming and the provider refresh,
+goes through one HTTP middleware on the shared client
 that rewrites the request body before it leaves the server:
 
 - Known secrets are replaced by `[key ...c21e]`: every pool key, webhook URL
@@ -187,6 +203,35 @@ character token in a sentence) is caught only if it is already a pool key or
 the paste parser finds it. Leasing a key, through the API or the MCP
 `get_key` tool, returns the secret to the app by design; use proxy mode for
 any client you would not hand a key to.
+
+## AI models, prices and provider refresh
+
+- **Switching models** is a superadmin action, audited as `ai.models`. Only
+  model ids from Anthropic's list or the built in table are accepted, and
+  every model is reached through the same client and redactor, so picking a
+  model changes cost and quality, never what leaves the server.
+- **Model price overrides** are superadmin only and audited as `ai.prices`
+  with the old and new values. They change how Acnologia counts the cost of
+  its own Claude calls (the Usage page) and, for a context window override,
+  when an Assistant chat compacts. They never touch provider keys, offers or
+  app budgets.
+- **The provider refresh never sends a key.** The refresh model gets the
+  provider's name, URLs, example names and current offers, and reads public
+  pricing pages through `web_search` and `web_fetch`, which run on
+  Anthropic's side, so no page is fetched from Acnologia's network. The
+  Claude price refresh reads Anthropic's pricing page the same way. Every
+  request passes the redactor above.
+- **A refresh can only change offers.** Never auth, the base URL, rules,
+  health checks or tests, so a misread or hostile page cannot redirect keys.
+  A change applies on its own only when every added or changed offer cites an
+  http(s) source and it does not remove every offer; otherwise it waits for a
+  superadmin. Claude price changes follow the same rule. Each applied change
+  is a provider version you can roll back, with a webhook and an audit entry.
+- **Spend is capped**: per run (default $2) and per month (default $5) for
+  the refresh feature, checked before each provider. Only one run goes at a
+  time.
+- **Providers copied from a peer are skipped** unless a superadmin turns
+  them on.
 
 ## Web protections
 
@@ -244,13 +289,19 @@ flowchart LR
         H["health checks"]
         L["AI live checks"]
     end
+    subgraph Token["carries an invite or a share token"]
+        Peer["preview, redeem, sync,<br/>leave, peer logos"]
+    end
     subgraph Without["no key"]
         Logo["logo discovery"]
+        AI["AI features,<br/>provider refresh"]
     end
     P -->|"service base_url only,<br/>no redirects,<br/>optional egress proxy"| Prov[provider]
     H -->|"service base_url only,<br/>no redirects,<br/>optional egress proxy"| Prov
     L -->|"provider's own domain only,<br/>GET examples, SafeClient"| Prov
     Logo -->|"SafeClient"| Site[provider website]
+    Peer -->|"owner's URL only,<br/>SafeClient unless the link<br/>is marked private network"| Owner[owner Acnologia]
+    AI -->|"redacted,<br/>web search and fetch<br/>run on Anthropic's side"| Claude[Claude API]
 ```
 
 Webhook deliveries carry no key and go through `SafeClient` unless
@@ -303,10 +354,17 @@ The model is that the other server is a client with a token, never a holder of
 keys:
 
 - **No secret leaves the owner.** The receiver gets a share token, a manifest
-  (service names, providers, how many keys are available, provider specs) and
-  answers to its proxied requests. Never a key, its hint or its count by
-  status. Hidden keys serve a share only when a superadmin turned on
-  `include_hidden`, which sets `lease_hidden` on the backing app.
+  and answers to its proxied requests. The manifest holds the share's name,
+  status, limits and expiry, each shared service's name, description,
+  provider and how many keys in its key scope can take a request now, and
+  the provider specs (which hold no secret). Never a key, its hint, its
+  label, its count by status, or which key served a request. Hidden keys
+  serve a share only when a superadmin turned on `include_hidden`, which
+  sets `lease_hidden` on the backing app, and only while the service's target
+  is trusted.
+- **Key scopes hold on every pick.** A share limited to up to N keys or a
+  picked list never gets a key outside it, through any path: the pool
+  applies the scope for the backing app before choosing.
 - **The backing app never grants everything.** An app with an empty service
   list may use every service, so a share's app always lists the shared
   services, or an entry that matches nothing for a provider only share. It is
@@ -317,10 +375,13 @@ keys:
   it is compared in constant time. Redeeming burns it in the same transaction
   that binds the peer. Preview and redeem are limited globally (20 a minute,
   500 a day).
-- **The receiver proves who it is.** Redeem carries the receiver's public key
-  and an Ed25519 signature over the share id, the invite hash, a nonce and its
-  id; the owner checks the id is derived from the key. The receiver checks
-  that the owner's identity at redeem matches the one previewed.
+- **An invite binds to the server that redeems it.** Redeem carries the
+  receiver's public key and an Ed25519 signature over the share id, the
+  invite hash, a nonce and its id; the owner checks the id is derived from
+  the key and records that server on the share. The invite is then spent, so
+  a leaked code is worthless after the first redeem, and a share serves one
+  receiver. The receiver checks that the owner's identity at redeem matches
+  the one previewed.
 - **Revoke is immediate.** Revoke deactivates the app and revokes its tokens in
   one transaction; the share check runs before the token check, so the next
   request is refused with `share_revoked`. Pause and expiry are checked on every
@@ -348,8 +409,10 @@ keys:
   accepts an allowed image type up to 512 KB whose bytes match the declared
   type and serves it with the same sandboxing CSP as every logo.
 - **No chains.** Services from a peer (provider `acnologia-peer`) cannot be
-  shared onward, cannot be leased, and `X-Acnologia-Hop` stops a request after 3
-  servers.
+  shared onward and cannot be leased. As a second guard, each server adds one
+  to `X-Acnologia-Hop` when it forwards to a peer (the proxy strips the
+  header on every other request); a request that arrives with more than 3,
+  or would leave for a fourth server, gets 508 `loop_detected`.
 - **Roles.** Only superadmins create, edit, pause, resume, revoke, connect,
   sync and disconnect. Admins can view. Server to server routes sit outside
   the access password lock; they need an invite or a share token.
@@ -366,6 +429,11 @@ keys:
 5. Mark keys admins must never see as `hidden`, and grant `lease_hidden` only
    to apps that need them.
 6. Use a fine grained, public read only `GITHUB_TOKEN` if you set one.
+7. On a server that shares, set `ACNOLOGIA_PUBLIC_URL`, send invites over a
+   private channel with the shortest validity that works, and give each share
+   the narrowest key scope and limits it needs.
+8. On Windows with a data directory outside your profile, restrict it with
+   `icacls`.
 
 ## Known limitations
 

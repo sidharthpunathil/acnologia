@@ -4,19 +4,21 @@
 
 A self-hosted pool for the API keys your apps burn through.
 
-Put every key you have for SerpAPI, ElevenLabs, Brave Search, Gemini or any
-key based HTTP API in one place. Your apps call Acnologia instead of the
+Put every key you have for SerpAPI, Brave Search, ElevenLabs, OpenAI,
+Anthropic, Gemini or any key based HTTP API in one place. Your apps call Acnologia instead of the
 provider. Acnologia sends each request with a key that has quota left, and when
 the provider answers rate limited, out of quota or suspended, it parks that key
 and retries with the next one. It is built for teams and solo developers who
 juggle free tier and paid keys across apps, workers and AI agents.
 
-One Go binary with the dashboard built in. SQLite storage, keys encrypted at
-rest with AES-256-GCM.
+One Go binary with the dashboard built in, for Linux, macOS and Windows.
+SQLite storage, keys encrypted at rest with AES-256-GCM.
 
 ![The catalog: every service and how many of its keys are available](docs/screenshots/catalog.png)
 
 ## Quick start
+
+On macOS or Linux:
 
 ```sh
 git clone https://github.com/sidharthpunathil/acnologia && cd acnologia
@@ -55,8 +57,10 @@ Open http://localhost:8080. The first visit creates the superadmin. Then:
 3. **Create an app** for each consumer and copy its `acn_...` token. It is shown once.
 4. **Point your app at** `http://localhost:8080/proxy/<service>/...` with that token.
 
-Set `ANTHROPIC_API_KEY` in `.env` to turn on the AI features. Everything else
-works without it. All settings are in [.env.example](.env.example).
+Set `ANTHROPIC_API_KEY` in `.env` to turn on the AI features, then pick the
+models they run on under Settings, AI. Everything else works without it. All
+settings are in [.env.example](.env.example) and
+[configuration](docs/configuration.md).
 
 ## Use it
 
@@ -115,12 +119,24 @@ TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
   as SerpAPI and Tavily, LLM APIs such as OpenAI, Anthropic, Groq and
   Together AI), a form or JSON editor, and an AI builder that writes, tests
   and publishes a new provider from its docs.
+- **Keeps offers current.** Each provider's free tiers, prices and published
+  limits pace keys and price requests. A [scheduled refresh](docs/flows.md#keeping-provider-offers-fresh)
+  (monthly by default, only providers you hold keys for, with a spend cap)
+  re-reads the pricing pages and applies a change on its own only when it
+  cites its source; anything else waits for review. It re-reads Claude's own
+  prices too.
 - **An [Assistant](docs/flows.md#assistant-chat)** that manages the pool in
   chat with your own permissions. Pasted keys go to an encrypted vault and the
-  model only sees placeholders.
+  model only sees placeholders. Long chats compact themselves into a summary,
+  and you can compact one by hand.
+- **[Your choice of model](docs/flows.md#choosing-the-ai-model)** per AI
+  feature (Assistant, provider builder, Fill with AI, chat summaries, offer
+  refresh), switched in Settings without a restart, with editable prices.
 - **[Shares between servers](docs/flows.md#sharing-between-servers).** Let a
   teammate's or another deploy's Acnologia use some of your services through
-  your proxy, with limits, pause and revoke. Keys never leave home.
+  your proxy: all keys, up to N or a picked list, with request and budget
+  limits, expiry, pause and revoke. The receiver gets each service with its
+  provider's name, logo and docs. Keys never leave home.
 - **Speaks to agents and scripts**: MCP at `/mcp`, `/llms.txt`,
   [SDKs](sdk/README.md) for Python, TypeScript, Go, Rust, Java, Kotlin, C#,
   Swift, Dart, C++, PHP and Ruby, and the [`acn` CLI](docs/cli.md) with
@@ -136,15 +152,15 @@ provider and Claude spend, and a dashboard that works on a phone.
 
 ## Documentation
 
-- [Request flows](docs/flows.md): the proxy, leases, key states and outcomes, MCP, the AI builder and the Assistant
+- [Request flows](docs/flows.md): the proxy, leases, key states and outcomes, MCP, the AI builder, offer refresh, model choice, the Assistant and sharing between servers
 - [Configuration](docs/configuration.md): every setting, self-hosting, backups, upgrading
-- [Deploying on Railway](docs/deploy-railway.md): a public deploy behind the access password
+- [Deploying on Railway](docs/deploy-railway.md): a public deploy behind the access password, with AI and sharing
 - [HTTP API](docs/api.md): consumer error codes and every dashboard route with its role
-- [Command line](docs/cli.md): install `acn`, sign in through the browser, commands, CI
+- [Command line](docs/cli.md): install `acn` on macOS, Linux or Windows, sign in through the browser, commands, CI
 - [SDKs](docs/sdks.md): the twelve client libraries, how to install each today, running their tests
-- [Security model](docs/security.md): roles, hidden keys, what the model can see, limits
-- [Provider specs](docs/providers.md): built in providers, the spec format, building one with AI
-- [Architecture](docs/architecture.md) and [Development](docs/development.md)
+- [Security model](docs/security.md): roles, hidden keys, what the model can see, limits, sharing
+- [Provider specs](docs/providers.md): the 27 built in providers, the spec format, offers, building one with AI
+- [Architecture](docs/architecture.md) and [Development](docs/development.md), including building on Windows
 - For agents: [llms.txt](docs/llms.txt) and the full reference in [llms-full.txt](docs/llms-full.txt), also served at `/llms.txt` and `/llms-full.txt`
 
 ## License
