@@ -14,7 +14,7 @@ Share your API keys without giving them away.
 </p>
 
 <p align="center">
-  <a href="https://github.com/sidharthpunathil/acnologia/raw/main/video/acnologia-web.mp4"><img src="docs/brand/video-tour.jpg" alt="Watch the 48 second tour of Acnologia" width="720"></a>
+  <a href="https://github.com/sidharthpunathil/acnologia/raw/main/video/acnologia-web.mp4"><img src="docs/screenshots/video-tour.png" alt="Watch the 48 second tour of Acnologia" width="720"></a>
 </p>
 
 API keys get passed around in `.env` files, chat messages and CI settings.
