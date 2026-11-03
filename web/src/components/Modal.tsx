@@ -46,7 +46,8 @@ function AutoFocus({ phone }: { phone: boolean }) {
 /**
  * Legacy dialog API over BoardUI Modal and Drawer. Escape, a press on the
  * backdrop and the close button dismiss it; focus is trapped and returns to
- * the opener. `variant="drawer"` is a side panel on wide screens. On phones
+ * the opener. `variant="drawer"` is a side panel on wide screens, 600px
+ * instead of 400px when `wide`. On phones
  * both variants open as bottom sheets.
  */
 export function Modal({
@@ -108,7 +109,7 @@ export function Modal({
   }
   if (variant === "drawer") {
     return (
-      <Drawer placement="end" size="md" isOpen={open} onOpenChange={onOpenChange}>
+      <Drawer placement="end" size={wide ? "lg" : "md"} isOpen={open} onOpenChange={onOpenChange}>
         {content}
       </Drawer>
     );

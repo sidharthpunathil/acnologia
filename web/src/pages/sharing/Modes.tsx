@@ -33,16 +33,54 @@ import { Callout, CopyButton } from "@/components/acn";
 import { cx } from "@/utils/cx";
 import { Countdown } from "./Timers";
 
+// ---- choice cards ----
+
+interface Choice<T extends string> {
+  id: T;
+  title: string;
+  body: string;
+  icon: typeof RiShieldKeyholeLine;
+  recommended?: boolean;
+}
+
+/**
+ * One option in a share picker: the icon in its own column so the title and
+ * the text line up under each other, the radio dot on the right.
+ */
+function ChoiceCard<T extends string>({ choice, readOnly }: { choice: Choice<T>; readOnly?: boolean }) {
+  const Icon = choice.icon;
+  return (
+    <RadioCard
+      value={choice.id}
+      title={
+        <span className="flex items-start gap-3 whitespace-normal">
+          <Icon className="mt-0.5 size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+          <span className="flex min-w-0 flex-col gap-1">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {choice.title}
+              {choice.recommended && (
+                <Chip variant="caption" color="lime">
+                  Recommended
+                </Chip>
+              )}
+            </span>
+            <span className="text-body-2-regular text-text-secondary">{choice.body}</span>
+          </span>
+        </span>
+      }
+      className={({ isSelected }) =>
+        cx("h-full items-start rounded-3xl p-4 sm:p-5", isSelected && "border-accent-line ring-1 ring-accent-line", readOnly && isSelected && "opacity-100")
+      }
+    />
+  );
+}
+
 // ---- mode choice ----
 
-const MODE_CARDS: { id: ShareMode; title: string; body: string; icon: typeof RiShieldKeyholeLine }[] = [
-  { id: "proxy", title: "Proxy through this server", body: "The other server never sees your keys. Revoke is instant.", icon: RiShieldKeyholeLine },
-  {
-    id: "handover",
-    title: "Hand over the keys",
-    body: "The other server gets the keys and calls the provider directly. Revoke deletes them there, but a modified server could keep a copy. Rotate keys you stop trusting.",
-    icon: RiKey2Line,
-  },
+const MODE_CARDS: Choice<ShareMode>[] = [
+  { id: "proxy", title: "Proxy through this server", body: "Calls go through this server. The other server never sees your keys, and revoking is instant.", icon: RiShieldKeyholeLine, recommended: true },
+  // The risk is spelled out in HandoverWarning, shown once this is picked.
+  { id: "handover", title: "Hand over the keys", body: "The other server gets the keys and calls the provider itself. Revoking asks it to delete them.", icon: RiKey2Line },
 ];
 
 export const MODE_LABEL: Record<ShareMode, string> = { proxy: "Proxy", handover: "Handover", reveal: "Keys shown" };
@@ -61,9 +99,10 @@ export function ModeChip({ mode }: { mode: ShareMode }) {
 
 // ---- recipient and person modes ----
 
-const RECIPIENT_CARDS: { id: ShareRecipient; title: string; body: string; icon: typeof RiServerLine }[] = [
-  { id: "server", title: "Another server", body: "Someone who runs their own Acnologia. They redeem an invite on their server.", icon: RiServerLine },
-  { id: "person", title: "A person", body: "Anyone with a browser. They open a one time link and get a personal token, or see the keys once.", icon: RiUserLine },
+// How a person uses the link is the next question, so it is not repeated here.
+const RECIPIENT_CARDS: Choice<ShareRecipient>[] = [
+  { id: "server", title: "Another server", body: "Someone running their own Acnologia. They redeem an invite there.", icon: RiServerLine },
+  { id: "person", title: "A person", body: "Anyone with a browser. They open a one time link.", icon: RiUserLine },
 ];
 
 /** "Share with": another server or a person. Fixed once the share exists. */
@@ -76,26 +115,15 @@ export function RecipientPicker({ value, onChange }: { value: ShareRecipient; on
       </div>
       <RadioGroup aria-labelledby={labelId} value={value} onChange={(v) => onChange(v as ShareRecipient)} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {RECIPIENT_CARDS.map((c) => (
-          <RadioCard
-            key={c.id}
-            value={c.id}
-            title={
-              <span className="flex items-center gap-2 whitespace-normal">
-                <c.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
-                {c.title}
-              </span>
-            }
-            description={<span className="mt-1 block whitespace-normal text-body-2-regular">{c.body}</span>}
-            className={({ isSelected }) => cx("items-start rounded-3xl p-4", isSelected && "border-accent-line ring-1 ring-accent-line")}
-          />
+          <ChoiceCard key={c.id} choice={c} />
         ))}
       </RadioGroup>
     </div>
   );
 }
 
-const PERSON_MODE_CARDS: { id: PersonMode; title: string; body: string; icon: typeof RiShieldKeyholeLine }[] = [
-  { id: "proxy", title: "Through this server", body: "They get a personal token. They never see your keys. Revoke is instant.", icon: RiShieldKeyholeLine },
+const PERSON_MODE_CARDS: Choice<PersonMode>[] = [
+  { id: "proxy", title: "Through this server", body: "They get a personal token. They never see your keys. Revoke is instant.", icon: RiShieldKeyholeLine, recommended: true },
   { id: "reveal", title: "Show them the keys", body: "They see the keys once. Revoke cannot take them back; rotate keys when the share ends.", icon: RiEyeLine },
 ];
 
@@ -119,19 +147,7 @@ export function PersonModePicker({ value, onChange, readOnly }: { value: PersonM
         className="grid grid-cols-1 gap-3"
       >
         {PERSON_MODE_CARDS.map((m) => (
-          <RadioCard
-            key={m.id}
-            value={m.id}
-            title={
-              <span className="flex items-center gap-2 whitespace-normal">
-                <m.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
-                {m.title}
-                {m.id === "proxy" && <span className="text-caption-1-regular text-text-tertiary">(recommended)</span>}
-              </span>
-            }
-            description={<span className="mt-1 block whitespace-normal text-body-2-regular">{m.body}</span>}
-            className={({ isSelected }) => cx("items-start rounded-3xl p-4", isSelected && "border-accent-line ring-1 ring-accent-line", readOnly && isSelected && "opacity-100")}
-          />
+          <ChoiceCard key={m.id} choice={m} readOnly={readOnly} />
         ))}
       </RadioGroup>
       {readOnly && (
@@ -215,20 +231,7 @@ export function ModePicker({ value, onChange, readOnly }: { value: ShareMode; on
         className="grid grid-cols-1 gap-3"
       >
         {MODE_CARDS.map((m) => (
-          <RadioCard
-            key={m.id}
-            value={m.id}
-            title={
-              <span className="flex items-center gap-2 whitespace-normal">
-                <m.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
-                {m.title}
-              </span>
-            }
-            description={<span className="mt-1 block whitespace-normal text-body-2-regular">{m.body}</span>}
-            className={({ isSelected }) =>
-              cx("items-start rounded-3xl p-4", isSelected && "border-accent-line ring-1 ring-accent-line", readOnly && isSelected && "opacity-100")
-            }
-          />
+          <ChoiceCard key={m.id} choice={m} readOnly={readOnly} />
         ))}
       </RadioGroup>
       {readOnly && (
