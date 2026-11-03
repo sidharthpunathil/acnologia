@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -30,6 +31,10 @@ type Provider struct {
 
 	HasLogo bool `json:"-"`
 	LogoRev int  `json:"-"`
+	// VersionSource, when set, is the source recorded on the new version
+	// instead of Source, so a change can be labelled (refresh) without
+	// changing where the provider came from.
+	VersionSource string `json:"-"`
 }
 
 type ProviderVersion struct {
@@ -119,7 +124,7 @@ func (s *Store) SaveProvider(ctx context.Context, p *Provider, by, note string) 
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO provider_versions(slug,version,snapshot,source,note,created_by,created_at) VALUES(?,?,?,?,?,?,?)`,
-		p.Slug, p.Version, snapshot(p), p.Source, note, by, t); err != nil {
+		p.Slug, p.Version, snapshot(p), cmp.Or(p.VersionSource, p.Source), note, by, t); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

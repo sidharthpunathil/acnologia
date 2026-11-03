@@ -108,6 +108,21 @@ func httpURL(s string) bool {
 // Publish validates, tests, saves a new version and swaps the live spec.
 // Requests already in flight keep the spec they started with.
 func (c *Catalog) Publish(ctx context.Context, in Input, source, by, note string) (*store.Provider, providers.TestReport, error) {
+	return c.publish(ctx, in, source, "", by, note)
+}
+
+// PublishVersion publishes like Publish but keeps the provider's source
+// (builtin, ai, peer:...) and labels only the new version with
+// versionSource. The offers refresh publishes this way.
+func (c *Catalog) PublishVersion(ctx context.Context, in Input, versionSource, by, note string) (*store.Provider, providers.TestReport, error) {
+	cur, err := c.Store.GetProvider(ctx, strings.TrimSpace(strings.ToLower(in.Slug)))
+	if err != nil {
+		return nil, providers.TestReport{}, err
+	}
+	return c.publish(ctx, in, cur.Source, versionSource, by, note)
+}
+
+func (c *Catalog) publish(ctx context.Context, in Input, source, versionSource, by, note string) (*store.Provider, providers.TestReport, error) {
 	spec, errs, rep := Check(&in)
 	if len(errs) > 0 || rep.Failed > 0 {
 		return nil, rep, &ValidationError{Errors: errs, Report: rep}
@@ -122,6 +137,7 @@ func (c *Catalog) Publish(ctx context.Context, in Input, source, by, note string
 	p := &store.Provider{
 		Slug: in.Slug, Name: in.Name, Category: in.Category, Description: in.Description, Website: in.Website,
 		DocsURL: in.DocsURL, Color: in.Color, Status: in.Status, Builtin: builtin, Source: source, Spec: in.Spec,
+		VersionSource: versionSource,
 	}
 	saved, err := c.Store.SaveProvider(ctx, p, by, note)
 	if err != nil {

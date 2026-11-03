@@ -47,6 +47,9 @@ const (
 	ShareResumed  = "share.resumed"
 	ShareRevoked  = "share.revoked"
 	ShareUpdated  = "share.updated"
+	// ProviderOffersChanged is a provider refresh publishing new offers.
+	// Never dropped as a repeat.
+	ProviderOffersChanged = "provider.offers_changed"
 )
 
 // Types lists every event a webhook can subscribe to, with a description.
@@ -69,6 +72,7 @@ var Types = []struct {
 	{ShareResumed, "A paused share was resumed"},
 	{ShareRevoked, "A share was revoked, or the other server left it"},
 	{ShareUpdated, "A share's services, providers, limits or expiry changed"},
+	{ProviderOffersChanged, "A provider refresh published new offers, prices or limits"},
 }
 
 func ValidType(t string) bool {
@@ -139,7 +143,7 @@ func (n *Notifier) Emit(e Event) {
 		delete(n.seen, t+"|"+e.subject())
 	}
 	k := e.Type + "|" + e.subject()
-	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet && !strings.HasPrefix(e.Type, "share.") {
+	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet && !strings.HasPrefix(e.Type, "share.") && !strings.HasPrefix(e.Type, "provider.") {
 		n.mu.Unlock()
 		return
 	}

@@ -329,6 +329,9 @@ func migrate(db *sql.DB) error {
 	if err := migratePeerProviders(db); err != nil {
 		return err
 	}
+	if err := migrateRefresh(db); err != nil {
+		return err
+	}
 	return migrateRuns(db)
 }
 
