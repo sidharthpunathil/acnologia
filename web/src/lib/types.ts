@@ -62,6 +62,10 @@ export interface Service {
   cache_ttl_sec?: number | null;
   /** USD per request override; null uses the provider default. */
   cost_per_request?: number | null;
+  /** Set when another Acnologia shares this service; it proxies through that server. */
+  peer_link_id?: number | null;
+  /** The name of the server that shares it. */
+  peer_name?: string;
 }
 
 export type ServiceInput = Pick<

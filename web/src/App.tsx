@@ -29,6 +29,7 @@ import { DocPage } from "./pages/docs/DocPage";
 import { WebhooksPage } from "./pages/Webhooks";
 import { EgressPage } from "./pages/Egress";
 import { GroupsPage } from "./pages/Groups";
+import { SharingPage } from "./pages/Sharing";
 import { UsagePage } from "./pages/Usage";
 import { AssistantPage } from "./pages/Assistant";
 import { CliAuthorizePage } from "./pages/CliAuthorize";
@@ -108,6 +109,14 @@ export function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="apps" element={<AppsPage />} />
           <Route path="groups" element={<GroupsPage />} />
+          <Route
+            path="sharing"
+            element={
+              <RequireRole ok={can.manage(role)}>
+                <SharingPage />
+              </RequireRole>
+            }
+          />
           <Route path="usage" element={<UsagePage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
           <Route path="egress" element={<EgressPage />} />
