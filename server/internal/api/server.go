@@ -295,6 +295,7 @@ func (s *Server) Router() http.Handler {
 			r.Put("/providers/{slug}", s.updateProvider)
 			r.Delete("/providers/{slug}", s.deleteProvider)
 			r.Post("/providers/{slug}/rollback", s.rollbackProvider)
+			r.Post("/providers/{slug}/guide/generate", s.generateProviderGuide)
 			r.Post("/providers/{slug}/live-check", s.liveCheckProvider)
 			r.Put("/providers/{slug}/logo", s.putProviderLogo)
 			r.Delete("/providers/{slug}/logo", s.deleteProviderLogo)

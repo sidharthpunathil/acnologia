@@ -136,6 +136,21 @@ func TestConsumerGuide(t *testing.T) {
 	}
 }
 
+// The generate route is mounted for admins and answers 503 without AI.
+func TestGenerateGuideRoute(t *testing.T) {
+	e := newEnv(t)
+	var out struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	e.do(e.super, "POST", "/api/admin/providers/serpapi/guide/generate", map[string]any{}, 503, &out)
+	if out.Error.Code != "ai_disabled" {
+		t.Fatalf("code = %q", out.Error.Code)
+	}
+	e.do(http.DefaultClient, "POST", "/api/admin/providers/serpapi/guide/generate", map[string]any{}, 401, nil)
+}
+
 func TestMCPServiceGuide(t *testing.T) {
 	e := newEnv(t)
 	e.do(e.super, "POST", "/api/admin/services", map[string]any{"provider": "elevenlabs", "slug": "voice", "base_url": "https://example.com"}, 201, nil)

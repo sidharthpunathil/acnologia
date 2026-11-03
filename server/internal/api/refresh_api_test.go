@@ -25,6 +25,10 @@ type fakeRefreshClaude struct {
 	models []string
 	offers []providers.Offer
 	prices []agent.ModelPrice
+	// guide answers submit_guide; nil answers verified false.
+	guide *providers.Guide
+	// bodies keeps every request body.
+	bodies []string
 }
 
 func (f *fakeRefreshClaude) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,11 +47,15 @@ func (f *fakeRefreshClaude) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(b, &req)
 	f.mu.Lock()
 	f.models = append(f.models, req.Model)
+	f.bodies = append(f.bodies, string(b))
 	f.mu.Unlock()
 	name, input := "submit_offers", map[string]any{"offers": f.offers, "verified": true, "summary": "Read the pricing page."}
 	for _, t := range req.Tools {
-		if t.Name == "submit_prices" {
+		switch t.Name {
+		case "submit_prices":
 			name, input = "submit_prices", map[string]any{"prices": f.prices, "verified": true, "summary": "Read the pricing page."}
+		case "submit_guide":
+			name, input = "submit_guide", map[string]any{"guide": f.guide, "verified": f.guide != nil, "summary": "Read the API reference."}
 		}
 	}
 	resp := map[string]any{"id": "msg_1", "type": "message", "role": "assistant", "model": req.Model,
