@@ -148,7 +148,12 @@ export function ProvidersPage() {
   const filtered = useMemo(() => {
     const n = q.trim().toLowerCase();
     const list = n ? providers.filter((p) => [p.name, p.slug, p.category, p.description].some((f) => f?.toLowerCase().includes(n))) : providers;
-    return [...list].sort((a, b) => a.name.localeCompare(b.name));
+    // Providers you hold keys for come first (most keys first), then the ones
+    // with a service but no keys yet, then the rest, each alphabetical.
+    const rank = (p: (typeof list)[number]) => ((p.keys_count ?? 0) > 0 ? 0 : (p.services_count ?? 0) > 0 ? 1 : 2);
+    return [...list].sort(
+      (a, b) => rank(a) - rank(b) || (b.keys_count ?? 0) - (a.keys_count ?? 0) || a.name.localeCompare(b.name),
+    );
   }, [providers, q]);
 
   const counts = useMemo(() => {
