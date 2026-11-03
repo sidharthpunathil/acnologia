@@ -617,3 +617,34 @@ func TestHandoverRefusesPhraseSecrets(t *testing.T) {
 		t.Fatalf("phrase masked: %q", got)
 	}
 }
+
+// TestHandoverCountScopeSticky: a count scope of N never hands over more than
+// N distinct keys. A handed over key that leaves rotation keeps its place, so
+// a receiver cannot collect every key by getting each one marked invalid; the
+// owner frees the place by deleting the key.
+func TestHandoverCountScopeSticky(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	ks := a.addKeys(map[string]any{"secret": "ownerkey1-handover", "priority": 1}, map[string]any{"secret": "ownerkey2-handover", "priority": 2})
+	sh := a.newShare(map[string]any{"name": "Keys", "services": []string{"serpapi"}, "mode": "handover", "private_network": true,
+		"key_scopes": map[string]any{"serpapi": map[string]any{"mode": "count", "count": 1}}})
+	link := b.connect(sh.Invite, 201)
+	held := handedKeys(t, b, link.ID)
+	if len(held) != 1 || *held[0].PeerRemoteKeyID != ks[0].ID {
+		t.Fatalf("handed %+v", held)
+	}
+	if _, err := a.st.DB.Exec(`UPDATE keys SET status=? WHERE id=?`, store.StatusInvalid, ks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	b.syncLink(link.ID)
+	for _, k := range handedKeys(t, b, link.ID) {
+		if *k.PeerRemoteKeyID == ks[1].ID {
+			t.Fatal("second key handed over past the count scope")
+		}
+	}
+	a.do(a.super, "DELETE", "/api/admin/keys/"+itoa(int(ks[0].ID)), nil, 200, nil)
+	b.syncLink(link.ID)
+	held = handedKeys(t, b, link.ID)
+	if len(held) != 1 || *held[0].PeerRemoteKeyID != ks[1].ID {
+		t.Fatalf("after delete %+v", held)
+	}
+}

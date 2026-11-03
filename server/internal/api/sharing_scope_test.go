@@ -216,3 +216,45 @@ func TestAppKeyScopeCache(t *testing.T) {
 		t.Fatalf("scope after update %v", sc)
 	}
 }
+
+// TestShareInvalidAnswerKeepsKey: a share holder shapes its own requests, so
+// a 401 it gets does not take the key out of rotation. Otherwise it could
+// knock the owner's keys out for every app and walk a count scope onto keys
+// outside its N.
+func TestShareInvalidAnswerKeepsKey(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	keys := a.addKeys(map[string]any{"secret": "k1", "priority": 1}, map[string]any{"secret": "k2", "priority": 2})
+	sh := a.newShare(map[string]any{"name": "x", "services": []string{"serpapi"},
+		"key_scopes": map[string]any{"serpapi": map[string]any{"mode": "count", "count": 1}}})
+	_, tok := a.redeemDirect(b, sh.Invite, nil)
+	setBad := func(msg string) {
+		a.up.mu.Lock()
+		defer a.up.mu.Unlock()
+		if msg == "" {
+			delete(a.up.bad, "k1")
+		} else {
+			a.up.bad["k1"] = msg
+		}
+	}
+	setBad("Invalid API key. Your API key should be here")
+	for i := 0; i < 3; i++ {
+		if code, body, _ := peerCall(t, "GET", a.srv.URL+"/proxy/serpapi/search.json?q=x", tok); code != 401 {
+			t.Fatalf("share call %d: %d %s", i, code, body)
+		}
+	}
+	ctx := context.Background()
+	if k, err := a.st.GetKey(ctx, keys[0].ID); err != nil || k.Status != store.StatusActive {
+		t.Fatalf("share call took k1 out: %+v %v", k, err)
+	}
+	setBad("")
+	onlyKeys(t, usedKeys(t, a, tok, 5), "k1")
+	// The same answer to a local app still takes the key out.
+	setBad("Invalid API key. Your API key should be here")
+	_, local := a.app(map[string]any{"name": "local"})
+	for i := 0; i < 4; i++ {
+		peerCall(t, "GET", a.srv.URL+"/proxy/serpapi/search.json?q=x", local)
+	}
+	if k, _ := a.st.GetKey(ctx, keys[0].ID); k.Status != store.StatusInvalid {
+		t.Fatalf("local 401 left k1 %s", k.Status)
+	}
+}
