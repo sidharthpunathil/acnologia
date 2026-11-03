@@ -194,6 +194,9 @@ body:has(.hm-landing) {
 .lp-navlink:active { background: var(--color-rule); }
 .lp-navlink svg { width: 20px; height: 20px; flex-shrink: 0; }
 .lp-stars { font-variant-numeric: tabular-nums; }
+/* Star on GitHub: the full label on wide screens, "Star" on phones. */
+.lp-star__short { display: none; }
+.lp-star .lp-stars { padding-left: var(--space-2xs); margin-left: var(--space-2xs); border-left: 1px solid color-mix(in oklab, currentColor 35%, transparent); }
 
 /* Hero: Stage. Text on five columns, the request path on seven, over the field. */
 .lp-hero {
@@ -545,8 +548,16 @@ body:has(.hm-landing) {
   .lp-path { min-height: 0; }
   .lp-wire { min-height: 48px; }
   .lp-steps { grid-template-columns: minmax(0, 1fr); }
-  .lp-shot img { width: 760px; max-width: none; }
-  .lp-shot[data-slot="share-dialog"] img { width: 560px; }
+  /* Screens fit the phone's width instead of panning, so nothing is cut off. */
+  .lp-shot img,
+  .lp-shot[data-slot="share-dialog"] img { width: 100%; max-width: 100%; }
+  /* Long commands wrap inside their panel; Copy still copies the exact line. */
+  .hm-landing .lp-code pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* The request path: notes move under the text so the text keeps its width. */
+  .lp-stop .lp-status { grid-column: 2; justify-self: start; }
+  .lp-stop__icon { width: 32px; height: 32px; }
+  .lp-stop__icon svg { width: 20px; height: 20px; }
+  .lp-stop__icon img { width: 32px; height: 32px; }
   .lp-shot__pan:focus-visible { outline-offset: -2px; }
   /* The table restacks: each row a labelled block. */
   .lp-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -561,6 +572,17 @@ body:has(.hm-landing) {
   .lp-table tbody th { padding: 0; border: 0; }
   .lp-table tr > * + td { margin-top: var(--space-sm); }
   .lp-table td[data-label]::before { content: attr(data-label); display: block; font-size: var(--text-sm); color: var(--color-muted); }
+}
+
+/* Small phones: the star button shortens, and the hero actions stack. */
+@media (max-width: 30rem) {
+  .lp-star__label { display: none; }
+  .lp-star__short { display: inline; }
+}
+@media (max-width: 24rem) {
+  .lp-actions { flex-wrap: wrap; }
+  .lp-actions > * { flex: 1 1 100%; }
+  .lp-wordmark { font-size: var(--text-md); }
 }
 
 @media (prefers-reduced-motion: reduce) {

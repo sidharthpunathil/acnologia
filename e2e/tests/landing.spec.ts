@@ -3,8 +3,8 @@ import { test } from "../support/fixtures";
 import { startServer, stopServer, type Started } from "../support/server";
 
 // The public landing page and the redirect to it. Signed out, home (/) is
-// /landing and Sign in starts the usual flow; deep links into the dashboard
-// still ask for the lock screen or sign in. Behaviour only: the screenshot
+// /landing, which offers no sign in: /login still starts the usual flow, and
+// deep links into the dashboard still ask for the lock screen or sign in. Behaviour only: the screenshot
 // is in login.spec.ts.
 
 const REPO = "https://github.com/sidharthpunathil/acnologia";
@@ -12,7 +12,7 @@ const REPO = "https://github.com/sidharthpunathil/acnologia";
 test.describe("open deploy, signed out", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test("home goes to the landing page, and Sign in to the sign in page", async ({ page, errors }) => {
+  test("home goes to the landing page, which stars on GitHub and offers no sign in", async ({ page, errors }) => {
     await page.goto("/");
     await expect(page).toHaveURL(/\/landing$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Share your API keys without giving them away.");
@@ -23,12 +23,18 @@ test.describe("open deploy, signed out", () => {
     await expect(github).toHaveAttribute("target", "_blank");
     await expect(github).toHaveAttribute("rel", "noopener noreferrer");
 
-    // Docs are readable signed out here, so the link stays in the app.
-    await expect(page.getByRole("link", { name: "Read the docs" })).toHaveAttribute("href", "/docs");
+    // The nav's Star on GitHub opens the repository, where the star button is.
+    const star = page.getByRole("banner").getByRole("link", { name: /Star Acnologia on GitHub/ });
+    await expect(star).toHaveAttribute("href", REPO);
+    await expect(star).toHaveAttribute("target", "_blank");
 
-    await page.getByRole("banner").getByRole("link", { name: "Sign in" }).click();
+    // Docs are readable signed out here, so the link stays in the app.
+    await expect(page.getByRole("link", { name: "Read the docs" }).first()).toHaveAttribute("href", "/docs");
+
+    // No sign in on the page; /login still works for those who need it.
+    await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
+    await page.goto("/login");
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-    await expect(page).toHaveURL(/\/login$/);
     expect(errors).toEqual([]);
   });
 
@@ -77,7 +83,7 @@ plain.describe("locked deploy", () => {
     server = undefined;
   });
 
-  plain("home is the landing page; Sign in goes through the lock screen and back home", async ({ page }, info) => {
+  plain("home is the landing page; /login goes through the lock screen and back home", async ({ page }, info) => {
     plain.skip(info.project.name !== "desktop-light", "runs once, in desktop-light");
     const base = server!.baseURL;
     const failed: string[] = [];
@@ -93,7 +99,7 @@ plain.describe("locked deploy", () => {
     await expect(page.getByRole("heading", { name: "This instance is private" })).toHaveCount(0);
     await expect(page.getByRole("main").getByRole("link", { name: /View on GitHub/ }).first()).toHaveAttribute("href", REPO);
     // The docs are locked here, so the link goes to the README's list.
-    await expect(page.getByRole("link", { name: /Read the docs/ })).toHaveAttribute("href", `${REPO}#documentation`);
+    await expect(page.getByRole("link", { name: /Read the docs/ }).first()).toHaveAttribute("href", `${REPO}#documentation`);
     // Every asset the page needs loads past the lock: scripts, styles, fonts, the mark.
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const markLoaded = await page
@@ -105,7 +111,8 @@ plain.describe("locked deploy", () => {
     expect(failed).toEqual([]);
     expect(errors).toEqual([]);
 
-    await page.getByRole("banner").getByRole("link", { name: "Sign in" }).click();
+    await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
+    await page.goto(`${base}/login`);
     await expect(page.getByRole("heading", { name: "This instance is private" })).toBeVisible();
     await page.getByLabel("Access password").fill(PASSWORD);
     await page.getByRole("button", { name: "Unlock" }).click();

@@ -58,6 +58,8 @@ type Icon = ComponentType<{
   "aria-hidden"?: boolean | "true" | "false";
 }>;
 
+const UNIX_SETUP = "curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/setup.sh | sh";
+const WIN_SETUP = "irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/setup.ps1 | iex";
 const UNIX_CLONE = "git clone https://github.com/sidharthpunathil/acnologia && cd acnologia";
 const UNIX_CONTAINER = "cp .env.example .env\ndocker compose up -d --build";
 const UNIX_SOURCE = "make build\nACNOLOGIA_DATA_DIR=./data ./bin/acnologia";
@@ -203,15 +205,6 @@ function GithubKey({ primary = true }: { primary?: boolean }) {
   );
 }
 
-/**
- * Where "Sign in" goes. /login runs the existing flow: the lock screen on a
- * locked deploy, first run setup on a fresh server, the sign in page
- * otherwise. Someone already signed in goes straight to the dashboard.
- */
-function useSignIn(): { href: string; label: string } {
-  const signedIn = useAuth((s) => s.status === "authenticated");
-  return signedIn ? { href: "/", label: "Open dashboard" } : { href: "/login", label: "Sign in" };
-}
 
 /** In app docs when this browser can read them; the README's list on a locked deploy. */
 function DocsLink({ className, children }: { className: string; children: ReactNode }) {
@@ -366,7 +359,7 @@ export function LandingPage() {
   const loadGate = useGate((s) => s.load);
   const gate = useGate((s) => s.status);
   const loadAuth = useAuth((s) => s.load);
-  const signIn = useSignIn();
+  const signedIn = useAuth((st) => st.status === "authenticated");
   const stars = useGithubStars();
   const starText = stars === null ? null : formatStars(stars);
 
@@ -375,8 +368,9 @@ export function LandingPage() {
     void loadGate();
   }, [loadGate]);
 
-  // Behind a locked gate the sign in state is refused anyway; past it, ask,
-  // so a signed in visitor sees "Open dashboard" instead of "Sign in".
+  // Behind a locked gate the session check is refused anyway; past it, ask,
+  // so a signed in visitor also gets an "Open dashboard" button. Visitors are
+  // not offered a sign in here: /login still works for those who need it.
   useEffect(() => {
     if (gate === "open") void loadAuth();
   }, [gate, loadAuth]);
@@ -401,23 +395,26 @@ export function LandingPage() {
               href={REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="lp-navlink"
+              className="lp-key lp-key--small lp-key--primary lp-star"
               aria-label={
-                starText ? `Acnologia on GitHub, ${starText.long} stars (opens in a new tab)` : "Acnologia on GitHub (opens in a new tab)"
+                starText
+                  ? `Star Acnologia on GitHub, ${starText.long} stars (opens GitHub in a new tab)`
+                  : "Star Acnologia on GitHub (opens GitHub in a new tab)"
               }
             >
-              <RiGithubLine aria-hidden />
-              {starText ? (
-                <>
-                  <RiStarLine aria-hidden />
-                  <span className="lp-stars">{starText.short}</span>
-                </>
-              ) : null}
+              <RiStarLine aria-hidden />
+              <span className="lp-star__label">Star on GitHub</span>
+              <span className="lp-star__short" aria-hidden>
+                Star
+              </span>
+              {starText ? <span className="lp-stars">{starText.short}</span> : null}
             </a>
-            <Link href={signIn.href} className="lp-key lp-key--small">
-              <RiLoginBoxLine aria-hidden />
-              {signIn.label}
-            </Link>
+            {signedIn ? (
+              <Link href="/" className="lp-key lp-key--small">
+                <RiLoginBoxLine aria-hidden />
+                Open dashboard
+              </Link>
+            ) : null}
           </nav>
         </div>
       </header>
@@ -431,10 +428,10 @@ export function LandingPage() {
               <p className="lp-lead">A self-hosted key server that gives each caller its own token.</p>
               <div className="lp-actions">
                 <GithubKey />
-                <Link href={signIn.href} className="lp-key">
-                  <RiLoginBoxLine aria-hidden />
-                  {signIn.label}
-                </Link>
+                <DocsLink className="lp-key">
+                  <RiBookOpenLine aria-hidden />
+                  Read the docs
+                </DocsLink>
               </div>
             </div>
             <RequestPath />
@@ -614,17 +611,19 @@ export function LandingPage() {
             <div className="lp-platforms">
               <Platform
                 title="macOS or Linux"
+                setup={UNIX_SETUP}
                 clone={UNIX_CLONE}
                 container={UNIX_CONTAINER}
                 source={UNIX_SOURCE}
-                note="Run it in a container, or build from source with make."
+                note="One command installs and starts it. Or clone the repository and run it in a container or build it with make."
               />
               <Platform
                 title="Windows, in PowerShell"
+                setup={WIN_SETUP}
                 clone={WIN_CLONE}
                 container={WIN_CONTAINER}
                 source={WIN_SOURCE}
-                note="Run it in Linux containers, or build from source with no make needed."
+                note="One command installs and starts it. Or clone the repository and run it in Linux containers or build it without make."
               />
             </div>
 
@@ -691,12 +690,14 @@ export function LandingPage() {
 
 function Platform({
   title,
+  setup,
   clone,
   container,
   source,
   note,
 }: {
   title: string;
+  setup: string;
   clone: string;
   container: string;
   source: string;
@@ -706,7 +707,8 @@ function Platform({
     <div className="lp-platform">
       <h3>{title}</h3>
       {note ? <p>{note}</p> : null}
-      <CodeBlock code={clone} label="get the code" roomyCopy className="lp-code" />
+      <CodeBlock code={setup} label="install and run" roomyCopy className="lp-code" />
+      <CodeBlock code={clone} label="or get the code" roomyCopy className="lp-code" />
       <CodeBlock code={container} label="run in a container" roomyCopy className="lp-code" />
       <CodeBlock code={source} label="or build from source" roomyCopy className="lp-code" />
     </div>

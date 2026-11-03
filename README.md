@@ -6,7 +6,6 @@ Share your API keys without giving them away.
 
 <p>
   <a href="https://github.com/sidharthpunathil/acnologia/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sidharthpunathil/acnologia/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <a href="https://github.com/sidharthpunathil/acnologia/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/sidharthpunathil/acnologia?sort=semver"></a>
   <img alt="Go 1.26" src="https://img.shields.io/badge/go-1.26-00ADD8">
   <img alt="Linux, macOS and Windows" src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-555">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2ea44f"></a>
