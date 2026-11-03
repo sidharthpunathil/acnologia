@@ -48,10 +48,15 @@ const (
 	ShareRevoked  = "share.revoked"
 	ShareUpdated  = "share.updated"
 	// Share timers and key handover. Never dropped as repeats.
-	ShareExpired         = "share.expired"
-	ShareHandover        = "share.handover"
-	ShareHandoverWiped   = "share.handover_wiped"
-	ShareRevokePush      = "share.revoke_push"
+	ShareExpired       = "share.expired"
+	ShareHandover      = "share.handover"
+	ShareHandoverWiped = "share.handover_wiped"
+	ShareRevokePush    = "share.revoke_push"
+	// Sharing with people. Never dropped as repeats. share.revealed is
+	// sent once per key, with ids only.
+	ShareClaimLink       = "share.claim_link"
+	ShareClaimed         = "share.claimed"
+	ShareRevealed        = "share.revealed"
 	PeerHandoverReceived = "peer.handover_received"
 	PeerHandoverWiped    = "peer.handover_wiped"
 	// ProviderOffersChanged is a provider refresh publishing new offers.
@@ -83,6 +88,9 @@ var Types = []struct {
 	{ShareHandover, "Keys were handed over to another server for the first time (renewals are not sent)"},
 	{ShareHandoverWiped, "Keys handed over to another server are known to be deleted there"},
 	{ShareRevokePush, "The result of telling another server to delete handed over keys"},
+	{ShareClaimLink, "A new claim link was issued for a share with a person"},
+	{ShareClaimed, "A person redeemed the claim link of a share"},
+	{ShareRevealed, "A key was revealed to a person by a reveal share (one event per key, ids only)"},
 	{PeerHandoverReceived, "Another server handed keys over to this one"},
 	{PeerHandoverWiped, "Keys another server handed over were deleted here, with the reason"},
 	{ProviderOffersChanged, "A provider refresh published new offers, prices or limits"},

@@ -93,6 +93,11 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 	if err != nil {
 		return nil, &rpcErr{-32603, "could not load MCP settings"}
 	}
+	if a.ShareID != nil {
+		// A share's token (another server's or a person's) gets the core
+		// and service tools only: never key insights or key management.
+		st.Insights, st.Manage = false, false
+	}
 	ctx = context.WithValue(ctx, mcpLimitKey, st.MaxResultKB)
 	switch req.Method {
 	case "initialize":

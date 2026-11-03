@@ -242,6 +242,12 @@ func (s *Server) shareFromApp(w http.ResponseWriter, r *http.Request) (*store.Sh
 		writeStoreErr(w, err)
 		return nil, false
 	}
+	// A person's token is for /proxy, /api/v1 and /mcp; the server to
+	// server routes are not theirs.
+	if sh.IsPerson() {
+		writeErr(w, 403, "not_a_share", "this token belongs to a share with a person, not another server")
+		return nil, false
+	}
 	return sh, true
 }
 
@@ -374,5 +380,5 @@ func (s *Server) emitShare(typ string, sh *store.Share, msg string) {
 		appID = *sh.AppID
 	}
 	s.Pool.Notify.Emit(notify.Event{Type: typ, AppID: appID, App: sh.Name, Message: msg,
-		Data: map[string]any{"share_id": sh.ID, "peer_id": sh.PeerID, "status": sh.Status}})
+		Data: map[string]any{"share_id": sh.ID, "peer_id": sh.PeerID, "status": sh.Status, "recipient": sh.Recipient}})
 }

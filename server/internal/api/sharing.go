@@ -114,6 +114,14 @@ type shareInput struct {
 	PrivateNetwork *bool `json:"private_network"`
 	// InviteValid is 1h, 24h or 7d (default 24h).
 	InviteValid string `json:"invite_valid"`
+	// Recipient is server (default) or person, fixed at creation.
+	Recipient *string `json:"recipient"`
+	// Label names a person; Email is an optional label, never mailed.
+	Label *string `json:"label"`
+	Email *string `json:"email"`
+	// ClaimValid is a person's claim link validity: 1h, 24h (default) or
+	// 7d. InviteValid is read when it is not set.
+	ClaimValid string `json:"claim_valid"`
 }
 
 var inviteValidity = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour}
@@ -175,6 +183,9 @@ func (s *Server) applyShareInput(r *http.Request, in shareInput, sh *store.Share
 		}
 		sh.Limits = *l
 	}
+	if msg := applyRecipientInput(in, sh); msg != "" {
+		return msg
+	}
 	if msg := applyShareModeInput(in, sh); msg != "" {
 		return msg
 	}
@@ -213,6 +224,10 @@ func (s *Server) applyShareInput(r *http.Request, in shareInput, sh *store.Share
 		if !shared[slug] {
 			delete(sh.KeyScopes, slug)
 		}
+	}
+	// A reveal share must have something to show, until it is claimed.
+	if sh.IsReveal() && sh.ClaimedAt == nil && len(s.revealableKeys(r.Context(), sh)) == 0 {
+		return errNoRevealable
 	}
 	return ""
 }
@@ -260,6 +275,9 @@ func (s *Server) checkKeyScopes(r *http.Request, in map[string]store.KeyScope, s
 				if err != nil || k.ServiceID != sv.ID {
 					return nil, "key " + strconv.FormatInt(id, 10) + " is not a key of " + slug
 				}
+				if k.Hidden && sh.IsReveal() {
+					return nil, "key " + strconv.FormatInt(id, 10) + " of " + slug + " is hidden; hidden keys are never revealed"
+				}
 				if k.Hidden && !sh.IncludeHidden {
 					return nil, "key " + strconv.FormatInt(id, 10) + " of " + slug + " is hidden; turn on include_hidden to share it"
 				}
@@ -294,7 +312,11 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 	}
 	sh := &store.Share{ID: crypto.RandomToken("shr_", 12)}
 	if msg := s.applyShareInput(r, in, sh); msg != "" {
-		writeErr(w, 400, "invalid", msg)
+		writeErr(w, 400, shareInputCode(msg), msg)
+		return
+	}
+	if sh.IsPerson() {
+		s.createPersonShare(w, r, in, sh)
 		return
 	}
 	code, hash, exp, msg := s.newInvite(r, sh, in.InviteValid)
@@ -360,9 +382,12 @@ type shareView struct {
 	// Handover is set on handover shares: what was handed over, and the
 	// last revoke push.
 	Handover *handoverView `json:"handover"`
-	// RotateChecklist lists, on a revoked handover share, every key the
-	// other server saw: rotate them at the provider.
+	// RotateChecklist lists, on a revoked handover share or an ended
+	// reveal share, every key the other side saw: rotate them at the
+	// provider.
 	RotateChecklist []rotateItem `json:"rotate_checklist,omitempty"`
+	// RevealedKeys lists the keys a reveal share showed. Never a secret.
+	RevealedKeys []revealedKeyView `json:"revealed_keys"`
 }
 
 // serviceKeyCount is one shared service's keys: KeysShared the scope
@@ -471,7 +496,7 @@ func (s *Server) updateShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg := s.applyShareInput(r, in, sh); msg != "" {
-		writeErr(w, 400, "invalid", msg)
+		writeErr(w, 400, shareInputCode(msg), msg)
 		return
 	}
 	if err := s.Store.UpdateShare(r.Context(), sh); err != nil {
@@ -513,6 +538,9 @@ func (s *Server) shareStatusHandler(status, event, verb string) http.HandlerFunc
 			s.pushRevoke(r.Context(), sh, s.publicURL(r))
 			sh, _ = s.Store.GetShare(r.Context(), sh.ID)
 		}
+		if status == store.ShareRevoked {
+			s.revealEnded(r.Context(), sh, "revoked")
+		}
 		writeJSON(w, 200, s.newShareView(r, sh, false))
 	}
 }
@@ -526,6 +554,10 @@ func (s *Server) newShareInvite(w http.ResponseWriter, r *http.Request) {
 		InviteValid string `json:"invite_valid"`
 	}
 	if r.ContentLength != 0 && !decode(w, r, &in) {
+		return
+	}
+	if sh.IsPerson() {
+		writeErr(w, 409, "person_share", "this share is for a person; issue a new claim link instead")
 		return
 	}
 	if sh.Status != store.SharePending {
