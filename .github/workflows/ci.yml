@@ -2,11 +2,18 @@
 # TypeScript SDKs, the dashboard build and the PowerShell scripts. Every job
 # runs offline against fakes, so the whole run stays short.
 #
-# The changes job decides which of them a commit needs: a job runs only when
-# its own files changed (an SDK change does not rebuild the dashboard, a
-# dashboard change does not test six SDK matrices). A change to this file, a
-# new branch, a force push, or anything it cannot diff runs them all. A
-# skipped job counts as passed for branch protection.
+# The changes job decides which of them a commit needs, so nothing is built or
+# tested again unless its own files changed:
+#   go          server Go code (not the embedded docs): the three OS matrix
+#   docs        only the embedded docs changed: their tests, on Linux
+#   go-sdk      sdk/go
+#   python-sdk  sdk/python
+#   ts-sdk      sdk/typescript
+#   web         web/
+#   windows     the build tooling (build.ps1, install.ps1, go.mod, the web
+#               lockfile): server code on Windows is go (windows-latest)'s job
+# A change to this file, a new branch, a force push, or anything it cannot
+# diff runs them all. A skipped job counts as passed for branch protection.
 #
 # checkout and setup-go are pinned to the same commits as the release
 # workflows; the other first-party actions to a major version.
@@ -33,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.diff.outputs.go }}
+      docs: ${{ steps.diff.outputs.docs }}
+      gosdk: ${{ steps.diff.outputs.gosdk }}
       python: ${{ steps.diff.outputs.python }}
       typescript: ${{ steps.diff.outputs.typescript }}
       web: ${{ steps.diff.outputs.web }}
@@ -64,15 +73,26 @@ jobs:
             printf 'Changed files:\n%s\n' "$files"
             if grep -qx '.github/workflows/ci.yml' <<<"$files"; then all=true; fi
           fi
+          # The docs copied into the server (make llms) are not Go code.
+          embedded='^server/internal/(docsmd/(files|assets)/|llmstxt/.*\.txt$)'
+          code=$(grep -vE "$embedded" <<<"$files" || true)
           area() {
-            if [ "$all" = true ] || grep -qE "$2" <<<"$files"; then v=true; else v=false; fi
+            if [ "$all" = true ] || grep -qE "$3" <<<"$2"; then v=true; else v=false; fi
             echo "$1=$v" | tee -a "$GITHUB_OUTPUT"
           }
-          area go '^(server|sdk/go)/'
-          area python '^sdk/python/'
-          area typescript '^sdk/typescript/'
-          area web '^web/'
-          area windows '^(server|web|scripts)/|^install\.ps1$'
+          area go "$code" '^server/'
+          area gosdk "$files" '^sdk/go/'
+          area python "$files" '^sdk/python/'
+          area typescript "$files" '^sdk/typescript/'
+          area web "$files" '^web/'
+          area windows "$files" '^scripts/|^install\.ps1$|^Makefile$|^server/go\.(mod|sum)$|^server/cmd/|^web/(package\.json|pnpm-lock\.yaml|vite\.config\.ts)$'
+          # The docs tests alone, when the docs changed but no Go code did
+          # (go runs every test anyway).
+          if [ "$all" != true ] && ! grep -q '^server/' <<<"$code" && grep -qE "$embedded" <<<"$files"; then
+            echo "docs=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "docs=false" | tee -a "$GITHUB_OUTPUT"
+          fi
 
   go:
     name: go (${{ matrix.os }})
@@ -113,7 +133,42 @@ jobs:
           CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./...
           GOOS=windows GOARCH=arm64 go vet ./...
 
-      - name: Test the Go SDK
+  # Only the embedded docs changed: the tests that read them, on Linux.
+  docs:
+    name: embedded docs
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Test the docs
+        working-directory: server
+        run: go test ./internal/api -run '^(TestDocs|TestControlMCPResourcesAndPrompts|TestGateLocksDashboardRoutes|TestGateOffChangesNothing)'
+
+  go-sdk:
+    name: go sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.gosdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: sdk/go/go.mod
+          cache: false
+
+      - name: Test
         working-directory: sdk/go
         run: go test ./...
 
