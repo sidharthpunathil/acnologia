@@ -15,7 +15,7 @@ Mermaid and render on GitHub.
 - [AI provider builder](#ai-provider-builder)
 - [Keeping provider offers fresh](#keeping-provider-offers-fresh)
 - [Assistant chat](#assistant-chat) and its [compaction](#compaction)
-- [Sharing between servers](#sharing-between-servers)
+- [Sharing between servers](#sharing-between-servers) and [with people](#sharing-with-people)
 
 ## Proxy request
 
@@ -901,3 +901,77 @@ webhooks with `reason: timer`. `POST /api/admin/shares/{id}/extend` moves
 `ends_at` later on an active or expired share; an expired one turns active,
 and handover keys are handed over again at the receiver's next sync. Invite
 expiry is unchanged.
+
+## Sharing with people
+
+Most people the owner wants to give access to (a contractor, a friend, a
+teammate with a script or an AI agent) do not run Acnologia. A share whose
+recipient is a person gives them access with nothing but a link. Key scopes,
+timers, pause, resume, extend, revoke, audit, webhooks and usage work as for
+a share with a server; request and budget limits too, in proxy mode.
+
+**Create.** A superadmin creates a share with `recipient: person`, a `label`
+(who it is for) and an optional `email`, which is only a label: Acnologia
+never sends mail. The mode is `proxy` (default) or `reveal`. The answer
+carries `claim_url`, `<public url>/claim/acnclaim_...`, shown once and valid
+1h, 24h (default) or 7d; only its hash is stored. While unclaimed,
+`POST /api/admin/shares/{id}/claim-link` issues a new link and kills the old
+one.
+
+**Claim.** The person opens the link. The page calls
+`POST /api/claim/v1/preview` (what is shared, by which server, for whom,
+until when, with which limits; no secret) and, when they press "Get my
+access", `POST /api/claim/v1/redeem`. Redeem burns the link in one
+transaction, so it works once (a second redeem gets 409 `already_claimed`).
+
+```mermaid
+sequenceDiagram
+    participant O as Owner (dashboard)
+    participant S as Acnologia
+    participant P as Person (browser)
+    O->>S: POST /api/admin/shares {recipient: person, label, mode}
+    S-->>O: claim_url (shown once; hash stored)
+    O-->>P: sends the link (chat, mail, in person)
+    P->>S: GET /claim/acnclaim_... (SPA page)
+    P->>S: POST /api/claim/v1/preview {code}
+    S-->>P: share, owner, services, limits, ends_at (no secret)
+    P->>S: POST /api/claim/v1/redeem {code}
+    S->>S: burn the link, mint the token or record the reveal
+    S-->>P: token (proxy) or keys (reveal), once
+```
+
+**Proxy mode.** Redeem mints an app token on the share's backing app: proxy
+only, allowed services are the shared services, key scopes and limits apply.
+The answer has the token, the base URL, per service the proxy URL, upstream
+auth and the provider's examples (for curl, Python and TypeScript snippets),
+the MCP URL, the limits and `ends_at`. The person calls
+`/proxy/<service>/...`, `/api/v1/services`, `/api/v1/me` and `/mcp` with
+`Authorization: Bearer acn_...`. Keys never leave the server; pause, revoke
+and an ended timer refuse the very next call with 403 `share_paused`,
+`share_revoked` or `share_expired`. At `/mcp` the token sees the core tools
+that do not hand out keys (`list_services`, `pool_status`, `proxy_request`)
+and the tools generated for the shared services; never `get_key`, key
+insights or key management.
+
+**Reveal mode.** Redeem returns the keys the scopes resolve to, each with its
+service, label, secret, provider, base URL and auth, exactly once. Hidden,
+restricted, disabled, invalid, banned and handed over keys are never shown,
+even with `include_hidden`; a share whose scopes resolve to no showable key
+is refused at creation. Each key is recorded as revealed (`share.revealed`,
+one audit entry and webhook per key, ids only) and marked "Revealed to
+<label>" on the owner's key list and key page (`revealed_to`). Revoke cannot
+take a revealed key back: when a claimed reveal share ends, by revoke or by
+its timer, its response carries `rotate_checklist`, the audit gets
+`share.rotate_keys`, and the owner should rotate each key at its provider.
+
+**My access.** `/me` is a page where the person pastes their token. It calls
+`GET /api/v1/me`: the share's name, the owner server's name, its status
+(active, paused, expired, revoked), mode and end, the services with how many
+keys are free, and the limits with today's and this month's use. The token is
+kept in the browser only when they tick "remember on this device".
+`/api/v1/me` works for any app token; ordinary apps get no share fields.
+
+**Locked deploys.** On a deploy behind the access password, `/claim/<code>`
+and `/me` load the dashboard shell like any page, the shell skips the lock
+screen on those two pages, and `/api/claim/v1/*` plus the token's own calls
+(`/proxy`, `/api/v1`, `/mcp`) pass the gate. Every other route stays locked.

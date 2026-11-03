@@ -472,6 +472,59 @@ docs say so plainly.
   superadmin connects a receiver to one. A receiver from before this
   feature cannot redeem a handover share (it sends no box key).
 
+## Sharing with people
+
+A share with a person gives someone who does not run Acnologia access
+through a one time claim link. In proxy mode the person is a client with a
+token, like a receiving server; in reveal mode they get the raw keys.
+
+- **Claim links.** A code is `acnclaim_` and 24 random bytes. Only its
+  SHA-256 is stored, it is shown once (in the create or new link answer),
+  and it is valid 1h, 24h or 7d. Redeem burns it in the same transaction
+  that mints the token or records the reveal, so it works once even under
+  parallel redeems; a new link kills the old one. Preview and redeem are
+  limited globally (20 a minute, 500 a day), answer with
+  `Cache-Control: no-store`, and say only which of unknown (404), used (409)
+  or expired (410) applies. A share revoked or past its timer before the
+  claim refuses the link. `acnclaim_` is a redactor pattern, and the request
+  log writes `/claim/[code]` for the page, so a code reaches no log, event,
+  audit detail, webhook or Claude input. Anyone holding an unclaimed link can
+  claim it: send it over a private channel and pick the shortest validity
+  that works. The email on a share is a label; nothing is ever sent.
+- **What a person's token can do.** It is an app token on the share's
+  backing app, kept as a hash like any app token. It can call
+  `/proxy/<service>` for the shared services only, within the key scopes,
+  limits and timer; read `/api/v1/services` and `/api/v1/me`; and use `/mcp`
+  with the core tools that do not hand out keys and the generated service
+  tools.
+- **What it cannot do.** Lease a key (the app is proxy only, so neither
+  `/api/v1/lease` nor MCP `get_key` works) or see any key secret, hint or
+  count by status. Use key insights or key management over MCP: a share's
+  token never gets those tool sets, whatever the app's MCP settings say, and
+  the Apps page cannot change a share's app. Reach any dashboard route (app
+  tokens never pass `requireUser`, which takes a session or an `acnadm_`
+  token) or the server to server routes (403 `not_a_share`). Outlive a
+  pause, revoke or ended timer: the share check runs before the token check
+  on every request.
+- **Reveal: the threat model.** A revealed key has left the server for good.
+  The person can use it for anything the provider allows, outside every
+  limit, for as long as the provider honors it, and revoke cannot take it
+  back; the dashboard and these docs say so plainly. What Acnologia does:
+  reveal only the keys the scopes resolve to, and never hidden, restricted,
+  disabled, invalid, banned or handed over keys (even with
+  `include_hidden`); show them in exactly one answer, after the link is
+  burned; record each key as revealed (`revealed_to` on the key,
+  `revealed_keys` on the share, `share.revealed` audit and webhook per key
+  with ids only); and when the share ends, list every revealed key in
+  `rotate_checklist` and the `share.rotate_keys` audit entry. Rotate them at
+  the provider. Only a superadmin creates a reveal share; prefer proxy mode.
+- **Access password lock.** On a locked deploy the `/claim/<code>` and `/me`
+  pages are the dashboard shell (which carries no data), `/api/claim/v1/*`
+  is open and needs a claim code, and the person's own calls go through
+  `/proxy`, `/api/v1` and `/mcp`, which were already open and need an app
+  token. Nothing else opens: other `/api/*` routes, writes to the pages and
+  dot segment tricks on the open prefixes stay locked.
+
 ## Operator checklist
 
 1. Serve over TLS and set `ACNOLOGIA_SECURE_COOKIES=true`.
@@ -490,7 +543,10 @@ docs say so plainly.
    handover share only with a server you trust to delete keys, with the
    shortest lease that works, and rotate its keys at the provider after you
    revoke it.
-8. On Windows with a data directory outside your profile, restrict it with
+8. Share with a person in proxy mode unless they truly need the raw keys;
+   send claim links privately with the shortest validity, and rotate every
+   key a reveal share showed once it ends.
+9. On Windows with a data directory outside your profile, restrict it with
    `icacls`.
 
 ## Known limitations
