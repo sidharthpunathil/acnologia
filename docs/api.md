@@ -3,7 +3,7 @@
 All bodies are JSON. Errors look like
 `{"error": {"code": "string", "message": "string"}}` with a matching status.
 
-There are five ways in:
+There are six ways in:
 
 | Surface | Prefix | Auth |
 |---|---|---|
@@ -12,6 +12,7 @@ There are five ways in:
 | Claim links | `/api/claim/v1` | a claim code (`acnclaim_...`) from a share with a person; see [Sharing with people](#sharing-with-people) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
 | Dashboard | `/api/auth`, `/api/admin`, `/api/logos`, `/api/cli/device` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
+| Control MCP | `/mcp/control` | admin API token only: `Authorization: Bearer acnadm_...`; see [Control MCP](#control-mcp-mcpcontrol) |
 
 The consumer API is documented for app and agent authors in
 [llms-full.txt](llms-full.txt) (served at `/llms-full.txt`, with a summary at `/llms.txt`). This page covers
@@ -133,6 +134,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `GET /events` | m | Request and health events, filters `service_id`, `key_id`, `kind`, `limit` (max 500). |
 | `GET /apps` | m | Apps (not those backing a share; their changes answer 409 `share_app`). Each carries `token_count` (tokens neither revoked nor expired) and `last_used_at` (the latest use by any of its tokens). Token values are never returned. |
 | `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the first token once as `token`, with its record (named `Default`) as `app_token`. |
+| `GET /mcp/control` | m | The control MCP for the Connect Claude card: `{url, groups: [{id, label, default}], tools: [{name, title, description, group, kind, available}]}`. `kind` is `read`, `write` or `destructive`; `available` is false when your role cannot use the tool. `url` uses `ACNOLOGIA_PUBLIC_URL`, else the request host. See [Control MCP](#control-mcp-mcpcontrol). |
 | `GET /apps/{id}/mcp`, `PUT /apps/{id}/mcp` | m / a | An app's MCP settings: `{core, service_tools, insights, manage, resources, prompts, exclusive_default, max_result_kb, instructions, disabled_tools}`, with the tool list. `max_result_kb` defaults to 200, at most 2048; `instructions` under 8,000 characters. |
 | `GET /apps/{id}/tokens` | m | The app's tokens, revoked ones included: `{id, name, prefix, created_at, created_by, created_by_email, last_used_at, expires_at, revoked_at}`. `prefix` is the first 8 characters plus `...`. `last_used_at` is written at most once a minute per token. |
 | `POST /apps/{id}/tokens` | a | Add a token: `{name, expires_in_days?}` (name up to 64 characters, expiry 1 to 3650 days, omitted means never). Returns `{token, app_token}`; the token is shown once. The app's other tokens keep working. Clears `lease_hidden` unless a superadmin creates it. |
@@ -192,6 +194,76 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `DELETE /peers/{id}` | s | Disconnect: delete any handed over keys, tell the owner, delete the token and the local services' key. On a link already disconnected or revoked, remove it from the list. |
 | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` | s | User management. A password reset ends that user's sessions; the last active superadmin cannot be removed. |
 | `GET /audit` | s | Audit log (max 1000 rows). |
+
+### Control MCP (`/mcp/control`)
+
+`POST /mcp/control` is a second MCP server, for operating Acnologia from an
+MCP client (Claude Code, Claude Desktop, claude.ai, Cursor) rather than for
+apps. It speaks the same JSON-RPC as `/mcp` (streamable HTTP, JSON
+responses, protocol `2025-06-18`; `DELETE` answers 204, other methods 405).
+
+- **Auth:** an admin API token only, `Authorization: Bearer acnadm_...`. The
+  call acts as the token's owner with the lower of the owner's role and the
+  token scope, like `/api/admin`. An app token, a dashboard session or no
+  token gets 401 with `WWW-Authenticate: Bearer realm="acnologia"`; the
+  message points app tokens to `/mcp`. Behind the access password the admin
+  token opens it, as it does `/api/admin`.
+- **How tools run:** each tool is an in process request to the matching
+  `/api/admin` route with the same token and client address (and
+  `X-Requested-With: acnologia-mcp`), so the route's role check, session
+  only rule, share app rule, validation and audit all apply. Service inputs
+  take an id, slug or name.
+- **Listing:** tools the caller's role cannot use are not listed. Members
+  see reads, admins add writes and `call`, superadmins add sharing and
+  refresh writes and the `admin` group.
+- **Confirm step:** destructive tools (deletes, revokes, rotate, disconnect,
+  a raw `DELETE`) take `confirm`. Without `confirm: true` nothing changes and
+  the result says what would happen (for example the service and its key
+  count). `confirm=off` turns the step off for clients that ask the user
+  themselves.
+- **Results:** the route's JSON as text, plus `structuredContent` when it is
+  an object. A route error is `isError: true` with its status and message.
+  Results are capped at 512 KB.
+- **Calling providers:** `call_service` `{service, method, path, query,
+  body, headers}` runs the request through the proxy as an app named
+  `Control MCP`, made on first use (mode proxy, all services). Key rotation,
+  retries, the breaker, the cache, usage and that app's limits all apply,
+  and the key never reaches the client. It needs the admin role. Turn the
+  app off or limit it on the Apps page. `list_service_examples` gives a
+  service's documented calls as ready `call_service` arguments.
+
+Choices go in the endpoint URL's query or in headers (the header wins):
+
+| Query | Header | Effect |
+|---|---|---|
+| `groups=services,keys` | `X-Acnologia-MCP-Groups` | Only these groups; `all` is every group. Default: every group except `admin`, `secrets` and `raw`. |
+| `exclude=delete_service` | `X-Acnologia-MCP-Exclude` | Drop tools by name. |
+| `read_only=1` | `X-Acnologia-MCP-Read-Only` | List only read tools and refuse the others. |
+| `confirm=off` | `X-Acnologia-MCP-Confirm` | No confirm step. Default `on`. |
+
+| Group | Tools |
+|---|---|
+| `overview` | `overview`, `usage_report`, `list_events`, `settings_summary`, `whoami` |
+| `services` | `list_services`, `get_service`, `create_service`, `update_service`, `delete_service`, `service_breaker`, `reset_breaker`, `cache_stats`, `purge_cache`, `check_service_keys` |
+| `keys` | `list_keys`, `key_details`, `add_keys`, `update_key`, `delete_key`, `check_key`, `check_all_keys`, `reset_key` |
+| `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp` |
+| `providers` | `list_providers`, `get_provider`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `check_provider_offers` |
+| `call` | `call_service`, `list_service_examples` |
+| `ai` | `ai_status`, `ai_models`, `ai_assist`, `start_provider_build`, `list_ai_runs`, `get_ai_run`, `cancel_ai_run`, `publish_ai_run`, `delete_ai_run` |
+| `routing` | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `test_webhook`, `list_egress`, `create_egress`, `update_egress`, `delete_egress`, `test_egress`, `list_groups`, `create_group`, `update_group`, `delete_group` |
+| `sharing` | `get_identity`, `update_identity`, `list_shares`, `get_share`, `create_share`, `update_share`, `pause_share`, `resume_share`, `revoke_share`, `extend_share`, `share_invite`, `share_claim_link`, `list_peers`, `preview_peer`, `connect_peer`, `sync_peer`, `disconnect_peer`, `list_peer_providers`, `pull_peer_provider` |
+| `refresh` | `refresh_settings`, `update_refresh_settings`, `run_refresh`, `list_refresh_runs`, `list_refresh_reviews`, `apply_refresh_review`, `dismiss_refresh_review` |
+| `admin` (off by default) | `list_users`, `create_user`, `update_user`, `delete_user`, `list_audit` |
+| `secrets` (off by default) | `reveal_key` |
+| `raw` (off by default) | `api_request` `{method, path, query, body}` for any `/api/admin/...` route not covered above |
+
+`api_request` refuses paths outside `/api/admin/`, `/api/admin/tokens`,
+`PATCH /api/admin/me` and the Assistant's chat routes.
+
+Resources: `acnologia://overview`, `acnologia://services`,
+`acnologia://llms-full.txt` and `acnologia://docs/{slug}` for each page under
+`/docs/{slug}.md` (also a resource template). Prompts: `onboard_provider`,
+`health_report`, `set_up_app` and `share_with_person`.
 
 ### Sharing between servers
 
