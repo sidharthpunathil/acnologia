@@ -144,7 +144,7 @@ func (d GuideDoc) Render(admin bool) string {
 		p("- Replace `%s` with the slug of a service built on this provider.\n", ServicePlaceholder)
 	}
 	p("- Auth: send your app token as `Authorization: Bearer acn_...` (or `X-Acnologia-Token: acn_...`).\n")
-	p("- Acnologia adds the provider's API key for you. Do not send one: it is replaced or rejected.\n")
+	p("- Acnologia adds the provider's API key for you. Do not send one: whatever you send in its place is overwritten.\n")
 	p("- Every response carries `X-Acnologia-Key-Id` and `X-Acnologia-Attempts`, so you can see which key served it.\n")
 	slug := d.Service
 	if slug == "" {
