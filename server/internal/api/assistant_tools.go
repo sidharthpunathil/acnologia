@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,11 +133,16 @@ func toolFail(msg string) toolOut { return toolOut{Model: msg, Summary: msg} }
 
 // resolveService finds a service by id, slug or name.
 func (cs *chatSession) resolveService(v string) (*store.Service, error) {
+	return cs.s.findService(cs.ctx, v)
+}
+
+// findService finds a service by id, slug or name.
+func (s *Server) findService(ctx context.Context, v string) (*store.Service, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return nil, errors.New("say which service (its slug, name or id)")
 	}
-	svcs, err := cs.s.Store.ListServices(cs.ctx)
+	svcs, err := s.Store.ListServices(ctx)
 	if err != nil {
 		return nil, err
 	}
