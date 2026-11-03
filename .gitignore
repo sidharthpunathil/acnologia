@@ -19,3 +19,6 @@ sdk/typescript/dist/
 # Swift Package Manager build output (root Package.swift)
 .build/
 .swiftpm/
+
+# Access passwords downloaded from a deploy. Never commit them.
+access-password*
