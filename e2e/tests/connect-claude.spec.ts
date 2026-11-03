@@ -32,8 +32,16 @@ test("connect claude section", async ({ page }) => {
 
   // Options rewrite the URL and the snippets.
   await section.getByRole("row", { name: "Admin" }).click();
-  await section.getByRole("switch", { name: "Read only" }).check({ force: true });
-  await section.getByRole("switch", { name: "Ask before deleting" }).uncheck({ force: true });
+  // Toggle the switches from the keyboard: their input is visually hidden,
+  // and on a phone a forced click at its spot can land on the fixed tab bar.
+  const readOnly = section.getByRole("switch", { name: "Read only" });
+  await readOnly.focus();
+  await readOnly.press("Space");
+  await expect(readOnly).toBeChecked();
+  const confirm = section.getByRole("switch", { name: "Ask before deleting" });
+  await confirm.focus();
+  await confirm.press("Space");
+  await expect(confirm).not.toBeChecked();
   const url = `${VIEW.url}?groups=overview,services,admin&read_only=1&confirm=off`;
   await expect(section.getByText(url, { exact: true })).toBeVisible();
   await expect(section.locator("pre").first()).toContainText(`"${url}"`);
