@@ -32,7 +32,7 @@ export function SetupPage() {
   };
 
   return (
-    <AuthShell meta="Self-hosted API key pool · first run">
+    <AuthShell meta="Self-hosted API key server · first run">
       <AuthCard
         mode="signup"
         confirmPassword

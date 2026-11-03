@@ -28,7 +28,7 @@ export function LoginPage() {
   };
 
   return (
-    <AuthShell meta="Self-hosted API key pool">
+    <AuthShell meta="Self-hosted API key server">
       <AuthCard
         mode="signin"
         title="Sign in"

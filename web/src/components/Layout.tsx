@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/stores/auth";
-import { BRAND_TITLE, TAGLINE } from "@/hooks/useTitle";
+import { BRAND_TITLE, REPO_URL, TAGLINE } from "@/hooks/useTitle";
 import { BRAND_NAME } from "@/components/acn/brand";
 import { ACCOUNT_ITEM, isActivePath, navItems, type NavItem } from "@/components/acn/nav";
 import { TopBar } from "@/components/acn/top-bar";
@@ -78,7 +78,17 @@ export function Layout() {
           <span title={BRAND_TITLE}>
             <span className="text-accent-fg">{BRAND_NAME}</span> · {TAGLINE}
           </span>
-          <span>Self-hosted API key pool</span>
+          <span>
+            Self-hosted ·{" "}
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-sm underline-offset-2 outline-none hover:text-text-secondary hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+            >
+              MIT licensed
+            </a>
+          </span>
         </div>
       </footer>
       <TabBar tabs={primary} moreActive={moreActive} onMore={() => setMore(true)} />
