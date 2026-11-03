@@ -217,9 +217,16 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.appLimited(w, r, a) {
+	est := 0.0
+	for _, sv := range targets {
+		est = max(est, costPerRequest(sv, providers.Get(sv.Provider), r.Method, "/"+path))
+	}
+	release, limited := s.appLimited(w, r, a, est)
+	if limited {
 		return
 	}
+	// Runs after the usage below is recorded.
+	defer release()
 	idemKey := idempotencyKey(r, a.ID, slug, path)
 	if idemKey != "" {
 		if e, ok := s.Cache.Get(idemKey); ok {

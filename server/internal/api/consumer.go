@@ -233,9 +233,11 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.appLimited(w, r, a) {
+	release, limited := s.appLimited(w, r, a, costPerRequest(sv, providers.Get(sv.Provider), "", ""))
+	if limited {
 		return
 	}
+	defer release()
 	wait := time.Duration(min(max(body.WaitSec, 0), 60)) * time.Second
 	l, err := s.issueLeaseOpts(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second, wait, body.Exclusive)
 	if errors.Is(err, errPeerLease) || errors.Is(err, errHandoverLease) {

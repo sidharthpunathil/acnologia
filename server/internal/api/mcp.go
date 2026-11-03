@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
@@ -285,9 +286,11 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			return nil, err
 		}
-		if hit := s.appLimitHit(ctx, a); hit != nil {
+		hit, release := s.admitApp(ctx, a, costPerRequest(sv, providers.Get(sv.Provider), "", ""))
+		if hit != nil {
 			return nil, fmt.Errorf("this app reached its %s limit, it resets %s", strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339))
 		}
+		defer release()
 		st, _ := s.Store.GetMCPSettings(ctx, a.ID)
 		exclusive := st.ExclusiveDefault
 		if args.Exclusive != nil {

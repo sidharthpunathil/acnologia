@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
@@ -73,11 +74,12 @@ func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug strin
 }
 
 // appLimited writes a 429 and returns true when the app has reached one of
-// its request or budget limits.
-func (s *Server) appLimited(w http.ResponseWriter, r *http.Request, a *store.App) bool {
-	hit := s.appLimitHit(r.Context(), a)
+// its request or budget limits. Otherwise the request holds a place under
+// the limits until release, which the caller runs after recording usage.
+func (s *Server) appLimited(w http.ResponseWriter, r *http.Request, a *store.App, est float64) (release func(), limited bool) {
+	hit, release := s.admitApp(r.Context(), a, est)
 	if hit == nil {
-		return false
+		return release, false
 	}
 	retry := max(int(math.Ceil(time.Until(hit.ResetAt).Seconds())), 1)
 	w.Header().Set("Retry-After", strconv.Itoa(retry))
@@ -87,28 +89,62 @@ func (s *Server) appLimited(w http.ResponseWriter, r *http.Request, a *store.App
 		"reset_at":        hit.ResetAt,
 		"retry_after_sec": retry,
 	})
-	return true
+	return nil, true
 }
 
-// appLimitHit returns the limit the app has reached, or nil, and tells
-// webhooks about it.
-func (s *Server) appLimitHit(ctx context.Context, a *store.App) *store.LimitHit {
+// admission is one app's requests admitted under its limits whose usage is
+// not recorded yet. mu also makes check and reserve one step per app.
+type admission struct {
+	mu   sync.Mutex
+	reqs int64
+	cost float64
+}
+
+func noRelease() {}
+
+// admitApp returns the limit the app has reached, or nil, and tells webhooks
+// about it. Usage is recorded only once a request is served, so a request
+// that passes reserves one request and est dollars until release: without
+// that, a burst of concurrent requests would all see the same usage and pass
+// a limit that had room for one.
+func (s *Server) admitApp(ctx context.Context, a *store.App, est float64) (*store.LimitHit, func()) {
 	l, err := s.Store.GetAppLimits(ctx, a.ID)
 	if err != nil || !l.Any() {
-		return nil
+		return nil, noRelease
 	}
+	v, _ := s.admitted.LoadOrStore(a.ID, &admission{})
+	ad := v.(*admission)
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
 	now := time.Now()
 	u, err := s.Store.GetAppUsage(ctx, a.ID, now)
 	if err != nil {
-		return nil
+		return nil, noRelease
 	}
+	u.TodayRequests += ad.reqs
+	u.MonthRequests += ad.reqs
+	u.TodayCost += ad.cost
+	u.MonthCost += ad.cost
 	hit := store.CheckLimits(l, u, now)
+	if hit == nil {
+		ad.reqs++
+		ad.cost += est
+		var once sync.Once
+		return nil, func() {
+			once.Do(func() {
+				ad.mu.Lock()
+				ad.reqs--
+				ad.cost -= est
+				ad.mu.Unlock()
+			})
+		}
+	}
 	if hit != nil && s.Pool.Notify != nil {
 		s.Pool.Notify.Emit(notify.Event{Type: notify.AppLimit, AppID: a.ID, App: a.Name,
 			Message: fmt.Sprintf("app %q reached its %s limit, it resets %s", a.Name, strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339)),
 			Data:    map[string]any{"limit": hit.Limit, "reset_at": hit.ResetAt}})
 	}
-	return hit
+	return hit, nil
 }
 
 // idempotencyKey scopes a client's Idempotency-Key to the app, target and request line.
