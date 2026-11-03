@@ -188,6 +188,7 @@ func (c *Catalog) Boot(ctx context.Context) error {
 	for _, b := range providers.Builtins() {
 		if cur, err := c.Store.GetProvider(ctx, b.Slug); err == nil {
 			c.backfillOffers(ctx, cur, b)
+			c.backfillGuide(ctx, b)
 			// Already seeded: only fill in a logo that is still missing, so
 			// existing installs get logos added in newer releases.
 			_, cur, lerr := c.Store.ProviderLogo(ctx, b.Slug)
@@ -249,6 +250,42 @@ func (c *Catalog) backfillOffers(ctx context.Context, cur *store.Provider, b pro
 	next.Spec = spec
 	if _, err := c.Store.SaveProvider(ctx, &next, "system", "built-in offers added"); err != nil {
 		slog.Warn("could not add offers to built-in provider", "slug", cur.Slug, "err", err)
+	}
+}
+
+// backfillGuide gives a built-in provider the usage guide this release ships
+// when its stored spec has none. A guide only documents the API, so adding one
+// to a spec an operator has edited changes nothing they set; a guide they
+// wrote themselves is never replaced.
+func (c *Catalog) backfillGuide(ctx context.Context, b providers.Builtin) {
+	if b.Spec.Guide == nil {
+		return
+	}
+	// Read again: backfillOffers may just have saved a new version.
+	cur, err := c.Store.GetProvider(ctx, b.Slug)
+	if err != nil || !cur.Builtin {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(cur.Spec, &raw) != nil {
+		return
+	}
+	if g, ok := raw["guide"]; ok && string(g) != "null" {
+		return
+	}
+	guide, err := json.Marshal(b.Spec.Guide)
+	if err != nil {
+		return
+	}
+	raw["guide"] = guide
+	spec, err := json.Marshal(raw)
+	if err != nil {
+		return
+	}
+	next := *cur
+	next.Spec = spec
+	if _, err := c.Store.SaveProvider(ctx, &next, "system", "built-in guide added"); err != nil {
+		slog.Warn("could not add a guide to built-in provider", "slug", cur.Slug, "err", err)
 	}
 }
 
