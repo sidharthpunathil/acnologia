@@ -67,3 +67,46 @@ func TestBuilderPromptAsksForOffers(t *testing.T) {
 		t.Error("worked examples should show offers")
 	}
 }
+
+func TestBuilderPromptAsksForGuide(t *testing.T) {
+	for _, want := range []string{"- guide:", "summary", "endpoints", "params", "most useful first", "Never describe auth", "relative to base_url", "pagination", "cost traps"} {
+		if !strings.Contains(specGuide, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
+	}
+	if d, _ := providerProp["description"].(string); !strings.Contains(d, "guide") {
+		t.Error("submit_provider should ask for the guide")
+	}
+}
+
+// A guide in a draft is decoded and validated like the rest of the spec.
+func TestBuilderDraftGuideIsValidated(t *testing.T) {
+	guide := `"guide": {"summary": "Web search as JSON.", "endpoints": [{"name": "Search", "method": "GET", "path": "/",
+	  "description": "Search the web.", "params": [{"name": "query", "in": "query", "type": "string", "required": true, "description": "Search terms"}],
+	  "response": "results[] with title and url"}], "notes": ["Results are cached for an hour."]},
+    "examples":`
+	draft := strings.Replace(offerDraft, `"examples":`, guide, 1)
+	var in catalog.Input
+	if err := json.Unmarshal([]byte(draft), &in); err != nil {
+		t.Fatal(err)
+	}
+	spec, errs, _ := catalog.Check(&in)
+	if len(errs) > 0 {
+		t.Fatalf("good guide: %v", errs)
+	}
+	if spec.Guide == nil || len(spec.Guide.Endpoints) != 1 || spec.Guide.Endpoints[0].Params[0].Name != "query" {
+		t.Fatalf("guide not decoded: %+v", spec.Guide)
+	}
+	bad := strings.Replace(draft, `"in": "query"`, `"in": "cookie"`, 1)
+	bad = strings.Replace(bad, `"summary": "Web search as JSON."`, `"summary": ""`, 1)
+	if err := json.Unmarshal([]byte(bad), &in); err != nil {
+		t.Fatal(err)
+	}
+	_, errs, _ = catalog.Check(&in)
+	got := strings.Join(errs, "\n")
+	for _, want := range []string{"guide.summary is required", "params[0].in must be"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}

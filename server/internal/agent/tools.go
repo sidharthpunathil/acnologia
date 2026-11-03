@@ -24,7 +24,7 @@ func schema(props map[string]any, required ...string) anthropic.BetaToolInputSch
 
 var providerProp = map[string]any{
 	"type":        "object",
-	"description": "The provider: slug, name, category, description, website, docs_url, color (#rrggbb brand color), logo_url (optional direct image URL of the brand logo), and spec (the provider spec object described in the system prompt, including offers from the pricing page with source_url and checked_at).",
+	"description": "The provider: slug, name, category, description, website, docs_url, color (#rrggbb brand color), logo_url (optional direct image URL of the brand logo), and spec (the provider spec object described in the system prompt, including offers from the pricing page with source_url and checked_at, and a guide with summary, endpoints and notes).",
 	"properties": map[string]any{
 		"slug": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"},
 		"category": map[string]any{"type": "string"}, "description": map[string]any{"type": "string"},
