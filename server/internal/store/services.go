@@ -53,8 +53,13 @@ func (s *Store) UpdateService(ctx context.Context, sv *Service) error {
 	return err
 }
 
+// DeleteService deletes a service; its keys go by cascade, and a trigger
+// takes the events of its hidden keys with them.
 func (s *Store) DeleteService(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM services WHERE id=?`, id)
+	if err == nil {
+		s.keysChanged()
+	}
 	return err
 }
 

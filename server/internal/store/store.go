@@ -332,7 +332,21 @@ func migrate(db *sql.DB) error {
 	if err := migrateRefresh(db); err != nil {
 		return err
 	}
-	return migrateRuns(db)
+	if err := migrateRuns(db); err != nil {
+		return err
+	}
+	return migrateHiddenKeyEvents(db)
+}
+
+// migrateHiddenKeyEvents deletes a hidden key's events with the key, however
+// the key goes: DeleteKey, a service delete (the keys go by cascade), a
+// peer link revoke or disconnect. Events have no foreign key, and once the
+// key row is gone nothing marks them hidden, so non-superadmins would see
+// them in event lists, counts and spend.
+func migrateHiddenKeyEvents(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TRIGGER IF NOT EXISTS hidden_key_events_gone AFTER DELETE ON keys
+		WHEN OLD.hidden=1 BEGIN DELETE FROM events WHERE key_id=OLD.id; END`)
+	return err
 }
 
 func addColumn(db *sql.DB, table, col, def string) (bool, error) {

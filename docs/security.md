@@ -109,7 +109,9 @@ flowchart TD
 
 Hidden keys and their traffic are also left out of everything a non-superadmin
 sees: key lists, counts, events, request totals, and the events of a deleted
-hidden key.
+hidden key. A hidden key's events are deleted with it however it goes (its own
+delete, its service's delete, or a peer link revoke or disconnect removing it),
+since nothing would mark them hidden once the key row is gone.
 
 A health check sends the secret to the service's base URL, so a key is only
 ever checked against its own service, and MCP `check_keys` needs a service.
