@@ -3,7 +3,11 @@ import { AcnAppToken, AcnEgress, AcnServiceGroup } from "@/components/foundation
 import { api } from "@/lib/api";
 import { num, plural } from "@/lib/format";
 import { ops } from "@/lib/ops";
-import { envOf, type SettingsSummary } from "@/lib/settings";
+import { useState } from "react";
+import { errorMessage } from "@/lib/api";
+import { envOf, settingsApi, type HealthSettings, type SettingsSummary } from "@/lib/settings";
+import { toast } from "@/stores/toast";
+import { Select, SelectItem } from "@/components/base/select/select";
 import { sharing } from "@/lib/sharing";
 import { ThemePicker } from "@/components/acn/theme-picker";
 import { useLoad, type Loaded } from "./hooks";
@@ -82,14 +86,118 @@ export function IntegrationsSection({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-/** Go's Duration text ("6h0m0s") without the zero tail ("6h"). */
-function duration(v: string) {
-  if (v === "0s") return "Off";
-  return v.replace(/(\d[hm])0s$/, "$1").replace(/(\d)h0m$/, "$1h");
+/** "every 6 hours", "every 15 minutes", "off". */
+const INTERVAL_WORDS: Record<string, string> = {
+  off: "Off",
+  "15m": "Every 15 minutes",
+  "30m": "Every 30 minutes",
+  "1h": "Every hour",
+  "6h": "Every 6 hours",
+  "12h": "Every 12 hours",
+  "24h": "Every day",
+  "7d": "Every week",
+};
+
+function intervalWords(id: string): string {
+  return INTERVAL_WORDS[id] ?? (id === "off" ? "Off" : `Every ${id}`);
 }
 
-/** Housekeeping and size limits: environment only, shown to admins. */
-export function AdvancedSection({ isAdmin, summary }: { isAdmin: boolean; summary: Loaded<SettingsSummary> }) {
+/** The env choice in the picker: drop the saved interval. */
+const USE_ENV = "env";
+
+/**
+ * How often every key is checked against its provider. A superadmin picks it
+ * here and it applies within a minute; "Use the environment" goes back to
+ * ACNOLOGIA_HEALTH_INTERVAL. Admins see it read only.
+ */
+function HealthChecksRow({ isSuper }: { isSuper: boolean }) {
+  const load = useLoad(settingsApi.health);
+  const [busy, setBusy] = useState(false);
+  const [local, setLocal] = useState<HealthSettings | null>(null);
+  const h = local ?? load.data;
+
+  const description = "How often every key is checked against its provider, with one cheap request each. While checks are on, out of quota keys are rechecked at least hourly.";
+  if (load.error) {
+    return (
+      <SettingRow label="Key health checks" description={description}>
+        <span className="text-caption-1-regular text-text-error-primary">{load.error}</span>
+      </SettingRow>
+    );
+  }
+  if (!h) {
+    return (
+      <SettingRow label="Key health checks" description={description}>
+        <EnvValue env={null} />
+      </SettingRow>
+    );
+  }
+  const where =
+    h.source === "saved" ? (
+      <>
+        Set here. <code className="font-mono wrap-anywhere">ACNOLOGIA_HEALTH_INTERVAL</code> says {intervalWords(h.env).toLowerCase()}
+      </>
+    ) : (
+      <>
+        From <code className="font-mono wrap-anywhere">ACNOLOGIA_HEALTH_INTERVAL</code>
+      </>
+    );
+
+  if (!isSuper) {
+    return (
+      <SettingRow label="Key health checks" description={description}>
+        <div className="flex flex-col gap-1 sm:items-end">
+          <span className="text-body-2-medium text-text-primary">{intervalWords(h.interval)}</span>
+          <span className="text-caption-1-regular text-text-tertiary">{where}. Only a superadmin can change it.</span>
+        </div>
+      </SettingRow>
+    );
+  }
+
+  const choose = async (key: string) => {
+    const next = key === USE_ENV ? "" : key;
+    if ((h.source === "env" && next === "") || (h.source === "saved" && next === h.saved)) return;
+    setBusy(true);
+    try {
+      const r = await settingsApi.setHealth(next);
+      setLocal(r);
+      toast.success(r.interval === "off" ? "Background health checks are off" : `Health checks now run ${intervalWords(r.interval).toLowerCase()}`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SettingRow label="Key health checks" description={description}>
+      <div className="flex w-full flex-col gap-1 sm:w-64 sm:items-end">
+        <Select
+          aria-label="Key health checks"
+          selectedKey={h.source === "saved" ? h.saved : USE_ENV}
+          onSelectionChange={(k) => k != null && void choose(String(k))}
+          isDisabled={busy}
+          className="w-full"
+          popoverClassName="w-(--trigger-width)"
+        >
+          {[
+            <SelectItem key={USE_ENV} id={USE_ENV} textValue={`Use the environment (${intervalWords(h.env)})`}>
+              Use the environment ({intervalWords(h.env).toLowerCase()})
+            </SelectItem>,
+            ...h.choices.map((c) => (
+              <SelectItem key={c} id={c} textValue={intervalWords(c)}>
+                {intervalWords(c)}
+              </SelectItem>
+            )),
+          ]}
+        </Select>
+        <span className="text-caption-1-regular text-text-tertiary">{where}. Applies within a minute.</span>
+      </div>
+    </SettingRow>
+  );
+}
+
+/** Housekeeping and size limits, shown to admins. Health checks can be changed here; the rest is environment only. */
+export function AdvancedSection({ isAdmin, isSuper, summary }: { isAdmin: boolean; isSuper: boolean; summary: Loaded<SettingsSummary> }) {
   const env = (name: string) => envOf(summary.data, name);
   let body;
   if (!isAdmin) {
@@ -104,12 +212,13 @@ export function AdvancedSection({ isAdmin, summary }: { isAdmin: boolean; summar
     body = <SectionError what="the server limits" message={summary.error} onRetry={summary.reload} />;
   } else {
     body = (
+      <>
+      <SettingsCard>
+        <HealthChecksRow isSuper={isSuper} />
+      </SettingsCard>
       <SettingsCard title="Set by the environment. Change them in .env and restart.">
         <SettingRow label="Event retention" description="How long activity events are kept before they are deleted.">
           <EnvValue env={env("ACNOLOGIA_EVENT_RETENTION_DAYS")} format={(v) => plural(Number(v), "day")} unsetLabel="Default" />
-        </SettingRow>
-        <SettingRow label="Background health checks" description="How often every key is checked against its provider.">
-          <EnvValue env={env("ACNOLOGIA_HEALTH_INTERVAL")} format={duration} unsetLabel="Default" />
         </SettingRow>
         <SettingRow label="Largest request body" description="Bigger proxied requests are refused.">
           <EnvValue env={env("ACNOLOGIA_MAX_BODY_MB")} format={(v) => `${num(Number(v))} MB`} unsetLabel="Default" />
@@ -121,6 +230,7 @@ export function AdvancedSection({ isAdmin, summary }: { isAdmin: boolean; summar
           <EnvValue env={env("ACNOLOGIA_EGRESS_ECHO_URL")} format={(v) => <span dir="ltr">{v}</span>} unsetLabel="Default" />
         </SettingRow>
       </SettingsCard>
+      </>
     );
   }
   return (

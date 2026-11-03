@@ -71,7 +71,7 @@ export function SettingsPage() {
           <SecuritySection isAdmin={isAdmin} isSuper={isSuper} summary={summary} />
           <IntegrationsSection isAdmin={isAdmin} />
           <ConnectClaudeSection />
-          <AdvancedSection isAdmin={isAdmin} summary={summary} />
+          <AdvancedSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} />
         </div>
       </div>
     </div>

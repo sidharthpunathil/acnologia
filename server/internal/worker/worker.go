@@ -14,8 +14,11 @@ import (
 )
 
 type Worker struct {
-	Store          *store.Store
-	Pool           *pool.Pool
+	Store *store.Store
+	Pool  *pool.Pool
+	// HealthInterval is the environment's key health check interval. The
+	// interval in effect is read from the store on every pass (a superadmin
+	// can change it on the Settings page), with this as the fallback.
 	HealthInterval time.Duration
 	Retention      time.Duration
 	// Peers refreshes the shares other servers gave this one, every
@@ -36,9 +39,9 @@ type Worker struct {
 // loop: they make one upstream call per key and can take minutes, which must
 // not delay freeing expired lease slots or reviving exhausted keys.
 func (w *Worker) Run(ctx context.Context) {
-	if w.HealthInterval > 0 {
-		go w.runHealth(ctx)
-	}
+	// Always running: the interval can be turned on from the Settings page
+	// without a restart. A pass with the interval off does nothing.
+	go w.runHealth(ctx)
 	if w.Peers != nil && w.PeerInterval > 0 {
 		go w.runPeers(ctx)
 	}
@@ -147,6 +150,10 @@ func (w *Worker) tick(ctx context.Context) {
 // healthChecks re-checks keys whose last check is older than the interval.
 // Exhausted keys are rechecked hourly so they come back as soon as quota resets.
 func (w *Worker) healthChecks(ctx context.Context) {
+	every := w.Store.HealthInterval(ctx, w.HealthInterval)
+	if every <= 0 {
+		return
+	}
 	svcs, err := w.Store.ListServices(ctx)
 	if err != nil {
 		return
@@ -168,7 +175,7 @@ func (w *Worker) healthChecks(ctx context.Context) {
 			if lim := k.ConcurrencyLimit(sv); lim > 0 && w.Pool.InFlight()[k.ID] >= lim {
 				continue
 			}
-			interval := w.HealthInterval
+			interval := every
 			if k.Status == store.StatusExhausted && interval > time.Hour {
 				interval = time.Hour
 			}

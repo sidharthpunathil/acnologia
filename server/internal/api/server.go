@@ -292,6 +292,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/ai/models", s.aiModels)
 			// Provider offers refresh (refresh.go): admins read.
 			r.Get("/providers/refresh/settings", s.getRefreshSettings)
+			r.Get("/health/settings", s.getHealthSettings)
 			r.Get("/providers/refresh/runs", s.listRefreshRuns)
 			r.Get("/providers/refresh/runs/{id}", s.getRefreshRun)
 			r.Get("/providers/refresh/reviews", s.listRefreshReviews)
@@ -346,6 +347,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/ai/prices/{model}", s.aiResetPrice)
 			// Provider offers refresh: only a superadmin changes anything.
 			r.Put("/providers/refresh/settings", s.putRefreshSettings)
+			r.Put("/health/settings", s.putHealthSettings)
 			r.Post("/providers/refresh/run", s.runRefresh)
 			r.Post("/providers/refresh/reviews/{id}/apply", s.applyRefreshReview)
 			r.Post("/providers/refresh/reviews/{id}/dismiss", s.dismissRefreshReview)

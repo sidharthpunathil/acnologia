@@ -19,8 +19,24 @@ export interface SettingsSummary {
   env: EnvSetting[];
 }
 
+/** Background key health checks (GET and PUT /api/admin/health/settings). */
+export interface HealthSettings {
+  /** In effect: "off", "15m", "1h", "6h", "7d" and so on. */
+  interval: string;
+  interval_sec: number;
+  /** saved: set on this page. env: from ACNOLOGIA_HEALTH_INTERVAL (or its default). */
+  source: "saved" | "env";
+  saved: string;
+  /** What the environment says, used when nothing is saved. */
+  env: string;
+  choices: string[];
+}
+
 export const settingsApi = {
   summary: () => request<SettingsSummary>("GET", "/api/admin/settings"),
+  health: () => request<HealthSettings>("GET", "/api/admin/health/settings"),
+  /** "" goes back to the environment's interval. */
+  setHealth: (interval: string) => request<HealthSettings>("PUT", "/api/admin/health/settings", { interval }),
 };
 
 /** The entry for `name`, or a placeholder when the server did not send it. */
