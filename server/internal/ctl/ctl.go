@@ -270,7 +270,7 @@ type httpError struct {
 
 func (e *httpError) Error() string {
 	if e.Message != "" {
-		return fmt.Sprintf("%s (%d %s)", e.Message, e.Status, e.Code)
+		return fmt.Sprintf("%s (%d %s)", clean(e.Message), e.Status, clean(e.Code))
 	}
 	return fmt.Sprintf("server answered %d", e.Status)
 }
@@ -299,15 +299,12 @@ func (c *cli) callWith(ctx context, method, path string, body, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "acnologia-ctl")
 	// A server behind the access gate wants its password on every
-	// dashboard call; it is read from the environment, never saved.
-	if pw := config.Getenv("ACNOLOGIA_ACCESS_PASSWORD"); pw != "" {
-		req.Header.Set("X-Acnologia-Access", pw)
+	// dashboard call; it is read from the environment, never saved, and
+	// sent only to the server it was set for (see accessPasswordFor).
+	if pw := accessPasswordFor(ctx.URL); pw != "" {
+		req.Header.Set(accessHeader, pw)
 	}
-	hc := c.http
-	if hc == nil {
-		hc = &http.Client{Timeout: 2 * time.Minute}
-	}
-	resp, err := hc.Do(req)
+	resp, err := c.httpClient(2 * time.Minute).Do(req)
 	if err != nil {
 		return err
 	}
@@ -380,7 +377,7 @@ func (c *cli) loginToken(u, token, name string) error {
 	if err := c.remember(name, ctx); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "Signed in to %s as %s (%s). Saved as %q.\n", u, me.Email, me.Role, name)
+	fmt.Fprintf(c.out, "Signed in to %s as %s (%s). Saved as %q.\n", u, clean(me.Email), clean(me.Role), name)
 	return nil
 }
 
@@ -519,17 +516,20 @@ func (c *cli) loginDevice(u, name string, noBrowser bool) error {
 		}
 		return fmt.Errorf("could not start the sign in: %w", err)
 	}
-	link := st.VerificationURIComplete
-	if link == "" {
-		link = st.VerificationURI + "?code=" + url.QueryEscape(st.UserCode)
-	}
+	// The link is opened only when it points back at this server; anything
+	// else (another host, file://, a local path, a custom scheme) would hand
+	// the OS launcher whatever the server chose.
+	link, safe := verifyLink(u, st)
 
-	fmt.Fprintf(c.out, "Your one-time code: %s\n", st.UserCode)
+	fmt.Fprintf(c.out, "Your one-time code: %s\n", clean(st.UserCode))
 	if gate.Required && gate.Locked {
 		fmt.Fprintln(c.out, "This server is behind a site password: unlock it in the browser, then sign in.")
 	}
+	if !safe {
+		fmt.Fprintf(c.out, "The server sent a sign in link that is not on %s, so it was not opened.\n", hostOf(u))
+	}
 	opened := false
-	if !noBrowser {
+	if !noBrowser && safe {
 		open := c.openBrowser
 		if open == nil {
 			open = openBrowser
@@ -537,9 +537,9 @@ func (c *cli) loginDevice(u, name string, noBrowser bool) error {
 		opened = open(link) == nil
 	}
 	if opened {
-		fmt.Fprintf(c.out, "Opened %s in your browser.\nCheck the code matches, then approve.\n", link)
+		fmt.Fprintf(c.out, "Opened %s in your browser.\nCheck the code matches, then approve.\n", clean(link))
 	} else {
-		fmt.Fprintf(c.out, "Open this link in a browser, check the code matches, then approve:\n  %s\n", link)
+		fmt.Fprintf(c.out, "Open this link in a browser, check the code matches, then approve:\n  %s\n", clean(link))
 	}
 	fmt.Fprintln(c.out, "Waiting for approval...")
 
@@ -554,7 +554,7 @@ func (c *cli) loginDevice(u, name string, noBrowser bool) error {
 	if err := c.remember(name, ctx); err != nil {
 		return fmt.Errorf("signed in, but could not save the token: %w", err)
 	}
-	fmt.Fprintf(c.out, "Signed in to %s as %s (%s)\n", hostOf(u), g.User.Email, g.Scope)
+	fmt.Fprintf(c.out, "Signed in to %s as %s (%s)\n", hostOf(u), clean(g.User.Email), clean(g.Scope))
 	return nil
 }
 
@@ -702,10 +702,10 @@ func (c *cli) whoami() error {
 	if err := json.Unmarshal(raw, &me); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "%s on %s\n", me.Email, hostOf(ctx.URL))
-	fmt.Fprintf(c.out, "Acts as  %s", me.Role)
+	fmt.Fprintf(c.out, "%s on %s\n", clean(me.Email), hostOf(ctx.URL))
+	fmt.Fprintf(c.out, "Acts as  %s", clean(me.Role))
 	if ctx.Scope != "" {
-		fmt.Fprintf(c.out, " (token scope %s)", ctx.Scope)
+		fmt.Fprintf(c.out, " (token scope %s)", clean(ctx.Scope))
 	}
 	fmt.Fprintln(c.out)
 	return nil
@@ -715,11 +715,10 @@ func (c *cli) whoami() error {
 func (c *cli) printJSON(raw []byte) error {
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, raw, "", "  "); err != nil {
-		_, err = c.out.Write(raw)
-		return err
+		return fmt.Errorf("the server's answer is not JSON: %w", err)
 	}
 	buf.WriteByte('\n')
-	_, err := c.out.Write(buf.Bytes())
+	_, err := c.out.Write(cleanJSON(buf.Bytes()))
 	return err
 }
 
@@ -749,7 +748,7 @@ func (c *cli) contexts() error {
 		if n == cf.Current {
 			mark = "*"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", mark, n, cf.Contexts[n].URL)
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", mark, clean(n), clean(cf.Contexts[n].URL))
 	}
 	return tw.Flush()
 }
@@ -802,7 +801,7 @@ func (c *cli) status() error {
 	k := ov.Keys
 	fmt.Fprintf(c.out, "Server     %s", hostOf(ctx.URL))
 	if health.Version != "" {
-		fmt.Fprintf(c.out, " (version %s)", health.Version)
+		fmt.Fprintf(c.out, " (version %s)", clean(health.Version))
 	}
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Services   %d\n", ov.Services)
@@ -856,7 +855,7 @@ func (c *cli) services() error {
 	fmt.Fprintln(tw, "SLUG\tPROVIDER\tKEYS\tAVAILABLE\tCOOLING\tEXHAUSTED\tINVALID\tREQ 24H")
 	for _, s := range svcs {
 		k := s.KeyCounts
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n", s.Slug, s.Provider, k["total"], k["available"], k["cooling"], k["exhausted"], k["invalid"]+k["banned"], s.Requests)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n", clean(s.Slug), clean(s.Provider), k["total"], k["available"], k["cooling"], k["exhausted"], k["invalid"]+k["banned"], s.Requests)
 	}
 	return tw.Flush()
 }
@@ -899,10 +898,7 @@ func (c *cli) keys(args []string) error {
 		if k.Status == "cooling" && k.Cooldown != nil {
 			note = "back in " + time.Until(*k.Cooldown).Round(time.Second).String()
 		}
-		if len(note) > 60 {
-			note = note[:57] + "..."
-		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%d\t%s\n", k.ID, k.Label, k.Hint, k.Status, q, k.Today, note)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%d\t%s\n", k.ID, clean(k.Label), clean(k.Hint), clean(k.Status), q, k.Today, clip(note, 60))
 	}
 	return tw.Flush()
 }
@@ -953,7 +949,7 @@ func (c *cli) keysAdd(args []string) error {
 	if err := c.call("POST", fmt.Sprintf("/api/admin/services/%d/keys", sv.ID), map[string]any{"keys": keys}, &out); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "Added %d keys to %s", len(out.Keys), sv.Slug)
+	fmt.Fprintf(c.out, "Added %d keys to %s", len(out.Keys), clean(sv.Slug))
 	if len(out.Skipped) > 0 {
 		fmt.Fprintf(c.out, ", skipped %d duplicates", len(out.Skipped))
 	}
@@ -974,11 +970,11 @@ func (c *cli) keysCheck(args []string) error {
 		return err
 	}
 	if msg, ok := out["message"].(string); ok && msg != "" {
-		fmt.Fprintln(c.out, msg)
+		fmt.Fprintln(c.out, clean(msg))
 		return nil
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.out, string(b))
+	fmt.Fprintln(c.out, string(cleanJSON(b)))
 	return nil
 }
 
@@ -1020,11 +1016,8 @@ func (c *cli) events(args []string) error {
 	tw := tabwriter.NewWriter(c.out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "TIME\tKIND\tSERVICE\tKEY\tAPP\tSTATUS\tMS\tDETAIL")
 	for _, e := range out.Events {
-		d := e.Detail
-		if len(d) > 70 {
-			d = d[:67] + "..."
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", e.TS.Local().Format("Jan 02 15:04:05"), e.Kind, e.Service, e.Key, e.App, e.Status, e.Latency, d)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", e.TS.Local().Format("Jan 02 15:04:05"),
+			clean(e.Kind), clean(e.Service), clean(e.Key), clean(e.App), e.Status, e.Latency, clip(e.Detail, 70))
 	}
 	return tw.Flush()
 }
@@ -1062,9 +1055,9 @@ func (c *cli) breaker(args []string) error {
 		return err
 	}
 	st := out.Status
-	fmt.Fprintf(c.out, "%s: %s", sv.Slug, strings.ReplaceAll(st.State, "_", " "))
+	fmt.Fprintf(c.out, "%s: %s", clean(sv.Slug), clean(strings.ReplaceAll(st.State, "_", " ")))
 	if st.State == "open" {
-		fmt.Fprintf(c.out, ", next probe in %.0fs (%s)", st.RetryAfter, st.Reason)
+		fmt.Fprintf(c.out, ", next probe in %.0fs (%s)", st.RetryAfter, clean(st.Reason))
 	}
 	if out.Threshold > 0 {
 		fmt.Fprintf(c.out, "; opens after %d provider errors in %.0fs", out.Threshold, out.Window)
@@ -1086,7 +1079,7 @@ func (c *cli) cachePurge(slug string) error {
 	if err := c.call("POST", fmt.Sprintf("/api/admin/services/%d/cache/purge", sv.ID), nil, &out); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "Dropped %d cached responses for %s.\n", out.Purged, sv.Slug)
+	fmt.Fprintf(c.out, "Dropped %d cached responses for %s.\n", out.Purged, clean(sv.Slug))
 	return nil
 }
 
@@ -1132,7 +1125,7 @@ func (c *cli) usage(args []string) error {
 	fmt.Fprintf(c.out, "Today       %d requests%s, $%.4f%s, %d cache hits\n", u.TodayRequests, of(l.DailyRequests), u.TodayCost, ofUSD(l.DailyBudget), u.TodayHits)
 	fmt.Fprintf(c.out, "This month  %d requests%s, $%.4f%s\n", u.MonthRequests, of(l.MonthlyRequests), u.MonthCost, ofUSD(l.MonthlyBudget))
 	if out.LimitHit != nil {
-		fmt.Fprintf(c.out, "Blocked     %s limit reached, resets %s\n", strings.ReplaceAll(out.LimitHit.Limit, "_", " "), out.LimitHit.ResetAt.Local().Format(time.RFC1123))
+		fmt.Fprintf(c.out, "Blocked     %s limit reached, resets %s\n", clean(strings.ReplaceAll(out.LimitHit.Limit, "_", " ")), out.LimitHit.ResetAt.Local().Format(time.RFC1123))
 	}
 	return nil
 }

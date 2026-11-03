@@ -25,12 +25,16 @@ type deviceServer struct {
 	created map[string]string
 	deleted []string
 	auth    []string
+	access  []string
+	// link replaces verification_uri_complete when set.
+	link string
 }
 
 func (d *deviceServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.auth = append(d.auth, r.Header.Get("Authorization"))
+	d.access = append(d.access, r.Header.Get("X-Acnologia-Access"))
 	switch {
 	case r.URL.Path == "/healthz":
 		_, _ = io.WriteString(w, `{"ok":true,"version":"v9"}`)
@@ -38,7 +42,16 @@ func (d *deviceServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"required":true,"locked":true}`)
 	case r.URL.Path == "/api/cli/device" && r.Method == "POST":
 		_ = json.NewDecoder(r.Body).Decode(&d.created)
-		_, _ = io.WriteString(w, `{"device_code":"dev-secret","user_code":"WDJB-MJHT","verification_uri":"http://x/cli/authorize","verification_uri_complete":"http://x/cli/authorize?code=WDJB-MJHT","expires_in":600,"interval":5}`)
+		// Like the real server: the link is on its own base URL, unless
+		// the test makes it send another.
+		link := d.link
+		if link == "" {
+			link = "http://" + r.Host + "/cli/authorize?code=WDJB-MJHT"
+		}
+		b, _ := json.Marshal(map[string]any{"device_code": "dev-secret", "user_code": "WDJB-MJHT",
+			"verification_uri": "http://" + r.Host + "/cli/authorize", "verification_uri_complete": link,
+			"expires_in": 600, "interval": 5})
+		_, _ = w.Write(b)
 	case r.URL.Path == "/api/cli/device/token":
 		var in map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&in)
@@ -85,6 +98,8 @@ func newTestCLI(t *testing.T, stdin string) (*cli, *bytes.Buffer, *bytes.Buffer,
 	t.Setenv("ACNOLOGIA_CTL_CONFIG", filepath.Join(dir, "ctl.json"))
 	t.Setenv("ACNOLOGIA_URL", "")
 	t.Setenv("ACNOLOGIA_TOKEN", "")
+	t.Setenv("ACNOLOGIA_ACCESS_PASSWORD", "")
+	t.Setenv("ACNOLOGIA_ACCESS_URL", "")
 	var out, errb bytes.Buffer
 	opened := &[]string{}
 	c := &cli{
@@ -109,7 +124,7 @@ func TestDeviceLogin(t *testing.T) {
 	if !strings.Contains(errb.String(), "Acnologia URL (for example https://key.sidharth.co):") {
 		t.Fatalf("no prompt: %q", errb)
 	}
-	if len(*opened) != 1 || (*opened)[0] != "http://x/cli/authorize?code=WDJB-MJHT" {
+	if len(*opened) != 1 || (*opened)[0] != srv.URL+"/cli/authorize?code=WDJB-MJHT" {
 		t.Fatalf("browser opened %v", *opened)
 	}
 	host := strings.TrimPrefix(srv.URL, "http://")

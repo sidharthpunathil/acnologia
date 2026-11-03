@@ -10,11 +10,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
-	"github.com/sidharthpunathil/acnologia/server/internal/config"
 	"github.com/sidharthpunathil/acnologia/server/internal/mcpbridge"
 )
 
@@ -50,8 +51,8 @@ func (c *cli) mcp(args []string) error {
 		return errors.New("ACNOLOGIA_TOKEN holds an app token (acn_...); the control MCP needs an admin token (acnadm_...). For the app MCP, run: acnologia mcp --token acn_...")
 	}
 	h := f.Header()
-	if pw := config.Getenv("ACNOLOGIA_ACCESS_PASSWORD"); pw != "" {
-		h.Set("X-Acnologia-Access", pw)
+	if pw := accessPasswordFor(ctx.URL); pw != "" {
+		h.Set(accessHeader, pw)
 	}
 	return mcpbridge.Run(mcpbridge.Options{
 		Endpoint: ctx.URL + "/mcp/control",
@@ -59,8 +60,24 @@ func (c *cli) mcp(args []string) error {
 		Header:   h,
 		Unauthorized: fmt.Sprintf("the saved token may have expired or been revoked: run %s login again, or set ACNOLOGIA_TOKEN to a valid admin token (acnadm_...)",
 			c.name()),
-		Client: c.http,
-	}, c.in, c.out, c.err)
+		Client: c.httpClient(10 * time.Minute),
+	}, c.in, c.out, cleanLines{c.err})
+}
+
+// cleanLines is a writer for the bridge's notes to the person, which can
+// quote the server: each write is one line, printed through clean.
+type cleanLines struct{ w io.Writer }
+
+func (l cleanLines) Write(p []byte) (int, error) {
+	s := strings.TrimSuffix(string(p), "\n")
+	nl := ""
+	if len(s) < len(p) {
+		nl = "\n"
+	}
+	if _, err := io.WriteString(l.w, clean(s)+nl); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 // mcpContext is the named saved server, or the current one.
