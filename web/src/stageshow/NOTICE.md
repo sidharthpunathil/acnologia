@@ -14,7 +14,8 @@ license. They remain illustrative references to those products. The Wikipedia
 study includes two local photographs dedicated under CC0 1.0 (also used
 in the Finder, Telegram and annotation studies); their authors,
 original source pages and modifications are recorded in
-[`examples/wikipedia/PHOTOS.md`](examples/wikipedia/PHOTOS.md). Other scenes
+`examples/wikipedia/PHOTOS.md` in the Stageshow repository (the examples are
+not vendored here). Other scenes
 use CSS and vector illustrations. No third-party fonts are bundled, and the
 playground does not fetch fonts or photographs from external services at runtime.
 
