@@ -64,6 +64,7 @@ func tinyfishBuiltins() []Builtin {
 					{Name: "Usage", Method: "GET", Path: "/usage", Query: map[string]string{"limit": "1"}, Safe: true},
 				},
 				Tests: tests(`{"query":"coffee roasters","results":[],"total_results":0,"page":0}`),
+				Guide: tinyfishSearchGuide(),
 			},
 		},
 		{
@@ -91,7 +92,77 @@ func tinyfishBuiltins() []Builtin {
 					{Name: "Usage", Method: "GET", Path: "/usage", Query: map[string]string{"limit": "1"}, Safe: true},
 				},
 				Tests: tests(`{"results":[{"url":"https://example.com","text":"Example Domain"}],"errors":[]}`),
+				Guide: tinyfishFetchGuide(),
 			},
+		},
+	}
+}
+
+// tinyfishUsage is the usage listing both TinyFish hosts serve.
+func tinyfishUsage(what string) GuideEndpoint {
+	return GuideEndpoint{Name: "Usage", Method: "GET", Path: "/usage", Description: "Recent " + what + " records of the key Acnologia picked. Free.",
+		Params: []GuideParam{
+			sgP("limit", "query", "integer", false, "1 to 1000 (default 100)."),
+			sgP("page", "query", "integer", false, "Starting at 1."),
+			sgP("status", "query", "string", false, "completed or failed."),
+			sgP("start_after", "query", "string", false, "RFC 3339 time; end_before is the upper bound.")},
+		Response: "items[] (one per request or URL, with status and created_at), total, page, total_pages, has_more."}
+}
+
+func tinyfishSearchGuide() *Guide {
+	return &Guide{
+		Summary: "Fast structured web, news and research paper search from TinyFish, free within per minute, per hour and per day limits. " +
+			"Pick it first for everyday link finding when cost matters; use Exa or Tavily when you need page content or answers in the same call.",
+		Endpoints: []GuideEndpoint{
+			{Name: "Search", Method: "GET", Path: "/", Description: "Search the web. Every parameter is a query parameter.",
+				Params: []GuideParam{
+					sgP("query", "query", "string", true, "Search query, 1 to 2000 characters."),
+					sgP("purpose", "query", "string", false, "The goal behind the search, used to rank results."),
+					sgP("domain_type", "query", "string", false, "web (default), news or research_paper."),
+					sgP("location", "query", "string", false, "Country code (default US)."),
+					sgP("language", "query", "string", false, "Language code (default en)."),
+					sgP("include_domains", "query", "string", false, "Comma separated domains to keep; exclude_domains drops them."),
+					sgP("recency_minutes", "query", "integer", false, "Only results from the last N minutes."),
+					sgP("after_date", "query", "string", false, "YYYY-MM-DD; before_date is the upper bound."),
+					sgP("page", "query", "integer", false, "Zero based page, 0 to 10.")},
+				Response: "results[] with position, title, url, snippet, site_name, date (plus publisher for news; authors, year, venue, pdf_url for papers); total_results, page."},
+			tinyfishUsage("search"),
+		},
+		Notes: []string{
+			sgNoKey,
+			"The search is GET / with query parameters; there is no body. page is zero based.",
+			sgCacheGET(""),
+			"Free per account: 30 requests a minute, 500 an hour and 12,000 a day (reset 00:00 UTC). Past the daily allowance a request needs wallet funds or gets 402; Acnologia then moves to another key.",
+			"One TinyFish key also works for TinyFish Fetch, which turns result URLs into page content.",
+		},
+	}
+}
+
+func tinyfishFetchGuide() *Guide {
+	return &Guide{
+		Summary: "Turns up to 10 URLs per request into clean markdown, HTML or JSON, free within per minute and per day limits. " +
+			"Pick it to read pages you already have URLs for; use Firecrawl for whole site crawls or interactive pages.",
+		Endpoints: []GuideEndpoint{
+			{Name: "Fetch", Method: "POST", Path: "/", Description: "Fetch and extract the content of one or more URLs in parallel.",
+				Params: []GuideParam{
+					sgP("urls", "body", "string[]", true, "1 to 10 URLs."),
+					sgP("format", "body", "string", false, "markdown (default), html or json."),
+					sgP("purpose", "body", "string", false, "What the content is for; tailors extraction."),
+					sgP("links", "body", "boolean", false, "true adds outbound links[]."),
+					sgP("image_links", "body", "boolean", false, "true adds image_links[]."),
+					sgP("include_selectors", "body", "string[]", false, "CSS selectors to keep; exclude_selectors removes elements first."),
+					sgP("ttl", "body", "integer", false, "Accept a cached copy up to this many seconds old; 0 prefers a live fetch."),
+					sgP("per_url_timeout_ms", "body", "integer", false, "Per URL timeout, up to 110000.")},
+				Body:     map[string]any{"urls": []string{"https://example.com"}, "format": "markdown"},
+				Response: "results[] with url, final_url, title, description, text (string, or object for json), published_date; errors[] with url and error code (for example bot_blocked, timeout, page_not_found)."},
+			tinyfishUsage("fetch"),
+		},
+		Notes: []string{
+			sgNoKey,
+			"A 200 can still hold failures: always check errors[] as well as results[].",
+			"Billed and limited per successfully fetched URL: 150 a minute and 1,000 a day free (reset 00:00 UTC). Acnologia's pacer counts requests, so send one URL per request when you need its limits to be exact.",
+			"Acnologia does not cache fetch responses (they are POSTs).",
+			"if_none_match and if_modified_since work with a single URL only; with several URLs they are a 400.",
 		},
 	}
 }
