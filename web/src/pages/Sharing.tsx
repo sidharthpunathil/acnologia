@@ -16,22 +16,31 @@ import { useAuth } from "../stores/auth";
 import { useServices } from "../stores/services";
 import { useProviders } from "../stores/providers";
 import { toast } from "../stores/toast";
-import { errorMessage } from "../lib/api";
+import { ApiError, errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
 import { api } from "../lib/api";
 import { compact, dateTime, plural, relTime } from "../lib/format";
 import type { AppLimits } from "../lib/ops";
 import {
+  LEASES,
   lastDays,
+  linkHandoverKeys,
+  shareEndAction,
+  shareEndsAt,
+  shareLease,
+  shareMode,
   sharing,
+  type EndAction,
   type InviteValidity,
   type KeyScope,
+  type Lease,
   type LinkStatus,
   type PeerLink,
   type PeerPreview,
   type ServerIdentity,
   type Share,
   type ShareInput,
+  type ShareMode,
   type ShareStatus,
 } from "../lib/sharing";
 import { Modal } from "../components/Modal";
@@ -51,8 +60,11 @@ import { UnpluggedArt } from "@/components/foundations/illustrations";
 import { cx } from "@/utils/cx";
 import { KeyScopes, visibleKeys, type KeyLists } from "./sharing/KeyScopes";
 import { LimitMeters, limitSummary } from "./sharing/Limits";
+import { END_ACTION_LABEL, Countdown, EndActionPicker, EndsPicker, ExtendButton, endsDraftOf, resolveEnds, type EndsDraft } from "./sharing/Timers";
+import { HandoverKeysList, HandoverWarning, LeasePicker, ModeChip, ModePicker, PeerHandoverKeys, RevokeResultModal, wipeDeadline } from "./sharing/Modes";
 
-const PROMISE = "Keys never leave the server that owns them.";
+// Only true for proxy shares; handover shares give the keys away, so say which.
+const PROMISE = "In proxy mode, keys never leave the server that owns them.";
 
 const SHARE_COLOR: Record<ShareStatus, ChipColor> = { pending: "yellow", active: "lime", paused: "neutral", revoked: "rose", expired: "gray" };
 const LINK_COLOR: Record<LinkStatus, ChipColor> = { active: "lime", paused: "neutral", expired: "gray", revoked: "rose", disconnected: "gray" };
@@ -199,8 +211,11 @@ interface ShareDraft {
   include_hidden: boolean;
   key_scopes: Record<string, KeyScope>;
   limits: Record<LimitKey, string>;
-  expires: string;
   invite_valid: InviteValidity;
+  mode: ShareMode;
+  lease: Lease;
+  ends: EndsDraft;
+  end_action: EndAction;
 }
 
 function draftOf(s: Share | null): ShareDraft {
@@ -217,8 +232,11 @@ function draftOf(s: Share | null): ShareDraft {
     include_hidden: s?.include_hidden ?? false,
     key_scopes: { ...(s?.key_scopes ?? {}) },
     limits,
-    expires: s?.expires_at ? s.expires_at.slice(0, 10) : "",
     invite_valid: "24h",
+    mode: s ? shareMode(s) : "proxy",
+    lease: s ? shareLease(s) : "24h",
+    ends: endsDraftOf(s ? shareEndsAt(s) : null),
+    end_action: s ? shareEndAction(s) : "expire",
   };
 }
 
@@ -280,6 +298,9 @@ function ShareFormModal({
     }
   }, [open, d.services, services]);
 
+  // Mode is chosen at creation and fixed once the invite is redeemed.
+  const modeLocked = !!initial && (!!initial.redeemed_at || initial.status !== "pending");
+
   // A service that came from another server cannot be shared onward.
   const serviceOptions = services
     .filter((s) => s.provider !== "acnologia-peer" && !s.peer_link_id)
@@ -290,8 +311,14 @@ function ShareFormModal({
     e.preventDefault();
     if (!d.name.trim()) return setErr("Give the share a name, such as the server it is for.");
     if (!d.services.length && !d.providers.length) return setErr("Pick at least one service or provider to share.");
-    const limits = parseDraftLimits(d);
+    const handover = d.mode === "handover";
+    // The other server runs handover requests, so this one cannot hold it to limits.
+    const limits = handover ? { ...NO_LIMITS } : parseDraftLimits(d);
     if (typeof limits === "string") return setErr(limits);
+    // An untouched end time is sent back as it was, even if it already passed.
+    const keptEnd = initial && JSON.stringify(d.ends) === JSON.stringify(endsDraftOf(shareEndsAt(initial)));
+    const ends = keptEnd ? { iso: shareEndsAt(initial) ?? "" } : resolveEnds(d.ends);
+    if ("error" in ends) return setErr(ends.error);
     const key_scopes: Record<string, KeyScope> = {};
     for (const slug of d.services) {
       const sc = d.key_scopes[slug];
@@ -318,8 +345,13 @@ function ShareFormModal({
       providers: d.providers,
       key_scopes,
       limits,
-      expires_at: d.expires ? new Date(`${d.expires}T23:59:59Z`).toISOString() : "",
+      ends_at: ends.iso,
+      // Same moment for servers that only know expires_at.
+      expires_at: ends.iso,
+      end_action: d.end_action,
     };
+    if (!modeLocked) body.mode = d.mode;
+    if (handover) body.lease = d.lease;
     if (isSuper) body.include_hidden = d.include_hidden;
     if (!initial) body.invite_valid = d.invite_valid;
     setBusy(true);
@@ -338,8 +370,9 @@ function ShareFormModal({
     }
   };
 
+  const handover = d.mode === "handover";
   const parsedLimits = parseDraftLimits(d);
-  const limitLine = typeof parsedLimits === "string" ? "" : limitSummary(parsedLimits);
+  const limitLine = handover || typeof parsedLimits === "string" ? "" : limitSummary(parsedLimits);
 
   return (
     <Modal
@@ -348,7 +381,7 @@ function ShareFormModal({
       wide
       variant="drawer"
       title={initial ? `Edit ${initial.name}` : "New share"}
-      description={initial ? "Changes reach the other server at its next sync." : `Give one other server use of some services or provider specs. ${PROMISE}`}
+      description={initial ? "Changes reach the other server at its next sync." : "Give one other server use of some services or provider specs."}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -362,6 +395,13 @@ function ShareFormModal({
     >
       <form id="share-form" onSubmit={submit} className="flex flex-col gap-5" noValidate>
         {err && <Callout tone="error">{err}</Callout>}
+        <ModePicker value={d.mode} onChange={(mode) => setD({ ...d, mode })} readOnly={modeLocked} />
+        {handover && (
+          <div className="flex flex-col gap-3">
+            <LeasePicker value={d.lease} onChange={(lease) => setD({ ...d, lease })} />
+            <HandoverWarning />
+          </div>
+        )}
         <Input label="Name" isRequired value={d.name} onChange={(name) => setD({ ...d, name })} placeholder="Railway deploy" autoComplete="off" />
         <div className="flex flex-col gap-1.5">
           <Label id="share-services-label">Services</Label>
@@ -374,7 +414,11 @@ function ShareFormModal({
               searchLabel="services"
             />
           </div>
-          <HintText>The other server proxies through this one. It never sees a key and cannot lease one.</HintText>
+          <HintText>
+            {handover
+              ? "The keys in scope go to the other server, sealed to it. Keys from another server are never handed on."
+              : "The other server proxies through this one. It never sees a key and cannot lease one."}
+          </HintText>
           {d.services.length > 0 && (
             <div className="mt-2 flex flex-col gap-2">
               <div className="text-body-medium text-text-primary">Keys to share</div>
@@ -398,46 +442,53 @@ function ShareFormModal({
           </div>
           <HintText>Definitions only, no keys. The other server can add its own keys to them.</HintText>
         </div>
-        <fieldset className="flex flex-col gap-3">
+        <fieldset className="flex flex-col gap-3" aria-describedby="share-limits-hint">
           <legend className="mb-1 text-body-medium text-text-primary">Limits</legend>
           {limitLine && (
             <p aria-live="polite" className="text-caption-1-medium text-text-primary">
               {limitLine}
             </p>
           )}
-          <p className="text-caption-1-regular text-text-secondary">Leave a field empty for no limit. Calls over a limit are refused until it resets.</p>
+          <p id="share-limits-hint" className="text-caption-1-regular text-text-secondary">
+            {handover
+              ? "Not available when handing over keys: requests run on the other server, so this one cannot count or stop them. The timer and renewal window still apply."
+              : "Leave a field empty for no limit. Calls over a limit are refused until it resets."}
+          </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {LIMIT_KEYS.map((k) => (
               <Input
                 key={k}
                 label={LIMIT_LABEL[k]}
                 inputMode={k.endsWith("_budget") ? "decimal" : "numeric"}
-                value={d.limits[k]}
+                value={handover ? "" : d.limits[k]}
                 onChange={(v) => setD({ ...d, limits: { ...d.limits, [k]: v } })}
-                placeholder="no limit"
+                placeholder={handover ? "not available" : "no limit"}
+                isDisabled={handover}
                 inputClassName="font-mono tabular-nums"
               />
             ))}
           </div>
         </fieldset>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Expires on" type="date" value={d.expires} onChange={(expires) => setD({ ...d, expires })} hint="Leave empty to keep it until you revoke it." />
-          {!initial && (
-            <Select
-              label="Invite valid for"
-              selectedKey={d.invite_valid}
-              onSelectionChange={(k) => k != null && setD({ ...d, invite_valid: k as InviteValidity })}
-              className="w-full"
-              popoverClassName="w-(--trigger-width)"
-            >
-              {VALIDITY.map((v) => (
-                <SelectItem key={v.id} id={v.id} textValue={v.label}>
-                  {v.label}
-                </SelectItem>
-              ))}
-            </Select>
-          )}
-        </div>
+        <fieldset className="flex flex-col gap-4">
+          <legend className="mb-1 text-body-medium text-text-primary">Timer</legend>
+          <EndsPicker value={d.ends} onChange={(ends) => setD({ ...d, ends })} />
+          <EndActionPicker value={d.end_action} onChange={(end_action) => setD({ ...d, end_action })} handover={handover} />
+        </fieldset>
+        {!initial && (
+          <Select
+            label="Invite valid for"
+            selectedKey={d.invite_valid}
+            onSelectionChange={(k) => k != null && setD({ ...d, invite_valid: k as InviteValidity })}
+            className="w-full sm:max-w-xs"
+            popoverClassName="w-(--trigger-width)"
+          >
+            {VALIDITY.map((v) => (
+              <SelectItem key={v.id} id={v.id} textValue={v.label}>
+                {v.label}
+              </SelectItem>
+            ))}
+          </Select>
+        )}
         <Textarea label="Note" value={d.note} onChange={(note) => setD({ ...d, note })} rows={2} placeholder="Who this is for, optional" maxLength={500} />
         {isSuper && (
           <div className="flex items-start justify-between gap-4 rounded-2xl bg-background-secondary-default p-4">
@@ -446,7 +497,9 @@ function ShareFormModal({
                 Include hidden keys
               </div>
               <p id="share-hidden-hint" className="mt-0.5 text-caption-1-regular text-text-secondary">
-                Lets the other server's requests use hidden keys too. Some upstream answers can echo a key, so turn this on only for servers you trust.
+                {handover
+                  ? "Hands over hidden keys too. Turn this on only for servers you trust with those keys."
+                  : "Lets the other server's requests use hidden keys too. Some upstream answers can echo a key, so turn this on only for servers you trust."}
               </p>
             </div>
             <Switch isSelected={d.include_hidden} onChange={(v) => setD({ ...d, include_hidden: v })} aria-labelledby="share-hidden-label" aria-describedby="share-hidden-hint" />
@@ -487,6 +540,7 @@ function ShareRow({
   onChanged,
   onEdit,
   onInvite,
+  onRevoked,
 }: {
   share: Share;
   isSuper: boolean;
@@ -494,8 +548,39 @@ function ShareRow({
   onChanged: () => void;
   onEdit: () => void;
   onInvite: (code: string) => void;
+  onRevoked: (share: Share, deadline: string | null) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const mode = shareMode(share);
+  const handover = mode === "handover";
+  const endsAt = shareEndsAt(share);
+  const endAction = shareEndAction(share);
+  const leaseMs = LEASES.find((l) => l.id === shareLease(share))?.ms ?? 0;
+  const deadline = handover ? wipeDeadline(share, leaseMs) : null;
+  const revoke = async () => {
+    setBusy("revoke");
+    try {
+      const after = await sharing.revokeShare(share.id);
+      if (handover) onRevoked({ ...share, ...after }, deadline);
+      else toast.success(`Revoked ${share.name}`);
+      onChanged();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const extend = async (iso: string) => {
+    try {
+      await sharing.extendShare(share.id, iso);
+    } catch (e) {
+      // A server without the extend endpoint still takes a new end time on edit.
+      if (!(e instanceof ApiError) || (e.status !== 404 && e.status !== 405)) throw new Error(errorMessage(e));
+      await sharing.updateShare(share.id, { ends_at: iso, expires_at: iso });
+    }
+    toast.success(iso ? `Extended ${share.name} to ${dateTime(iso)}` : `${share.name} no longer ends on its own`);
+    onChanged();
+  };
   const act = async (what: string, fn: () => Promise<unknown>, done: string) => {
     setBusy(what);
     try {
@@ -518,6 +603,7 @@ function ShareRow({
             <Chip variant="caption" color={SHARE_COLOR[share.status]}>
               {share.left_at ? "left by peer" : share.status}
             </Chip>
+            <ModeChip mode={mode} />
           </div>
           <div className="mt-1 text-caption-1-regular text-text-secondary">
             {share.peer_id ? (
@@ -553,13 +639,35 @@ function ShareRow({
             )}
           </div>
           <div className="mt-2 font-mono text-caption-1-regular text-text-secondary">
-            {compact(share.usage?.today_requests ?? 0)} today · last used {relTime(share.usage?.last_used_at, now)}
-            {share.expires_at && <> · expires {dateTime(share.expires_at)}</>}
+            {compact(share.usage?.today_requests ?? 0)} today{handover && " (reported)"} · last used {relTime(share.usage?.last_used_at, now)}
             {share.usage?.limit_hit && <span className="text-text-error-primary"> · limit reached</span>}
           </div>
-          <div className="mt-3">
-            <LimitMeters share={share} />
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-caption-1-regular text-text-secondary">
+            {share.status === "revoked" ? (
+              <span>Revoked{share.revoked_at ? ` ${dateTime(share.revoked_at)}` : ""}</span>
+            ) : share.status === "expired" ? (
+              <span>
+                Expired{endsAt ? ` ${dateTime(endsAt)}` : ""}
+                {isSuper ? ". Extend it to turn it back on." : ""}
+              </span>
+            ) : endsAt ? (
+              <>
+                <Countdown iso={endsAt} subject={share.name} className="text-text-primary" />
+                <span>
+                  then {END_ACTION_LABEL[endAction]}
+                  {endAction === "expire" && " (can be extended)"}
+                </span>
+              </>
+            ) : (
+              <span>No end time</span>
+            )}
           </div>
+          {!handover && (
+            <div className="mt-3">
+              <LimitMeters share={share} />
+            </div>
+          )}
+          {handover && share.status !== "pending" && <HandoverKeysList share={share} />}
         </div>
         <div className="flex shrink-0 flex-col gap-3 lg:items-end">
           <UsageBars share={share} />
@@ -597,16 +705,27 @@ function ShareRow({
                   Resume
                 </Button>
               )}
+              {(share.status === "active" || share.status === "expired") && <ExtendButton name={share.name} endsAt={endsAt} onExtend={extend} />}
               <Button size="small" variant="ghost" leadingIcon={RiPencilLine} disabled={!!busy} onClick={onEdit}>
                 Edit
               </Button>
               <ConfirmButton
                 label="Revoke"
-                confirmLabel="Revoke for good"
+                confirmLabel={handover ? "Revoke and wipe" : "Revoke for good"}
                 variant="outline"
-                onConfirm={() => act("revoke", () => sharing.revokeShare(share.id), `Revoked ${share.name}`)}
+                description={
+                  handover
+                    ? `Sends a delete signal now. If the other server cannot be reached, its copy is wiped by ${deadline ? dateTime(deadline) : "the end of the renewal window"}. This cannot be undone.`
+                    : "The other server stops at once. This cannot be undone."
+                }
+                onConfirm={revoke}
               />
             </div>
+          )}
+          {isSuper && share.status === "revoked" && handover && (
+            <Button size="small" variant="ghost" onClick={() => onRevoked(share, wipeDeadline(share, 0))}>
+              Keys to rotate
+            </Button>
           )}
         </div>
       </div>
@@ -673,7 +792,7 @@ function ConnectModal({ open, onClose, onConnected }: { open: boolean; onClose: 
       onClose={onClose}
       wide
       title="Connect a server"
-      description={`Use services another Acnologia shares with you. ${PROMISE}`}
+      description="Use services another Acnologia shares with you."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -776,6 +895,7 @@ function PeerRow({ link, isSuper, now, onChanged }: { link: PeerLink; isSuper: b
             <Chip variant="caption" color={LINK_COLOR[link.status]}>
               {link.status}
             </Chip>
+            <ModeChip mode={shareMode(link)} />
             {link.trusted && (
               <Chip variant="caption" color="neutral">
                 private network
@@ -809,6 +929,7 @@ function PeerRow({ link, isSuper, now, onChanged }: { link: PeerLink; isSuper: b
             last sync {relTime(link.last_sync_at, now)}
           </div>
           {link.last_error && <div className="mt-1 wrap-anywhere text-caption-1-regular text-text-error-primary">{link.last_error}</div>}
+          {shareMode(link) === "handover" && !gone && <PeerHandoverKeys keys={linkHandoverKeys(link)} />}
         </div>
         {isSuper && (
           <div className="flex shrink-0 flex-wrap items-center gap-1">
@@ -873,6 +994,7 @@ export function SharingPage() {
   const [editing, setEditing] = useState<Share | null>(null);
   const [invite, setInvite] = useState<{ name: string; code: string } | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [revoked, setRevoked] = useState<{ share: Share; deadline: string | null } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -909,7 +1031,7 @@ export function SharingPage() {
       <div>
         <PageHeader title="Sharing" meta={`${plural(shares.length, "share")} · ${activeShares} active · ${plural(peers.length, "connection")}`} className="mb-4" />
         <p className="max-w-2xl text-body-2-regular text-text-secondary">
-          Let another Acnologia use some of your services, or use services another one shares with you. {PROMISE} A share can be limited, paused and revoked at any time.
+          Let another Acnologia use some of your services, or use services another one shares with you. {PROMISE} Handover shares give the keys to the other server, which deletes them when the share ends. A share can be timed, paused and revoked at any time.
         </p>
       </div>
 
@@ -931,7 +1053,7 @@ export function SharingPage() {
             art={UnpluggedArt}
             icon={RiShareForwardLine}
             title="Nothing shared yet"
-            body={`Share a service and the other server proxies through this one. ${PROMISE}`}
+            body="Share a service by proxy and the other server never sees a key, or hand the keys over so it calls the provider directly."
             action={
               isSuper ? (
                 <Button variant="primary" leadingIcon={RiAddLine} onClick={openNew}>
@@ -954,6 +1076,7 @@ export function SharingPage() {
                   setFormOpen(true);
                 }}
                 onInvite={(code) => setInvite({ name: s.name, code })}
+                onRevoked={(share, deadline) => setRevoked({ share, deadline })}
               />
             ))}
           </ul>
@@ -975,7 +1098,7 @@ export function SharingPage() {
           <EmptyState
             icon={RiLinkM}
             title="No connections yet"
-            body={`Paste an invite from another Acnologia to use what it shares. ${PROMISE}`}
+            body="Paste an invite from another Acnologia to use what it shares."
             action={
               isSuper ? (
                 <Button variant="secondary" leadingIcon={RiLinkM} onClick={() => setConnectOpen(true)}>
@@ -1013,6 +1136,7 @@ export function SharingPage() {
         }}
       />
       <InviteModal invite={invite} onClose={() => setInvite(null)} />
+      <RevokeResultModal share={revoked?.share ?? null} deadline={revoked?.deadline ?? null} onClose={() => setRevoked(null)} />
       <ConnectModal
         open={connectOpen}
         onClose={() => setConnectOpen(false)}
