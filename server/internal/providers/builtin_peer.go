@@ -30,6 +30,7 @@ func peerBuiltin() Builtin {
 			Defaults: Defaults{Strategy: "round_robin", CooldownSec: 30, MaxAttempts: 1, BreakerThreshold: -1},
 			Quota:    QuotaInfo{Unit: "requests"},
 			Rules:    rules,
+			Guide:    peerGuide(),
 			Health: &Health{Method: "GET", Path: "/api/peer/v1/manifest", FromOrigin: true,
 				Invalid: &Match{BodyContains: []string{"share_revoked", "share_paused", "share_expired"}}},
 			Tests: []Fixture{
@@ -44,6 +45,25 @@ func peerBuiltin() Builtin {
 				{Name: "upstream 500 relayed", Status: 500, Body: `oops`, Expect: OK},
 				{Name: "service not shared", Status: 403, Body: `{"error":{"code":"service_not_allowed","message":"no"}}`, Expect: OK},
 			},
+		},
+	}
+}
+
+// peerGuide lists no endpoints: they are those of the service the other
+// server shares, whatever provider that is.
+func peerGuide() *Guide {
+	return &Guide{
+		Summary: "A service another Acnologia server shares with this one. Your call goes to that server's proxy and is answered with a key from its pool; its keys never reach this server. " +
+			"Use it exactly like the shared service on the owner's side: same paths, parameters and bodies.",
+		Notes: []string{
+			sgNoKey + " Acnologia sends the share token to the owner server for you.",
+			"Paths are the remote service's. A call to /proxy/<this service>/<path> reaches <owner>/proxy/<shared service>/<path>, so use the endpoints of the provider behind the shared service (the service's peer_provider, for example serpapi or tavily) and read that provider's guide.",
+			"The owner server rotates its own keys before answering, so a provider error relayed from upstream (429, 5xx and the like) means its pool could not serve the call; it is not this service's fault and is returned as is.",
+			"403 with share_revoked, share_paused or share_expired means the owner ended or paused the share; nothing on this side can fix it.",
+			"429 with error.code app_limit_reached means the share's request or budget limit is used up; retry_after_sec says when it resets.",
+			"503 with no_key_available or all_keys_busy means the owner has no free key right now; retry after retry_after_sec.",
+			"Each request is tried once (no retries through another share key), and services shared by another server cannot be leased or shared onward: proxy calls only.",
+			"Caching follows this service's settings here (off by default) and the owner's cache on its side.",
 		},
 	}
 }
