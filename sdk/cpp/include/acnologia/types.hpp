@@ -1,8 +1,10 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iosfwd>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,6 +36,89 @@ struct Service {
     bool available = false;
     std::string base_url;
     Auth auth;
+    /// Where the service's usage guide is served. Client::guide fetches it.
+    std::string guide_url;
+};
+
+/// The app behind a token, from GET /api/v1/me. For a share's token, name is
+/// the share's name.
+struct AppInfo {
+    std::int64_t id = 0;
+    std::string name;
+};
+
+/// An app's request and budget limits. An empty optional means no limit.
+struct AppLimits {
+    std::optional<std::int64_t> daily_requests;
+    std::optional<std::int64_t> monthly_requests;
+    std::optional<double> daily_budget;
+    std::optional<double> monthly_budget;
+};
+
+/// A limit the app has reached. limit is daily_requests, monthly_requests,
+/// daily_budget or monthly_budget, and reset_at (RFC 3339) is when it resets.
+struct LimitHit {
+    std::string limit;
+    std::string reset_at;
+};
+
+/// What the app used today and this month (UTC).
+struct AppUsage {
+    std::int64_t today_requests = 0;
+    double today_cost = 0;
+    std::int64_t month_requests = 0;
+    double month_cost = 0;
+    /// RFC 3339, empty when the app was never used.
+    std::string last_used_at;
+    std::optional<LimitHit> limit_hit;
+};
+
+/// A service in GET /api/v1/me. available counts keys free right now for a
+/// share's token. For an ordinary app it is 1 or 0.
+struct MeService {
+    std::string slug;
+    std::string name;
+    std::string provider;
+    std::string category;
+    int available = 0;
+    /// The logo as a data: URI, or empty.
+    std::string logo_url;
+};
+
+/// The server that owns a share.
+struct ShareOwner {
+    std::string name;
+    std::string id;
+};
+
+/// The share behind a share's token (another server's, or a person's from a
+/// claim link).
+struct ShareInfo {
+    std::string id;
+    std::string name;
+    ShareOwner owner;
+    std::string recipient;  ///< "server" or "person"
+    std::string label;
+    /// pending, active, paused, expired or revoked.
+    std::string status;
+    std::string mode;
+    /// RFC 3339, empty when the share has no end.
+    std::string ends_at;
+
+    bool active() const noexcept { return status == "active"; }
+};
+
+/// GET /api/v1/me: the token's own access.
+struct Me {
+    AppInfo app;
+    AppLimits limits;
+    AppUsage usage;
+    /// The first limit reached, if any (the same as usage.limit_hit).
+    std::optional<LimitHit> limit_hit;
+    std::vector<MeService> services;
+    /// Set only for a share's token. A paused, expired or revoked share still
+    /// answers, with that status and no services.
+    std::optional<ShareInfo> share;
 };
 
 /// The result of using a leased key.
@@ -106,6 +191,16 @@ struct AppliedAuth {
 /// Redacted: prints the location and name, never the value.
 std::ostream& operator<<(std::ostream& os, const AppliedAuth& auth);
 std::string to_string(const AppliedAuth& auth);
+
+/// The longest Idempotency-Key the proxy accepts.
+inline constexpr std::size_t max_idempotency_key = 200;
+
+/// A random Idempotency-Key (32 hex characters) for a proxied request.
+std::string new_idempotency_key();
+
+/// Parses a Retry-After value: delay seconds, or an HTTP date (IMF-fixdate)
+/// counted from now. Zero when it is empty, invalid or in the past.
+std::chrono::milliseconds parse_retry_after(const std::string& value);
 
 /// Percent encodes everything but the unreserved characters (A-Z a-z 0-9 - . _ ~).
 std::string url_encode(const std::string& s);

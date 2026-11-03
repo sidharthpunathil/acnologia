@@ -22,7 +22,7 @@ namespace acn = acnologia;
 namespace {
 
 struct Seen {
-    std::string method, path, auth, user_agent, body;
+    std::string method, path, auth, user_agent, body, access, idempotency_key, accept;
 };
 
 class TinyServer {
@@ -104,6 +104,9 @@ private:
         s.path = head.substr(sp1 + 1, sp2 - sp1 - 1);
         s.auth = header_value(head, "authorization");
         s.user_agent = header_value(head, "user-agent");
+        s.access = header_value(head, "x-acnologia-access");
+        s.idempotency_key = header_value(head, "idempotency-key");
+        s.accept = header_value(head, "accept");
         s.body = body;
         {
             std::lock_guard<std::mutex> g(mu_);
@@ -120,6 +123,17 @@ private:
             out = R"({"lease_id":"lse_a","key_id":5,"service":"echo","secret":"sek","auth":{"type":"header","name":"X-Key"},"base_url":"http://upstream.test","expires_at":"2026-11-02T10:00:00Z"})";
         } else if (s.path == "/api/v1/leases/lse_a/report") {
             out = R"({"ok":true,"next":null})";
+        } else if (s.path == "/api/v1/me") {
+            out = R"({"app":{"id":3,"name":"agi-labs-worker"},"limits":{"daily_requests":50},)"
+                  R"("usage":{"today_requests":2,"today_cost":0,"month_requests":9,"month_cost":0,"last_used_at":null,"limit_hit":null},)"
+                  R"("limit_hit":null,"services":[{"slug":"echo","name":"Echo","provider":"echo","category":"test","available":1,"logo_url":null}],"share":null})";
+        } else if (s.path == "/api/v1/services/echo/guide?format=md") {
+            extra = "Content-Type: text/markdown\r\n";
+            out = "# Echo\n";
+        } else if (s.path == "/proxy/echo/limited") {
+            status = 429;
+            extra = "Retry-After: 7\r\nContent-Type: application/json\r\n";
+            out = R"({"error":{"code":"app_limit_reached","message":"limit"},"limit":"daily_requests","reset_at":"2026-11-05T00:00:00Z"})";
         } else if (s.path.rfind("/proxy/echo/redirect", 0) == 0) {
             status = 302;
             extra = "Location: http://elsewhere.test/\r\n";
@@ -130,7 +144,11 @@ private:
             status = 404;
             out = R"({"error":{"code":"not_found","message":"no route"}})";
         }
-        std::string reason = status == 200 ? "OK" : status == 302 ? "Found" : status == 503 ? "Service Unavailable" : "Not Found";
+        std::string reason = status == 200   ? "OK"
+                             : status == 302 ? "Found"
+                             : status == 429 ? "Too Many Requests"
+                             : status == 503 ? "Service Unavailable"
+                                             : "Not Found";
         std::string resp = "HTTP/1.1 " + std::to_string(status) + " " + reason + "\r\nContent-Length: " +
                            std::to_string(out.size()) + "\r\nConnection: close\r\n" + extra + "\r\n" + out;
         std::size_t sent = 0;
@@ -181,6 +199,40 @@ TEST_CASE("the libcurl transport talks to a real HTTP server") {
     CHECK(seen[0].user_agent == std::string("acnologia-cpp/") + acn::version);
     CHECK(seen[2].path == "/api/v1/leases/lse_a/report");
     CHECK(seen[2].body == R"({"outcome":"ok"})");
+}
+
+TEST_CASE("me, guide, Idempotency-Key, Retry-After and the access header over libcurl") {
+    TinyServer server;
+    acn::ClientOptions o;
+    o.access_password = "local access password";
+    o.throw_proxy_errors = true;
+    acn::Client client(server.url(), "acn_integration", o);
+
+    acn::Me me = client.me();
+    CHECK(me.app.name == "agi-labs-worker");
+    CHECK(me.limits.daily_requests == 50);
+    REQUIRE(me.services.size() == 1);
+    CHECK(me.services[0].available == 1);
+
+    CHECK(client.guide("echo") == "# Echo\n");
+
+    auto resp = client.proxy("echo").post_idempotent("/v1/chat", R"({"q":"hi"})", "job-1");
+    CHECK(resp.status == 200);
+
+    try {
+        client.proxy_get("echo", "/limited");
+        FAIL("expected AppLimitReached");
+    } catch (const acn::AppLimitReached& e) {
+        CHECK(e.limit() == "daily_requests");
+        CHECK(e.reset_at() == "2026-11-05T00:00:00Z");
+        CHECK(e.retry_after() == std::chrono::seconds(7));
+    }
+
+    auto seen = server.seen();
+    REQUIRE(seen.size() == 4);
+    for (const auto& s : seen) CHECK(s.access == "local access password");
+    CHECK(seen[1].accept == "text/markdown");
+    CHECK(seen[2].idempotency_key == "job-1");
 }
 
 TEST_CASE("a refused connection is a TransportError") {

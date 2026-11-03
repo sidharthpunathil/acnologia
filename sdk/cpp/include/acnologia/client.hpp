@@ -34,6 +34,17 @@ struct ClientOptions {
     /// lease with a longer wait stretches it. Zero disables it. Proxy calls
     /// have no timeout because proxied bodies may take long.
     std::chrono::milliseconds timeout{75000};
+    /// The server's access password, sent as X-Acnologia-Access on every
+    /// call. The consumer routes do not need it, but a server behind a
+    /// stricter front may. Empty means ACNOLOGIA_ACCESS_PASSWORD, used only
+    /// when the client's URL has the same origin as ACNOLOGIA_ACCESS_URL (or,
+    /// when that is unset, ACNOLOGIA_URL), so it never goes to another server.
+    std::string access_password;
+    /// When true, Proxy calls throw the typed ApiError for answers that come
+    /// from Acnologia itself (for example AppLimitReached, ShareRevoked,
+    /// NoKeyAvailable), while the provider's own answers are still returned
+    /// as they are. See is_acnologia_error.
+    bool throw_proxy_errors = false;
 };
 
 /// A key handed out by the pool. Report its outcome when done: on services
@@ -59,14 +70,16 @@ public:
     bool reported() const noexcept { return reported_; }
 
     /// Sends the outcome. When report.rotate is true and another key is
-    /// available, the next lease is returned; otherwise std::nullopt.
+    /// available, the next lease is returned; otherwise std::nullopt. The
+    /// secret is scrubbed from report.message, which is cut to 500 bytes.
     std::optional<Lease> report(const Report& report);
     /// Shorthand for report(Report{outcome, status_code, {}, {}, rotate}).
     std::optional<Lease> report(Outcome outcome, int status_code = 0, bool rotate = false);
 
     /// Extends the open lease (POST /api/v1/leases/{id}/renew). Zero ttl uses
     /// the server default of 120s. Returns and stores the new expires_at.
-    /// Throws ApiError with code lease_not_found when the lease is not open.
+    /// Throws ApiError with code lease_not_found when the lease is not open,
+    /// and LeaseRevoked when the app may no longer hold the key.
     std::string renew(std::chrono::milliseconds ttl = std::chrono::milliseconds{0});
 
     /// Where to put the secret: a query parameter for "query" auth, otherwise
@@ -106,7 +119,9 @@ std::string to_string(const Lease& lease);
 /// injects a key, retries on rate limits with the next key, and never returns
 /// the secret. Upstream responses come back as they are (a non 2xx status is
 /// not an exception) and carry X-Acnologia-Key-Id and X-Acnologia-Attempts.
-/// The body is read fully into memory.
+/// The body is read fully into memory. Acnologia's own errors (no key, an app
+/// limit, an ended share) also come back as responses, unless
+/// ClientOptions::throw_proxy_errors is set or you call check().
 class Proxy {
 public:
     const std::string& service() const noexcept { return service_; }
@@ -126,6 +141,27 @@ public:
     HttpResponse post(const std::string& path, const std::string& body,
                       const std::string& content_type = "application/json",
                       const Headers& headers = {}) const;
+    /// PUT and PATCH with a Content-Type (application/json by default).
+    HttpResponse put(const std::string& path, const std::string& body,
+                     const std::string& content_type = "application/json", const Headers& headers = {}) const;
+    HttpResponse patch(const std::string& path, const std::string& body,
+                       const std::string& content_type = "application/json", const Headers& headers = {}) const;
+    /// DELETE (delete is a keyword).
+    HttpResponse del(const std::string& path, const Query& query = {}, const Headers& headers = {}) const;
+
+    /// POST with an Idempotency-Key, so a retry never runs the request twice:
+    /// the proxy answers a repeated key with the stored response and
+    /// Idempotent-Replayed: true. An empty key gets a new random one. When the
+    /// connection fails, the request is sent once more with the same key.
+    /// Throws std::invalid_argument for a key over max_idempotency_key bytes.
+    HttpResponse post_idempotent(const std::string& path, const std::string& body,
+                                 std::string idempotency_key = {},
+                                 const std::string& content_type = "application/json",
+                                 const Headers& headers = {}) const;
+
+    /// Throws the typed ApiError when resp is an error from Acnologia itself
+    /// (see is_acnologia_error); does nothing for the provider's answers.
+    void check(const HttpResponse& resp) const;
 
 private:
     friend class Client;
@@ -138,10 +174,22 @@ private:
 
 std::ostream& operator<<(std::ostream& os, const Proxy& proxy);
 
+/// True when a proxy response is an error from Acnologia itself rather than
+/// the provider's answer: a JSON {"error": {"code"}} body with one of the
+/// consumer API codes at its documented status (for example 429
+/// app_limit_reached, 403 share_revoked, 508 loop_detected), and no
+/// X-Acnologia-Key-Id header, which only relayed answers carry.
+bool is_acnologia_error(const HttpResponse& resp);
+
+/// Throws the typed ApiError for resp when is_acnologia_error(resp).
+void throw_if_acnologia_error(const HttpResponse& resp);
+
 namespace detail {
 void run_with_key(const Client& client, const std::string& service,
                   const std::function<void(Lease&)>& fn, const WithKeyOptions& options);
 std::string scrub_message(const std::string& message, const std::string& secret);
+/// Replaces each non empty secret (raw and URL encoded) with [redacted].
+std::string scrub_secrets(std::string message, const std::vector<std::string>& secrets);
 }  // namespace detail
 
 /// Client for an Acnologia key pool, authenticated with an app token
@@ -154,11 +202,12 @@ std::string scrub_message(const std::string& message, const std::string& secret)
 class Client {
 public:
     /// base_url is the Acnologia server, for example http://localhost:8080.
-    /// Throws std::invalid_argument when either argument is empty.
+    /// An empty base_url or token falls back to ACNOLOGIA_URL or
+    /// ACNOLOGIA_TOKEN. Throws std::invalid_argument when one is still empty.
     Client(std::string base_url, std::string token, ClientOptions options = {});
 
-    /// Reads ACNOLOGIA_URL and ACNOLOGIA_TOKEN. Throws std::invalid_argument
-    /// when either is unset or empty.
+    /// Reads ACNOLOGIA_URL, ACNOLOGIA_TOKEN and ACNOLOGIA_ACCESS_PASSWORD.
+    /// Throws std::invalid_argument when the URL or token is unset or empty.
     static Client from_env(ClientOptions options = {});
 
     const std::string& base_url() const noexcept;
@@ -167,9 +216,19 @@ public:
     /// GET /api/v1/services: the services this app token may use.
     std::vector<Service> services() const;
 
+    /// GET /api/v1/me: the token's app, limits, use so far, services and,
+    /// for a share's token, the share and its status.
+    Me me() const;
+
+    /// GET /api/v1/services/{service}/guide as Markdown: how to call the
+    /// service. Throws Forbidden (service_not_allowed) for a service the
+    /// token may not use.
+    std::string guide(const std::string& service) const;
+
     /// POST /api/v1/lease. Throws NoKeyAvailable when the pool is empty or
     /// every key is cooling down, and AllKeysBusy (a subclass) when every
     /// usable key is at its concurrency limit and options.wait ran out.
+    /// Throws LeaseNotAllowed when the service is proxy only for this token.
     /// Throws std::invalid_argument when options.wait is outside 0 to max_wait.
     Lease lease(const std::string& service, const LeaseOptions& options = {}) const;
 

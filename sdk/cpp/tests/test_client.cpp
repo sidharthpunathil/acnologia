@@ -55,6 +55,36 @@ json lease_json(const std::string& id, std::int64_t key, const std::string& secr
             {"expires_at", "2026-11-02T10:00:00Z"}, {"exclusive", false}};
 }
 
+void set_env(const char* name, const std::string& value) {
+#ifdef _WIN32
+    ::_putenv_s(name, value.c_str());
+#else
+    ::setenv(name, value.c_str(), 1);
+#endif
+}
+
+void unset_env(const char* name) {
+#ifdef _WIN32
+    ::_putenv_s(name, "");
+#else
+    ::unsetenv(name);
+#endif
+}
+
+void clear_env() {
+    for (const char* n : {"ACNOLOGIA_URL", "ACNOLOGIA_TOKEN", "ACNOLOGIA_ACCESS_PASSWORD", "ACNOLOGIA_ACCESS_URL"}) {
+        unset_env(n);
+    }
+}
+
+acn::HttpResponse error_reply(int status, const std::string& code, const std::string& message = "m",
+                              json extra = json::object(), acn::Headers headers = {}) {
+    json j = extra;
+    j["error"] = {{"code", code}, {"message", message}};
+    headers.emplace_back("Content-Type", "application/json");
+    return {status, headers, j.dump()};
+}
+
 std::string header(const acn::HttpRequest& r, const std::string& name) {
     for (const auto& [k, v] : r.headers) {
         if (k == name) return v;
@@ -537,20 +567,18 @@ TEST_CASE("from_env reads ACNOLOGIA_URL and ACNOLOGIA_TOKEN") {
     acn::ClientOptions o;
     o.transport = fake;
     o.user_agent = "my-app/1";
-    ::unsetenv("ACNOLOGIA_URL");
-    ::unsetenv("ACNOLOGIA_TOKEN");
+    clear_env();
     CHECK_THROWS_AS(acn::Client::from_env(o), std::invalid_argument);
-    ::setenv("ACNOLOGIA_URL", "http://env.test//", 1);
+    set_env("ACNOLOGIA_URL", "http://env.test//");
     CHECK_THROWS_AS(acn::Client::from_env(o), std::invalid_argument);
-    ::setenv("ACNOLOGIA_TOKEN", "acn_env", 1);
+    set_env("ACNOLOGIA_TOKEN", "acn_env");
     auto c = acn::Client::from_env(o);
     CHECK(c.base_url() == "http://env.test");
     CHECK(c.services().empty());
     CHECK(fake->requests[0].url == "http://env.test/api/v1/services");
     CHECK(header(fake->requests[0], "Authorization") == "Bearer acn_env");
     CHECK(header(fake->requests[0], "User-Agent") == "my-app/1");
-    ::unsetenv("ACNOLOGIA_URL");
-    ::unsetenv("ACNOLOGIA_TOKEN");
+    clear_env();
     CHECK_THROWS_AS(acn::Client("", "t"), std::invalid_argument);
 }
 
@@ -564,4 +592,417 @@ TEST_CASE("a lease outlives its client") {
         l = c.lease("serpapi");
     }
     CHECK_FALSE(l->report(acn::Outcome::ok).has_value());
+}
+
+TEST_CASE("me parses an ordinary app") {
+    Fixture f([](const acn::HttpRequest&) {
+        return reply(200, json::parse(R"({
+            "app": {"id": 7, "name": "agi-labs-worker"},
+            "limits": {"daily_requests": 1000, "monthly_requests": null, "daily_budget": 2.5, "monthly_budget": null},
+            "usage": {"today_requests": 12, "today_cost": 0.25, "month_requests": 340, "month_cost": 3.5,
+                      "last_used_at": "2026-11-04T09:00:00Z", "limit_hit": null},
+            "limit_hit": null,
+            "services": [{"slug": "agi-labs", "name": "AGI Labs", "provider": "agi-labs", "category": "llm",
+                          "available": 1, "logo_url": null}],
+            "share": null})"));
+    });
+    acn::Me me = f.client.me();
+    CHECK(f.fake->requests[0].method == "GET");
+    CHECK(f.fake->path(0) == "/api/v1/me");
+    CHECK(header(f.fake->requests[0], "Authorization") == "Bearer acn_test_token");
+    CHECK(me.app.id == 7);
+    CHECK(me.app.name == "agi-labs-worker");
+    CHECK(me.limits.daily_requests == 1000);
+    CHECK_FALSE(me.limits.monthly_requests.has_value());
+    CHECK(me.limits.daily_budget == 2.5);
+    CHECK_FALSE(me.limits.monthly_budget.has_value());
+    CHECK(me.usage.today_requests == 12);
+    CHECK(me.usage.today_cost == 0.25);
+    CHECK(me.usage.month_requests == 340);
+    CHECK(me.usage.month_cost == 3.5);
+    CHECK(me.usage.last_used_at == "2026-11-04T09:00:00Z");
+    CHECK_FALSE(me.usage.limit_hit.has_value());
+    CHECK_FALSE(me.limit_hit.has_value());
+    REQUIRE(me.services.size() == 1);
+    CHECK(me.services[0].slug == "agi-labs");
+    CHECK(me.services[0].available == 1);
+    CHECK(me.services[0].logo_url.empty());
+    CHECK_FALSE(me.share.has_value());
+}
+
+TEST_CASE("me parses a share token, its limit hit and a paused share") {
+    Fixture f([](const acn::HttpRequest&) {
+        return reply(200, json::parse(R"({
+            "app": {"id": 9, "name": "Team share"},
+            "limits": {"daily_requests": 10},
+            "usage": {"today_requests": 10, "today_cost": 0, "month_requests": 10, "month_cost": 0,
+                      "last_used_at": null,
+                      "limit_hit": {"limit": "daily_requests", "reset_at": "2026-11-05T00:00:00Z"}},
+            "limit_hit": {"limit": "daily_requests", "reset_at": "2026-11-05T00:00:00Z"},
+            "services": [],
+            "share": {"id": "shr_1", "name": "Team share", "owner": {"name": "Home server", "id": "acn_srv_abc"},
+                      "owner_name": "Home server", "owner_id": "acn_srv_abc", "recipient": "person",
+                      "label": "Anyone with the link", "status": "paused", "mode": "proxy",
+                      "ends_at": "2026-12-01T00:00:00Z"}})"));
+    });
+    acn::Me me = f.client.me();
+    CHECK(me.usage.last_used_at.empty());
+    REQUIRE(me.limit_hit.has_value());
+    CHECK(me.limit_hit->limit == "daily_requests");
+    CHECK(me.limit_hit->reset_at == "2026-11-05T00:00:00Z");
+    REQUIRE(me.usage.limit_hit.has_value());
+    CHECK(me.services.empty());
+    REQUIRE(me.share.has_value());
+    CHECK(me.share->id == "shr_1");
+    CHECK(me.share->owner.name == "Home server");
+    CHECK(me.share->owner.id == "acn_srv_abc");
+    CHECK(me.share->recipient == "person");
+    CHECK(me.share->status == "paused");
+    CHECK_FALSE(me.share->active());
+    CHECK(me.share->ends_at == "2026-12-01T00:00:00Z");
+}
+
+TEST_CASE("services reads guide_url and guide fetches Markdown") {
+    Fixture f([](const acn::HttpRequest& r) {
+        if (r.url.find("/guide") != std::string::npos) {
+            if (r.url.find("/services/secret/") != std::string::npos) {
+                return error_reply(403, "service_not_allowed", "not yours");
+            }
+            return acn::HttpResponse{200, {{"Content-Type", "text/markdown"}}, "# AGI Labs\n\nPOST /v1/chat\n"};
+        }
+        return reply(200, {{"services", {{{"slug", "agi-labs"}, {"guide_url", "/api/v1/services/agi-labs/guide"}}}}});
+    });
+    CHECK(f.client.services().at(0).guide_url == "/api/v1/services/agi-labs/guide");
+    CHECK(f.client.guide("agi-labs") == "# AGI Labs\n\nPOST /v1/chat\n");
+    CHECK(f.fake->path(1) == "/api/v1/services/agi-labs/guide?format=md");
+    CHECK(header(f.fake->requests[1], "Accept") == "text/markdown");
+    CHECK_THROWS_AS(f.client.guide("secret"), acn::Forbidden);
+}
+
+TEST_CASE("app_limit_reached is AppLimitReached with limit, reset_at and retry_after") {
+    bool body_retry = true;
+    Fixture f([&](const acn::HttpRequest&) {
+        json extra = {{"limit", "monthly_budget"}, {"reset_at", "2026-12-01T00:00:00Z"}};
+        if (body_retry) extra["retry_after_sec"] = 120;
+        return error_reply(429, "app_limit_reached", "this app reached its monthly budget limit", extra,
+                           {{"Retry-After", "90"}});
+    });
+    try {
+        f.client.lease("agi-labs");
+        FAIL("expected AppLimitReached");
+    } catch (const acn::AppLimitReached& e) {
+        CHECK(e.status() == 429);
+        CHECK(e.code() == "app_limit_reached");
+        CHECK(e.limit() == "monthly_budget");
+        CHECK(e.reset_at() == "2026-12-01T00:00:00Z");
+        CHECK(e.retry_after() == 120s);
+        CHECK(std::string(e.what()) ==
+              "acnologia: app limit reached (monthly_budget, resets 2026-12-01T00:00:00Z) (retry after 120s): "
+              "this app reached its monthly budget limit");
+    }
+    body_retry = false;
+    try {
+        f.client.services();
+        FAIL("expected AppLimitReached");
+    } catch (const acn::AppLimitReached& e) {
+        CHECK(e.retry_after() == 90s);  // from the Retry-After header
+    }
+}
+
+TEST_CASE("Retry-After is the fallback for every error") {
+    std::string code = "no_key_available";
+    Fixture f([&](const acn::HttpRequest&) {
+        return error_reply(code == "rate_limited" ? 429 : 503, code, "m", json::object(), {{"Retry-After", "4"}});
+    });
+    try {
+        f.client.lease("agi-labs");
+        FAIL("expected NoKeyAvailable");
+    } catch (const acn::NoKeyAvailable& e) {
+        CHECK(e.retry_after() == 4s);
+    }
+    code = "service_unavailable";
+    try {
+        f.client.lease("agi-labs");
+        FAIL("expected ServiceUnavailable");
+    } catch (const acn::ServiceUnavailable& e) {
+        CHECK(e.retry_after() == 4s);
+    }
+    code = "rate_limited";
+    try {
+        f.client.lease("agi-labs");
+        FAIL("expected ApiError");
+    } catch (const acn::ApiError& e) {
+        CHECK(e.status() == 429);
+        CHECK(e.retry_after() == 4s);
+    }
+}
+
+TEST_CASE("share, lease, upstream and loop errors have their own types") {
+    std::string code;
+    int status = 403;
+    Fixture f([&](const acn::HttpRequest&) { return error_reply(status, code, "msg"); });
+
+    code = "share_revoked";
+    try {
+        f.client.services();
+        FAIL("expected ShareRevoked");
+    } catch (const acn::ShareRevoked& e) {
+        CHECK(e.share_status() == "revoked");
+        CHECK(e.status() == 403);
+    }
+    code = "share_paused";
+    CHECK_THROWS_AS(f.client.services(), acn::SharePaused);
+    try {
+        f.client.services();
+    } catch (const acn::ShareUnavailable& e) {
+        CHECK(e.share_status() == "paused");
+    }
+    code = "share_expired";
+    CHECK_THROWS_AS(f.client.services(), acn::ShareExpired);
+    CHECK_THROWS_AS(f.client.services(), acn::Forbidden);  // still a Forbidden for older handlers
+
+    code = "lease_not_allowed";
+    CHECK_THROWS_AS(f.client.lease("agi-labs"), acn::LeaseNotAllowed);
+    CHECK_THROWS_AS(f.client.lease("agi-labs"), acn::Forbidden);
+
+    code = "lease_revoked";
+    CHECK_THROWS_AS(f.client.services(), acn::LeaseRevoked);
+
+    status = 502;
+    code = "upstream_blocked";
+    CHECK_THROWS_AS(f.client.services(), acn::UpstreamBlocked);
+    code = "upstream_unreachable";
+    CHECK_THROWS_AS(f.client.services(), acn::UpstreamUnreachable);
+
+    status = 508;
+    code = "loop_detected";
+    try {
+        f.client.services();
+        FAIL("expected LoopDetected");
+    } catch (const acn::LoopDetected& e) {
+        CHECK(e.status() == 508);
+        CHECK(std::string(e.what()) == "acnologia: http 508: loop_detected: msg");
+    }
+}
+
+TEST_CASE("renew throws LeaseRevoked when the app may no longer hold the key") {
+    Fixture f([](const acn::HttpRequest& r) {
+        if (r.url.find("/renew") != std::string::npos) return error_reply(403, "lease_revoked", "key disabled");
+        return reply(200, lease_json("lse_1", 1));
+    });
+    auto l = f.client.lease("agi-labs");
+    CHECK_THROWS_AS(l.renew(), acn::LeaseRevoked);
+}
+
+TEST_CASE("proxy answers stay responses unless throw_proxy_errors is set") {
+    acn::HttpResponse next;
+    auto fake = std::make_shared<FakeTransport>([&](const acn::HttpRequest&) { return next; });
+    acn::ClientOptions o;
+    o.transport = fake;
+    acn::Client plain("http://acn.test", "acn_x", o);
+    o.throw_proxy_errors = true;
+    acn::Client strict("http://acn.test", "acn_x", o);
+
+    next = error_reply(429, "app_limit_reached", "limit", {{"limit", "daily_requests"}, {"retry_after_sec", 5}});
+    CHECK(plain.proxy("agi-labs").post("/v1/chat", "{}").status == 429);
+    CHECK(acn::is_acnologia_error(next));
+    CHECK_THROWS_AS(plain.proxy("agi-labs").check(next), acn::AppLimitReached);
+    CHECK_THROWS_AS(acn::throw_if_acnologia_error(next), acn::AppLimitReached);
+    try {
+        strict.proxy("agi-labs").post("/v1/chat", "{}");
+        FAIL("expected AppLimitReached");
+    } catch (const acn::AppLimitReached& e) {
+        CHECK(e.limit() == "daily_requests");
+        CHECK(e.retry_after() == 5s);
+    }
+
+    next = error_reply(403, "share_expired", "over");
+    CHECK_THROWS_AS(strict.proxy_get("agi-labs", "/v1/models"), acn::ShareExpired);
+    next = error_reply(508, "loop_detected", "loop");
+    CHECK_THROWS_AS(strict.proxy_get("agi-labs", "/v1/models"), acn::LoopDetected);
+    next = error_reply(503, "all_keys_busy", "busy", {{"retry_after_sec", 1}});
+    CHECK_THROWS_AS(strict.proxy_get("agi-labs", "/v1/models"), acn::AllKeysBusy);
+
+    // The provider's own answers are never thrown, even when they look alike.
+    next = error_reply(429, "app_limit_reached", "provider side", json::object(), {{"X-Acnologia-Key-Id", "3"}});
+    CHECK_FALSE(acn::is_acnologia_error(next));
+    CHECK(strict.proxy("agi-labs").post("/v1/chat", "{}").status == 429);
+    next = error_reply(429, "rate_limit_exceeded", "slow down");
+    CHECK_FALSE(acn::is_acnologia_error(next));
+    CHECK(strict.proxy("agi-labs").post("/v1/chat", "{}").status == 429);
+    next = error_reply(500, "no_key_available", "wrong status");
+    CHECK_FALSE(acn::is_acnologia_error(next));
+    next = {200, {}, R"({"error":{"code":"loop_detected"}})"};
+    CHECK_FALSE(acn::is_acnologia_error(next));
+    next = {404, {}, "not json"};
+    CHECK_FALSE(acn::is_acnologia_error(next));
+}
+
+TEST_CASE("put, patch and del send their methods") {
+    Fixture f([](const acn::HttpRequest&) { return acn::HttpResponse{204, {}, ""}; });
+    auto p = f.client.proxy("agi-labs");
+    p.put("/v1/files/1", R"({"a":1})");
+    p.patch("/v1/files/1", "a=1", "application/x-www-form-urlencoded");
+    p.del("/v1/files/1", {{"force", "true"}});
+    CHECK(f.fake->requests[0].method == "PUT");
+    CHECK(header(f.fake->requests[0], "Content-Type") == "application/json");
+    CHECK(f.fake->requests[1].method == "PATCH");
+    CHECK(header(f.fake->requests[1], "Content-Type") == "application/x-www-form-urlencoded");
+    CHECK(f.fake->requests[1].body == "a=1");
+    CHECK(f.fake->requests[2].method == "DELETE");
+    CHECK(f.fake->requests[2].url == "http://acn.test/proxy/agi-labs/v1/files/1?force=true");
+    CHECK(f.fake->requests[2].body.empty());
+}
+
+TEST_CASE("post_idempotent sends an Idempotency-Key and retries a failed connection with it") {
+    int fail = 0;
+    Fixture f([&](const acn::HttpRequest&) {
+        if (fail > 0) {
+            --fail;
+            throw acn::TransportError("acnologia: POST request failed: connection reset");
+        }
+        return acn::HttpResponse{200, {{"Idempotent-Replayed", "true"}}, "{}"};
+    });
+    auto p = f.client.proxy("agi-labs");
+
+    auto resp = p.post_idempotent("/v1/chat", R"({"q":"hi"})", "job-42", "application/json",
+                                  {{"idempotency-key", "old"}, {"X-Trace", "1"}});
+    CHECK(resp.idempotent_replayed());
+    CHECK(header(f.fake->requests[0], "Idempotency-Key") == "job-42");
+    CHECK(header(f.fake->requests[0], "idempotency-key").empty());
+    CHECK(header(f.fake->requests[0], "X-Trace") == "1");
+    CHECK(header(f.fake->requests[0], "Content-Type") == "application/json");
+
+    p.post_idempotent("/v1/chat", "{}");
+    std::string generated = header(f.fake->requests[1], "Idempotency-Key");
+    CHECK(generated.size() == 32);
+
+    fail = 1;
+    p.post_idempotent("/v1/chat", "{}", "retry-me");
+    REQUIRE(f.fake->requests.size() == 4);
+    CHECK(header(f.fake->requests[2], "Idempotency-Key") == "retry-me");
+    CHECK(header(f.fake->requests[3], "Idempotency-Key") == "retry-me");
+
+    fail = 2;
+    CHECK_THROWS_AS(p.post_idempotent("/v1/chat", "{}", "twice"), acn::TransportError);
+    CHECK_THROWS_AS(p.post_idempotent("/v1/chat", "{}", std::string(201, 'k')), std::invalid_argument);
+    CHECK_FALSE(acn::HttpResponse{}.idempotent_replayed());
+}
+
+TEST_CASE("new_idempotency_key is 32 random hex characters") {
+    std::string a = acn::new_idempotency_key();
+    std::string b = acn::new_idempotency_key();
+    CHECK(a.size() == 32);
+    CHECK(a.find_first_not_of("0123456789abcdef") == std::string::npos);
+    CHECK(a != b);
+}
+
+TEST_CASE("parse_retry_after reads seconds and HTTP dates") {
+    CHECK(acn::parse_retry_after("120") == 120s);
+    CHECK(acn::parse_retry_after(" 7 ") == 7s);
+    CHECK(acn::parse_retry_after("") == 0ms);
+    CHECK(acn::parse_retry_after("-1") == 0ms);
+    CHECK(acn::parse_retry_after("soon") == 0ms);
+    CHECK(acn::parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT") == 0ms);  // in the past
+    auto later = acn::parse_retry_after("Fri, 01 Jan 2100 00:00:00 GMT");
+    CHECK(later > std::chrono::hours(24 * 365));
+    acn::HttpResponse r{429, {{"retry-after", "3"}}, ""};
+    CHECK(r.retry_after() == 3s);
+}
+
+TEST_CASE("the access password is sent as X-Acnologia-Access") {
+    clear_env();
+    auto fake = std::make_shared<FakeTransport>([](const acn::HttpRequest&) { return reply(200, {{"services", json::array()}}); });
+    acn::ClientOptions o;
+    o.transport = fake;
+    o.access_password = "correct horse battery";
+    acn::Client c("http://acn.test", "acn_x", o);
+    c.services();
+    CHECK(header(fake->requests[0], "X-Acnologia-Access") == "correct horse battery");
+    c.proxy("agi-labs").get("/v1/models", {}, {{"X-Acnologia-Access", "other"}});
+    int n = 0;
+    for (const auto& h : fake->requests[1].headers) n += h.first == "X-Acnologia-Access";
+    CHECK(n == 1);
+    CHECK(header(fake->requests[1], "X-Acnologia-Access") == "correct horse battery");
+
+    o.access_password.clear();
+    acn::Client none("http://acn.test", "acn_x", o);
+    none.services();
+    CHECK(header(fake->requests[2], "X-Acnologia-Access").empty());
+}
+
+TEST_CASE("ACNOLOGIA_ACCESS_PASSWORD goes only to its own server") {
+    clear_env();
+    auto fake = std::make_shared<FakeTransport>([](const acn::HttpRequest&) { return reply(200, {{"services", json::array()}}); });
+    acn::ClientOptions o;
+    o.transport = fake;
+    set_env("ACNOLOGIA_URL", "https://keys.example.test:443/");
+    set_env("ACNOLOGIA_TOKEN", "acn_env");
+    set_env("ACNOLOGIA_ACCESS_PASSWORD", "env password 123");
+
+    acn::Client::from_env(o).services();
+    CHECK(header(fake->requests[0], "X-Acnologia-Access") == "env password 123");
+    acn::Client("", "", o).services();  // empty arguments fall back to the environment
+    CHECK(fake->requests[1].url == "https://keys.example.test:443/api/v1/services");
+    CHECK(header(fake->requests[1], "Authorization") == "Bearer acn_env");
+    CHECK(header(fake->requests[1], "X-Acnologia-Access") == "env password 123");
+
+    acn::Client("https://other.example.test", "acn_x", o).services();
+    CHECK(header(fake->requests[2], "X-Acnologia-Access").empty());
+    acn::Client("HTTPS://keys.example.test/", "acn_x", o).services();  // same origin, default port left out
+    CHECK(header(fake->requests[3], "X-Acnologia-Access") == "env password 123");
+
+    set_env("ACNOLOGIA_ACCESS_URL", "https://other.example.test/");
+    acn::Client("https://other.example.test", "acn_x", o).services();
+    CHECK(header(fake->requests[4], "X-Acnologia-Access") == "env password 123");
+    acn::Client::from_env(o).services();
+    CHECK(header(fake->requests[5], "X-Acnologia-Access").empty());
+    clear_env();
+}
+
+TEST_CASE("error messages never carry the token or the access password") {
+    acn::ClientOptions o;
+    bool transport_fails = false;
+    auto fake = std::make_shared<FakeTransport>([&](const acn::HttpRequest&) -> acn::HttpResponse {
+        if (transport_fails) {
+            throw acn::TransportError("acnologia: GET request failed: http://acn.test/?acn_token=acn_s3cret_token");
+        }
+        return error_reply(400, "bad_request", "token acn_s3cret_token and password hunter2hunter2 echoed");
+    });
+    o.transport = fake;
+    o.access_password = "hunter2hunter2";
+    acn::Client c("http://acn.test", "acn_s3cret_token", o);
+    try {
+        c.services();
+        FAIL("expected ApiError");
+    } catch (const acn::ApiError& e) {
+        CHECK(e.message() == "token [redacted] and password [redacted] echoed");
+        CHECK(std::string(e.what()).find("acn_s3cret_token") == std::string::npos);
+    }
+    transport_fails = true;
+    try {
+        c.services();
+        FAIL("expected TransportError");
+    } catch (const acn::TransportError& e) {
+        CHECK(std::string(e.what()) == "acnologia: GET request failed: http://acn.test/?acn_token=[redacted]");
+    }
+    try {
+        c.proxy("agi-labs").get("/v1/models");
+        FAIL("expected TransportError");
+    } catch (const acn::TransportError& e) {
+        CHECK(std::string(e.what()).find("acn_s3cret_token") == std::string::npos);
+    }
+}
+
+TEST_CASE("report scrubs the secret from a message you write yourself") {
+    Fixture f(pool_handler(1));
+    auto l = f.client.lease("agi-labs");
+    acn::Report r;
+    r.outcome = acn::Outcome::error;
+    r.message = "failed with " + l.secret() + " " + std::string(600, 'x');
+    l.report(r);
+    std::string msg = f.fake->reports().at(0)["message"];
+    CHECK(msg.find(l.secret()) == std::string::npos);
+    CHECK(msg.rfind("failed with [key] ", 0) == 0);
+    CHECK(msg.size() == 500);
 }

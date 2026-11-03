@@ -83,7 +83,109 @@ void replace_all(std::string& s, const std::string& from, const std::string& to)
     }
 }
 
+// Replaces secret, its percent encoded form and its form encoded form.
+void replace_secret(std::string& s, const std::string& secret, const std::string& with) {
+    if (secret.empty()) return;
+    replace_all(s, secret, with);
+    std::string enc = url_encode(secret);
+    replace_all(s, enc, with);
+    std::string form = enc;
+    replace_all(form, "%20", "+");
+    replace_all(s, form, with);
+}
+
+std::optional<std::int64_t> json_opt_int(const json& j, const char* key) {
+    auto it = j.find(key);
+    if (it == j.end() || !it->is_number()) return std::nullopt;
+    if (it->is_number_integer()) return it->get<std::int64_t>();
+    return static_cast<std::int64_t>(it->get<double>());
+}
+
+std::optional<double> json_opt_double(const json& j, const char* key) {
+    auto it = j.find(key);
+    if (it == j.end() || !it->is_number()) return std::nullopt;
+    return it->get<double>();
+}
+
+std::int64_t json_int(const json& j, const char* key) { return json_opt_int(j, key).value_or(0); }
+double json_double(const json& j, const char* key) { return json_opt_double(j, key).value_or(0.0); }
+
+std::optional<LimitHit> json_limit_hit(const json& j, const char* key) {
+    auto it = j.find(key);
+    if (it == j.end() || !it->is_object()) return std::nullopt;
+    return LimitHit{json_string(*it, "limit"), json_string(*it, "reset_at")};
+}
+
+const json* json_object(const json& j, const char* key) {
+    auto it = j.find(key);
+    if (it == j.end() || !it->is_object()) return nullptr;
+    return &*it;
+}
+
+// scheme://host[:port], lower case, without a default port.
+std::string origin_of(const std::string& url) {
+    auto scheme_end = url.find("://");
+    if (scheme_end == std::string::npos) return {};
+    auto host_end = url.find_first_of("/?#", scheme_end + 3);
+    std::string o = lower(url.substr(0, host_end == std::string::npos ? url.size() : host_end));
+    auto strip = [&o](const std::string& scheme, const std::string& port) {
+        if (o.rfind(scheme + "://", 0) == 0 && o.size() > port.size() &&
+            o.compare(o.size() - port.size(), port.size(), port) == 0) {
+            o.resize(o.size() - port.size());
+        }
+    };
+    strip("http", ":80");
+    strip("https", ":443");
+    return o;
+}
+
+std::string env(const char* name) {
+    const char* v = std::getenv(name);
+    return v ? v : "";
+}
+
+// Expected statuses for the codes Acnologia itself answers on the proxy.
+bool acnologia_code(const std::string& code, int status) {
+    if (code == "unauthenticated") return status == 401 || status == 403;
+    if (code == "service_not_allowed" || code == "proxy_not_allowed" || code == "lease_not_allowed" ||
+        code == "share_revoked" || code == "share_paused" || code == "share_expired") {
+        return status == 403;
+    }
+    if (code == "bad_path" || code == "bad_body") return status == 400;
+    if (code == "method_not_allowed") return status == 405;
+    if (code == "body_too_large") return status == 413;
+    if (code == "no_key_available" || code == "all_keys_busy" || code == "service_unavailable" ||
+        code == "empty_group") {
+        return status == 503;
+    }
+    if (code == "app_limit_reached") return status == 429;
+    if (code == "unknown_service") return status == 404;
+    if (code == "upstream_unreachable" || code == "upstream_blocked") return status == 502;
+    if (code == "loop_detected") return status == 508;
+    return false;
+}
+
+std::string error_code(const std::string& body) {
+    json j = json::parse(body, nullptr, false);
+    if (!j.is_object()) return {};
+    auto e = j.find("error");
+    if (e == j.end() || !e->is_object()) return {};
+    return json_string(*e, "code");
+}
+
+void set_header(Headers& headers, const std::string& name, const std::string& value) {
+    const std::string n = lower(name);
+    headers.erase(std::remove_if(headers.begin(), headers.end(), [&n](const auto& h) { return lower(h.first) == n; }),
+                  headers.end());
+    headers.emplace_back(name, value);
+}
+
 }  // namespace
+
+std::string scrub_secrets(std::string message, const std::vector<std::string>& secrets) {
+    for (const auto& s : secrets) replace_secret(message, s, "[redacted]");
+    return message;
+}
 
 long long ceil_seconds(std::chrono::milliseconds d) {
     auto ms = d.count();
@@ -93,14 +195,7 @@ long long ceil_seconds(std::chrono::milliseconds d) {
 
 std::string scrub_message(const std::string& message, const std::string& secret) {
     std::string out = message;
-    if (!secret.empty()) {
-        replace_all(out, secret, "[key]");
-        std::string enc = url_encode(secret);
-        replace_all(out, enc, "[key]");
-        std::string form = enc;
-        replace_all(form, "%20", "+");
-        replace_all(out, form, "[key]");
-    }
+    replace_secret(out, secret, "[key]");
     if (out.size() > max_report_message) {
         std::size_t cut = max_report_message;
         // Do not split a UTF-8 sequence.
@@ -110,9 +205,10 @@ std::string scrub_message(const std::string& message, const std::string& secret)
     return out;
 }
 
-void throw_api_error(int status, const std::string& body) {
+void throw_api_error(int status, const std::string& body, const Headers& headers,
+                     const std::vector<std::string>& secrets) {
     json j = json::parse(body, nullptr, false);
-    std::string code, message;
+    std::string code, message, limit, reset_at;
     std::chrono::milliseconds retry{0};
     if (j.is_object()) {
         auto e = j.find("error");
@@ -123,39 +219,72 @@ void throw_api_error(int status, const std::string& body) {
             message = e->get<std::string>();
         }
         retry = json_seconds(j, "retry_after_sec");
+        limit = json_string(j, "limit");
+        reset_at = json_string(j, "reset_at");
     }
-    if (code == "all_keys_busy") throw AllKeysBusy(message, retry, status);
-    if (code == "no_key_available" || (status == 503 && code.empty())) {
-        throw NoKeyAvailable(message, retry, "no_key_available", status);
+    if (retry.count() == 0) {
+        HttpResponse h;
+        h.headers = headers;
+        retry = h.retry_after();
     }
-    if (code == "service_unavailable") throw ServiceUnavailable(message, retry, status);
     if (message.empty() && code.empty()) {
         message = trim_space(body);
         if (message.size() > 200) message.resize(200);
         if (message.empty()) message = status_text(status);
         if (message.empty()) message = "HTTP " + std::to_string(status);
     }
+    message = scrub_secrets(std::move(message), secrets);
+    if (code == "all_keys_busy") throw AllKeysBusy(message, retry, status);
+    if (code == "no_key_available" || (status == 503 && code.empty())) {
+        throw NoKeyAvailable(message, retry, "no_key_available", status);
+    }
+    if (code == "service_unavailable") throw ServiceUnavailable(message, retry, status);
+    if (code == "app_limit_reached") throw AppLimitReached(message, limit, reset_at, retry, status);
+    if (code == "share_revoked") throw ShareRevoked(message, status);
+    if (code == "share_paused") throw SharePaused(message, status);
+    if (code == "share_expired") throw ShareExpired(message, status);
+    if (code == "lease_not_allowed") throw LeaseNotAllowed(message, status);
+    if (code == "lease_revoked") throw LeaseRevoked(message, status);
+    if (code == "upstream_unreachable") throw UpstreamUnreachable(message, status);
+    if (code == "upstream_blocked") throw UpstreamBlocked(message, status);
+    if (code == "loop_detected") throw LoopDetected(message, status);
     if (status == 401) throw Unauthenticated(code, message, status);
     if (status == 403) throw Forbidden(code, message, status);
-    throw ApiError(status, code, message);
+    throw ApiError(status, code, message, retry);
 }
 
-json ClientCore::call(const std::string& method, const std::string& path, const json* body,
-                      std::chrono::milliseconds timeout_override) const {
+HttpResponse ClientCore::send(const HttpRequest& req) const {
+    try {
+        return transport->send(req);
+    } catch (const TransportError& e) {
+        std::string what = e.what();
+        std::string scrubbed = scrub_secrets(what, secrets());
+        if (scrubbed == what) throw;
+        throw TransportError(scrubbed);
+    }
+}
+
+HttpResponse ClientCore::raw(const std::string& method, const std::string& path, const json* body,
+                             std::chrono::milliseconds timeout_override, const std::string& accept) const {
     HttpRequest req;
     req.method = method;
     req.url = base_url + path;
     req.timeout = timeout;
     if (timeout.count() > 0 && timeout_override > timeout) req.timeout = timeout_override;
-    req.headers = {{"Authorization", "Bearer " + token},
-                   {"User-Agent", user_agent},
-                   {"Accept", "application/json"}};
+    req.headers = {{"Authorization", "Bearer " + token}, {"User-Agent", user_agent}, {"Accept", accept}};
+    if (!access_password.empty()) req.headers.emplace_back("X-Acnologia-Access", access_password);
     if (body != nullptr) {
         req.headers.emplace_back("Content-Type", "application/json");
         req.body = body->dump();
     }
-    HttpResponse resp = transport->send(req);
-    if (resp.status < 200 || resp.status > 299) throw_api_error(resp.status, resp.body);
+    HttpResponse resp = send(req);
+    if (resp.status < 200 || resp.status > 299) throw_api_error(resp.status, resp.body, resp.headers, secrets());
+    return resp;
+}
+
+json ClientCore::call(const std::string& method, const std::string& path, const json* body,
+                      std::chrono::milliseconds timeout_override) const {
+    HttpResponse resp = raw(method, path, body, timeout_override, "application/json");
     if (resp.body.empty()) return json();
     json out = json::parse(resp.body, nullptr, false);
     if (out.is_discarded()) throw Error("acnologia: decode response: invalid JSON");
@@ -256,7 +385,7 @@ std::optional<Lease> Lease::report(const Report& r) {
     json body = {{"outcome", to_string(r.outcome)}};
     if (r.status_code != 0) body["status_code"] = r.status_code;
     if (r.retry_after.count() > 0) body["retry_after_sec"] = detail::ceil_seconds(r.retry_after);
-    if (!r.message.empty()) body["message"] = r.message;
+    if (!r.message.empty()) body["message"] = detail::scrub_message(r.message, secret_);
     if (r.rotate) body["rotate"] = true;
     json out = core_->call("POST", "/api/v1/leases/" + url_encode(lease_id_) + "/report", &body);
     reported_ = true;
@@ -350,29 +479,87 @@ HttpResponse Proxy::request(const std::string& method, const std::string& path, 
     for (auto& c : req.method) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     req.url = url(p, query);
     req.body = body;
+    const bool own_access = !core_->access_password.empty();
     for (const auto& h : headers) {
         const std::string n = detail::lower(h.first);
         if (n == "authorization" || n == "user-agent") continue;
+        if (own_access && n == "x-acnologia-access") continue;
         req.headers.push_back(h);
     }
     req.headers.emplace_back("Authorization", "Bearer " + core_->token);
     req.headers.emplace_back("User-Agent", core_->user_agent);
+    if (own_access) req.headers.emplace_back("X-Acnologia-Access", core_->access_password);
     req.timeout = std::chrono::milliseconds{0};
-    return core_->transport->send(req);
+    HttpResponse resp = core_->send(req);
+    if (core_->throw_proxy_errors) check(resp);
+    return resp;
+}
+
+void Proxy::check(const HttpResponse& resp) const {
+    if (is_acnologia_error(resp)) detail::throw_api_error(resp.status, resp.body, resp.headers, core_->secrets());
 }
 
 HttpResponse Proxy::get(const std::string& path, const Query& query, const Headers& headers) const {
     return request("GET", path, {}, headers, query);
 }
 
-HttpResponse Proxy::post(const std::string& path, const std::string& body, const std::string& content_type,
-                         const Headers& headers) const {
+namespace {
+
+Headers with_content_type(const Headers& headers, const std::string& content_type) {
     Headers h;
     for (const auto& kv : headers) {
         if (detail::lower(kv.first) != "content-type") h.push_back(kv);
     }
     if (!content_type.empty()) h.emplace_back("Content-Type", content_type);
-    return request("POST", path, body, h);
+    return h;
+}
+
+}  // namespace
+
+HttpResponse Proxy::post(const std::string& path, const std::string& body, const std::string& content_type,
+                         const Headers& headers) const {
+    return request("POST", path, body, with_content_type(headers, content_type));
+}
+
+HttpResponse Proxy::put(const std::string& path, const std::string& body, const std::string& content_type,
+                        const Headers& headers) const {
+    return request("PUT", path, body, with_content_type(headers, content_type));
+}
+
+HttpResponse Proxy::patch(const std::string& path, const std::string& body, const std::string& content_type,
+                          const Headers& headers) const {
+    return request("PATCH", path, body, with_content_type(headers, content_type));
+}
+
+HttpResponse Proxy::del(const std::string& path, const Query& query, const Headers& headers) const {
+    return request("DELETE", path, {}, headers, query);
+}
+
+HttpResponse Proxy::post_idempotent(const std::string& path, const std::string& body, std::string idempotency_key,
+                                    const std::string& content_type, const Headers& headers) const {
+    if (idempotency_key.size() > max_idempotency_key) {
+        throw std::invalid_argument("acnologia: Idempotency-Key is longer than 200 bytes");
+    }
+    if (idempotency_key.empty()) idempotency_key = new_idempotency_key();
+    Headers h = with_content_type(headers, content_type);
+    detail::set_header(h, "Idempotency-Key", idempotency_key);
+    try {
+        return request("POST", path, body, h);
+    } catch (const TransportError&) {
+        // The same key makes the second try safe: if the first one reached
+        // the provider, the proxy replays its answer instead of sending again.
+        return request("POST", path, body, h);
+    }
+}
+
+bool is_acnologia_error(const HttpResponse& resp) {
+    if (resp.status < 400) return false;
+    if (!resp.header("X-Acnologia-Key-Id").empty()) return false;
+    return detail::acnologia_code(detail::error_code(resp.body), resp.status);
+}
+
+void throw_if_acnologia_error(const HttpResponse& resp) {
+    if (is_acnologia_error(resp)) detail::throw_api_error(resp.status, resp.body, resp.headers);
 }
 
 std::ostream& operator<<(std::ostream& os, const Proxy& p) {
@@ -382,6 +569,8 @@ std::ostream& operator<<(std::ostream& os, const Proxy& p) {
 // Client
 
 Client::Client(std::string base_url, std::string token, ClientOptions options) {
+    if (base_url.empty()) base_url = detail::env("ACNOLOGIA_URL");
+    if (token.empty()) token = detail::env("ACNOLOGIA_TOKEN");
     if (base_url.empty()) throw std::invalid_argument("acnologia: base_url is required (or set ACNOLOGIA_URL)");
     if (token.empty()) throw std::invalid_argument("acnologia: token is required (or set ACNOLOGIA_TOKEN)");
     auto core = std::make_shared<detail::ClientCore>();
@@ -391,13 +580,22 @@ Client::Client(std::string base_url, std::string token, ClientOptions options) {
         options.user_agent.empty() ? std::string("acnologia-cpp/") + version : std::move(options.user_agent);
     core->transport = options.transport ? std::move(options.transport) : make_curl_transport();
     core->timeout = options.timeout;
+    core->throw_proxy_errors = options.throw_proxy_errors;
+    core->access_password = std::move(options.access_password);
+    if (core->access_password.empty()) {
+        // The password belongs to one server: send it only there.
+        std::string owner = detail::env("ACNOLOGIA_ACCESS_URL");
+        if (owner.empty()) owner = detail::env("ACNOLOGIA_URL");
+        const std::string here = detail::origin_of(core->base_url);
+        if (!here.empty() && here == detail::origin_of(owner)) {
+            core->access_password = detail::env("ACNOLOGIA_ACCESS_PASSWORD");
+        }
+    }
     core_ = std::move(core);
 }
 
 Client Client::from_env(ClientOptions options) {
-    const char* url = std::getenv("ACNOLOGIA_URL");
-    const char* tok = std::getenv("ACNOLOGIA_TOKEN");
-    return Client(url ? url : "", tok ? tok : "", std::move(options));
+    return Client(detail::env("ACNOLOGIA_URL"), detail::env("ACNOLOGIA_TOKEN"), std::move(options));
 }
 
 const std::string& Client::base_url() const noexcept { return core_->base_url; }
@@ -423,9 +621,74 @@ std::vector<Service> Client::services() const {
             v.auth.name = detail::json_string(*a, "name");
             v.auth.prefix = detail::json_string(*a, "prefix");
         }
+        v.guide_url = detail::json_string(s, "guide_url");
         svcs.push_back(std::move(v));
     }
     return svcs;
+}
+
+Me Client::me() const {
+    json out = core_->call("GET", "/api/v1/me", nullptr);
+    Me me;
+    if (!out.is_object()) throw Error("acnologia: decode response: me is not an object");
+    if (const json* a = detail::json_object(out, "app")) {
+        me.app.id = detail::json_int(*a, "id");
+        me.app.name = detail::json_string(*a, "name");
+    }
+    if (const json* l = detail::json_object(out, "limits")) {
+        me.limits.daily_requests = detail::json_opt_int(*l, "daily_requests");
+        me.limits.monthly_requests = detail::json_opt_int(*l, "monthly_requests");
+        me.limits.daily_budget = detail::json_opt_double(*l, "daily_budget");
+        me.limits.monthly_budget = detail::json_opt_double(*l, "monthly_budget");
+    }
+    if (const json* u = detail::json_object(out, "usage")) {
+        me.usage.today_requests = detail::json_int(*u, "today_requests");
+        me.usage.today_cost = detail::json_double(*u, "today_cost");
+        me.usage.month_requests = detail::json_int(*u, "month_requests");
+        me.usage.month_cost = detail::json_double(*u, "month_cost");
+        me.usage.last_used_at = detail::json_string(*u, "last_used_at");
+        me.usage.limit_hit = detail::json_limit_hit(*u, "limit_hit");
+    }
+    me.limit_hit = detail::json_limit_hit(out, "limit_hit");
+    if (!me.limit_hit) me.limit_hit = me.usage.limit_hit;
+    if (auto it = out.find("services"); it != out.end() && it->is_array()) {
+        for (const auto& s : *it) {
+            if (!s.is_object()) continue;
+            MeService v;
+            v.slug = detail::json_string(s, "slug");
+            v.name = detail::json_string(s, "name");
+            v.provider = detail::json_string(s, "provider");
+            v.category = detail::json_string(s, "category");
+            v.available = static_cast<int>(detail::json_int(s, "available"));
+            v.logo_url = detail::json_string(s, "logo_url");
+            me.services.push_back(std::move(v));
+        }
+    }
+    if (const json* sh = detail::json_object(out, "share")) {
+        ShareInfo info;
+        info.id = detail::json_string(*sh, "id");
+        info.name = detail::json_string(*sh, "name");
+        if (const json* o = detail::json_object(*sh, "owner")) {
+            info.owner.name = detail::json_string(*o, "name");
+            info.owner.id = detail::json_string(*o, "id");
+        }
+        if (info.owner.name.empty()) info.owner.name = detail::json_string(*sh, "owner_name");
+        if (info.owner.id.empty()) info.owner.id = detail::json_string(*sh, "owner_id");
+        info.recipient = detail::json_string(*sh, "recipient");
+        info.label = detail::json_string(*sh, "label");
+        info.status = detail::json_string(*sh, "status");
+        info.mode = detail::json_string(*sh, "mode");
+        info.ends_at = detail::json_string(*sh, "ends_at");
+        me.share = std::move(info);
+    }
+    return me;
+}
+
+std::string Client::guide(const std::string& service) const {
+    return core_
+        ->raw("GET", "/api/v1/services/" + url_encode(service) + "/guide?format=md", nullptr,
+              std::chrono::milliseconds{0}, "text/markdown")
+        .body;
 }
 
 Lease Client::lease(const std::string& service, const LeaseOptions& options) const {

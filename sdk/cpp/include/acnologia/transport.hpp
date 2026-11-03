@@ -27,6 +27,11 @@ struct HttpResponse {
 
     /// First header with this name, compared case insensitively, or "".
     std::string header(const std::string& name) const;
+    /// The Retry-After header as a duration, zero when absent or invalid.
+    std::chrono::milliseconds retry_after() const { return parse_retry_after(header("Retry-After")); }
+    /// True when the proxy replayed a stored answer for a repeated
+    /// Idempotency-Key (Idempotent-Replayed: true).
+    bool idempotent_replayed() const { return header("Idempotent-Replayed") == "true"; }
 };
 
 /// Sends HTTP requests. Implementations must be safe to call from several
