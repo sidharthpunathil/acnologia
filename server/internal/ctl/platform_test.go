@@ -1,6 +1,8 @@
 package ctl
 
 import (
+	"bytes"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -108,3 +110,26 @@ func TestWriteFileAtomicReplaces(t *testing.T) {
 		}
 	}
 }
+
+// A keys file saved on Windows: byte order mark, CRLF, passed by name.
+func TestKeysAddWindowsFile(t *testing.T) {
+	f := &fake{}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	t.Setenv("ACNOLOGIA_CTL_CONFIG", filepath.Join(t.TempDir(), "ctl.json"))
+	t.Setenv("ACNOLOGIA_URL", srv.URL)
+	t.Setenv("ACNOLOGIA_TOKEN", "acnadm_good")
+	p := filepath.Join(t.TempDir(), "keys.txt")
+	if err := os.WriteFile(p, []byte(bom+"k-one\r\n# note\r\nmain, k-two\r\n\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := Run([]string{"keys", "add", "serpapi", p}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("keys add: %d %s", code, errb.String())
+	}
+	if len(f.added) != 2 || f.added[0]["secret"] != "k-one" || f.added[1]["label"] != "main" || f.added[1]["secret"] != "k-two" {
+		t.Fatalf("parsed keys: %q", f.added)
+	}
+}
+
+const bom = "\ufeff"

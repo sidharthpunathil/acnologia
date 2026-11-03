@@ -917,7 +917,9 @@ func (c *cli) keysAdd(args []string) error {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+		// Scanner drops the \r of CRLF files; a byte order mark from Notepad
+		// or PowerShell would otherwise stick to the first secret.
+		line := strings.TrimSpace(strings.TrimPrefix(sc.Text(), "\ufeff"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
