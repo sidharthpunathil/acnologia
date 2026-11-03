@@ -521,6 +521,16 @@ the token: 403 `share_revoked` or `share_paused` and 401 mark it invalid, 429
 anything A relays from the upstream is passed on untouched (A already rotated).
 Shared services are proxy only: a lease would hand out the token.
 
+**Which keys.** Each shared service can be limited to all its keys, up to N
+keys, or a picked list (`key_scopes`, see [the API](api.md#sharing-between-servers)).
+A's pool applies the scope on every pick for the share's backing app, using a
+per app cache that any share change clears, so ordinary apps pay nothing. Up
+to N takes the first N keys still in rotation by priority; when one turns
+invalid, banned or disabled the next one takes its place, while a key that is
+only cooling down or out of quota keeps its slot. The Sharing page shows each
+service as `serpapi · 3 of 10 keys` and each set limit as a meter of what was
+used today or this month against its cap.
+
 **Sync.** B reads each link's manifest every 10 minutes and on Sync now. New
 services are created; services no longer shared keep their row (events and app
 settings survive) but their key is disabled; a status change applies at once.

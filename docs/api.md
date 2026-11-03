@@ -149,9 +149,9 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /chat/threads/{id}/compact` | m | Compact now: Claude summarizes the older messages and the summary replaces them in what the model is sent; the last 6 messages stay verbatim and the transcript keeps everything. Returns the new `compact` item. 400 `nothing_to_compact` when the chat is too short, 409 while a turn runs, 502 `compact_failed` when the summary call fails (nothing changes), 503 when AI is off. |
 | `GET /identity` | a | This server's identity: `{id, name, url, url_source: env\|saved\|request, version, public_key, fingerprint}`. |
 | `PATCH /identity` | s | `{name, url}`. `url` is ignored when `ACNOLOGIA_PUBLIC_URL` is set; `""` clears the saved one. |
-| `GET /shares`, `GET /shares/{id}` | a | Shares this server gives, each with `usage {today_requests, today_cost, month_requests, last_used_at, history (14 days), limit_hit}`; one share adds `per_service` request counts. Never carries the invite or token. |
-| `POST /shares` | s | `{name, note, services, providers, limits, expires_at, include_hidden, invite_valid: 1h\|24h\|7d}`. Returns `{share, invite}`; the invite is shown once. Services from another server (provider `acnologia-peer`) are refused. Audited as `share.created`. |
-| `PATCH /shares/{id}` | s | Same fields but `invite_valid`. Changes reach the receiver at its next sync. `expires_at: ""` clears the expiry; an expired share moved into the future turns active again. Audited as `share.updated`. |
+| `GET /shares`, `GET /shares/{id}` | a | Shares this server gives, each with `key_scopes`, `service_keys {slug: {keys_shared, keys_total}}` (the keys each shared service's scope resolves to now, of the keys the share could use without a scope) and `usage {today_requests, today_cost, month_requests, month_cost, last_used_at, history (14 days), limit_hit}`; one share adds `per_service` request counts. Never carries the invite or token. |
+| `POST /shares` | s | `{name, note, services, providers, key_scopes, limits, expires_at, include_hidden, invite_valid: 1h\|24h\|7d}`. Returns `{share, invite}`; the invite is shown once. Services from another server (provider `acnologia-peer`) are refused. Audited as `share.created` with the services, providers and key scope modes. |
+| `PATCH /shares/{id}` | s | Same fields but `invite_valid`. Changes reach the receiver at its next sync; a new key scope applies to the very next request. `expires_at: ""` clears the expiry; an expired share moved into the future turns active again. Audited as `share.updated`. |
 | `POST /shares/{id}/pause`, `/resume`, `/revoke` | s | Pause (reversible) or revoke (final). Both refuse the very next request. Audited as `share.paused`, `share.resumed`, `share.revoked`. |
 | `POST /shares/{id}/invite` | s | A new invite for a share not redeemed yet: `{invite_valid}`. The old invite stops working. |
 | `GET /peers` | a | Shares other servers gave this one: status, `local_services`, imported `providers`, `last_sync_at`, `last_error`, the owner's `fingerprint`. Never carries the token. |
@@ -176,6 +176,22 @@ model in [security.md](security.md#sharing-between-servers).
 | `POST /api/peer/v1/redeem` | invite and signature | `{invite, share_id, id, name, url, public_key, nonce, signature}`. The signature is Ed25519 over `acnologia-redeem-v1\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>`. Returns `{token, owner, manifest}` once. 409 `invite_used`, 410 `invite_expired`, 404 `invite_invalid`, 401 `bad_signature`, 400 `bad_identity`. |
 | `GET /api/peer/v1/manifest` | share token | `{share_id, name, status, limits, expires_at, services: [{slug, name, provider, category, description, logo_url, available}], providers: [{slug, name, version, shared, spec, ...}]}`. No key data. |
 | `POST /api/peer/v1/leave` | share token | The receiver disconnected; the share is revoked and shows as left by the peer. |
+
+**Key scopes.** `key_scopes` maps a shared service's slug to which of its keys
+the share may use. A service without an entry uses every key, as before.
+
+| Mode | Shape | Meaning |
+|---|---|---|
+| `all` | `{"mode": "all"}` | Every key the share could use. Sending it removes the scope. |
+| `count` | `{"mode": "count", "count": 3}` | At most N keys (N 1 or more): the first N still in rotation, by priority then id. Invalid, banned and disabled keys are out of rotation and the next key takes their place; a key cooling down or out of quota still counts, so the share does not spread onto every key. |
+| `pick` | `{"mode": "pick", "key_ids": [4, 9]}` | Only the listed keys. Each must be a key of that service (400 otherwise), and a hidden key needs `include_hidden` (400 otherwise). A deleted key drops out. |
+
+Restricted and hidden keys still apply in every mode. Sending `key_scopes`
+replaces all of them; a scope for a service the share does not share is a
+400, and a service removed from the share loses its scope. The pool enforces
+the scope on every pick, so a scope that leaves no usable key answers 503
+`no_key_available`, and the manifest's `available` counts only keys in the
+scope.
 
 Preview and redeem share a global limit of 20 calls a minute and 500 a day
 (429 `rate_limited`). All four routes, and the well-known identity, are open
