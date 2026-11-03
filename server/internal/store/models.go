@@ -93,6 +93,19 @@ type Service struct {
 	PeerLinkID     *int64 `json:"peer_link_id"`
 	PeerName       string `json:"peer_name,omitempty"`
 	PeerRemoteSlug string `json:"peer_remote_slug,omitempty"`
+	// PeerProvider is the owner's provider slug for a peer service. Provider
+	// stays acnologia-peer (it classifies the share token's answers); this
+	// one names the provider for display, docs, examples and MCP tools.
+	PeerProvider string `json:"peer_provider,omitempty"`
+}
+
+// DocProvider is the provider whose name, logo, docs and examples describe
+// the service: the owner's provider for a peer service, else its own.
+func (s *Service) DocProvider() string {
+	if s.PeerProvider != "" {
+		return s.PeerProvider
+	}
+	return s.Provider
 }
 
 const (

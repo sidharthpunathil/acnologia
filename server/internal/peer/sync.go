@@ -41,6 +41,9 @@ type Syncer struct {
 	// Client returns the HTTP client for a link. trusted allows private
 	// addresses (two servers on one network); otherwise only public ones.
 	Client func(trusted bool) *http.Client
+	// FetchSiteLogo finds a logo on a provider's website, the fallback when
+	// the owner serves none for an imported provider. Nil skips it.
+	FetchSiteLogo func(ctx context.Context, site string) ([]byte, string, error)
 
 	mu sync.Mutex // one sync at a time, so two cannot both create a service
 }
@@ -262,6 +265,12 @@ func (y *Syncer) apply(ctx context.Context, link *store.PeerLink, token string, 
 	default:
 		status = LinkActive
 	}
+	// Providers first, so a service made below already has its provider's
+	// name, logo and examples. A failed import never blocks the service: it
+	// works through the owner's proxy either way.
+	if status == LinkActive {
+		problems = append(problems, y.syncProviders(ctx, link, token, m)...)
+	}
 	present := map[string]bool{}
 	for _, ms := range m.Services {
 		present[ms.Slug] = true
@@ -269,7 +278,10 @@ func (y *Syncer) apply(ctx context.Context, link *store.PeerLink, token string, 
 			continue // the owner must never share these; ignore if it does
 		}
 		if id, ok := link.Services[ms.Slug]; ok {
-			if _, err := y.Store.GetService(ctx, id); err == nil {
+			if sv, err := y.Store.GetService(ctx, id); err == nil {
+				if sv.PeerProvider != ms.Provider {
+					_ = y.Store.SetServicePeerProvider(ctx, id, ms.Provider)
+				}
 				if status == LinkActive && (!prevActive || y.keysDisabled(ctx, id)) {
 					_ = y.Store.SetServiceKeysStatus(ctx, id, store.StatusActive, "")
 				}
@@ -294,21 +306,6 @@ func (y *Syncer) apply(ctx context.Context, link *store.PeerLink, token string, 
 			}
 			_ = y.Store.SetServiceKeysStatus(ctx, id, store.StatusDisabled, why)
 		}
-	}
-	imported := map[string]bool{}
-	for _, p := range link.Providers {
-		imported[p] = true
-	}
-	for _, mp := range m.Providers {
-		if !mp.Shared || imported[mp.Slug] || status != LinkActive {
-			continue
-		}
-		if err := y.importProvider(ctx, link, mp); err != nil {
-			problems = append(problems, fmt.Sprintf("provider %s: %v", mp.Slug, err))
-			continue
-		}
-		link.Providers = append(link.Providers, mp.Slug)
-		imported[mp.Slug] = true
 	}
 	raw, _ := json.Marshal(m)
 	link.Manifest = raw
@@ -358,6 +355,9 @@ func (y *Syncer) createService(ctx context.Context, link *store.PeerLink, ms Man
 	if err := y.Store.SetServicePeer(ctx, created.ID, link.ID, ms.Slug); err != nil {
 		return 0, err
 	}
+	if err := y.Store.SetServicePeerProvider(ctx, created.ID, ms.Provider); err != nil {
+		return 0, err
+	}
 	enc, err := y.Box.Encrypt(token)
 	if err != nil {
 		return 0, err
@@ -370,22 +370,4 @@ func (y *Syncer) createService(ctx context.Context, link *store.PeerLink, ms Man
 		return 0, err
 	}
 	return created.ID, nil
-}
-
-// importProvider adds a shared provider spec as a local provider, unless one
-// with that slug exists. It is imported once; later owner changes are not
-// pulled in, so an owner cannot redirect keys this server adds to it.
-func (y *Syncer) importProvider(ctx context.Context, link *store.PeerLink, mp ManifestProvider) error {
-	if _, err := y.Store.GetProvider(ctx, mp.Slug); err == nil {
-		return errors.New("a provider with that slug already exists here, skipped")
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	if mp.Slug == providers.PeerSlug {
-		return errors.New("cannot import the built in peer provider")
-	}
-	in := catalog.Input{Slug: mp.Slug, Name: mp.Name, Category: mp.Category, Description: mp.Description,
-		Website: mp.Website, DocsURL: mp.DocsURL, Color: mp.Color, Status: "active", Spec: mp.Spec}
-	_, _, err := y.Catalog.Publish(ctx, in, "peer:"+link.PeerID, "peer "+link.PeerName, fmt.Sprintf("imported from %s (v%d)", link.PeerName, mp.Version))
-	return err
 }

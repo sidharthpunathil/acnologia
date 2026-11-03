@@ -55,8 +55,13 @@ func (s *Server) fillLogos(ctx context.Context, svcs ...*store.Service) {
 			u := fmt.Sprintf("/api/logos/services/%d?v=%d", sv.ID, sv.LogoRev)
 			sv.LogoURL = &u
 		default:
-			if rev, ok := revs[sv.Provider]; ok {
-				sv.LogoURL = providerLogoURL(sv.Provider, rev)
+			// A peer service shows the owner's provider's logo when this
+			// server has it, else the peer provider's.
+			for _, slug := range []string{sv.DocProvider(), sv.Provider} {
+				if rev, ok := revs[slug]; ok {
+					sv.LogoURL = providerLogoURL(slug, rev)
+					break
+				}
 			}
 		}
 	}
@@ -290,7 +295,10 @@ func (s *Server) serviceLogo(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, store.ErrNotFound) {
 		// Fall back to the provider logo.
 		if sv, e := s.Store.GetService(r.Context(), id); e == nil {
-			data, mime, err = s.Store.ProviderLogo(r.Context(), sv.Provider)
+			data, mime, err = s.Store.ProviderLogo(r.Context(), sv.DocProvider())
+			if errors.Is(err, store.ErrNotFound) && sv.DocProvider() != sv.Provider {
+				data, mime, err = s.Store.ProviderLogo(r.Context(), sv.Provider)
+			}
 		}
 	}
 	serveLogo(w, r, data, mime, err)

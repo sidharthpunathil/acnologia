@@ -7,8 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 )
 
 // RemoteError is an error answer from another server.
@@ -151,4 +155,48 @@ func FetchManifest(ctx context.Context, c *http.Client, base, token string) (Man
 // Leave tells the owner this server disconnected.
 func Leave(ctx context.Context, c *http.Client, base, token string) error {
 	return call(ctx, c, http.MethodPost, strings.TrimRight(base, "/")+"/api/peer/v1/leave", token, map[string]any{}, nil)
+}
+
+// FetchProviderLogo reads the logo of a provider in the share's manifest
+// from the owner, with the share token. It is only ever sent to the owner's
+// URL. The answer must be an allowed image type no larger than
+// catalog.MaxLogoBytes, and the bytes must match the declared type.
+func FetchProviderLogo(ctx context.Context, c *http.Client, base, token, slug string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/peer/v1/providers/"+url.PathEscape(slug)+"/logo", nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("could not reach the other server: %w", stripURL(err))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", &RemoteError{Status: resp.StatusCode, Code: "logo_unavailable"}
+	}
+	declared, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if !catalog.AllowedLogoMimes[declared] {
+		return nil, "", errors.New("the owner's logo is not an allowed image type")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, catalog.MaxLogoBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > catalog.MaxLogoBytes {
+		return nil, "", errors.New("the owner's logo is larger than 512 KB")
+	}
+	sniffed := catalog.SniffImage(data)
+	if sniffed == "" || iconType(declared) != iconType(sniffed) {
+		return nil, "", errors.New("the owner's logo does not match its type")
+	}
+	return data, sniffed, nil
+}
+
+// iconType treats the two icon mime types as one.
+func iconType(m string) string {
+	if m == "image/vnd.microsoft.icon" {
+		return "image/x-icon"
+	}
+	return m
 }
