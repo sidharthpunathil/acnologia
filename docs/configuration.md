@@ -26,6 +26,7 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_EGRESS_ECHO_URL` | `https://www.cloudflare.com/cdn-cgi/trace` | URL the egress proxy test calls to learn the proxy's public IP. |
 | `ANTHROPIC_API_KEY` | empty | Enables the AI features: the provider builder, "Fill with AI" and the Assistant. Everything else works without it. |
 | `ACNOLOGIA_AI_MODEL` | `claude-opus-5-5` | Model for AI features. |
+| `ACNOLOGIA_CHAT_COMPACT_TOKENS` | `0` | Prompt size, in tokens, at which an Assistant chat summarizes its older messages. `0` means 60% of the model's context window (600,000 tokens for current models, 120,000 for 200K models). |
 | `GITHUB_TOKEN` | empty | Lets the AI builder read GitHub with a higher rate limit. Use a fine grained, public read only token. |
 
 The `acn` CLI (and `acnologia ctl`) reads two more: `ACNOLOGIA_URL` and

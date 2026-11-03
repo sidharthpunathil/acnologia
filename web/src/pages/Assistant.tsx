@@ -9,8 +9,10 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   RiArrowDownLine,
   RiChatHistoryLine,
+  RiContractUpDownLine,
   RiEditBoxLine,
   RiFileUploadLine,
+  RiMore2Fill,
 } from "@remixicon/react";
 import { useTitle } from "@/hooks/useTitle";
 import { ApiError, errorMessage } from "@/lib/api";
@@ -22,6 +24,7 @@ import { Callout } from "@/components/acn/callout";
 import { Button } from "@/components/base/buttons/button";
 import { IconButton } from "@/components/base/buttons/icon-button";
 import { Drawer, DrawerBody, DrawerHeader } from "@/components/base/drawer/drawer";
+import { Dropdown, DropdownGroup, DropdownItem, DropdownPopover, DropdownTrigger } from "@/components/base/dropdown/dropdown";
 import { Kbd } from "@/components/base/kbd/kbd";
 import { Modal, ModalBody, ModalHeader } from "@/components/base/modal/modal";
 import { Skeleton } from "@/components/base/skeleton/skeleton";
@@ -31,6 +34,7 @@ import { cx } from "@/utils/cx";
 import { QUIET_BUTTON } from "@/components/application/agent-chat/agent-chat-message";
 import {
   AssistantText,
+  CompactDivider,
   ConfirmCard,
   collapseBlank,
   ErrorItem,
@@ -178,6 +182,7 @@ export function AssistantPage() {
     send,
     confirm,
     answer: answerAsk,
+    compact,
     drafts,
     setDraftText,
     setDraftAttachment,
@@ -407,6 +412,21 @@ export function AssistantPage() {
     }
   };
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const compactNow = async () => {
+    setMenuOpen(false);
+    try {
+      await compact();
+      toast.success("Earlier messages summarized. Claude now works from the summary and the latest messages.");
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "busy")
+        toast.info("Still working on your last message. Try again in a moment.");
+      else if (err instanceof ApiError && err.code === "nothing_to_compact")
+        toast.info("This chat is too short to compact yet.");
+      else toast.error(errorMessage(err));
+    }
+  };
+
   const onAnswerAsk = async (body: Parameters<typeof answerAsk>[0]) => {
     try {
       await answerAsk(body);
@@ -613,6 +633,12 @@ export function AssistantPage() {
           />
         </div>
       );
+    else if (it.kind === "compact")
+      body = (
+        <div className={GUTTER}>
+          <CompactDivider item={it} />
+        </div>
+      );
     else if (it.kind === "error")
       body = (
         <div className={GUTTER}>
@@ -688,6 +714,38 @@ export function AssistantPage() {
             <span className="sr-only">Assistant: </span>
             {title ?? <span className="text-text-tertiary">New chat</span>}
           </h1>
+          {currentId !== null && items.length > 0 && (
+            <Dropdown isOpen={menuOpen} onOpenChange={setMenuOpen}>
+              <DropdownTrigger
+                aria-label="Chat actions"
+                className={cx(
+                  "inline-flex size-8 shrink-0 items-center justify-center rounded-lg pointer-coarse:size-10",
+                  "text-foreground-icon-secondary transition-colors duration-150 ease-out",
+                  "hover:bg-background-tertiary-default hover:text-foreground-icon-primary",
+                  menuOpen && "bg-background-tertiary-default text-foreground-icon-primary",
+                )}
+              >
+                <RiMore2Fill className="size-4 shrink-0" aria-hidden />
+              </DropdownTrigger>
+              <DropdownPopover aria-label="Chat actions" placement="bottom end" className="w-[230px] p-2">
+                <DropdownGroup>
+                  <DropdownItem
+                    onSelect={() => {
+                      if (busy || off) return;
+                      void compactNow();
+                    }}
+                    className={cx("px-2 py-1.5", (busy || off) && "cursor-not-allowed opacity-50")}
+                  >
+                    <RiContractUpDownLine className="size-[18px] shrink-0 text-foreground-icon-secondary" aria-hidden />
+                    <span className="flex min-w-0 flex-col items-start">
+                      <span className="text-body-medium text-text-primary">Compact now</span>
+                      <span className="text-caption-1-regular text-text-tertiary">Summarize older messages</span>
+                    </span>
+                  </DropdownItem>
+                </DropdownGroup>
+              </DropdownPopover>
+            </Dropdown>
+          )}
           <TooltipTrigger delay={500}>
             <IconButton
               icon={RiEditBoxLine}

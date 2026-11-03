@@ -155,6 +155,13 @@ type chatData struct {
 	Vault    []vaultEntry `json:"vault,omitempty"`
 	VaultSeq int          `json:"vault_seq,omitempty"`
 	BatchSeq int          `json:"batch_seq,omitempty"`
+	// Compact is the summary that replaces the older messages in what the
+	// model is sent (assistant_compact.go). Messages and Items stay whole.
+	Compact *chatCompact `json:"compact,omitempty"`
+	// LastInput is the prompt size Claude reported for the last call, made
+	// with the first LastInputAt messages.
+	LastInput   int `json:"last_input,omitempty"`
+	LastInputAt int `json:"last_input_at,omitempty"`
 }
 
 // chatSession is the state of one turn against a thread.
@@ -175,6 +182,8 @@ type chatSession struct {
 	waitUsed time.Duration
 	secrets  map[string]bool // key secrets seen this turn, redacted on save
 	newIDs   map[string]bool // items created this turn
+	// compactFailed stops retrying a failed summary within the turn.
+	compactFailed bool
 }
 
 // turnState is what GET thread reports while a turn runs.
@@ -655,9 +664,9 @@ func (cs *chatSession) redactAll() {
 
 // ---- model loop ----
 
-func (cs *chatSession) params() []anthropic.BetaMessageParam {
-	out := make([]anthropic.BetaMessageParam, 0, len(cs.data.Messages))
-	for _, m := range cs.data.Messages {
+func toParams(msgs []chatMsg) []anthropic.BetaMessageParam {
+	out := make([]anthropic.BetaMessageParam, 0, len(msgs))
+	for _, m := range msgs {
 		blocks := make([]anthropic.BetaContentBlockParamUnion, 0, len(m.Blocks))
 		for _, b := range m.Blocks {
 			switch b.Type {
@@ -695,12 +704,20 @@ func (cs *chatSession) loop(ctx context.Context) error {
 		if cs.s.chatModel != nil {
 			converse = cs.s.chatModel
 		}
+		cs.maybeCompact(ctx, system)
 		cs.turn.setStep("Thinking")
-		resp, err := converse(cs.redactCtx(ctx), system, cs.params(), tools)
+		history, trimmed := cs.history(system)
+		sent := len(cs.data.Messages)
+		resp, err := converse(cs.redactCtx(ctx), system, toParams(history), tools)
 		if err != nil {
 			return fmt.Errorf("the assistant could not answer: %v", err)
 		}
 		cs.s.Agent.Record(ctx, store.AIFeatureAssistant, agent.CallerOf(cs.user), agent.ThreadRef(cs.thread), resp)
+		if !trimmed {
+			u := resp.Usage
+			cs.data.LastInput = int(u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens)
+			cs.data.LastInputAt = sent
+		}
 		msg := chatMsg{Role: "assistant"}
 		results := []chatBlock{}
 		for _, block := range resp.Content {
