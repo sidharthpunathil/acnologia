@@ -22,7 +22,9 @@ on:
       - "server/**"
       - "web/**"
       - "docs/**"
-      - "README.md"
+      # The README is copied into the image as the overview doc, but a README
+      # edit alone is not worth a new image; the next build picks it up.
+      - "!server/internal/docsmd/files/overview.md"
       - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/release-image.yml"

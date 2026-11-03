@@ -70,7 +70,28 @@ looks after it:
 
 ## Quick start
 
-On macOS or Linux:
+One command installs the server, starts it in the background and keeps it
+running across restarts. On macOS or Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/setup.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/setup.ps1 | iex
+```
+
+It downloads the newest release and checks its checksum, keeps everything in
+one folder (`~/.acnologia`, or `%LocalAppData%\Acnologia` on Windows),
+listens on `127.0.0.1:8080` only, and runs as a launchd agent, a systemd user
+service or a Scheduled Task. Run it again to upgrade. Add options after
+`sh -s --`: `--port 9090`, `--with-cli` (also installs `acn`), `--docker` (the
+container image instead), `--no-service`, or `--uninstall`. For a public
+server with a domain and HTTPS, see [Deploy](#deploy).
+
+Or run it yourself, with Docker or from source:
 
 ```sh
 git clone https://github.com/sidharthpunathil/acnologia && cd acnologia
@@ -84,19 +105,8 @@ make build
 ACNOLOGIA_DATA_DIR=./data ./bin/acnologia
 ```
 
-On Windows, in PowerShell:
-
-```powershell
-git clone https://github.com/sidharthpunathil/acnologia; cd acnologia
-
-# Docker Desktop (Linux containers)
-Copy-Item .env.example .env
-docker compose up -d --build
-
-# or from source (Go 1.26, Node 22, pnpm 10), no make needed
-.\scripts\build.ps1
-.\bin\acnologia.exe    # data goes to %LocalAppData%\Acnologia
-```
+On Windows from source, `.\scripts\build.ps1` builds without make, and
+`.\bin\acnologia.exe` keeps its data in `%LocalAppData%\Acnologia`.
 
 Release builds for Linux, macOS and Windows (amd64 and arm64) are on the
 [releases page](https://github.com/sidharthpunathil/acnologia/releases).

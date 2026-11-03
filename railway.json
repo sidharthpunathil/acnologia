@@ -7,7 +7,7 @@
       "server/**",
       "web/**",
       "docs/**",
-      "README.md",
+      "!server/internal/docsmd/files/overview.md",
       "Dockerfile",
       ".dockerignore",
       "railway.json"
