@@ -435,3 +435,38 @@ In the dashboard, a message with pasted keys shows its prose first and a
 secret). The chat state lives in the page's store: the last open chat comes
 back when you return from another tab, unsent drafts are kept per chat while
 the page is open, and a turn still running is picked up again.
+
+### Compaction
+
+A long chat would eventually overflow the model's context window and gets
+slower and dearer on every turn. Before each model call the server estimates
+the prompt: the input tokens Claude reported for the last call plus about one
+token per four characters added since, or a character estimate of the whole
+prompt, whichever is larger. Past 60% of the model's context window (or
+`ACNOLOGIA_CHAT_COMPACT_TOKENS`), it compacts:
+
+```mermaid
+flowchart TD
+    Est["estimate the next prompt"] --> Over{"past the threshold?"}
+    Over -->|no| Send["send the history"]
+    Over -->|yes| Split["keep the last 6 messages verbatim;<br/>move the cut back so a tool_use<br/>is never split from its tool_result"]
+    Split --> Sum["one Claude call summarizes the older part<br/>(and any earlier summary) from the stored,<br/>already redacted history"]
+    Sum -->|ok| Store["redact the summary, store it on the thread<br/>(text, messages covered, time, tokens saved),<br/>add an 'Earlier messages summarized' item"]
+    Store --> SendS["send summary + kept messages"]
+    Sum -->|fails| Fall{"near the window?<br/>(90%)"}
+    Fall -->|no| Send
+    Fall -->|yes| Trim["send only the latest messages,<br/>with a note that older ones were left out"]
+```
+
+- Nothing is deleted. The stored messages and the transcript stay whole, so you
+  still see every message above the divider; only what Claude is sent changes.
+- Repeated compaction folds the previous summary into the new one.
+- The summary keeps goals, decisions, the names and ids of services, keys, apps
+  and providers touched, pending tasks and open questions. Key placeholders stay
+  as they are; the summary passes the same redactor as tool results, so it never
+  holds a secret.
+- The summary call is billed as Assistant usage on the Usage page.
+- A failed summary is logged and not retried in that turn; the chat carries on.
+- The thread's menu (the dots at the top right of the chat) has **Compact now**,
+  which calls `POST /chat/threads/{id}/compact` whatever the chat's size. Open
+  the divider to read the summary.
