@@ -54,6 +54,7 @@ func TestRedactorTable(t *testing.T) {
 		{name: "app token", in: "called with acn_aaaabbbbccccddddeeeeffff1234", gone: []string{"aaaabbbbccccddddeeeeffff1234"}},
 		{name: "admin token", in: "ctl used acnadm_aaaabbbbccccddddeeeeffff1234", gone: []string{"aaaabbbbccccddddeeeeffff1234"}},
 		{name: "share invite", in: "pasted acninv_eyJ1IjoiaHR0cHM6Ly9hLmV4YW1wbGUifQ here", gone: []string{"eyJ1IjoiaHR0cHM6Ly9hLmV4YW1wbGUifQ"}},
+		{name: "sealed key", in: "got acnseal1_aaaabbbb-ccccdddd_eeeeffff12 back", gone: []string{"aaaabbbb-ccccdddd_eeeeffff12"}},
 		{name: "legacy app token", in: "called with cog_aaaabbbbccccddddeeeeffff1234", gone: []string{"aaaabbbbccccddddeeeeffff1234"}},
 		{name: "legacy admin token", in: "ctl used cogadm_aaaabbbbccccddddeeeeffff1234", gone: []string{"aaaabbbbccccddddeeeeffff1234"}},
 		{name: "jwt", in: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", gone: []string{"dozjgNryP4J3"}},

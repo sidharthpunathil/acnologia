@@ -105,6 +105,16 @@ func writeNoKey(w http.ResponseWriter, err error) bool {
 // lease would hand out the share token. Those services are proxy only.
 var errPeerLease = errors.New("this service is shared by another Acnologia server and is proxy only, use /proxy/{service}/...")
 
+// errHandoverLease refuses a lease on keys another server handed over: a
+// lease hands out the raw key, and those keys never leave this server.
+var errHandoverLease = errors.New("this service holds keys another Acnologia server handed over and is proxy only, use /proxy/{service}/...")
+
+// isHandoverService reports whether a service holds keys another server
+// handed over (made for a handover link, with the owner's provider).
+func isHandoverService(sv *store.Service) bool {
+	return sv.PeerLinkID != nil && sv.Provider != providers.PeerSlug
+}
+
 // issueLease picks a key and creates a lease. On keys with a concurrency
 // limit the lease holds a slot until it is reported or expires, so set a
 // ttl close to how long you need the key.
@@ -117,6 +127,11 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration, exclusive bool) (*leaseDTO, error) {
 	if sv.Provider == providers.PeerSlug {
 		return nil, errPeerLease
+	}
+	// A lease hands out the raw key; keys another server handed over stay
+	// inside this server's proxy.
+	if isHandoverService(sv) {
+		return nil, errHandoverLease
 	}
 	ex := map[int64]bool{}
 	for _, id := range exclude {
@@ -132,6 +147,10 @@ func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Ser
 			s.Pool.EmitPoolEmpty(sv, err)
 		}
 		return nil, err
+	}
+	if p.Key.IsHandedOver() {
+		p.Release()
+		return nil, errHandoverLease
 	}
 	if ttl <= 0 || ttl > 24*time.Hour {
 		ttl = 5 * time.Minute
@@ -217,7 +236,7 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 	}
 	wait := time.Duration(min(max(body.WaitSec, 0), 60)) * time.Second
 	l, err := s.issueLeaseOpts(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second, wait, body.Exclusive)
-	if errors.Is(err, errPeerLease) {
+	if errors.Is(err, errPeerLease) || errors.Is(err, errHandoverLease) {
 		writeErr(w, 403, "lease_not_allowed", err.Error())
 		return
 	}

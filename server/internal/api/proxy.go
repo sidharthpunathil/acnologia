@@ -337,8 +337,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		// the query), so proxying can disclose it just like a lease. Hidden
 		// keys therefore need the same superadmin grant as leasing them.
 		// A service shared by another server holds its share token as a
-		// hidden key, which any app may proxy through (never lease).
-		allowHidden := a.LeaseHidden || sv.Provider == providers.PeerSlug
+		// hidden key, which any app may proxy through (never lease), and so
+		// does a service holding keys another server handed over.
+		allowHidden := a.LeaseHidden || sv.Provider == providers.PeerSlug || isHandoverService(sv)
 		picked, err := s.Pool.PickFor(r.Context(), sv, a.ID, allowHidden, tried, queue, false, pr)
 		waited := time.Since(waitStart)
 		if err != nil && r.Context().Err() != nil {

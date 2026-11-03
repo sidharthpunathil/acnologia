@@ -74,6 +74,8 @@ type Server struct {
 	peers *peer.Syncer
 	// peerLimit bounds invite preview and redeem calls (peer_public.go).
 	peerLimit *peerLimiter
+	// revokeLimit bounds revoke pushes from other servers (handover.go).
+	revokeLimit *peerLimiter
 	// Refresh keeps providers' offers current (refresh.go).
 	Refresh *refresh.Refresher
 }
@@ -88,7 +90,9 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 		devices:  newDeviceStore(),
 	}
 	s.peerLimit = newPeerLimiter()
+	s.revokeLimit = newPeerLimiter()
 	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat, FetchSiteLogo: peer.SiteLogo}
+	s.peers.OnHandover = s.onHandover
 	s.Refresh = &refresh.Refresher{Store: st, Catalog: cat, AI: serverAI{s}}
 	s.Breakers.OnChange = func(id int64, down bool, reason string) { go s.onBreakerChange(id, down, reason) }
 	// main wires these up with their workers; tests and embedders get working defaults.
@@ -154,6 +158,11 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireApp).Get("/manifest", s.peerManifest)
 		r.With(s.requireApp).Post("/leave", s.peerLeave)
 		r.With(s.requireApp).Get("/providers/{slug}/logo", s.peerProviderLogo)
+		// Key handover: sealed keys and the receiver's report need the
+		// share token; a revoke push is signed by the owner.
+		r.With(s.requireApp).Get("/keys", s.peerKeys)
+		r.With(s.requireApp).Post("/report", s.peerReport)
+		r.Post("/revoke", s.peerRevoke)
 	})
 	r.Get("/llms-full.txt", s.serveLLMsFull)
 	s.mountDocs(r)
@@ -325,6 +334,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/shares/{id}/resume", s.shareStatusHandler(store.ShareActive, notify.ShareResumed, "resumed"))
 			r.Post("/shares/{id}/revoke", s.shareStatusHandler(store.ShareRevoked, notify.ShareRevoked, "revoked"))
 			r.Post("/shares/{id}/invite", s.newShareInvite)
+			r.Post("/shares/{id}/extend", s.extendShare)
 			r.Post("/peers/preview", s.previewPeer)
 			r.Post("/peers", s.connectPeer)
 			r.Post("/peers/{id}/sync", s.syncPeer)

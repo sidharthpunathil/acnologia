@@ -608,9 +608,11 @@ flowchart TD
 ## Sharing between servers
 
 One Acnologia (the **owner**) can let another (the **receiver**) use some of
-its services and give it provider specs. Keys never leave the owner: the
-receiver calls the owner's proxy with a share token, and the owner picks and
-injects its own key. Pairing is by invite only.
+its services and give it provider specs. In the default proxy mode keys never
+leave the owner: the receiver calls the owner's proxy with a share token, and
+the owner picks and injects its own key. A share can instead hand the keys
+over (see [Share modes](#share-modes-proxy-or-key-handover)). Pairing is by
+invite only.
 
 Every server has an identity: an Ed25519 keypair made on first start (the
 private key encrypted with the master key, in `meta`), an id `acn_srv_` plus
@@ -768,3 +770,134 @@ can delete one B does not use from the Providers page.
 **Loops.** A service whose provider is `acnologia-peer` can never be shared
 onward, and a request that already passed through more than 3 servers gets 508
 `loop_detected`.
+
+### Share modes: proxy or key handover
+
+A share has a `mode`, chosen when it is created and fixed once redeemed
+(create a new share to change it):
+
+- **Proxy** (the default) is everything above: the other server never sees
+  your keys, and revoke is instant.
+- **Handover** gives the keys themselves to the other server, so it calls the
+  provider directly: lower latency, and it keeps working while the owner is
+  down.
+
+**The honest constraint.** A handed over key cannot be taken back. Once the
+other server holds it, it can copy it, and revoke can only make a server that
+cooperates delete it. Everything below narrows that window; none of it closes
+it. After revoking a handover share, rotate every key on its rotate checklist
+at the provider.
+
+**What is handed over.** The share's key scopes decide (all, up to N, or a
+picked list), as for proxy; hidden keys only with `include_hidden`; keys of a
+service whose provider is `acnologia-peer`, or keys another server handed
+over to this one, never. Request and budget limits cannot apply: the other
+server makes the requests, so this server cannot count them, and a handover
+share refuses limits with 400. Timers and the lease still apply.
+
+**Sealing.** Every server has an X25519 key pair next to its Ed25519 identity
+(the private part encrypted with the master key, made on first use) and
+publishes the public part as `box_public_key` at `/.well-known/acnologia`.
+The receiver signs it into its redeem request and the owner records it on the
+share. Each secret is sealed with HPKE (RFC 9180) base mode: DHKEM(X25519,
+HKDF-SHA256), HKDF-SHA256 and AES-256-GCM, with the info string
+`acnologia-handover-v1\n<share id>\n<key id>\n<receiver id>`, so a sealed
+secret opens only on that server, for that key and that share. The envelope
+is `acnseal1_` + base64url(enc and ciphertext); the prefix names the format
+version and the redactor knows it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Owner (A)
+    participant B as Receiver (B)
+    participant P as Provider
+
+    B->>A: GET /api/peer/v1/manifest (share token)
+    A-->>B: status active, mode handover, lease
+    B->>A: GET /api/peer/v1/keys (share token)
+    A->>A: resolve the key scope, seal each key to B's box key,<br/>valid_until = now + lease, record the exposure
+    A-->>B: services (base URL, auth) and sealed keys
+    B->>B: open each key, store it encrypted as a hidden key<br/>of a local service on A's provider, lease = valid_until
+    B->>A: POST /api/peer/v1/report (keys held, requests, status)
+    Note over B,P: a local app on B calls /proxy/a-serpapi/...
+    B->>P: request with the handed over key (A is not involved)
+```
+
+**On the receiver.** Handed over keys live in a local service per shared
+service, slug `<prefix>-<slug>`, whose provider is the owner's (imported as a
+dependency when B lacks it) and whose base URL and auth come from the owner.
+Unless the link is on a private network, that base URL must be http(s) and
+resolve to public addresses. Each key is hidden, labeled "Handed over by
+<server>", and carries `peer_link_id` and `peer_valid_until`. Local apps use
+it through B's proxy like any key. B never reveals it, leases it (403
+`lease_not_allowed`, also for apps with `lease_hidden` and for MCP
+`get_key`), shares it onward, changes its secret, hidden flag or egress, or
+points its service anywhere else (409 `handover_service`).
+
+**The lease.** Every handed over key is valid until `now + lease` (1h, 6h,
+24h by default, 72h or 7d). B renews on each sync (every 10 minutes). The
+owner stops renewing when the share is paused, expired or revoked, or the key
+leaves the scope. B's worker checks every minute and deletes, row and
+ciphertext (zeroed first), every key whose lease ended, with no network
+needed: a receiver cut off from the owner lets go of the keys on its own.
+
+**Wipes.** B deletes handed over keys when the lease ends, when the manifest
+or a refusal says paused, expired or revoked, when a key is no longer sent,
+when B disconnects (before telling the owner) and when a signed revoke
+arrives. Pause wipes too; resume hands the keys over again at the next sync.
+B audits and announces arrivals and wipes (`peer.handover_received`,
+`peer.handover_wiped` with the reason), never every renewal.
+
+**Revoke now.** Revoking a handover share (by hand, or by a timer whose end
+action is revoke) also pushes `POST <receiver url>/api/peer/v1/revoke`,
+signed with the owner's identity key over the share id, the receiver id, a
+timestamp and a nonce. B checks the signature against the owner key it
+pinned at connect, refuses timestamps more than 5 minutes off and nonces it
+has seen, deletes every key of that link and marks it revoked. The push is
+best effort and uses the public only client unless the share is marked
+`private_network`. The outcome is recorded on the share: "wiped 1 key(s) at
+...", or "not reached (...); the keys are deleted by <time> when their lease
+ends".
+
+```mermaid
+flowchart TD
+    R([revoke handover share]) --> T[token and app off at once]
+    T --> Push{signed push reaches B?}
+    Push -->|yes| W1[B deletes the keys now<br/>owner records wiped]
+    Push -->|no| L[recorded as not reached]
+    L --> Sync{B syncs?}
+    Sync -->|yes| W2[manifest says revoked: B deletes]
+    Sync -->|no| W3[lease ends: B's worker deletes,<br/>no network needed]
+    W1 --> C[rotate checklist: rotate each key at the provider]
+    W2 --> C
+    W3 --> C
+```
+
+**What the owner sees.** Each handover share lists its keys with when each
+was first handed over, last renewed, valid until, deleted (and why), and the
+request count and status the receiver reported (cooperative, shown as
+reported by the other server). The key list marks each key as handed over
+while live and as was handed over after (`handed_over` on the key). A revoked
+handover share carries `rotate_checklist`, every key the receiver ever held.
+Deliveries are audited once (`share.handover`), not on every renewal; wipes
+the owner learns of (push confirmed, lease lapsed, reported deleted, peer
+left) as `share.handover_wiped`; each push as `share.revoke_push`.
+
+### Share timers
+
+Both modes have a timer: `ends_at` (RFC 3339, or none; `expires_at` is the
+same field under its old name) and `end_action`:
+
+- `expire` (default): the share stops working (403 `share_expired`) and can
+  be extended back to active.
+- `revoke`: the share is revoked for good: invite and token dead, handed over
+  keys wiped by the push or, failing that, by the lease.
+
+The worker checks every minute, and every request checks too, so a timer
+never runs late by more than the next request. Ends are audited as
+`share.expired` or `share.revoked` (detail "timer ended") and sent to
+webhooks with `reason: timer`. `POST /api/admin/shares/{id}/extend` moves
+`ends_at` later on an active or expired share; an expired one turns active,
+and handover keys are handed over again at the receiver's next sync. Invite
+expiry is unchanged.

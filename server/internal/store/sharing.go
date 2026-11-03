@@ -56,9 +56,45 @@ type Share struct {
 	// KeyScopes limits which keys of each shared service the share may use,
 	// by service slug. A missing entry means every key.
 	KeyScopes map[string]KeyScope `json:"key_scopes"`
+	// Mode is ShareModeProxy or ShareModeHandover, fixed once redeemed.
+	Mode string `json:"mode"`
+	// LeaseSec is how long a handed over key stays valid on the receiver
+	// without renewal (handover only).
+	LeaseSec int `json:"lease_sec"`
+	// EndAction is what happens when ExpiresAt (the timer, ends_at in the
+	// API) passes: EndExpire or EndRevoke.
+	EndAction string `json:"end_action"`
+	// PeerBoxPublicKey is the receiver's X25519 key, recorded at redeem;
+	// handed over keys are sealed to it.
+	PeerBoxPublicKey string `json:"peer_box_public_key"`
+	// PrivateNetwork lets the revoke push reach a receiver on a private
+	// address (a superadmin's call, like a link's trusted flag).
+	PrivateNetwork bool `json:"private_network"`
+	// LastRevokePush is the outcome of the last revoke push, or nil.
+	LastRevokePush *RevokePush `json:"-"`
 
 	inviteHash string
 }
+
+// RevokePush is the outcome of telling a receiver to delete handed over keys.
+type RevokePush struct {
+	At     time.Time `json:"at"`
+	OK     bool      `json:"ok"`
+	Detail string    `json:"detail"`
+}
+
+// Share modes and timer end actions.
+const (
+	ShareModeProxy    = "proxy"
+	ShareModeHandover = "handover"
+	EndExpire         = "expire"
+	EndRevoke         = "revoke"
+	// DefaultLeaseSec is the default handover lease, 24 hours.
+	DefaultLeaseSec = 24 * 60 * 60
+)
+
+// IsHandover reports whether the share hands keys over.
+func (sh *Share) IsHandover() bool { return sh.Mode == ShareModeHandover }
 
 // HasInvite reports whether an unredeemed invite is outstanding.
 func (sh *Share) HasInvite() bool { return sh.inviteHash != "" }
@@ -86,6 +122,8 @@ type PeerLink struct {
 	Services map[string]int64 `json:"services"`
 	// Providers lists provider slugs imported from this peer.
 	Providers []string `json:"providers"`
+	// Mode is the share's mode: proxy or handover.
+	Mode string `json:"mode"`
 
 	TokenEnc []byte `json:"-"`
 }
@@ -148,7 +186,10 @@ func migrateSharing(db *sql.DB) error {
 			return err
 		}
 	}
-	return migrateKeyScopes(db)
+	if err := migrateKeyScopes(db); err != nil {
+		return err
+	}
+	return migrateHandover(db)
 }
 
 var (
@@ -162,17 +203,19 @@ var (
 
 const shareCols = `s.id, s.name, s.note, s.status, s.services, s.providers, s.include_hidden, s.app_id, s.peer_id, s.peer_name, s.peer_url,
 s.peer_public_key, s.invite_hash, s.invite_expires_at, s.expires_at, s.created_by, s.created_at, s.redeemed_at, s.revoked_at, s.left_at,
-s.key_scopes, a.daily_requests, a.monthly_requests, a.daily_budget, a.monthly_budget`
+s.key_scopes, a.daily_requests, a.monthly_requests, a.daily_budget, a.monthly_budget,
+s.mode, s.lease_sec, s.end_action, s.peer_box_public_key, s.private_network, s.revoke_push_at, s.revoke_push_ok, s.revoke_push_detail`
 
 func scanShare(row interface{ Scan(...any) error }) (*Share, error) {
 	var sh Share
-	var svcs, provs, scopes string
-	var hidden int
+	var svcs, provs, scopes, pushDetail string
+	var hidden, private int
 	var created int64
-	var app, invExp, exp, by, red, rev, left, dr, mr sql.NullInt64
+	var app, invExp, exp, by, red, rev, left, dr, mr, pushAt, pushOK sql.NullInt64
 	var db, mb sql.NullFloat64
 	err := row.Scan(&sh.ID, &sh.Name, &sh.Note, &sh.Status, &svcs, &provs, &hidden, &app, &sh.PeerID, &sh.PeerName, &sh.PeerURL,
-		&sh.PeerPublicKey, &sh.inviteHash, &invExp, &exp, &by, &created, &red, &rev, &left, &scopes, &dr, &mr, &db, &mb)
+		&sh.PeerPublicKey, &sh.inviteHash, &invExp, &exp, &by, &created, &red, &rev, &left, &scopes, &dr, &mr, &db, &mb,
+		&sh.Mode, &sh.LeaseSec, &sh.EndAction, &sh.PeerBoxPublicKey, &private, &pushAt, &pushOK, &pushDetail)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -183,6 +226,10 @@ func scanShare(row interface{ Scan(...any) error }) (*Share, error) {
 	_ = json.Unmarshal([]byte(svcs), &sh.Services)
 	_ = json.Unmarshal([]byte(provs), &sh.Providers)
 	sh.IncludeHidden = hidden == 1
+	sh.PrivateNetwork = private == 1
+	if pushAt.Valid {
+		sh.LastRevokePush = &RevokePush{At: time.Unix(pushAt.Int64, 0).UTC(), OK: pushOK.Int64 == 1, Detail: pushDetail}
+	}
 	sh.KeyScopes = decodeScopes(scopes)
 	sh.AppID, sh.CreatedBy = toInt(app), toInt(by)
 	sh.InviteExpires, sh.ExpiresAt = toTime(invExp), toTime(exp)
@@ -239,10 +286,13 @@ func (s *Store) CreateShare(ctx context.Context, sh *Share, inviteHash string, c
 		fromInt(l.DailyRequests), fromInt(l.MonthlyRequests), f(l.DailyBudget), f(l.MonthlyBudget), appID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO shares(id,name,note,status,services,providers,include_hidden,app_id,invite_hash,invite_expires_at,expires_at,created_by,created_at,key_scopes)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	sh.normalize()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO shares(id,name,note,status,services,providers,include_hidden,app_id,invite_hash,invite_expires_at,expires_at,created_by,created_at,key_scopes,
+		mode,lease_sec,end_action,private_network)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sh.ID, sh.Name, sh.Note, SharePending, string(svcs), string(provs), b2i(sh.IncludeHidden), appID, inviteHash,
-		fromTime(sh.InviteExpires), fromTime(sh.ExpiresAt), nz(createdBy), t, encodeScopes(sh.KeyScopes)); err != nil {
+		fromTime(sh.InviteExpires), fromTime(sh.ExpiresAt), nz(createdBy), t, encodeScopes(sh.KeyScopes),
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -290,8 +340,12 @@ func (s *Store) UpdateShare(ctx context.Context, sh *Share) error {
 	if status == ShareExpired && !sh.Expired(time.Now()) {
 		status = ShareActive
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE shares SET name=?, note=?, services=?, providers=?, include_hidden=?, expires_at=?, status=?, key_scopes=? WHERE id=?`,
-		sh.Name, sh.Note, string(svcs), string(provs), b2i(sh.IncludeHidden), fromTime(sh.ExpiresAt), status, encodeScopes(sh.KeyScopes), sh.ID); err != nil {
+	sh.normalize()
+	// The mode is fixed once redeemed: only a pending share's mode changes.
+	if _, err := tx.ExecContext(ctx, `UPDATE shares SET name=?, note=?, services=?, providers=?, include_hidden=?, expires_at=?, status=?, key_scopes=?,
+		mode=CASE WHEN status='pending' THEN ? ELSE mode END, lease_sec=?, end_action=?, private_network=? WHERE id=?`,
+		sh.Name, sh.Note, string(svcs), string(provs), b2i(sh.IncludeHidden), fromTime(sh.ExpiresAt), status, encodeScopes(sh.KeyScopes),
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.ID); err != nil {
 		return err
 	}
 	if sh.AppID != nil {
@@ -342,6 +396,8 @@ func (s *Store) ShareInviteMatches(ctx context.Context, id, inviteHash string) b
 // PeerBinding is the peer a share is redeemed by.
 type PeerBinding struct {
 	ID, Name, URL, PublicKey string
+	// BoxPublicKey is the peer's X25519 key, for handover shares.
+	BoxPublicKey string
 }
 
 // RedeemShare binds a pending share to a peer, burns the invite and stores
@@ -373,8 +429,8 @@ func (s *Store) RedeemShare(ctx context.Context, id, inviteHash string, p PeerBi
 	if exp.Valid && exp.Int64 <= t {
 		return nil, ErrInviteExpired
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE shares SET status=?, peer_id=?, peer_name=?, peer_url=?, peer_public_key=?, invite_hash='', redeemed_at=?
-		WHERE id=? AND status=? AND invite_hash=?`, ShareActive, p.ID, p.Name, p.URL, p.PublicKey, t, id, SharePending, inviteHash)
+	res, err := tx.ExecContext(ctx, `UPDATE shares SET status=?, peer_id=?, peer_name=?, peer_url=?, peer_public_key=?, peer_box_public_key=?, invite_hash='', redeemed_at=?
+		WHERE id=? AND status=? AND invite_hash=?`, ShareActive, p.ID, p.Name, p.URL, p.PublicKey, p.BoxPublicKey, t, id, SharePending, inviteHash)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +541,7 @@ func (s *Store) ShareServiceCounts(ctx context.Context, appID int64, since time.
 // ---- peer links (receiver side) ----
 
 const peerLinkCols = `id, peer_id, peer_name, peer_url, peer_public_key, remote_share_id, token_enc, status, manifest, prefix, trusted,
-last_sync_at, last_error, created_by, created_at, services, providers`
+last_sync_at, last_error, created_by, created_at, services, providers, mode`
 
 func scanPeerLink(row interface{ Scan(...any) error }) (*PeerLink, error) {
 	var l PeerLink
@@ -494,7 +550,7 @@ func scanPeerLink(row interface{ Scan(...any) error }) (*PeerLink, error) {
 	var created int64
 	var sync, by sql.NullInt64
 	err := row.Scan(&l.ID, &l.PeerID, &l.PeerName, &l.PeerURL, &l.PeerPublicKey, &l.RemoteShareID, &l.TokenEnc, &l.Status, &manifest, &l.Prefix, &trusted,
-		&sync, &l.LastError, &by, &created, &svcs, &provs)
+		&sync, &l.LastError, &by, &created, &svcs, &provs, &l.Mode)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -516,9 +572,9 @@ func scanPeerLink(row interface{ Scan(...any) error }) (*PeerLink, error) {
 
 // CreatePeerLink stores a redeemed share's link.
 func (s *Store) CreatePeerLink(ctx context.Context, l *PeerLink, createdBy int64) (*PeerLink, error) {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO peer_links(peer_id,peer_name,peer_url,peer_public_key,remote_share_id,token_enc,status,manifest,prefix,trusted,created_by,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		l.PeerID, l.PeerName, l.PeerURL, l.PeerPublicKey, l.RemoteShareID, l.TokenEnc, l.Status, "{}", l.Prefix, b2i(l.Trusted), nz(createdBy), now())
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO peer_links(peer_id,peer_name,peer_url,peer_public_key,remote_share_id,token_enc,status,manifest,prefix,trusted,created_by,created_at,mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		l.PeerID, l.PeerName, l.PeerURL, l.PeerPublicKey, l.RemoteShareID, l.TokenEnc, l.Status, "{}", l.Prefix, b2i(l.Trusted), nz(createdBy), now(), linkMode(l.Mode))
 	if err != nil {
 		return nil, err
 	}

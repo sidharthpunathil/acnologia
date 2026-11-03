@@ -274,6 +274,12 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 	if !s.checkServiceRefs(w, r, sv, oldSlug) {
 		return
 	}
+	// A service holding keys another server handed over sends them where
+	// the owner said; nobody here may point them somewhere else.
+	if isHandoverService(sv) && targetOf(sv) != before {
+		writeErr(w, 409, "handover_service", "this service holds keys another server handed over; its base URL, auth, provider and egress follow the owner")
+		return
+	}
 	// Where keys are sent decides who can read them. A superadmin saving the
 	// service vouches for its target; anyone else changing it revokes that,
 	// so hidden keys stop flowing until a superadmin confirms.
@@ -363,6 +369,7 @@ func (s *Server) fillInFlight(keys ...*store.Key) {
 		}
 		k.QuotaUnit = u
 	}
+	s.fillHandovers(context.Background(), keys...)
 }
 
 type keyInput struct {
@@ -661,6 +668,10 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, code, "invalid", msg)
 		return
 	}
+	if k.IsHandedOver() && (in.Secret != nil || in.Hidden != nil || in.EgressID != nil) {
+		writeErr(w, 403, "handed_over", "this key was handed over by another server; its secret, hidden flag and egress cannot change here")
+		return
+	}
 	p := store.KeyPatch{
 		Label: in.Label, Tier: in.Tier, Hidden: in.Hidden, Restricted: in.Restricted, AppIDs: in.AppIDs,
 		Status: in.Status, Weight: in.Weight, Priority: in.Priority, Notes: in.Notes, Account: in.accountPatch(),
@@ -758,6 +769,10 @@ func (s *Server) revealKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if sv.Provider == providers.PeerSlug {
 		writeErr(w, 403, "share_token", "this key is a share token from another server and is never revealed")
+		return
+	}
+	if k.IsHandedOver() {
+		writeErr(w, 403, "handed_over", "this key was handed over by another server and is never revealed")
 		return
 	}
 	secret, err := s.Pool.Box.Decrypt(k.SecretEnc)

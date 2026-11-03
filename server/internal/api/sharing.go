@@ -100,8 +100,18 @@ type shareInput struct {
 	Limits        *store.AppLimits `json:"limits"`
 	// KeyScopes replaces the key scopes, by service slug.
 	KeyScopes *map[string]store.KeyScope `json:"key_scopes"`
-	// ExpiresAt is RFC 3339, or "" to clear.
+	// ExpiresAt is RFC 3339, or "" to clear. EndsAt is the same timer under
+	// its newer name, and wins when both are sent.
 	ExpiresAt *string `json:"expires_at"`
+	EndsAt    *string `json:"ends_at"`
+	// EndAction is expire (default) or revoke: what the timer does.
+	EndAction *string `json:"end_action"`
+	// Mode is proxy (default) or handover; fixed once redeemed.
+	Mode *string `json:"mode"`
+	// Lease is the handover renewal window: 1h, 6h, 24h (default), 72h or 7d.
+	Lease *string `json:"lease"`
+	// PrivateNetwork lets the revoke push reach a receiver on a private address.
+	PrivateNetwork *bool `json:"private_network"`
 	// InviteValid is 1h, 24h or 7d (default 24h).
 	InviteValid string `json:"invite_valid"`
 }
@@ -165,13 +175,20 @@ func (s *Server) applyShareInput(r *http.Request, in shareInput, sh *store.Share
 		}
 		sh.Limits = *l
 	}
-	if in.ExpiresAt != nil {
-		if *in.ExpiresAt == "" {
+	if msg := applyShareModeInput(in, sh); msg != "" {
+		return msg
+	}
+	ends, field := in.ExpiresAt, "expires_at"
+	if in.EndsAt != nil {
+		ends, field = in.EndsAt, "ends_at"
+	}
+	if ends != nil {
+		if *ends == "" {
 			sh.ExpiresAt = nil
 		} else {
-			t, err := time.Parse(time.RFC3339, *in.ExpiresAt)
+			t, err := time.Parse(time.RFC3339, *ends)
 			if err != nil {
-				return "expires_at must be an RFC 3339 time"
+				return field + " must be an RFC 3339 time"
 			}
 			t = t.UTC()
 			sh.ExpiresAt = &t
@@ -336,6 +353,16 @@ type shareView struct {
 	*store.Share
 	Usage       shareUsage                 `json:"usage"`
 	ServiceKeys map[string]serviceKeyCount `json:"service_keys"`
+	// Lease is the handover lease as a choice (1h, 6h, 24h, 72h, 7d).
+	Lease string `json:"lease"`
+	// EndsAt is the share's timer, the same value as expires_at.
+	EndsAt *time.Time `json:"ends_at"`
+	// Handover is set on handover shares: what was handed over, and the
+	// last revoke push.
+	Handover *handoverView `json:"handover"`
+	// RotateChecklist lists, on a revoked handover share, every key the
+	// other server saw: rotate them at the provider.
+	RotateChecklist []rotateItem `json:"rotate_checklist,omitempty"`
 }
 
 // serviceKeyCount is one shared service's keys: KeysShared the scope
@@ -346,7 +373,9 @@ type serviceKeyCount struct {
 }
 
 func (s *Server) newShareView(r *http.Request, sh *store.Share, perService bool) shareView {
-	return shareView{Share: sh, Usage: s.shareUsage(r, sh, perService), ServiceKeys: s.shareKeyCounts(r.Context(), sh)}
+	v := shareView{Share: sh, Usage: s.shareUsage(r, sh, perService), ServiceKeys: s.shareKeyCounts(r.Context(), sh)}
+	s.fillModeView(r.Context(), &v)
+	return v
 }
 
 // shareKeyCounts resolves each shared service's key scope.
@@ -479,6 +508,11 @@ func (s *Server) shareStatusHandler(status, event, verb string) http.HandlerFunc
 		}
 		s.Store.AddAudit(r.Context(), userFrom(r), event, sh.Name, "")
 		s.emitShare(event, sh, "share "+sh.Name+" was "+verb)
+		if status == store.ShareRevoked && sh.IsHandover() {
+			// Tell the receiver to delete the keys now; the lease is the backstop.
+			s.pushRevoke(r.Context(), sh, s.publicURL(r))
+			sh, _ = s.Store.GetShare(r.Context(), sh.ID)
+		}
 		writeJSON(w, 200, s.newShareView(r, sh, false))
 	}
 }
@@ -522,10 +556,40 @@ type peerLinkView struct {
 	*store.PeerLink
 	Fingerprint   string           `json:"fingerprint"`
 	LocalServices []*store.Service `json:"local_services"`
+	// Handover lists the keys a handover share gave this server, with the
+	// end of each lease. Never a secret.
+	Handover *linkHandoverView `json:"handover"`
+}
+
+type linkHandoverView struct {
+	Keys []linkHandoverKey `json:"keys"`
+}
+
+type linkHandoverKey struct {
+	KeyID       int64      `json:"key_id"`
+	RemoteKeyID *int64     `json:"remote_key_id"`
+	Service     string     `json:"service"`
+	Label       string     `json:"label"`
+	ValidUntil  *time.Time `json:"valid_until"`
+	Status      string     `json:"status"`
 }
 
 func (s *Server) peerLinkView(r *http.Request, l *store.PeerLink) peerLinkView {
 	v := peerLinkView{PeerLink: l, LocalServices: []*store.Service{}}
+	if l.Mode == store.ShareModeHandover {
+		v.Handover = &linkHandoverView{Keys: []linkHandoverKey{}}
+		keys, _ := s.Store.HandoverKeys(r.Context(), l.ID)
+		slugs := map[int64]string{}
+		for _, k := range keys {
+			if _, ok := slugs[k.ServiceID]; !ok {
+				if sv, err := s.Store.GetService(r.Context(), k.ServiceID); err == nil {
+					slugs[k.ServiceID] = sv.Slug
+				}
+			}
+			v.Handover.Keys = append(v.Handover.Keys, linkHandoverKey{KeyID: k.ID, RemoteKeyID: k.PeerRemoteKeyID, Service: slugs[k.ServiceID],
+				Label: k.Label, ValidUntil: k.PeerValidUntil, Status: k.EffectiveStatus})
+		}
+	}
 	if pub, err := peer.ParsePublicKey(l.PeerPublicKey); err == nil {
 		v.Fingerprint = peer.Fingerprint(pub)
 	}

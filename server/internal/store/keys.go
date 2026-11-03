@@ -11,16 +11,18 @@ import (
 
 const keyCols = `id, service_id, label, secret_enc, hint, tier, hidden, restricted, status, weight, priority, cooldown_until,
 consecutive_fails, quota_limit, quota_remaining, quota_reset_at, usage_total, usage_today, last_used_at, last_error,
-last_checked_at, notes, created_at, max_concurrency, last_ok_at, egress_id, account_name, account_email, account_phone, account_ref`
+last_checked_at, notes, created_at, max_concurrency, last_ok_at, egress_id, account_name, account_email, account_phone, account_ref,
+peer_link_id, peer_valid_until, peer_remote_key_id`
 
 func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	var k Key
 	var hidden, restricted int
-	var cd, ql, qr, qra, lu, lc, mc, lok, eg sql.NullInt64
+	var cd, ql, qr, qra, lu, lc, mc, lok, eg, pl, pv, pr sql.NullInt64
 	var created int64
 	err := row.Scan(&k.ID, &k.ServiceID, &k.Label, &k.SecretEnc, &k.Hint, &k.Tier, &hidden, &restricted, &k.Status,
 		&k.Weight, &k.Priority, &cd, &k.ConsecutiveFails, &ql, &qr, &qra, &k.UsageTotal, &k.UsageToday, &lu,
-		&k.LastError, &lc, &k.Notes, &created, &mc, &lok, &eg, &k.AccountName, &k.AccountEmail, &k.AccountPhone, &k.AccountRef)
+		&k.LastError, &lc, &k.Notes, &created, &mc, &lok, &eg, &k.AccountName, &k.AccountEmail, &k.AccountPhone, &k.AccountRef,
+		&pl, &pv, &pr)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -33,6 +35,7 @@ func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	k.MaxConcurrency = toInt(mc)
 	k.LastOKAt = toTime(lok)
 	k.EgressID = toInt(eg)
+	k.PeerLinkID, k.PeerValidUntil, k.PeerRemoteKeyID = toInt(pl), toTime(pv), toInt(pr)
 	k.CreatedAt = time.Unix(created, 0).UTC()
 	k.AppIDs = []int64{}
 	k.computeEffective(time.Now())
@@ -135,6 +138,16 @@ type NewKey struct {
 	CreatedBy  int64
 	MaxConc    *int64
 	Account    KeyAccount
+	// Handover marks a key another server handed over (see handover.go).
+	Handover *KeyHandoverRef
+}
+
+// KeyHandoverRef ties a handed over key to the peer link it came through,
+// the owner's key id and the end of its lease.
+type KeyHandoverRef struct {
+	LinkID      int64
+	RemoteKeyID int64
+	ValidUntil  time.Time
 }
 
 var ErrDuplicate = errors.New("duplicate")
@@ -171,12 +184,13 @@ func (s *Store) CreateKeys(ctx context.Context, nks []NewKey) ([]*Key, []int, er
 	for i, nk := range nks {
 		// A failed INSERT (a duplicate) rolls back only that statement, so the
 		// transaction stays usable.
+		ho := nk.Handover
 		_, err := tx.ExecContext(ctx, `INSERT INTO keys(id,service_id,label,secret_enc,secret_fp,hint,tier,hidden,restricted,weight,priority,notes,quota_limit,created_by,created_at,max_concurrency,
-		account_name,account_email,account_phone,account_ref)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		account_name,account_email,account_phone,account_ref,peer_link_id,peer_remote_key_id,peer_valid_until)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			next, nk.ServiceID, nk.Label, nk.SecretEnc, nk.SecretFP, nk.Hint, nk.Tier, b2i(nk.Hidden), b2i(nk.Restricted),
 			nk.Weight, nk.Priority, nk.Notes, fromInt(nk.QuotaLimit), nk.CreatedBy, now(), fromInt(nk.MaxConc),
-			nk.Account.Name, nk.Account.Email, nk.Account.Phone, nk.Account.Ref)
+			nk.Account.Name, nk.Account.Email, nk.Account.Phone, nk.Account.Ref, ho.link(), ho.remote(), ho.until())
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE") {
 				dups = append(dups, i)

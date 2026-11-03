@@ -35,7 +35,7 @@ var rules = []rule{
 	{name: "jwt", re: regexp.MustCompile(`eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}`)},
 	// Shorter prefixes need a boundary in front ("task-..." is not "sk-...").
 	{name: "openai", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])(sk-[A-Za-z0-9_\-]{16,})`), group: 1, ok: hasDigit},
-	{name: "prefixed", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])((?:hf|gsk|r8|acn|acnadm|acninv|cog|cogadm|whsec)_[A-Za-z0-9_\-]{20,}|(?:pplx|xai|fc)-[A-Za-z0-9_\-]{20,})`), group: 1, ok: notServerID},
+	{name: "prefixed", re: regexp.MustCompile(`(?:^|[^A-Za-z0-9_\-])((?:hf|gsk|r8|acn|acnadm|acninv|acnseal[0-9]*|cog|cogadm|whsec)_[A-Za-z0-9_\-]{20,}|(?:pplx|xai|fc)-[A-Za-z0-9_\-]{20,})`), group: 1, ok: notServerID},
 	// Credentials by position.
 	// The access gate's cookie (acnologia_gate=<issued>.<mac>) is hex after
 	// a timestamp, which the entropy rule leaves alone, so it gets its own.

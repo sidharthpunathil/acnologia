@@ -47,6 +47,13 @@ const (
 	ShareResumed  = "share.resumed"
 	ShareRevoked  = "share.revoked"
 	ShareUpdated  = "share.updated"
+	// Share timers and key handover. Never dropped as repeats.
+	ShareExpired         = "share.expired"
+	ShareHandover        = "share.handover"
+	ShareHandoverWiped   = "share.handover_wiped"
+	ShareRevokePush      = "share.revoke_push"
+	PeerHandoverReceived = "peer.handover_received"
+	PeerHandoverWiped    = "peer.handover_wiped"
 	// ProviderOffersChanged is a provider refresh publishing new offers.
 	// Never dropped as a repeat.
 	ProviderOffersChanged = "provider.offers_changed"
@@ -72,6 +79,12 @@ var Types = []struct {
 	{ShareResumed, "A paused share was resumed"},
 	{ShareRevoked, "A share was revoked, or the other server left it"},
 	{ShareUpdated, "A share's services, providers, limits or expiry changed"},
+	{ShareExpired, "A share's timer ended and it expired"},
+	{ShareHandover, "Keys were handed over to another server for the first time (renewals are not sent)"},
+	{ShareHandoverWiped, "Keys handed over to another server are known to be deleted there"},
+	{ShareRevokePush, "The result of telling another server to delete handed over keys"},
+	{PeerHandoverReceived, "Another server handed keys over to this one"},
+	{PeerHandoverWiped, "Keys another server handed over were deleted here, with the reason"},
 	{ProviderOffersChanged, "A provider refresh published new offers, prices or limits"},
 }
 
@@ -143,7 +156,7 @@ func (n *Notifier) Emit(e Event) {
 		delete(n.seen, t+"|"+e.subject())
 	}
 	k := e.Type + "|" + e.subject()
-	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet && !strings.HasPrefix(e.Type, "share.") && !strings.HasPrefix(e.Type, "provider.") {
+	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet && !strings.HasPrefix(e.Type, "share.") && !strings.HasPrefix(e.Type, "peer.") && !strings.HasPrefix(e.Type, "provider.") {
 		n.mu.Unlock()
 		return
 	}

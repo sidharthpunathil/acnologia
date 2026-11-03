@@ -163,9 +163,22 @@ type Key struct {
 	// EgressID routes this key's traffic through an outbound proxy,
 	// overriding the service's.
 	EgressID *int64 `json:"egress_id"`
+	// PeerLinkID is set on a key another server handed over (handover.go):
+	// the link it came through. PeerValidUntil is when it is deleted unless
+	// the owner renews it; PeerRemoteKeyID is the owner's id for it.
+	PeerLinkID      *int64     `json:"peer_link_id"`
+	PeerValidUntil  *time.Time `json:"peer_valid_until"`
+	PeerRemoteKeyID *int64     `json:"peer_remote_key_id"`
+	// Handovers lists the other servers this key was handed over to, on the
+	// owner. Filled by the key list handlers.
+	Handovers []KeyHandover `json:"handed_over,omitempty"`
 
 	SecretEnc []byte `json:"-"`
 }
+
+// IsHandedOver reports whether another server handed this key over. Such a
+// key is never revealed, leased, shared onward or exported.
+func (k *Key) IsHandedOver() bool { return k.PeerLinkID != nil }
 
 // ConcurrencyLimit is the effective in-flight cap for the key; 0 means unlimited.
 func (k *Key) ConcurrencyLimit(svc *Service) int {

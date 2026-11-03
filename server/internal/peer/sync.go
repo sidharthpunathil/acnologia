@@ -45,6 +45,13 @@ type Syncer struct {
 	// the owner serves none for an imported provider. Nil skips it.
 	FetchSiteLogo func(ctx context.Context, site string) ([]byte, string, error)
 
+	// OnHandover hears about handed over keys arriving or being deleted, for
+	// audit and webhooks. Nil is fine.
+	OnHandover func(ctx context.Context, ev HandoverEvent)
+	// CheckHost vets the host of an owner's base URL for handed over keys on
+	// a link that is not on a private network. Nil uses PublicHost.
+	CheckHost func(ctx context.Context, host string) error
+
 	mu sync.Mutex // one sync at a time, so two cannot both create a service
 }
 
@@ -110,6 +117,10 @@ func (y *Syncer) Connect(ctx context.Context, code, prefix string, trusted bool,
 		PublicKey: self.PublicKey, Nonce: nonce,
 		Signature: SignRedeem(priv, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID),
 	}
+	if self.BoxPublicKey != "" {
+		req.BoxPublicKey = self.BoxPublicKey
+		req.Signature = SignRedeemBox(priv, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID, self.BoxPublicKey)
+	}
 	res, err := Redeem(ctx, c, inv, req)
 	if err != nil {
 		return nil, err
@@ -130,6 +141,7 @@ func (y *Syncer) Connect(ctx context.Context, code, prefix string, trusted bool,
 	link, err := y.Store.CreatePeerLink(ctx, &store.PeerLink{
 		PeerID: owner.ID, PeerName: owner.Name, PeerURL: inv.URL, PeerPublicKey: owner.PublicKey,
 		RemoteShareID: inv.ShareID, TokenEnc: enc, Status: LinkActive, Prefix: prefix, Trusted: trusted,
+		Mode: res.Manifest.Mode,
 	}, userID)
 	if err != nil {
 		return nil, err
@@ -206,7 +218,15 @@ func (y *Syncer) MarkRemoteState(ctx context.Context, linkID int64, state string
 // services at once. Revoked also deletes the token and the keys holding it.
 func (y *Syncer) setStatus(ctx context.Context, link *store.PeerLink, state string) (*store.PeerLink, error) {
 	now := time.Now().UTC()
+	if link.Mode == ModeHandover {
+		// Pause, expiry and revoke all delete handed over keys; resume hands
+		// them over again.
+		y.wipeLink(ctx, link, "share "+state+" by "+link.PeerName)
+	}
 	for _, id := range link.Services {
+		if link.Mode == ModeHandover {
+			break
+		}
 		if state == LinkRevoked {
 			_ = y.Store.DeleteServiceKeys(ctx, id)
 		} else {
@@ -234,6 +254,11 @@ func (y *Syncer) Disconnect(ctx context.Context, id int64) (*store.PeerLink, err
 	if err != nil {
 		return nil, err
 	}
+	// Handed over keys go before the owner hears about it, so "left" on
+	// the owner means they are gone.
+	if link.Mode == ModeHandover {
+		y.wipeLink(ctx, link, WipeDisconnected)
+	}
 	if len(link.TokenEnc) > 0 {
 		if token, err := y.Box.Decrypt(link.TokenEnc); err == nil {
 			lctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -243,8 +268,10 @@ func (y *Syncer) Disconnect(ctx context.Context, id int64) (*store.PeerLink, err
 			cancel()
 		}
 	}
-	for _, sid := range link.Services {
-		_ = y.Store.DeleteServiceKeys(ctx, sid)
+	if link.Mode != ModeHandover {
+		for _, sid := range link.Services {
+			_ = y.Store.DeleteServiceKeys(ctx, sid)
+		}
 	}
 	if err := y.Store.ClearPeerLinkToken(ctx, id, LinkDisconnected); err != nil {
 		return nil, err
@@ -270,6 +297,10 @@ func (y *Syncer) apply(ctx context.Context, link *store.PeerLink, token string, 
 	// works through the owner's proxy either way.
 	if status == LinkActive {
 		problems = append(problems, y.syncProviders(ctx, link, token, m)...)
+	}
+	if link.Mode == ModeHandover {
+		problems = append(problems, y.applyHandover(ctx, link, token, status)...)
+		return y.saveApplied(ctx, link, m, status, now, problems)
 	}
 	present := map[string]bool{}
 	for _, ms := range m.Services {
@@ -307,6 +338,10 @@ func (y *Syncer) apply(ctx context.Context, link *store.PeerLink, token string, 
 			_ = y.Store.SetServiceKeysStatus(ctx, id, store.StatusDisabled, why)
 		}
 	}
+	return y.saveApplied(ctx, link, m, status, now, problems)
+}
+
+func (y *Syncer) saveApplied(ctx context.Context, link *store.PeerLink, m *Manifest, status string, now time.Time, problems []string) error {
 	raw, _ := json.Marshal(m)
 	link.Manifest = raw
 	link.Status, link.LastSyncAt = status, &now
