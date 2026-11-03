@@ -1,0 +1,117 @@
+local json = require("acnologia.json")
+
+describe("json", function()
+  it("encodes scalars", function()
+    assert.are.equal("null", json.encode(nil))
+    assert.are.equal("null", json.encode(json.null))
+    assert.are.equal("true", json.encode(true))
+    assert.are.equal("false", json.encode(false))
+    assert.are.equal("42", json.encode(42))
+    assert.are.equal("-7", json.encode(-7))
+    assert.are.equal("1.5", json.encode(1.5))
+    assert.are.equal("3", json.encode(3.0))
+    assert.are.equal('"hi"', json.encode("hi"))
+  end)
+
+  it("escapes strings", function()
+    assert.are.equal([["a\"b\\c\nd\te\u0001"]], json.encode('a"b\\c\nd\te\1'))
+    assert.are.equal('"caf\195\169 /"', json.encode("caf\195\169 /"))
+  end)
+
+  it("encodes arrays and objects with sorted keys", function()
+    assert.are.equal("[1,2,3]", json.encode({ 1, 2, 3 }))
+    assert.are.equal('{"a":1,"b":[true,null],"c":{"d":"e"}}',
+      json.encode({ c = { d = "e" }, b = { true, json.null }, a = 1 }))
+  end)
+
+  it("encodes empty tables as objects unless marked", function()
+    assert.are.equal("{}", json.encode({}))
+    assert.are.equal("[]", json.encode(json.array({})))
+    assert.are.equal('{"1":"x"}', json.encode(json.object({ "x" })))
+  end)
+
+  it("encodes sparse tables as objects", function()
+    assert.are.equal('{"1":"a","3":"c"}', json.encode({ [1] = "a", [3] = "c" }))
+  end)
+
+  it("refuses what JSON cannot hold", function()
+    local s, err = json.encode({ f = print })
+    assert.is_nil(s)
+    assert.truthy(err:find("cannot encode a function", 1, true))
+    s, err = json.encode(0 / 0)
+    assert.is_nil(s)
+    assert.truthy(err)
+    s, err = json.encode(math.huge)
+    assert.is_nil(s)
+    local t = {}
+    t.self = t
+    s, err = json.encode(t)
+    assert.is_nil(s)
+    assert.truthy(err:find("contains itself", 1, true))
+    s, err = json.encode({ [true] = 1 })
+    assert.is_nil(s)
+  end)
+
+  it("decodes scalars", function()
+    assert.are.equal(true, json.decode("true"))
+    assert.are.equal(false, json.decode(" false "))
+    assert.are.equal(json.null, json.decode("null"))
+    assert.are.equal(12, json.decode("12"))
+    assert.are.equal(-0.5, json.decode("-0.5"))
+    assert.are.equal(1500, json.decode("1.5e3"))
+    assert.are.equal(0.015, json.decode("1.5E-2"))
+    assert.are.equal(0, json.decode("0"))
+    assert.are.equal("x", json.decode('"x"'))
+  end)
+
+  it("decodes nested values", function()
+    local v = json.decode(' {"a": [1, {"b": null}, "c"], "d": {}, "e": []} ')
+    assert.are.equal(1, v.a[1])
+    assert.are.equal(json.null, v.a[2].b)
+    assert.are.equal("c", v.a[3])
+    assert.are.same({}, v.d)
+    assert.are.equal(0, #v.e)
+    assert.are.equal('{"a":[1,{"b":null},"c"],"d":{},"e":[]}', json.encode(v))
+  end)
+
+  it("decodes escapes and unicode, including surrogate pairs", function()
+    assert.are.equal('a"b\\c/d\b\f\n\r\t', json.decode([["a\"b\\c\/d\b\f\n\r\t"]]))
+    assert.are.equal("\195\169", json.decode([["é"]]))
+    assert.are.equal("\226\130\172", json.decode([["€"]]))
+    assert.are.equal("\240\159\152\128", json.decode([["😀"]]))
+    assert.are.equal("\239\191\189", json.decode([["\ud83d"]]))
+    assert.are.equal("A", json.decode([["A"]]))
+    assert.are.equal("caf\195\169", json.decode('"caf\195\169"'))
+  end)
+
+  it("round trips", function()
+    local v = { name = "agi-labs", ids = { 1, 2, 3 }, nested = { ok = true, n = 0.25, s = "line\nbreak" } }
+    local back = json.decode(json.encode(v))
+    assert.are.same(v.ids[3], back.ids[3])
+    assert.are.equal(v.nested.s, back.nested.s)
+    assert.are.equal(v.nested.n, back.nested.n)
+    assert.are.equal(json.encode(v), json.encode(back))
+  end)
+
+  it("rejects bad input with a position", function()
+    local bad = {
+      "", "{", "[1,]", "[1 2]", '{"a" 1}', '{a:1}', "01", "1.", "1e", "-", ".5",
+      '"abc', '"\\x"', '"\\u12"', "tru", "nul", "[1] x", '"a\nb"', "{,}",
+    }
+    for _, s in ipairs(bad) do
+      local v, err = json.decode(s)
+      assert.is_nil(v, "expected an error for " .. s)
+      assert.truthy(err and err:find("json:", 1, true), "no message for " .. s)
+    end
+    local _, err = json.decode('{\n  "a": x}')
+    assert.truthy(err:find("line 2", 1, true))
+    assert.is_nil(json.decode(42))
+  end)
+
+  it("refuses absurd nesting", function()
+    local deep = string.rep("[", 600) .. string.rep("]", 600)
+    local v, err = json.decode(deep)
+    assert.is_nil(v)
+    assert.truthy(err:find("nested", 1, true))
+  end)
+end)
