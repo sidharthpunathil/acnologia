@@ -490,3 +490,37 @@ func TestControlMCPResultCap(t *testing.T) {
 		t.Fatal("trim broke a rune")
 	}
 }
+
+// Guides reach the control MCP: a provider's, a service's with its proxy
+// URL, and the AI writer is listed for admins only.
+func TestControlMCPGuides(t *testing.T) {
+	e := newEnv(t)
+	c := &ctlClient{e: e, tok: adminToken(e, "write")}
+	sc, text, isErr := c.tool("provider_guide", map[string]any{"slug": "serpapi"})
+	if isErr || sc["generated"] != false || !strings.Contains(argStr(sc, "markdown"), "SerpAPI") {
+		t.Fatalf("provider_guide: %s", text)
+	}
+	if _, text, isErr := c.tool("create_service", map[string]any{"provider": "serpapi", "slug": "search3", "name": "Search three", "base_url": e.upURL}); isErr {
+		t.Fatalf("create_service: %s", text)
+	}
+	sc, text, isErr = c.tool("service_guide", map[string]any{"service": "Search three"})
+	if isErr || !strings.Contains(argStr(sc, "markdown"), "/proxy/search3") {
+		t.Fatalf("service_guide: %s", text)
+	}
+	has := func(names []string, n string) bool {
+		for _, x := range names {
+			if x == n {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(c.names(), "write_provider_guide") {
+		t.Fatal("admin token is not offered write_provider_guide")
+	}
+	r := &ctlClient{e: e, tok: adminToken(e, "read")}
+	names := r.names()
+	if has(names, "write_provider_guide") || !has(names, "provider_guide") || !has(names, "service_guide") {
+		t.Fatalf("read token tools: %v", names)
+	}
+}

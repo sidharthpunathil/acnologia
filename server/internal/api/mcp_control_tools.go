@@ -497,6 +497,12 @@ func buildCtlTools() []ctlTool {
 			Desc: "Providers Acnologia knows (built in, manual, AI built and copied from other servers), with how many services use each."},
 		{Name: "get_provider", Title: "Get a provider", Group: "providers", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/providers/{slug}",
 			Desc: "One provider with its full spec (auth, health check, quota, examples, offers) and version history.", Props: map[string]any{"slug": sProp("Provider slug")}, Required: []string{"slug"}},
+		{Name: "provider_guide", Title: "Provider usage guide", Group: "providers", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/providers/{slug}/guide",
+			Desc:  "How to call a provider through Acnologia, as Markdown and as the structured guide: endpoints with params, example bodies, what the response holds, limits, pricing and how errors are handled. Read it before call_service on a provider you have not used. generated is true when the provider has no written guide and this one was built from its examples. Pass service to fill in that service's proxy URL.",
+			Props: map[string]any{"slug": sProp("Provider slug"), "service": sProp("Optional service slug built on this provider")}, Required: []string{"slug"}, Query: []string{"service"}},
+		{Name: "write_provider_guide", Title: "Write a provider guide with AI", Group: "providers", Kind: ctlWrite, Role: a, Method: post, Path: "/api/admin/providers/{slug}/guide/generate", OpenWorld: true,
+			Desc:  "Have the AI write or rewrite a provider's usage guide from its docs, examples and offers, and save it as a new provider version (only the guide changes; roll back with rollback_provider). Takes up to a few minutes. Use it after adding a provider without a guide, or when a guide is thin or out of date.",
+			Props: map[string]any{"slug": sProp("Provider slug"), "instruction": sProp("Optional: what to focus on or fix, under 4,000 characters")}, Required: []string{"slug"}, Body: []string{"instruction"}},
 		{Name: "validate_provider", Title: "Validate a provider", Group: "providers", Kind: ctlRead, Role: m, Method: post, Path: "/api/admin/providers/validate",
 			Desc:  "Check a provider definition without saving it. Returns the problems found and the fixture test report. Include spec.guide (summary plus the main endpoints with params and an example body).",
 			Props: providerFields, Required: []string{"spec"}, Body: keysOf(providerFields)},
@@ -529,7 +535,7 @@ func buildCtlTools() []ctlTool {
 
 		// ---- call ----
 		{Name: "call_service", Title: "Call a service", Group: "call", Kind: ctlWrite, Role: a, OpenWorld: true,
-			Desc: "Call a provider API (search, LLM, voice and the rest) through Acnologia's proxy: it picks a pooled key, injects it, rotates on rate limits and records usage. The key is never shown. Calls run as the app \"Control MCP\", made on first use, so its limits and usage apply. list_service_examples shows ready to use arguments.",
+			Desc: "Call a provider API (search, LLM, voice and the rest) through Acnologia's proxy: it picks a pooled key, injects it, rotates on rate limits and records usage. The key is never shown. Calls run as the app \"Control MCP\", made on first use, so its limits and usage apply. Read service_guide first for the endpoints and params; list_service_examples shows ready to use arguments.",
 			Props: map[string]any{
 				"service": svcIn,
 				"method":  eProp("HTTP method, default GET", "GET", "POST", "PUT", "PATCH", "DELETE"),
@@ -539,6 +545,9 @@ func buildCtlTools() []ctlTool {
 				"headers": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Extra request headers; the key header is set by Acnologia"},
 			},
 			Required: []string{"service", "path"}, Run: ctlCallService},
+		{Name: "service_guide", Title: "Service usage guide", Group: "call", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/services/{service}/guide",
+			Desc:  "How to call one service: its real proxy URL, endpoints with params and example bodies, response fields, limits and error handling, as Markdown and as the structured guide. Read it before the first call_service on a service.",
+			Props: map[string]any{"service": svcIn}, Required: []string{"service"}},
 		{Name: "list_service_examples", Title: "Service examples", Group: "call", Kind: ctlRead, Role: m,
 			Desc:  "A service's documented example calls, each with ready to use call_service arguments, plus its quota unit and offers.",
 			Props: map[string]any{"service": svcIn}, Required: []string{"service"}, Run: ctlServiceExamples},

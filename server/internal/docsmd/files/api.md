@@ -251,8 +251,8 @@ Choices go in the endpoint URL's query or in headers (the header wins):
 | `services` | `list_services`, `get_service`, `create_service`, `update_service`, `delete_service`, `service_breaker`, `reset_breaker`, `cache_stats`, `purge_cache`, `check_service_keys` |
 | `keys` | `list_keys`, `key_details`, `add_keys`, `update_key`, `delete_key`, `check_key`, `check_all_keys`, `reset_key` |
 | `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp` |
-| `providers` | `list_providers`, `get_provider`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `check_provider_offers` |
-| `call` | `call_service`, `list_service_examples` |
+| `providers` | `list_providers`, `get_provider`, `provider_guide`, `write_provider_guide`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `check_provider_offers` |
+| `call` | `call_service`, `service_guide`, `list_service_examples` |
 | `ai` | `ai_status`, `ai_models`, `ai_assist`, `start_provider_build`, `list_ai_runs`, `get_ai_run`, `cancel_ai_run`, `publish_ai_run`, `delete_ai_run` |
 | `routing` | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `test_webhook`, `list_egress`, `create_egress`, `update_egress`, `delete_egress`, `test_egress`, `list_groups`, `create_group`, `update_group`, `delete_group` |
 | `sharing` | `get_identity`, `update_identity`, `list_shares`, `get_share`, `create_share`, `update_share`, `pause_share`, `resume_share`, `revoke_share`, `extend_share`, `share_invite`, `share_claim_link`, `list_peers`, `preview_peer`, `connect_peer`, `sync_peer`, `disconnect_peer`, `list_peer_providers`, `pull_peer_provider` |
