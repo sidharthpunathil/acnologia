@@ -471,7 +471,31 @@ type KeyEffect struct {
 	Checked          bool
 }
 
+// okEffect reports whether e is exactly what a successful call records:
+// failures reset and the OK time set, with the quota counted down or not.
+func okEffect(e KeyEffect) (decrement, ok bool) {
+	only := e.Status == nil && e.CooldownUntil == nil && !e.ClearCooldown && e.QuotaRemaining == nil &&
+		e.QuotaLimit == nil && e.QuotaResetAt == nil && e.LastError == nil && !e.Checked
+	return e.DecrementQuota, only && e.MarkOK && e.ConsecutiveFails != nil
+}
+
+const (
+	applyOK          = `UPDATE keys SET consecutive_fails=?, last_ok_at=? WHERE id=?`
+	applyOKDecrement = `UPDATE keys SET consecutive_fails=?, quota_remaining=CASE WHEN quota_remaining IS NULL THEN NULL WHEN quota_remaining>0 THEN quota_remaining-1 ELSE 0 END, last_ok_at=? WHERE id=?`
+)
+
+// ApplyEffect writes an outcome's effect on a key, committed when it
+// returns. The effect of a successful call, the common case, is group
+// committed with other requests' writes; every other effect (a cooldown,
+// a status change) is written directly.
 func (s *Store) ApplyEffect(ctx context.Context, id int64, e KeyEffect) error {
+	if dec, ok := okEffect(e); ok {
+		q := applyOK
+		if dec {
+			q = applyOKDecrement
+		}
+		return s.gw.write(wstmt{q, []any{*e.ConsecutiveFails, now(), id}})
+	}
 	sets := []string{}
 	args := []any{}
 	add := func(q string, a ...any) { sets = append(sets, q); args = append(args, a...) }

@@ -27,28 +27,43 @@ func newStmtCache(db *sql.DB) *stmtCache {
 
 // stmt returns the prepared statement for q, preparing it on first use.
 // It returns nil when q cannot be prepared or the cache is full; callers
-// then run q on the pool, which reports any error in q itself.
+// then run q on the pool, which reports any error in q itself. No lock is
+// held while preparing: preparing waits for a connection, and on the writer
+// that connection may be held by a transaction that is itself looking up a
+// statement here.
 func (c *stmtCache) stmt(ctx context.Context, q string) *sql.Stmt {
+	if st := c.peek(q); st != nil {
+		return st
+	}
 	c.mu.RLock()
-	st := c.m[q]
+	full := c.m == nil || len(c.m) >= maxCachedStmts
 	c.mu.RUnlock()
-	if st != nil {
-		return st
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if st := c.m[q]; st != nil {
-		return st
-	}
-	if c.m == nil || len(c.m) >= maxCachedStmts {
+	if full {
 		return nil
 	}
 	st, err := c.db.PrepareContext(context.WithoutCancel(ctx), q)
 	if err != nil {
 		return nil
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if have := c.m[q]; have != nil {
+		_ = st.Close()
+		return have
+	}
+	if c.m == nil || len(c.m) >= maxCachedStmts {
+		_ = st.Close()
+		return nil
+	}
 	c.m[q] = st
 	return st
+}
+
+// peek returns the statement for q if it is prepared already.
+func (c *stmtCache) peek(q string) *sql.Stmt {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.m[q]
 }
 
 func (c *stmtCache) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {

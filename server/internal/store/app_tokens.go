@@ -195,7 +195,7 @@ var touched = struct {
 
 // TouchAppToken records that a token (and its app) was just used, at most
 // once per TokenTouchInterval per token.
-func (s *Store) TouchAppToken(ctx context.Context, appID, tokenID int64) {
+func (s *Store) TouchAppToken(_ context.Context, appID, tokenID int64) {
 	t := time.Now()
 	touched.Lock()
 	k := touchKey{s, tokenID}
@@ -205,8 +205,9 @@ func (s *Store) TouchAppToken(ctx context.Context, appID, tokenID int64) {
 	}
 	touched.at[k] = t
 	touched.Unlock()
-	_, _ = s.DB.ExecContext(ctx, `UPDATE app_tokens SET last_used_at=? WHERE id=?`, t.Unix(), tokenID)
-	_, _ = s.DB.ExecContext(ctx, `UPDATE apps SET last_used_at=? WHERE id=?`, t.Unix(), appID)
+	_ = s.gw.write(
+		wstmt{`UPDATE app_tokens SET last_used_at=? WHERE id=?`, []any{t.Unix(), tokenID}},
+		wstmt{`UPDATE apps SET last_used_at=? WHERE id=?`, []any{t.Unix(), appID}})
 }
 
 type appTokenCtxKey struct{}

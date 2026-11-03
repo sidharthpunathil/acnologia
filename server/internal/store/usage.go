@@ -73,16 +73,18 @@ func (s *Store) SetAppLimits(ctx context.Context, appID int64, l AppLimits) erro
 }
 
 // RecordAppUsage adds one upstream request and its cost to today's row.
-// Cache hits are counted separately and cost nothing.
-func (s *Store) RecordAppUsage(ctx context.Context, appID int64, cost float64, cacheHit bool) error {
+// Cache hits are counted separately and cost nothing. The write is group
+// committed and does not stop when ctx is cancelled: the request was served,
+// so a client hanging up must not keep it out of the app's limits. It has
+// committed when RecordAppUsage returns.
+func (s *Store) RecordAppUsage(_ context.Context, appID int64, cost float64, cacheHit bool) error {
 	req, hit := 1, 0
 	if cacheHit {
 		req, hit, cost = 0, 1, 0
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO app_usage(app_id, day, requests, cost, cache_hits) VALUES(?,?,?,?,?)
+	return s.gw.write(wstmt{`INSERT INTO app_usage(app_id, day, requests, cost, cache_hits) VALUES(?,?,?,?,?)
 		ON CONFLICT(app_id, day) DO UPDATE SET requests=requests+excluded.requests, cost=cost+excluded.cost, cache_hits=cache_hits+excluded.cache_hits`,
-		appID, dayOf(time.Now()), req, cost, hit)
-	return err
+		[]any{appID, dayOf(time.Now()), req, cost, hit}})
 }
 
 func (s *Store) GetAppUsage(ctx context.Context, appID int64, at time.Time) (AppUsage, error) {

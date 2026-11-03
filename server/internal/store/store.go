@@ -33,6 +33,8 @@ type Store struct {
 	rd *sql.DB
 	// w and r keep prepared statements for constant SQL on each pool.
 	w, r *stmtCache
+	// gw group commits the per request writes (see writer.go).
+	gw *groupWriter
 	// red redacts secrets from text the store writes (see redact.go).
 	red atomic.Pointer[redact.Redactor]
 	// scopes caches share key scopes by app (see keyscope.go).
@@ -290,7 +292,8 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("open read pool: %w", err)
 	}
 	chmodDB(dataDir, file)
-	return &Store{DB: db, rd: rd, w: newStmtCache(db), r: newStmtCache(rd)}, nil
+	w := newStmtCache(db)
+	return &Store{DB: db, rd: rd, w: w, r: newStmtCache(rd), gw: newGroupWriter(db, w)}, nil
 }
 
 // chmodDB keeps the database and its WAL and shared memory files owner only.
@@ -452,8 +455,9 @@ func addColumn(db *sql.DB, table, col, def string) (bool, error) {
 	return err == nil, err
 }
 
-// Close closes both pools.
+// Close waits for queued writes to commit, then closes both pools.
 func (s *Store) Close() error {
+	s.gw.close()
 	s.r.close()
 	s.w.close()
 	rerr := s.rd.Close()
