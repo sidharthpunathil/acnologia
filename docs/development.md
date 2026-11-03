@@ -1,6 +1,7 @@
 # Development
 
-Go 1.26, Node 22 and pnpm 10.
+Go 1.26, Node 22 and pnpm 10. On Windows, see [Windows](#windows) for the
+PowerShell equivalents.
 
 ```sh
 make dev    # Go on :8080 and Vite on :5173 with hot reload
@@ -19,18 +20,24 @@ mixing keys.
 | Path | What |
 |---|---|
 | `server/cmd/acnologia` | Entry point and boot sequence. |
-| `server/internal/api` | HTTP handlers, middleware, proxy, MCP. |
+| `server/cmd/acn` | The `acn` command line client. |
+| `server/internal/api` | HTTP handlers, middleware, proxy, MCP, sharing routes, the Assistant and its compaction. |
 | `server/internal/pool` | Key selection, concurrency slots, outcomes, health checks. |
 | `server/internal/providers` | Provider spec format and engine, built in specs. |
 | `server/internal/catalog` | Provider publishing, versions, logos, live checks, SSRF safe client. |
-| `server/internal/agent` | AI provider builder and the shared Claude client. |
+| `server/internal/agent` | The shared Claude client, the AI provider builder, Fill with AI, model choice per feature, model prices and the offers check. |
+| `server/internal/refresh` | Scheduled provider offers and Claude price refresh: settings, runs, diffs, reviews. |
+| `server/internal/peer` | Server identity, invites, the manifest client and sync with other servers. |
 | `server/internal/store` | SQLite schema, migrations, queries. |
 | `server/internal/crypto` | Master key, encryption, hashing, scrubbing. |
 | `server/internal/redact` | Keeps secrets out of requests to Claude, stored text and logs. |
-| `server/internal/ctl` | The `acnologia ctl` client. |
-| `server/internal/worker` | Housekeeping and background health checks. |
+| `server/internal/ctl` | The `acn` and `acnologia ctl` client. |
+| `server/internal/worker` | Housekeeping, background health checks, peer sync and the refresh schedule. |
+| `server/internal/breaker`, `egress`, `respcache`, `notify`, `keyparse` | Circuit breaker, egress proxies, response cache, webhooks, the key paste parser. |
+| `server/internal/config` | Environment settings and the default data directory per OS. |
+| `server/internal/docsmd`, `llmstxt`, `webui` | Embedded copies of the docs, `llms.txt` and the built dashboard. |
 | `web/` | React, Vite, Zustand and Tailwind dashboard. Built into `server/internal/webui/dist`. |
-| `sdk/` | Go, Python, TypeScript, PHP and Ruby clients. |
+| `sdk/` | The twelve client libraries, see [SDKs](sdks.md). |
 | `e2e/` | Playwright screenshot suite for the dashboard. |
 | `scripts/build.ps1` | The Makefile's build steps for Windows PowerShell. |
 | `install.sh`, `install.ps1` | `acn` installers for macOS and Linux, and for Windows. |
@@ -49,14 +56,28 @@ See [architecture](architecture.md) for how the packages fit together.
 | Python SDK | `cd sdk/python && pytest` | Same for Python (needs `httpx`, `pytest`). |
 | Dashboard | `cd web && npx tsc --noEmit -p .` | Type check. |
 | Dashboard screens | `make test-screens` | Full page screenshots of every dashboard page, see below. |
+| Live provider checks | `cd server && ACNOLOGIA_LIVE_PROVIDERS=1 go test ./internal/providers -run TestInferenceLiveNoKey -v` | Calls the real LLM APIs with an invalid key. Needs the network, no secrets; skipped without the variable. See [providers](providers.md#testing-against-the-real-apis). |
 
 The API tests spin up the real router on `httptest` with a temporary SQLite
 database, so they exercise middleware, auth and the proxy the way production
 does.
 
-CI (`.github/workflows/ci.yml`) runs the server, the Go, Python and
-TypeScript SDKs on Linux, macOS and Windows for every push and pull request,
-plus a Windows job that builds both binaries with `scripts/build.ps1`.
+CI (`.github/workflows/ci.yml`) runs on every push and pull request. All of
+it runs offline against fakes.
+
+| Job | Runs on | What |
+|---|---|---|
+| go | Linux, macOS, Windows | `go vet`, server and CLI tests (`-race` except on Windows), Go SDK tests; on Linux also a Windows arm64 cross compile |
+| python sdk | Linux, macOS, Windows | `pytest` |
+| typescript sdk | Linux, macOS, Windows | tests and type check |
+| dashboard build | Linux | `pnpm build` |
+| windows build | Windows | parses `install.ps1` and `scripts/build.ps1` in PowerShell 5.1 and 7, builds both binaries with `build.ps1` and runs them |
+
+Releases are tag driven: a `v*` tag runs `release-server.yml`, which builds
+the server for Linux, macOS and Windows on amd64 and arm64 (`.tar.gz`, or
+`.zip` for Windows, plus `SHA256SUMS`); a `cli-v*` tag runs
+`release-cli.yml` for `acn` on the same six targets, which `install.sh` and
+`install.ps1` download.
 
 ## Windows
 
