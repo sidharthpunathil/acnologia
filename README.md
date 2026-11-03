@@ -2,19 +2,62 @@
 
 # Acnologia
 
-A self-hosted pool for the API keys your apps burn through.
+Share your API keys without giving them away.
 
-Put every key you have for SerpAPI, Brave Search, ElevenLabs, OpenAI,
-Anthropic, Gemini or any key based HTTP API in one place. Your apps call Acnologia instead of the
-provider. Acnologia sends each request with a key that has quota left, and when
-the provider answers rate limited, out of quota or suspended, it parks that key
-and retries with the next one. It is built for teams and solo developers who
-juggle free tier and paid keys across apps, workers and AI agents.
+API keys get passed around in `.env` files, chat messages and CI settings.
+Once a key is out, you cannot take it back, you cannot see who is using it,
+and the only way to stop them is to rotate it for everyone.
+
+Acnologia is a self-hosted key server. You add your keys once. Every app,
+script, AI agent, teammate or other server gets its own token and calls the
+API through Acnologia, which attaches the key on the way out. You decide
+which keys each one may use, how much, and for how long, and you can revoke
+any of them in one click without touching the key itself.
 
 One Go binary with the dashboard built in, for Linux, macOS and Windows.
 SQLite storage, keys encrypted at rest with AES-256-GCM.
 
-![The catalog: every service and how many of its keys are available](docs/screenshots/catalog.png)
+## Who you can share with
+
+| Share with | What they get | What they see |
+|---|---|---|
+| An app or script | Its own `acn_` token for the proxy | Nothing but responses |
+| An AI agent | The same token over MCP at `/mcp`, or plain HTTP | Nothing but responses |
+| A person who does not run Acnologia | A one time link, then a personal token, ready made snippets and a My access page | Nothing but responses |
+| Another Acnologia server | An invite bound to that server's identity | Nothing, in proxy mode |
+
+In proxy mode the key never leaves your server, so revoking a share stops the
+next request. For the cases where the other side needs the raw key there are
+explicit modes: lease (an app borrows a key for a short time), handover (keys
+sealed to another server, deleted there when the share ends) and reveal (a
+person sees the keys once). Acnologia marks every key that left this way, and
+when such a share ends it lists exactly which keys to rotate.
+
+## Control every share
+
+- **Pick the keys.** All of a service's keys, up to N of them, or a hand
+  picked list.
+- **Set limits.** Daily or monthly request caps and a USD budget per app or
+  share, reserved before each call so a burst cannot overshoot them.
+- **Set a timer.** End a share after an hour, a day, a week or at a set time,
+  and choose whether it expires (you can extend it) or is revoked for good.
+- **Pause, resume, revoke.** Each takes effect on the next request.
+- **See the use.** Requests, spend and last use per share, and an audit log
+  of every change and every reveal.
+
+## Keys that keep working
+
+Sharing a pool of keys only helps if the pool stays healthy, so Acnologia
+looks after it:
+
+- A rate limited key rests for as long as the provider asked, a key out of
+  quota waits for its reset, and a revoked or suspended key leaves rotation
+  once a health check confirms it. An outage at the provider opens a circuit
+  breaker instead of blaming your keys.
+- Keys are picked round robin, fill first, least used, most quota left or
+  weighted random, with backup keys and per key concurrency limits.
+- Identical GET requests can be answered from a response cache, and retried
+  POSTs with an `Idempotency-Key` are replayed instead of sent twice.
 
 ## Quick start
 
@@ -47,40 +90,52 @@ docker compose up -d --build
 ```
 
 Release builds for Linux, macOS and Windows (amd64 and arm64) are on the
-[releases page](https://github.com/sidharthpunathil/acnologia/releases). The
-`acn` CLI installs with `irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex`.
+[releases page](https://github.com/sidharthpunathil/acnologia/releases).
 
 Open http://localhost:8080. The first visit creates the superadmin. Then:
 
-1. **Add a service.** Pick a provider from the catalog, or describe any HTTP API.
-2. **Add keys.** Paste them one per line, as `label,secret`, CSV, JSON or a `.env` file.
-3. **Create an app** for each consumer and copy its `acn_...` token. It is shown once.
-4. **Point your app at** `http://localhost:8080/proxy/<service>/...` with that token.
+1. **Add a service.** Pick one from the built in catalog, or describe any
+   HTTP API that takes a key in a header or a query parameter.
+2. **Add keys.** Paste them one per line, as `label,secret`, CSV, JSON or a
+   `.env` file.
+3. **Share them.** Create an app and copy its `acn_` token (shown once), or
+   open Sharing to send a link to a person or an invite to another server.
+4. **Call through the proxy** at `http://localhost:8080/proxy/<service>/...`
+   with that token.
 
-Set `ANTHROPIC_API_KEY` in `.env` to turn on the AI features, then pick the
-models they run on under Settings, AI. Everything else works without it. All
-settings are in [.env.example](.env.example) and
+The AI features (an assistant that manages the server in chat, a builder that
+turns API docs into a provider spec, and a monthly refresh of provider prices
+and limits) need `ANTHROPIC_API_KEY` in `.env`. Everything else works without
+it. Every setting is in [.env.example](.env.example) and
 [configuration](docs/configuration.md).
 
 ## Use it
 
-**Proxy mode.** Send the request as you would send it to the provider, minus
-the provider's key. Acnologia attaches a key and retries with the next one on
-a rate limit. Your app never holds a secret.
+**Proxy.** Send the request you would send to the API, minus the key.
+Acnologia attaches one, and retries with the next key if the first is rate
+limited.
 
 ```sh
-curl "http://localhost:8080/proxy/serpapi/search.json?q=coffee" \
+curl "http://localhost:8080/proxy/weather/v1/forecast?city=Lisbon" \
   -H "Authorization: Bearer acn_your_app_token"
 ```
 
-**Lease mode**, for SDKs that insist on holding the raw key. Borrow a key, call
-the provider yourself, then report what happened. With `rotate: true` the
-report hands you the next key.
+**Share with a person.** In Sharing, choose New share, then A person. Pick
+the services, keys, limits and end time, and send them the one time link.
+They open it, get a personal token with copy and paste snippets and an MCP
+setup for their agent, and can check what they have left at `/me`.
+
+**Share with another server.** Each server has an id and a key pair. Create
+an invite in Sharing and paste it on the other server: its services appear
+there and call through yours.
+
+**Lease**, for SDKs that insist on holding the raw key. Borrow a key, call the
+API yourself, then report what happened. With `rotate: true` the report hands
+you the next key.
 
 ```sh
 curl -X POST localhost:8080/api/v1/lease -H "Authorization: Bearer acn_..." \
-  -H "Content-Type: application/json" -d '{"service":"serpapi"}'
-# {"lease_id":"lse_...","key_id":4,"secret":"...","auth":{"type":"query","name":"api_key"},...}
+  -H "Content-Type: application/json" -d '{"service":"weather"}'
 
 curl -X POST localhost:8080/api/v1/leases/lse_.../report -H "Authorization: Bearer acn_..." \
   -H "Content-Type: application/json" -d '{"outcome":"rate_limited","retry_after_sec":60,"rotate":true}'
@@ -95,77 +150,40 @@ acn login        # asks for the URL, then you approve in the browser
 acn services
 ```
 
-**From Claude**, after `acn login`, run `claude mcp add acnologia -- acn mcp`
-and Claude can run the whole server as you ([Connect Claude](docs/cli.md#connect-claude)).
+On Windows: `irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex`.
 
 Each service's **Integrate** tab has ready snippets in curl, Python,
-TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
+TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart, and
+there are [SDKs](sdk/README.md) for the same twelve languages.
 
-![A service page: each key's health, quota and last use](docs/screenshots/service.png)
+## Also included
 
-## What it does
-
-- **Recovers from failing keys.** Rate limited keys rest for as long as the
-  provider asked, exhausted keys wait for their quota reset, invalid and
-  banned keys leave rotation, and a provider outage opens a circuit breaker
-  instead of blaming your keys.
-- **Picks keys your way**: round robin, fill first, least used, most quota
-  left or weighted random, with backup keys and per key concurrency limits.
-- **Saves quota** with a response cache for identical GETs and
-  `Idempotency-Key` replays for retried POSTs.
-- **Scopes every app**: its own token, services and mode, plus daily or
-  monthly request and USD budget limits.
-- **Protects secrets.** Hidden keys only superadmins see, an audit log of
-  every change and reveal, and a redactor that keeps keys out of logs,
-  events, webhooks and everything sent to Claude.
-- **Providers are data.** Twenty seven built in specs (search APIs such
-  as SerpAPI and Tavily, LLM APIs such as OpenAI, Anthropic, Groq and
-  Together AI), a form or JSON editor, and an AI builder that writes, tests
-  and publishes a new provider from its docs.
-- **Keeps offers current.** Each provider's free tiers, prices and published
-  limits pace keys and price requests. A [scheduled refresh](docs/flows.md#keeping-provider-offers-fresh)
-  (monthly by default, only providers you hold keys for, with a spend cap)
-  re-reads the pricing pages and applies a change on its own only when it
-  cites its source; anything else waits for review. It re-reads Claude's own
-  prices too.
-- **An [Assistant](docs/flows.md#assistant-chat)** that manages the pool in
-  chat with your own permissions. Pasted keys go to an encrypted vault and the
-  model only sees placeholders. Long chats compact themselves into a summary,
-  and you can compact one by hand.
-- **[Your choice of model](docs/flows.md#choosing-the-ai-model)** per AI
-  feature (Assistant, provider builder, Fill with AI, chat summaries, offer
-  refresh), switched in Settings without a restart, with editable prices.
-- **[Shares between servers](docs/flows.md#sharing-between-servers).** Let a
-  teammate's or another deploy's Acnologia use some of your services through
-  your proxy: all keys, up to N or a picked list, with request and budget
-  limits, expiry, pause and revoke. The receiver gets each service with its
-  provider's name, logo and docs. Keys never leave home.
-- **Speaks to agents and scripts**: MCP at `/mcp`, `/llms.txt`,
-  [SDKs](sdk/README.md) for Python, TypeScript, Go, Rust, Java, Kotlin, C#,
-  Swift, Dart, C++, PHP and Ruby, and the [`acn` CLI](docs/cli.md) with
-  browser sign in.
-
-| Apps | Assistant |
-|---|---|
-| ![Apps with their modes, limits and spend](docs/screenshots/apps.png) | ![The Assistant adding keys from a chat](docs/screenshots/assistant.png) |
-
-Also: service groups, egress proxies, webhooks to Slack, Discord, Telegram or
-signed JSON, live quota from provider account endpoints, a Usage page for
-provider and Claude spend, and a dashboard that works on a phone.
+- **Hidden keys** only superadmins can see or route, and a redactor that keeps
+  keys out of logs, events, webhooks and anything sent to the AI model.
+- **An access password** that locks a public deploy before anyone reaches
+  the sign in page.
+- **Providers as data.** Built in specs for common search and AI APIs, a form
+  or JSON editor for your own, and an AI builder that writes, tests and
+  publishes a spec from an API's docs.
+- **Service groups, egress proxies, signed webhooks**, live quota from
+  provider account endpoints, a Usage page, and a dashboard that works on a
+  phone.
 
 ## Documentation
 
-- [Request flows](docs/flows.md): the proxy, leases, key states and outcomes, MCP, the AI builder, offer refresh, model choice, the Assistant and sharing between servers
+- [Request flows](docs/flows.md): the proxy, leases, key states, MCP, sharing, the AI builder, offer refresh and the assistant
+- [Security model](docs/security.md): roles, hidden keys, what each kind of share can see, what the model can see
 - [Configuration](docs/configuration.md): every setting, self-hosting, backups, upgrading
-- [Deploying on Railway](docs/deploy-railway.md): a public deploy behind the access password, with AI and sharing
+- [Deploying publicly](docs/deploy-railway.md): a hosted deploy behind the access password
 - [HTTP API](docs/api.md): consumer error codes and every dashboard route with its role
-- [Command line](docs/cli.md): install `acn` on macOS, Linux or Windows, sign in through the browser, commands, CI
-- [SDKs](docs/sdks.md): the twelve client libraries, how to install each today, running their tests
-- [Security model](docs/security.md): roles, hidden keys, what the model can see, limits, sharing
-- [Provider specs](docs/providers.md): the 27 built in providers, the spec format, offers, building one with AI
-- [Architecture](docs/architecture.md) and [Development](docs/development.md), including building on Windows
-- For agents: [llms.txt](docs/llms.txt) and the full reference in [llms-full.txt](docs/llms-full.txt), also served at `/llms.txt` and `/llms-full.txt`
+- [Command line](docs/cli.md) and [SDKs](docs/sdks.md)
+- [Provider specs](docs/providers.md): the spec format, offers, building one with AI
+- [Architecture](docs/architecture.md) and [Development](docs/development.md)
+- For agents: [llms.txt](docs/llms.txt) and [llms-full.txt](docs/llms-full.txt), also served at `/llms.txt` and `/llms-full.txt`
 
 ## License
 
 The SDKs in `sdk/` are MIT licensed. The server has no license file yet.
+
+Product and company names that appear in the built in provider catalog belong
+to their owners. Acnologia is not affiliated with or endorsed by any of them.

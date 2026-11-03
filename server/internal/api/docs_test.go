@@ -48,8 +48,8 @@ func TestDocsLinksAreRewritten(t *testing.T) {
 	_, overview := getDoc(t, e.srv.URL+"/docs/overview.md")
 	for _, want := range []string{
 		"(/docs/security)",
-		"(/docs/flows#assistant-chat)",
-		"(/docs/assets/catalog.png)",
+		"(/docs/flows)",
+		"(/docs/cli)",
 		`src="/docs/assets/logo.png"`,
 		"(/docs/sdks)",
 		"(" + docsmd.RepoURL + "/blob/main/.env.example)",
@@ -128,7 +128,7 @@ func TestDocsIndexAndAssets(t *testing.T) {
 			t.Errorf("doc %d: %+v", i, d)
 		}
 	}
-	if out.Docs[0].Title != "Overview" || !strings.HasPrefix(out.Docs[0].Description, "A self-hosted pool") {
+	if out.Docs[0].Title != "Overview" || !strings.HasPrefix(out.Docs[0].Description, "Share your API keys") {
 		t.Errorf("overview entry: %+v", out.Docs[0])
 	}
 	resp, _ = getDoc(t, e.srv.URL+"/docs/assets/catalog.png")
