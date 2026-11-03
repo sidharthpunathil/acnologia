@@ -11,7 +11,7 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_ADDR` | `:8080` | Listen address. When unset and the host sets `PORT` (Railway, Render, Fly), the server listens on `0.0.0.0:$PORT`. |
 | `ACNOLOGIA_DATA_DIR` | `./data`; `%LocalAppData%\Acnologia` on Windows | Holds `acnologia.db` (plus WAL files) and, when no env key is set, `master.key`. Created with mode 0700 (on Windows it relies on the folder's ACL instead, see [Windows](#windows)). |
 | `ACNOLOGIA_MASTER_KEY` | empty | 32 bytes, base64 or hex, that encrypt stored keys. Generate with `acnologia gen-master-key`. When empty, `data/master.key` is used, or created on first boot. |
-| `ACNOLOGIA_PUBLIC_URL` | empty | Base URL written into `/llms.txt`, and the URL this server announces to other servers: in `/.well-known/acnologia` and in every share invite it makes. When empty, the URL a superadmin saved on the Sharing page is used, else the request host. Set it on any server that shares, so invites never carry an internal address. |
+| `ACNOLOGIA_PUBLIC_URL` | empty | Base URL for links the server writes: the MCP endpoint shown on the Apps page and the `acn login` approval link. It is also the URL this server announces to other servers: in `/.well-known/acnologia` and in every share invite it makes. When empty, the URL a superadmin saved on the Sharing page is used for sharing, else the request host. Set it on any server that shares, so invites never carry an internal address. |
 | `ACNOLOGIA_SECURE_COOKIES` | `false` | Mark the session cookie `Secure`. Set `true` behind HTTPS. It is also set automatically for direct TLS. |
 | `ACNOLOGIA_TRUST_PROXY_HEADERS` | `false` | Take the client IP from `X-Forwarded-For` / `X-Real-IP`. Enable only behind a proxy that overwrites them; otherwise clients could spoof their address to dodge the login limiter. |
 | `ACNOLOGIA_ACCESS_PASSWORD` | empty | Locks the whole site behind one shared password, in front of the user accounts. At least 12 characters. Unset, nothing changes. See [Access password](#access-password). |
@@ -29,9 +29,16 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_CHAT_COMPACT_TOKENS` | `0` | Prompt size, in tokens, at which an Assistant chat summarizes its older messages. `0` means 60% of the Assistant's model's context window (600,000 tokens for current models, 120,000 for 200K models), so it moves when the model changes. |
 | `GITHUB_TOKEN` | empty | Lets the AI builder read GitHub with a higher rate limit. Use a fine grained, public read only token. |
 
-The `acn` CLI (and `acnologia ctl`) reads two more: `ACNOLOGIA_URL` and
-`ACNOLOGIA_TOKEN` override the saved server for one command. See
-[Command line](cli.md).
+The command line tools, the installers and one test read a few more. The
+server ignores them.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ACNOLOGIA_URL`, `ACNOLOGIA_TOKEN` | empty | `acn` and `acnologia ctl`: use this server and admin token for one command instead of the saved one (for CI). `acnologia mcp` reads them too, as the base URL (default `http://localhost:8080`) and the app token. See [Command line](cli.md). |
+| `ACNOLOGIA_CTL_CONFIG` | `acnologia/ctl.json` in the user config folder | `acn`: where the saved servers live. |
+| `ACNOLOGIA_ACCESS_PASSWORD` | empty | `acn` and `acnologia ctl` send it as `X-Acnologia-Access` on every call. Rarely needed, since an admin token passes the lock on its own. |
+| `ACN_VERSION`, `ACN_INSTALL_DIR` | newest `cli-v*` release; `/usr/local/bin` or `~/.local/bin` (`%LocalAppData%\Programs\acn` on Windows) | `install.sh` and `install.ps1`: pin a release and pick the install folder. |
+| `ACNOLOGIA_LIVE_PROVIDERS` | empty | Set to `1` to let `go test ./internal/providers` call the real LLM provider APIs with no key (see [providers](providers.md)). |
 
 ## Per service settings
 
@@ -169,7 +176,9 @@ each person still signs in with an email and password after unlocking.
   A locked API call gets `401 {"error":{"code":"locked"}}`; a page navigation
   gets the app, which shows the lock screen.
 - **Open:** the app shell and its static files (they carry no data), `/healthz`,
-  `/robots.txt`, `/api/gate*`, the CLI sign in's `POST /api/cli/device` and
+  `/robots.txt`, `/api/gate*`, `/.well-known/acnologia` and the server to
+  server routes under `/api/peer/v1/` (they need an invite or a share token,
+  see [sharing](api.md#sharing-between-servers)), the CLI sign in's `POST /api/cli/device` and
   `POST /api/cli/device/token` (useless until a signed in person approves),
   and the consumer routes `/proxy/*`, `/api/v1/*` and `/mcp`, which need an
   app token of their own. Apps and MCP clients keep working unchanged.
@@ -183,7 +192,7 @@ each person still signs in with an email and password after unlocking.
   and an HMAC keyed by the master key and the password, never the password.
   Changing the password signs every browser out. "Lock this browser" in the
   account menu calls `POST /api/gate/lock`. `GET /api/gate` answers
-  `{"locked": bool, "required": bool}`.
+  `{"locked": bool, "required": bool, "password_only": bool}`.
 - **Wrong guesses:** 5 a minute and 50 a day across all clients, then `429`
   with `retry_after_sec`. The limit is global, not per IP, because a client
   behind a proxy can claim any `X-Forwarded-For`.
