@@ -118,6 +118,29 @@ and limits) need `ANTHROPIC_API_KEY` in `.env`. Everything else works without
 it. Every setting is in [.env.example](.env.example) and
 [configuration](docs/configuration.md).
 
+## Deploy
+
+Run it anywhere a container or a Linux machine runs. Each guide ends with
+the server behind HTTPS and the access password, so it never comes up open.
+
+- [Every option](docs/deploy.md): one click on a hosting platform (the
+  repository carries [render.yaml](render.yaml), [fly.toml](fly.toml) and
+  [.railway/railway.ts](.railway/railway.ts)), the container image
+  `ghcr.io/sidharthpunathil/acnologia` for amd64 and arm64, and the settings
+  a public deploy needs
+- [A hosted deploy, step by step](docs/deploy-railway.md), with a volume
+- [Any Linux server](docs/deploy-vps.md): one command sets up Docker, the
+  server and an HTTPS certificate, and a rerun upgrades it:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/deploy/install-server.sh \
+    | sudo bash -s -- --domain key.example.com --email you@example.com
+  ```
+
+  Paste [deploy/cloud-init.yaml](deploy/cloud-init.yaml) as user data to do
+  the same when you create a server on any cloud, or create one from your
+  machine with the scripts in [deploy](deploy).
+
 ## Use it
 
 **Proxy.** Send the request you would send to the API, minus the key.
@@ -183,7 +206,7 @@ there are [SDKs](sdk/README.md) for the same twelve languages.
 - [Request flows](docs/flows.md): the proxy, leases, key states, MCP, sharing, the AI builder, offer refresh and the assistant
 - [Security model](docs/security.md): roles, hidden keys, what each kind of share can see, what the model can see
 - [Configuration](docs/configuration.md): every setting, self-hosting, backups, upgrading
-- [Deploying publicly](docs/deploy-railway.md): a hosted deploy behind the access password
+- [Deploying](docs/deploy.md): every way to run a public server, with [Railway](docs/deploy-railway.md) and [any Linux server](docs/deploy-vps.md) step by step
 - [HTTP API](docs/api.md): consumer error codes and every dashboard route with its role
 - [Command line](docs/cli.md) and [SDKs](docs/sdks.md)
 - [Provider specs](docs/providers.md): the spec format, offers, building one with AI

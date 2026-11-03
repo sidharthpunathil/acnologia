@@ -1,24 +1,31 @@
 # HTTP API
 
-All bodies are JSON. Errors look like
-`{"error": {"code": "string", "message": "string"}}` with a matching status.
+Every route Acnologia serves, grouped by who calls it. Bodies are JSON, and
+every error has the shape
+`{"error": {"code": "string", "message": "string"}}` with a matching HTTP
+status.
 
-There are six ways in:
+Each surface takes its own kind of credential:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/robots.txt`, `/.well-known/acnologia` and `/api/gate` stay open) |
+| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate`, `/api/public/github` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` and `/api/public/github` stay open) |
 | Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`), a share token (`manifest`, `leave`, `providers/{slug}/logo`, `keys`, `report`) or the owner's signature (`revoke`); see [Sharing between servers](#sharing-between-servers) |
 | Claim links | `/api/claim/v1` | a claim code (`acnclaim_...`) from a share with a person; see [Sharing with people](#sharing-with-people) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
 | Dashboard | `/api/auth`, `/api/admin`, `/api/logos`, `/api/cli/device` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
 | Control MCP | `/mcp/control` | admin API token only: `Authorization: Bearer acnadm_...`; see [Control MCP](#control-mcp-mcpcontrol) |
 
-The consumer API is documented for app and agent authors in
-[llms-full.txt](llms-full.txt) (served at `/llms-full.txt`, with a summary at `/llms.txt`). This page covers
-the rules that apply to it, then lists the dashboard API.
+App and agent authors get a fuller guide to the consumer API in
+[llms-full.txt](llms-full.txt), served at `/llms-full.txt` with a summary at
+`/llms.txt`. This page is the reference: the consumer routes and the status
+codes an app should handle, then the dashboard API.
 
 ## Consumer API
+
+What an app, script, agent or share token calls with its `acn_` token. The
+proxy and MCP keep the key on the server; a lease hands it to the app for a
+limited time.
 
 | Method and path | Purpose |
 |---|---|
@@ -55,19 +62,21 @@ Status codes an app should handle:
 | 403 | `lease_not_allowed` | Leasing a service another server shares with this one, or one holding keys another server handed over. Those are proxy only. |
 | 508 | `loop_detected` | The request already passed through more than 3 Acnologia servers (`X-Acnologia-Hop`). |
 
-Hidden keys are only used for apps a superadmin marked `lease_hidden`. Other
-apps simply never see them; if a service has only hidden keys, those apps get
-503 `no_key_available`.
+Hidden keys serve only apps a superadmin marked `lease_hidden`. Other apps
+never see them, so on a service with only hidden keys those apps get 503
+`no_key_available`.
 
 ## Dashboard API
 
-Mutating calls (anything but GET, HEAD, OPTIONS) must send `Content-Type:
-application/json` or `X-Requested-With`. The dashboard sends both.
+What the dashboard, the `acn` CLI and admin scripts call, with a session
+cookie or an admin API token. Every call that changes something (any method
+but GET, HEAD and OPTIONS) must send `Content-Type: application/json` or
+`X-Requested-With`. The dashboard sends both.
 
 ### Access lock (`/api/gate`)
 
-Open while the site is locked, so the lock screen can reach them. See
-[Access password](configuration.md#access-password).
+These routes stay open while the site is locked, so the lock screen can
+reach them. See [Access password](configuration.md#access-password).
 
 | Route | Role | Purpose |
 |---|---|---|
@@ -76,6 +85,9 @@ Open while the site is locked, so the lock screen can reach them. See
 | `POST /api/gate/lock` | public | Drops this browser's gate cookie. |
 
 ### Auth (`/api/auth`)
+
+First setup and dashboard sign in. The flow is in
+[flows.md](flows.md#dashboard-sign-in).
 
 | Route | Role | Purpose |
 |---|---|---|
@@ -87,8 +99,9 @@ Open while the site is locked, so the lock screen can reach them. See
 ### CLI sign in (`/api/cli/device`)
 
 The device flow behind `acn login` ([Command line](cli.md#how-the-sign-in-works)).
-Create and poll are open in the site lock and need no account; the rest need a
-dashboard session (not an API token).
+The CLI creates a request and polls for its token; both calls need no
+account and stay open behind the site lock. Looking up, approving and denying
+a code need a dashboard session (an API token is refused).
 
 | Route | Role | Purpose |
 |---|---|---|
@@ -100,7 +113,9 @@ dashboard session (not an API token).
 
 ### Admin (`/api/admin`)
 
-Role column: **m** member, **a** admin, **s** superadmin (minimum role).
+Everything the dashboard does. The Role column gives the minimum role:
+**m** member, **a** admin, **s** superadmin. An admin API token acts with the
+lower of its owner's role and its scope.
 
 | Route | Role | Purpose |
 |---|:-:|---|
@@ -124,7 +139,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `DELETE /services/{id}` | a | Delete with its keys. Admins cannot delete a service holding hidden keys. |
 | `POST /services/{id}/check` | a | Health check every key in the service. |
 | `GET /services/{id}/keys` | m | Keys (hidden ones only for superadmins). Never includes secrets. A key this server handed over to another server has `handed_over: [{share_id, share_name, peer_id, peer_name, live, handed_at, valid_until, wiped_at, reported_status}]`; a key a reveal share showed to a person has `revealed_to: [{share_id, share_name, label, revealed_at}]` (for good: revoke cannot take it back); a key another server handed over to this one has `peer_link_id`, `peer_valid_until` (deleted then unless renewed) and `peer_remote_key_id`. |
-| `POST /services/{id}/keys` | a | Add up to 1000 keys: `{keys: [{secret, label, tier, hidden, restricted, app_ids, weight, priority, notes, quota_limit, max_concurrency, account_name, account_email, account_phone, account_ref}]}`. `hidden` needs a superadmin. |
+| `POST /services/{id}/keys` | a | Add up to 5000 keys: `{keys: [{secret, label, tier, hidden, restricted, app_ids, weight, priority, notes, quota_limit, max_concurrency, account_name, account_email, account_phone, account_ref}]}`, or `{text}` with pasted keys for the server to parse. Returns 201 `{keys, skipped}`; keys already in the service are skipped. New keys are health checked in the background. `hidden` needs a superadmin. |
 | `GET /keys` | m | All keys across services, with filters `q`, `service_id`, `validity` and `sort`. |
 | `GET /keys/{id}/insights` | m | One key with recent events and 14 days of activity. |
 | `PATCH /keys/{id}` | a | Edit a key (including its account fields) or replace its secret. `egress_id` routes it through a proxy (0 falls back to the service's); only a superadmin can set it on hidden keys. On a key another server handed over, `secret`, `hidden` and `egress_id` are refused (403 `handed_over`). |
@@ -203,63 +218,70 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 
 ### Control MCP (`/mcp/control`)
 
-`POST /mcp/control` is a second MCP server, for operating Acnologia from an
-MCP client (Claude Code, Claude Desktop, claude.ai, Cursor) rather than for
-apps. It speaks the same JSON-RPC as `/mcp` (streamable HTTP, JSON
-responses, protocol `2025-06-18`; `DELETE` answers 204, other methods 405).
+`POST /mcp/control` is a second MCP server, for people operating Acnologia
+from an MCP client (Claude Code, Claude Desktop, claude.ai, Cursor). Apps use
+`/mcp` instead. It speaks the same JSON-RPC as `/mcp` (streamable HTTP, JSON
+responses, protocol `2025-06-18`); `DELETE` answers 204 and other methods
+405. The flow is in [flows.md](flows.md#control-mcp).
 
-- **Auth:** an admin API token only, `Authorization: Bearer acnadm_...`. The
+- **Auth.** Only an admin API token, `Authorization: Bearer acnadm_...`. The
   call acts as the token's owner with the lower of the owner's role and the
-  token scope, like `/api/admin`. An app token, a dashboard session or no
-  token gets 401 with `WWW-Authenticate: Bearer realm="acnologia"`; the
+  token scope, as on `/api/admin`. An app token, a dashboard session or no
+  token gets 401 with `WWW-Authenticate: Bearer realm="acnologia"`, and the
   message points app tokens to `/mcp`. Behind the access password the admin
   token opens it, as it does `/api/admin`.
-- **How tools run:** each tool is an in process request to the matching
+- **How tools run.** Each tool is an in process request to the matching
   `/api/admin` route with the same token and client address (and
-  `X-Requested-With: acnologia-mcp`), so the route's role check, session
-  only rule, share app rule, validation and audit all apply. Service inputs
-  take an id, slug or name.
-- **Listing:** tools the caller's role cannot use are not listed. Members
-  see reads, admins add writes and `call`, superadmins add sharing and
-  refresh writes and the `admin` group.
-- **Confirm step:** destructive tools (deletes, revokes, rotate, disconnect,
+  `X-Requested-With: acnologia-mcp`). The route's role check, session only
+  rule, share app rule, validation and audit all apply. Service inputs take
+  an id, slug or name.
+- **Listing.** Tools the caller's role cannot use are left out. Members see
+  reads; admins add writes and `call`; superadmins add sharing and refresh
+  writes and the `admin` group.
+- **Confirm step.** Destructive tools (deletes, revokes, rotate, disconnect,
   a raw `DELETE`) take `confirm`. Without `confirm: true` nothing changes and
-  the result says what would happen (for example the service and its key
-  count). `confirm=off` turns the step off for clients that ask the user
+  the result says what would happen, for example the service and its key
+  count. `confirm=off` turns the step off for clients that ask the user
   themselves.
-- **Results:** the route's JSON as text, plus `structuredContent` when it is
-  an object. A route error is `isError: true` with its status and message.
-  Results are capped at 512 KB.
-- **Shaping:** every read tool, `api_request` and each `batch` call take
-  `fields` (dot paths to keep, from the top; lists pass through, so
-  `services.slug` keeps every service's slug), `filter` (`{field: value}` on
-  the top level lists: text as a case insensitive substring, numbers and
-  booleans exactly, dot paths for nested fields), `limit` and `offset`. A
-  filtered or paged result adds `_matched: {list: count}`, the matches
+- **Results.** The route's JSON as text, plus `structuredContent` when it is
+  an object. A route error comes back as `isError: true` with its status and
+  message. Results are capped at 512 KB.
+- **Shaping.** Every read tool, `api_request` and each `batch` call take:
+  - `fields`: dot paths to keep, from the top. Lists pass through, so
+    `services.slug` keeps every service's slug.
+  - `filter`: `{field: value}` on the top level lists. Text matches as a
+    case insensitive substring, numbers and booleans exactly, and dot paths
+    reach nested fields.
+  - `limit` and `offset`.
+
+  A filtered or paged result adds `_matched: {list: count}`, the matches
   before paging. Shaping runs before the 512 KB cap, so it can bring a big
   result under it. `provider_guide` and `service_guide` take
   `format: markdown` for the Markdown alone.
-- **Search, batch and routes** (the `power` group, on by default):
-  `search` `{query, types, limit}` looks through services, keys, apps,
-  providers, shares, connected servers, webhooks, egress proxies, groups and
-  users, and returns `{results: [{type, id, name, matched, value,
-  details_tool}], total, searched, skipped}`; lists the role cannot read are
-  skipped and named, and secret bearing fields (keys, webhook URLs) are
-  never searched. `batch` `{calls: [{tool, arguments}], stop_on_error}` runs
-  up to 20 tools in order and returns `{results: [{index, tool, ok, result,
-  structured}], ran, failed}`; each call is checked as if made alone (role,
-  groups, read only, and the confirm step), and a batch cannot contain
-  `batch`. `list_routes` `{contains}` lists every `/api/admin` route with
-  the tool that covers it, for `api_request`.
-- **Calling providers:** `call_service` `{service, method, path, query,
+- **Search, batch and routes** (the `power` group, on by default).
+  - `search` `{query, types, limit}` looks through services, keys, apps,
+    providers, shares, connected servers, webhooks, egress proxies, groups
+    and users, and returns `{results: [{type, id, name, matched, value,
+    details_tool}], total, searched, skipped}`. Lists the role cannot read
+    are skipped and named, and secret bearing fields (keys, webhook URLs)
+    are never searched.
+  - `batch` `{calls: [{tool, arguments}], stop_on_error}` runs up to 20
+    tools in order and returns `{results: [{index, tool, ok, result,
+    structured}], ran, failed}`. Each call is checked as if made alone
+    (role, groups, read only and the confirm step), and a batch cannot
+    contain `batch`.
+  - `list_routes` `{contains}` lists every `/api/admin` route with the tool
+    that covers it, for `api_request`.
+- **Calling providers.** `call_service` `{service, method, path, query,
   body, headers}` runs the request through the proxy as an app named
-  `Control MCP`, made on first use (mode proxy, all services). Key rotation,
-  retries, the breaker, the cache, usage and that app's limits all apply,
-  and the key never reaches the client. It needs the admin role. Turn the
-  app off or limit it on the Apps page. `list_service_examples` gives a
-  service's documented calls as ready `call_service` arguments.
+  `Control MCP`, created on first use (mode proxy, all services). Key
+  rotation, retries, the breaker, the cache, usage and that app's limits all
+  apply, and the key never reaches the client. It needs the admin role. Turn
+  the app off or limit it on the Apps page. `list_service_examples` returns
+  a service's documented calls as ready `call_service` arguments.
 
-Choices go in the endpoint URL's query or in headers (the header wins):
+Options go in the endpoint URL's query or in headers. The header wins when
+both are set:
 
 | Query | Header | Effect |
 |---|---|---|
@@ -284,23 +306,24 @@ Choices go in the endpoint URL's query or in headers (the header wins):
 | `secrets` (off by default) | `reveal_key` |
 | `raw` (off by default) | `api_request` `{method, path, query, body}` for any `/api/admin/...` route not covered above |
 
-`api_request` refuses paths outside `/api/admin/`, `/api/admin/tokens`,
-`PATCH /api/admin/me` and the Assistant's chat routes.
+`api_request` refuses paths outside `/api/admin/`, and also refuses
+`/api/admin/tokens`, `PATCH /api/admin/me` and the Assistant's chat routes.
 
-Resources: `acnologia://overview`, `acnologia://services`,
-`acnologia://llms-full.txt` and `acnologia://docs/{slug}` for each page under
-`/docs/{slug}.md` (also a resource template). Prompts: `onboard_provider`,
-`health_report`, `set_up_app` and `share_with_person`.
+**Resources:** `acnologia://overview`, `acnologia://services`,
+`acnologia://llms-full.txt`, and `acnologia://docs/{slug}` for each page under
+`/docs/{slug}.md` (also offered as a resource template).
+**Prompts:** `onboard_provider`, `health_report`, `set_up_app` and
+`share_with_person`.
 
 ### Sharing between servers
 
-One Acnologia can let another use some of its services through its proxy,
-or give it provider specs. In proxy mode (the default) keys never leave the
-server that owns them; in handover mode they are sealed to the other server,
-which can then keep them, so revoke only makes a cooperating server delete
-them. The
-flow is in [flows.md](flows.md#sharing-between-servers) and the security
-model in [security.md](security.md#sharing-between-servers).
+The routes one Acnologia server calls on another. An owner can let a
+receiver use some of its services through its proxy, or give it provider
+specs. In proxy mode (the default) keys never leave the owner. In handover
+mode they are sealed to the receiver, which can then keep them, so revoke
+only makes a cooperating server delete them. The flow is in
+[flows.md](flows.md#sharing-between-servers) and the security model in
+[security.md](security.md#sharing-between-servers).
 
 | Route | Auth | Purpose |
 |---|---|---|
@@ -314,8 +337,8 @@ model in [security.md](security.md#sharing-between-servers).
 | `POST /api/peer/v1/report` | share token | `{keys: [{id, requests, status}]}`: the receiver says which handed over keys it holds, requests made with each and its pool status. The owner stores it as reported; a key missing from the list is recorded as deleted there. |
 | `POST /api/peer/v1/revoke` | owner signature | `{share_id, owner_id, receiver_id, ts, nonce, signature}`, sent by the owner to the receiver. The signature is Ed25519 over `acnologia-revoke-v1\n<share id>\n<receiver id>\n<ts>\n<nonce>`, checked against the owner key pinned on the link. Deletes every key handed over through that link and marks it revoked: `{ok, wiped}`. 401 `bad_signature`, 400 `stale` (more than 5 minutes off), 409 `replay`, 404 `unknown_share`, 429 `rate_limited` (too many failed attempts from one address). |
 
-**Key scopes.** `key_scopes` maps a shared service's slug to which of its keys
-the share may use. A service without an entry uses every key, as before.
+**Key scopes.** `key_scopes` maps a shared service's slug to the keys the
+share may use. A service without an entry uses every key.
 
 | Mode | Shape | Meaning |
 |---|---|---|
@@ -323,81 +346,99 @@ the share may use. A service without an entry uses every key, as before.
 | `count` | `{"mode": "count", "count": 3}` | At most N keys (N 1 or more): the first N still in rotation, by priority then id. Invalid, banned and disabled keys are out of rotation and the next key takes their place; a key cooling down or out of quota still counts, so the share does not spread onto every key. |
 | `pick` | `{"mode": "pick", "key_ids": [4, 9]}` | Only the listed keys. Each must be a key of that service (400 otherwise), and a hidden key needs `include_hidden` (400 otherwise). A deleted key drops out. |
 
-Restricted and hidden keys still apply in every mode. Sending `key_scopes`
-replaces all of them; a scope for a service the share does not share is a
-400, and a service removed from the share loses its scope. The pool enforces
-the scope on every pick, so a scope that leaves no usable key answers 503
-`no_key_available`, and the manifest's `available` counts only keys in the
-scope.
+The rules for restricted and hidden keys still apply in every mode. Sending
+`key_scopes` replaces all of them. A scope for a service the share does not
+include is a 400, and a service removed from the share loses its scope. The
+pool applies the scope on every pick, so a scope that leaves no usable key
+answers 503 `no_key_available`, and the manifest's `available` counts only
+keys in the scope.
 
-Preview and redeem count only refused invites: 10 a minute and 100 a day
-from one client address, and 20 a minute and 500 a day from all, then 429
-`rate_limited`. A valid invite never spends the budget, so a flood of junk
-cannot block a real one. A share token route called with an ordinary app token gets 403
-`not_a_share`; with the token of a revoked, paused or expired share, 403
-`share_revoked`, `share_paused` or `share_expired`. All these routes, and the well-known identity, are open
-through the access password lock. Revoke pushes have their own budget of
-the same size, spent only by refused pushes.
+**Rate limits and errors.** Preview and redeem count only refused invites:
+after 10 a minute and 100 a day from one client address, or 20 a minute and
+500 a day from all addresses, they answer 429 `rate_limited`. A valid invite
+never spends the budget, so a flood of junk cannot block a real one. Revoke
+pushes have their own budget of the same size, spent only by refused pushes.
+A share token route called with an ordinary app token gets 403
+`not_a_share`. With the token of a revoked, paused or expired share it gets
+403 `share_revoked`, `share_paused` or `share_expired`. All these routes, and
+the well-known identity, stay open behind the access password lock.
 
 ### Sharing with people
 
 A share whose `recipient` is `person` is for someone who does not run
-Acnologia. Creating one returns `claim_url`, `<public url>/claim/acnclaim_...`,
-shown once; only its hash is stored. The person opens it, the page previews
-the share and, on "Get my access", redeems the code, which works once. The
-flow is in [flows.md](flows.md#sharing-with-people) and the threat model in
+Acnologia. Creating one returns `claim_url`,
+`<public url>/claim/acnclaim_...`, shown once; only its hash is stored. The
+person opens it, the page previews the share, and "Get my access" redeems the
+code, which works once. The flow is in
+[flows.md](flows.md#sharing-with-people) and the threat model in
 [security.md](security.md#sharing-with-people).
 
-Rules on create and edit (400 `invalid` otherwise): `label` is 1 to 80
-characters; `email` is optional and only a label (loosely checked, never
-mailed); `mode` is `proxy` (default) or `reveal` (`handover` is for servers
-only, `reveal` for people only); `recipient` cannot change. A reveal share
-takes no request or budget limits, and its key scopes must resolve to at
-least one key it can show (400 `no_revealable_keys`): hidden keys are never
-revealed, even with `include_hidden`, and nor are restricted, disabled,
-invalid, banned or handed over keys. Timers, pause, resume, extend, revoke,
-audit and webhooks work as for a server share.
+**Rules on create and edit** (400 `invalid` otherwise):
 
-**Links anyone can claim.** Send `reusable: true` (it implies `recipient:
-person`) for a link meant for a team or a group. The same `claim_url` can be
-redeemed again and again, each claim minting a token of its own on the
-share's one backing app, until the link expires (`claim_valid` `1h`, `24h`,
-`7d` (the default) or `30d`), is replaced with `POST /shares/{id}/claim-link`
-(allowed while the share is pending or active; tokens already claimed keep
-working), the share ends, or `max_claims` claims were made (`0` or unset is
-no cap; it can be changed on edit). Limits, pause and revoke cover everyone
-who claimed it at once. A reusable share is proxy only (a forwarded link
-never shows raw keys), takes no `email`, and its `label` defaults to "Anyone
-with the link"; `reusable` cannot change. Shares carry `reusable`,
-`max_claims` and `claim_count`, the preview adds `share.reusable`, and a full
-link answers 410 `claim_full`.
+- `label` is 1 to 80 characters.
+- `email` is optional and only a label: loosely checked, never mailed.
+- `mode` is `proxy` (default) or `reveal`. `handover` is for servers only and
+  `reveal` for people only.
+- `recipient` cannot change.
+- A reveal share takes no request or budget limits, and its key scopes must
+  resolve to at least one key it can show (400 `no_revealable_keys`). Hidden
+  keys are never revealed, even with `include_hidden`, and neither are
+  restricted, disabled, invalid, banned or handed over keys.
+
+Timers, pause, resume, extend, revoke, audit and webhooks work as for a
+server share.
+
+**Links anyone can claim.** Send `reusable: true` (it implies
+`recipient: person`) for a link meant for a team or a group. The same
+`claim_url` can be redeemed again and again, and each claim mints its own
+token on the share's one backing app. The link works until one of these
+happens:
+
+- it expires (`claim_valid` `1h`, `24h`, `7d` (the default) or `30d`);
+- it is replaced with `POST /shares/{id}/claim-link`, allowed while the share
+  is pending or active (tokens already claimed keep working);
+- the share ends;
+- `max_claims` claims were made (`0` or unset means no cap; it can be changed
+  on edit).
+
+Limits, pause and revoke cover everyone who claimed it at once. A reusable
+share is proxy only, so a forwarded link never shows raw keys. It takes no
+`email`, its `label` defaults to "Anyone with the link", and `reusable`
+cannot change. Shares carry `reusable`, `max_claims` and `claim_count`, the
+preview adds `share.reusable`, and a full link answers 410 `claim_full`.
 
 | Route | Auth | Purpose |
 |---|---|---|
 | `POST /api/claim/v1/preview` | claim code | `{code}` (the code, or the whole link). `{owner: {name, id, url}, share: {name, label, mode, ends_at, limits, services: [{slug, name, provider, category, description, logo_url}], providers: [{slug, name}], key_count}, claim_expires_at}`. `key_count` is how many keys a reveal share would show (0 for proxy); `logo_url` is always null (logos need a dashboard session). No secret; does not use the link up. |
 | `POST /api/claim/v1/redeem` | claim code | `{code}`. Burns the link and answers once. Proxy: `{token, base_url (the origin plus /proxy), mcp_url, limits, ends_at, services: [{slug, name, provider, category, proxy_url, auth: {type, name, prefix}, examples: [{name, method, path, query, body}]}]}`; the token is an app token on the share's backing app, proxy only, for the shared services. Reveal: `{keys: [{service, label, secret, provider, base_url, auth: {type, name, prefix}}], ends_at}`; each key is recorded as revealed. 409 `nothing_to_reveal` (the link is not used up) when the scope has no key to show right now. |
 
-Both answer 404 `claim_invalid` for an unknown code, 409 `already_claimed`
-once redeemed, 410 `claim_expired` when the link ran out or the share ended
-(revoked, or its timer passed) before the claim, and 429 `rate_limited` past
-10 refused codes a minute or 100 a day from one address, or 20 a minute or
-500 a day from all (their own budget, sized like the invite routes). A code
-that opens a link never counts, and a malformed one costs no lookup and is
-not counted. They send `Cache-Control: no-store`. Both, the `/claim/<code>`
-and `/me` pages, and the person's own calls with the token (`/proxy`,
-`/api/v1`, `/mcp`) work through the access password lock; nothing else does.
+**Errors and limits.** Both routes answer:
 
-A person's token: works on `/proxy/{service}`, `/api/v1/services`,
-`/api/v1/me` and `/mcp`, only for the shared services and within the key
-scopes, limits and timer; cannot lease (403 `lease_not_allowed`), sees only
-the core and service MCP tools (never `get_key`, insights or manage tools,
-whatever the app's MCP settings say), gets 401 on every dashboard route and
-403 `not_a_share` on the server to server routes. Pause, revoke and an ended
-timer refuse the very next call. Audit and webhook events: `share.created`,
-`share.claim_link`, `share.claimed`, `share.revealed` (one per key, key id
-and service only), `share.paused`, `share.resumed`, `share.revoked`,
-`share.expired`, and the audit entry `share.rotate_keys` when a claimed
-reveal share ends.
+- 404 `claim_invalid` for an unknown code;
+- 409 `already_claimed` once redeemed;
+- 410 `claim_expired` when the link ran out, or the share ended (revoked, or
+  its timer passed), before the claim;
+- 429 `rate_limited` past 10 refused codes a minute or 100 a day from one
+  address, or 20 a minute or 500 a day from all addresses. This budget is
+  their own, sized like the invite routes'. A code that opens a link never
+  counts, and a malformed one is rejected without a lookup and not counted.
+
+Both send `Cache-Control: no-store`. These two routes, the `/claim/<code>`
+and `/me` pages, and the person's own calls with the token (`/proxy`,
+`/api/v1`, `/mcp`) work through the access password lock. Nothing else does.
+
+**What a person's token can do.** It works on `/proxy/{service}`,
+`/api/v1/services`, `/api/v1/me` and `/mcp`, only for the shared services and
+within the key scopes, limits and timer. It cannot lease (403
+`lease_not_allowed`). On MCP it sees only the core and service tools, never
+`get_key`, insights or manage tools, whatever the app's MCP settings say. It
+gets 401 on every dashboard route and 403 `not_a_share` on the server to
+server routes. Pause, revoke and an ended timer refuse the very next call.
+
+**Events.** Audit and webhook events: `share.created`, `share.claim_link`,
+`share.claimed`, `share.revealed` (one per key, key id and service only),
+`share.paused`, `share.resumed`, `share.revoked` and `share.expired`. When a
+claimed reveal share ends, the audit log also gets `share.rotate_keys`.
 
 ### Logos (`/api/logos`)
 
@@ -408,15 +449,17 @@ reveal share ends.
 ### Key account fields
 
 Every key can record who it belongs to: `account_name`, `account_email`,
-`account_phone` and `account_ref` (any other identifier, such as a username or
-account id). All are optional strings (max 200, 254, 40 and 200 characters;
-the email must contain `@`). They count as personal data: members receive them
-empty, and only admins and superadmins can search by them on the Keys page.
+`account_phone` and `account_ref` (any other identifier, such as a username
+or account id). All are optional strings of at most 200, 254, 40 and 200
+characters, and the email must contain `@`. They count as personal data:
+members receive them empty, and only admins and superadmins can search by
+them on the Keys page.
 
 ### Assistant transcript items
 
-`messages` and `confirm` return `{thread, items, all}`: `items` are the
-entries this request created or changed, `all` the full transcript. Each item:
+`messages` and `confirm` return `{thread, items, all}`. `items` holds the
+entries this request created or changed, and `all` the full transcript. Each
+item has these fields:
 
 | Field | Meaning |
 |---|---|

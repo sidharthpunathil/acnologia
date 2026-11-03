@@ -121,7 +121,7 @@ func TestDeviceLogin(t *testing.T) {
 	if code := c.exec([]string{"login"}); code != 0 {
 		t.Fatalf("login: %s %s", out, errb)
 	}
-	if !strings.Contains(errb.String(), "Acnologia URL (for example https://key.sidharth.co):") {
+	if !strings.Contains(errb.String(), "Acnologia URL (for example https://key.example.com):") {
 		t.Fatalf("no prompt: %q", errb)
 	}
 	if len(*opened) != 1 || (*opened)[0] != srv.URL+"/cli/authorize?code=WDJB-MJHT" {

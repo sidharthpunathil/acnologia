@@ -1,0 +1,32 @@
+#cloud-config
+# Paste this as "user data" when you create a server on any cloud that takes
+# cloud-init (Hetzner, DigitalOcean, AWS EC2, Google Cloud, Azure, Vultr,
+# Linode/Akamai, Scaleway, OVHcloud, Oracle Cloud and most others). The
+# server installs Docker and Acnologia on first boot, with HTTPS.
+#
+# Optional: replace the empty values below. With no domain the server is
+# reachable at https://<its-ip>.sslip.io. Read the generated access password
+# afterwards with:  ssh <user>@<ip> sudo grep ACCESS_PASSWORD /opt/acnologia/.env
+# (<user> is root on most VPS hosts, ubuntu or ec2-user on the big clouds).
+#
+# Progress: ssh in and run  sudo tail -f /var/log/acnologia-install.log
+# Upgrade later:            sudo bash /root/acnologia-install.sh
+write_files:
+  - path: /etc/acnologia-install.env
+    permissions: "0600"
+    content: |
+      ACN_DOMAIN=
+      ACN_EMAIL=
+      ANTHROPIC_API_KEY=
+
+runcmd:
+  - |
+    set -e
+    exec >>/var/log/acnologia-install.log 2>&1
+    set -a
+    . /etc/acnologia-install.env
+    set +a
+    rm -f /etc/acnologia-install.env
+    curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/deploy/install-server.sh \
+      -o /root/acnologia-install.sh
+    bash /root/acnologia-install.sh

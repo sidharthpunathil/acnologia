@@ -1,19 +1,29 @@
 # Acnologia for Dart and Flutter
 
-Dart client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Built on
-`package:http`, null safe, async throughout. Works in Dart on the server and command line, and
-in Flutter on mobile, desktop and the web.
+Call APIs with the keys your Acnologia server holds, using your app's own `acn_` token. In proxy mode the server attaches the key, moves to the next key on rate limits and quota errors, and the secret never reaches your app. In lease mode you borrow a key for code that needs it raw, and `withKey` reports and rotates for you.
 
-Two ways to use your pooled keys:
+Dart 3.0 or later, built on `package:http`, async throughout. It runs in Dart on the server and the command line, and in Flutter on mobile, desktop and the web.
 
-- **Proxy mode**: send requests to Acnologia instead of the provider. Acnologia injects a key, retries with the next key on rate limits, and never exposes the secret.
-- **Lease mode**: lease a key, call the provider yourself, report the outcome. `withKey` runs that loop and rotates keys for you.
+## Quick start
 
-Requires Dart 3.0+.
+```dart
+import 'package:acnologia/acnologia.dart';
+
+Future<void> main() async {
+  final acn = Acnologia(baseUrl: 'http://localhost:8080', token: 'acn_your_app_token');
+
+  final resp = await acn.proxy('weather').get('/v1/forecast', query: {'city': 'Lisbon'});
+  print('${resp.statusCode} ${resp.body}');
+
+  acn.close();
+}
+```
+
+`weather` is the slug of a service on your server. The request goes to `http://localhost:8080/proxy/weather/v1/forecast?city=Lisbon`.
 
 ## Install
 
-Until the package is published on pub.dev, depend on it from git:
+The package is not on pub.dev yet. Depend on it from git:
 
 ```yaml
 dependencies:
@@ -24,160 +34,161 @@ dependencies:
       ref: main
 ```
 
-Then `dart pub get` (or `flutter pub get`).
+Then run `dart pub get` (or `flutter pub get`).
 
-## Quick start
+## Connect
+
+Create an app in the dashboard and copy its token (`acn_...`, shown once; older `cog_...` tokens still work).
 
 ```dart
-import 'package:acnologia/acnologia.dart';
-import 'package:http/http.dart' as http;
-
 final acn = Acnologia(baseUrl: 'http://localhost:8080', token: 'acn_...');
-// or: final acn = Acnologia.fromEnvironment();
 
-final lease = await acn.lease('serpapi');
-final resp = await http.Response.fromStream(
-    await http.Client().send(lease.request('GET', '/search.json', query: {'q': 'coffee'})));
-await lease.report(resp.statusCode == 429 ? Outcome.rateLimited(const Duration(hours: 1)) : Outcome.ok);
+// or from ACNOLOGIA_URL and ACNOLOGIA_TOKEN
+final fromEnv = Acnologia.fromEnvironment();
 ```
 
-## Environment variables
+`Acnologia.fromEnvironment()` reads the process environment, then values given at compile time with `--dart-define=ACNOLOGIA_URL=...`, which is the only source in a Flutter web build. Pass `environment:` to read from a map instead. It throws `ArgumentError` when either value is missing.
 
-| Variable | Meaning |
-|---|---|
-| `ACNOLOGIA_URL` | The Acnologia server, for example `http://localhost:8080` |
-| `ACNOLOGIA_TOKEN` | The app token, `acn_...` (older `cog_...` tokens still work) |
+Both constructors also take:
 
-`Acnologia.fromEnvironment()` reads the process environment, then values given at compile time
-with `--dart-define=ACNOLOGIA_URL=...`, which is the only source in a Flutter web build. It throws
-`ArgumentError` when either is missing. Pass `environment:` to read from a map instead.
+| Argument | Default | Meaning |
+|---|---|---|
+| `httpClient` | a new `http.Client` | Any `http.Client`. `close()` closes it only if the SDK created it |
+| `userAgent` | `acnologia-dart/0.1.0` | Not sent in browsers, which forbid it |
+| `timeout` | 75 seconds | For API calls (lease, report, renew, services). Longer than the 60 second maximum lease wait. Proxy calls have no SDK timeout |
 
-Other constructor arguments: `httpClient` (any `http.Client`; the SDK creates one otherwise and
-`close()` closes it), `userAgent` (default `acnologia-dart/0.1.0`, not sent in browsers, which
-forbid it) and `timeout` for API calls (default 75 seconds, longer than the 60 second maximum
-lease wait). Proxy calls have no SDK timeout.
+`await acn.services()` returns the services this token may use, each with `slug`, `name`, `provider`, `category`, `available`, `baseUrl` and `auth`.
+
+## Proxy mode
+
+`acn.proxy(service)` sends requests to `/proxy/{service}/{path}` and returns the upstream `http.Response` whatever its status:
+
+```dart
+final weather = acn.proxy('weather');
+
+final resp = await weather.get('/v1/forecast', query: {'city': 'Lisbon'});
+print('key ${resp.acnologiaKeyId}, attempts ${resp.acnologiaAttempts}');
+
+await weather.post('/v1/alerts', body: {'city': 'Lisbon', 'level': 'high'});
+```
+
+`get`, `delete`, `post`, `put`, `patch` and `request(method, path, ...)` all take `query` and `headers`; the body methods also take `body`. A `String` or `List<int>` body is sent as is. Anything else is JSON encoded with `Content-Type: application/json` unless you set one. `stream(...)` returns an `http.StreamedResponse` for large or streamed bodies, and `url(path, query)` returns the full proxy URL.
+
+Redirects are not followed (browsers follow them on their own), so the app token is not sent to another host.
+
+Extensions on the response read Acnologia's headers: `acnologiaKeyId`, `acnologiaAttempts`, `acnologiaService` and `acnologiaCache`. When Acnologia itself refused the request (no key, circuit breaker open, bad token), `resp.acnologiaError` holds the typed exception and `resp.throwIfAcnologiaError()` throws it. A provider answer carries `X-Acnologia-Key-Id` and is never treated as an Acnologia error.
 
 ## Lease mode
 
-### withKey (recommended)
-
-Throw one of the rotation exceptions from the callback to rotate to the next key:
-
-| Callback | Reported outcome | Rotates |
-|---|---|---|
-| completes | `ok` | no |
-| throws `RateLimitedException(retryAfter: ...)` | `rate_limited` | yes |
-| throws `QuotaExhaustedException()` | `quota_exhausted` | yes |
-| throws `InvalidKeyException()` | `invalid` | yes |
-| throws anything else | `error` | no, the error is rethrown as is |
-
-After `maxAttempts` keys (default 5) the last rotation exception is thrown; the final attempt is
-reported without asking for a next key. When the pool runs dry, `NoKeyAvailableException` (or
-`AllKeysBusyException`) is thrown. Every lease is reported. Messages sent with a report have the
-secret replaced by `[key]` and are cut to 500 characters.
+Use a lease when a library insists on holding the raw key.
 
 ```dart
-final results = await acn.withKey('serpapi', (lease) async {
-  final req = lease.request('GET', '/search.json', query: {'engine': 'google', 'q': 'coffee'});
-  final resp = await http.Response.fromStream(await client.send(req));
-  if (resp.statusCode == 429 && resp.body.contains('run out of searches')) {
-    throw const QuotaExhaustedException(statusCode: 429);
-  }
+import 'package:http/http.dart' as http;
+
+final client = http.Client();
+final lease = await acn.lease('weather');
+try {
+  final resp = await http.Response.fromStream(
+      await client.send(lease.request('GET', '/v1/forecast', query: {'city': 'Lisbon'})));
+  await lease.report(resp.statusCode == 429 ? Outcome.rateLimited(const Duration(minutes: 1)) : Outcome.ok,
+      statusCode: resp.statusCode);
+} catch (e) {
+  await lease.report(Outcome.error);
+  rethrow;
+}
+```
+
+`acn.lease(service, {excludeKeyIds, ttl, wait, exclusive})` options:
+
+- `excludeKeyIds`: keys that must not be returned.
+- `ttl`: the lease lifetime. The server default is 120 seconds on services with a concurrency limit and 300 otherwise.
+- `wait`: 0 to 60 seconds to wait for a free slot when every usable key is busy. More than 60 throws `RangeError`.
+- `exclusive`: no other caller gets the key until you report.
+
+`Lease` fields: `leaseId`, `keyId`, `service`, `secret`, `auth` (`type`, `name`, `prefix`), `baseUrl`, `expiresAt` and `exclusive`. `toString()` never shows the secret or the app token. Read `lease.secret` only where you need it, and do not log it.
+
+### Put the key on the request
+
+- `lease.request(method, path, query:, headers:)` builds an `http.Request` to the provider with the secret applied. Send it with any `http.Client`.
+- `lease.apply(url, headers)` returns a record `(url:, headers:)` with the secret added. The inputs are not changed.
+- `lease.url(path, query)` joins the base URL and path without the secret.
+
+Where the secret goes depends on `auth.type`: `query` sets the query parameter `auth.name` (default `api_key`), `header` sets the header `auth.name`, and `bearer` sets `auth.name` (default `Authorization`) to `Bearer <secret>`. A non empty `auth.prefix` goes in front of the secret for every type and replaces `Bearer ` for bearer.
+
+### Report the outcome
+
+```dart
+final next = await lease.report(Outcome.rateLimited(const Duration(minutes: 1)), statusCode: 429, rotate: true);
+if (next != null) {
+  // retry with next
+}
+```
+
+`lease.report(outcome, {statusCode, message, rotate})` takes one of `Outcome.ok`, `Outcome.rateLimited([retryAfter])`, `Outcome.quotaExhausted`, `Outcome.invalid`, `Outcome.error`, `Outcome.busy` or `Outcome.banned`. With `rotate: true` it returns the next `Lease`, or null when no other key is free.
+
+Report on every path. On a service with a concurrency limit, an unreported lease holds one of the key's slots until its TTL runs out.
+
+### Renew for long jobs
+
+```dart
+final expires = await lease.renew(ttl: const Duration(minutes: 10));
+```
+
+`renew` returns the new expiry; `lease.expiresAt` keeps the old value. Without `ttl` the server uses 120 seconds, and it caps the value at 24 hours. A lease that is not yours or no longer open throws `AcnologiaApiException` with code `lease_not_found`.
+
+## withKey
+
+`withKey` leases a key, runs your callback with it, reports the outcome and returns the callback's value:
+
+```dart
+final forecast = await acn.withKey('weather', (lease) async {
+  final resp = await http.Response.fromStream(
+      await client.send(lease.request('GET', '/v1/forecast', query: {'city': 'Lisbon'})));
   if (resp.statusCode == 429) {
-    throw const RateLimitedException(retryAfter: Duration(hours: 1), statusCode: 429);
+    throw const RateLimitedException(retryAfter: Duration(minutes: 1), statusCode: 429);
   }
+  if (resp.statusCode == 402) throw const QuotaExhaustedException(statusCode: 402);
   if (resp.statusCode == 401) throw const InvalidKeyException(statusCode: 401);
-  if (resp.statusCode >= 400) throw StateError('serpapi: http ${resp.statusCode}');
+  if (resp.statusCode >= 400) throw StateError('weather: http ${resp.statusCode}');
   return jsonDecode(resp.body) as Map<String, dynamic>;
 }, maxAttempts: 3);
 ```
 
-`withKey` also takes `excludeKeyIds` (first lease only), and `ttl`, `wait` and `exclusive`, which
-apply to every lease it takes.
+Map the provider's responses to these exceptions to rotate:
 
-### Lease, report and renew by hand
+| Callback | Reported as | Then |
+|---|---|---|
+| completes | `ok` | returns its value |
+| throws `RateLimitedException(retryAfter: ...)` | `rate_limited` | retries with the next key |
+| throws `QuotaExhaustedException()` | `quota_exhausted` | retries with the next key |
+| throws `InvalidKeyException()` | `invalid` | retries with the next key |
+| throws anything else | `error` | rethrows it unchanged |
 
-```dart
-final lease = await acn.lease('serpapi', ttl: const Duration(minutes: 5), wait: const Duration(seconds: 10));
-// Report on every path: an unreported lease holds a concurrency slot until its TTL.
-final next = await lease.report(Outcome.rateLimited(const Duration(hours: 1)), statusCode: 429, rotate: true);
-if (next != null) { /* retry with next */ }
+All three take an optional `statusCode` and `message` and are `KeyRotationException`s.
 
-final expires = await lease.renew(ttl: const Duration(minutes: 10)); // for long jobs
-```
+`withKey(service, body, {maxAttempts = 5, excludeKeyIds, ttl, wait, exclusive})` applies `excludeKeyIds` to the first lease only, and `ttl`, `wait` and `exclusive` to every lease it takes. After `maxAttempts` keys it throws the last rotation exception; the final attempt is reported without asking for a next key. When the pool runs dry it throws `NoKeyAvailableException` (or `AllKeysBusyException`).
 
-`lease` options: `excludeKeyIds`, `ttl` (server default 120 seconds on services with a
-concurrency limit, 300 otherwise), `wait` (0 to 60 seconds to wait for a free slot when every
-usable key is busy) and `exclusive` (no other caller gets the key until you report).
-
-`Lease` fields: `leaseId`, `keyId`, `service`, `secret`, `auth` (`type`, `name`, `prefix`),
-`baseUrl`, `expiresAt`, `exclusive`. `apply(url, headers)` returns a record `(url:, headers:)`
-with the secret placed by `auth.type`: `query` sets the query parameter `auth.name`, `header` sets
-header `auth.name`, `bearer` sets `auth.name` (default `Authorization`) to `Bearer <secret>`. A
-non empty `auth.prefix` goes in front of the secret for every type and replaces `Bearer ` for
-bearer. `url(path, query)` joins the base URL and path without the secret, and
-`request(method, path, query:, headers:)` builds an `http.Request` with the secret applied.
-
-Outcomes: `Outcome.ok`, `Outcome.rateLimited([retryAfter])`, `Outcome.quotaExhausted`,
-`Outcome.invalid`, `Outcome.error`, `Outcome.busy`, `Outcome.banned`.
-
-The secret and the app token never appear in `toString()`. Read `lease.secret` only where you
-need it, and do not log it.
-
-## Proxy mode
-
-`acn.proxy(service)` sends requests to `/proxy/{service}/{path}` and returns the upstream
-`http.Response` whatever its status. Redirects are not followed (browsers follow them on their
-own), so the app token is not sent to another host.
-
-```dart
-final resp = await acn.proxy('serpapi').get('/search.json', query: {'engine': 'google', 'q': 'coffee'});
-print('${resp.statusCode} key ${resp.acnologiaKeyId} attempts ${resp.acnologiaAttempts}');
-
-final audio = await acn.proxy('elevenlabs').post('/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM',
-    body: {'text': 'Hello from Acnologia', 'model_id': 'eleven_multilingual_v2'});
-```
-
-Bodies: a `String` or `List<int>` is sent as is; anything else is JSON encoded with
-`Content-Type: application/json` unless you set one. Other helpers: `request`, `put`, `patch`,
-`delete`, `url(path, query)`, and `stream(...)`, which returns an `http.StreamedResponse` for
-large or streamed bodies.
-
-Extensions on the response: `acnologiaKeyId`, `acnologiaAttempts`, `acnologiaService` and
-`acnologiaCache` read Acnologia's headers. When Acnologia itself refused the request (no key,
-circuit breaker open, bad token), `resp.acnologiaError` holds the typed exception and
-`resp.throwIfAcnologiaError()` throws it. Provider answers carry `X-Acnologia-Key-Id` and are
-never treated as Acnologia errors.
-
-## Services
-
-```dart
-for (final s in await acn.services()) {
-  print('${s.slug} ${s.available} ${s.auth.type}');
-}
-```
+Every lease is reported. A message sent with a report has the secret replaced by `[key]` and is cut to 500 characters.
 
 ## Errors
 
-Every exception extends `AcnologiaException`, which has `message`, `statusCode`, `code` and
-`retryAfter`.
+Every exception extends `AcnologiaException`, which has `message`, `statusCode`, `code` and `retryAfter`.
 
 | Exception | When |
 |---|---|
 | `NoKeyAvailableException` | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
-| `AllKeysBusyException` (a `NoKeyAvailableException`, `busy` is true) | 503 `all_keys_busy`: every usable key is at its concurrency limit; retry after `retryAfter` (usually 1s) or lease with `wait` |
+| `AllKeysBusyException` | 503 `all_keys_busy`: every usable key is at its concurrency limit. A `NoKeyAvailableException` with `busy` true. Retry after `retryAfter` (usually 1 second) or lease with `wait` |
 | `ServiceUnavailableException` | 503 `service_unavailable`: the provider's circuit breaker is open |
 | `UnauthenticatedException` | 401: token missing, wrong, revoked or expired |
 | `ForbiddenException` | 403: app disabled, or `service_not_allowed`, `lease_not_allowed`, `proxy_not_allowed` |
-| `AcnologiaApiException` | any other non-2xx, for example 429 `app_limit_reached` or 404 `lease_not_found` |
-| `RateLimitedException`, `QuotaExhaustedException`, `InvalidKeyException` | you throw them from `withKey` (all are `KeyRotationException`) |
+| `AcnologiaApiException` | Any other non 2xx, for example 429 `app_limit_reached` or 404 `lease_not_found` |
+| `RateLimitedException`, `QuotaExhaustedException`, `InvalidKeyException` | Thrown by you from `withKey` |
 
-Bad arguments throw `ArgumentError` or `RangeError`; an API call that runs past `timeout` throws
-`TimeoutException`.
+Bad arguments throw `ArgumentError` or `RangeError`. An API call that runs past `timeout` throws `TimeoutException`.
 
 ```dart
 try {
-  await acn.withKey('elevenlabs', speak, wait: const Duration(seconds: 20));
+  await acn.withKey('weather', fetchForecast, wait: const Duration(seconds: 20));
 } on NoKeyAvailableException catch (e) {
   await Future<void>.delayed(e.retryAfter ?? const Duration(seconds: 1));
 }
@@ -197,5 +208,10 @@ Without a local Dart SDK:
 docker run --rm -v "$PWD":/w -w /w dart:stable sh -c "dart pub get && dart analyze && dart test"
 ```
 
-The tests replay the server's real response shapes through `MockClient` from
-`package:http/testing`.
+The tests replay the server's real response shapes through `MockClient` from `package:http/testing`.
+
+## More
+
+- [All SDKs](../README.md)
+- [HTTP API and error codes](../../docs/api.md)
+- [Request flows](../../docs/flows.md): what the proxy and leases do on the server

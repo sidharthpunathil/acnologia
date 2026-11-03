@@ -1,18 +1,27 @@
-# acnologia-kotlin
+# Acnologia for Kotlin
 
-Kotlin client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool.
-Coroutines first: every network call is a `suspend` function, built on OkHttp
-and kotlinx.serialization. It is its own artifact and does not wrap the Java SDK.
+Call the APIs your Acnologia server holds keys for, from Kotlin, with your app's own `acn_` token. Send requests through the proxy and the key never reaches your process. Or lease a key, call the provider yourself, and let `withKey` report each attempt and move to the next key on a rate limit, an empty quota or a rejected key.
 
-Two ways to use your pooled keys:
+Every network call is a `suspend` function, built on OkHttp and kotlinx.serialization. This is its own artifact and does not wrap the Java SDK.
 
-- **Proxy mode**: send requests to Acnologia instead of the provider. Acnologia injects a key, retries with the next key on rate limits, and never exposes the secret.
-- **Lease mode**: lease a key, call the provider yourself, report the outcome. `withKey` runs that loop and rotates keys for you.
+## Quick start
+
+```kotlin
+import dev.acnologia.kotlin.*
+
+suspend fun main() {
+    val acn = Acnologia("http://localhost:8080", "acn_your_app_token")
+    acn.proxy("weather").get("/v1/forecast", mapOf("city" to "Lisbon")).use { res ->
+        println(res.body!!.string())
+    }
+}
+```
+
+`weather` is the slug of a service on your server. Acnologia attaches the key, sends the call on, and returns the provider's response.
 
 ## Install
 
-The package is not on Maven Central yet. Publish it to your local Maven
-repository from this folder (Gradle 8 and JDK 17+):
+The package is not on Maven Central yet. Publish it to your local Maven repository from this folder (Gradle 8 and JDK 17 or later):
 
 ```sh
 cd sdk/kotlin
@@ -28,51 +37,59 @@ dependencies { implementation("dev.acnologia:acnologia-kotlin:0.1.0") }
 
 It brings in OkHttp 4.12, kotlinx-coroutines 1.9 and kotlinx-serialization-json 1.7.
 
-## Quick start
+## Connect to your server
 
-```kotlin
-import dev.acnologia.kotlin.*
+Create an app on the Apps page of the dashboard and copy its token. Tokens with the older `cog_` prefix still work.
 
-val acn = Acnologia.fromEnv() // ACNOLOGIA_URL and ACNOLOGIA_TOKEN
-val http = OkHttpClient()
+`Acnologia.fromEnv()` reads the URL and token from the environment and throws `IllegalArgumentException` when one is missing:
 
-val json: String = acn.withKey("serpapi") { lease ->
-    http.newCall(lease.request("/search.json", mapOf("q" to "coffee"))).await().use { res -> // adds ?api_key=<secret>
-        if (res.code == 429) throw RateLimitedException(1.hours, 429)
-        if (res.code == 401) throw InvalidKeyException(401)
-        res.body!!.string()
-    }
-}
-```
+| Variable | Meaning |
+|---|---|
+| `ACNOLOGIA_URL` | Server URL, such as `http://localhost:8080` |
+| `ACNOLOGIA_TOKEN` | App token, `acn_...` |
 
-Or set the URL and token yourself:
+The constructor takes the rest as named arguments:
 
 ```kotlin
 val acn = Acnologia("http://localhost:8080", "acn_...", httpClient = myOkHttp, userAgent = "my-app/1.0")
 ```
 
-The default `User-Agent` is `acnologia-kotlin/0.1.0`. The default OkHttp client
-has a 75 second call and read timeout, longer than the 60 second maximum lease
-wait; if you pass your own, keep its timeouts longer than any wait. Tokens with
-the older `cog_` prefix still work. `Call.await()` is exported so you can run
-your own OkHttp calls without blocking a thread.
+| Argument | Default | Notes |
+|---|---|---|
+| `httpClient` | an OkHttp client with a 75 second call and read timeout | That is longer than the 60 second maximum lease wait. If you pass your own, keep its timeouts longer than any wait. `fromEnv(httpClient)` takes one too. |
+| `userAgent` | `acnologia-kotlin/0.1.0` | |
 
-## Environment variables
+`Call.await()` is exported so you can run your own OkHttp calls without blocking a thread.
 
-| Variable | Used for |
-|---|---|
-| `ACNOLOGIA_URL` | the server, for example `http://localhost:8080` |
-| `ACNOLOGIA_TOKEN` | the app token, `acn_...` |
+## Call an API through the proxy
 
-`Acnologia.fromEnv()` reads both and throws `IllegalArgumentException` when one
-is missing.
+`acn.proxy(service)` returns a `Proxy` whose requests go to `/proxy/{service}/{path}`. The key stays on the server. Each call returns the OkHttp `Response`; close it.
 
-## withKey
+```kotlin
+@Serializable data class Alert(val city: String)
 
-`withKey(service, maxAttempts = 5, options = LeaseOptions()) { lease -> ... }`
-takes a suspend block. It leases a key, runs the block, reports the outcome,
-and on a rotation exception reports it with `rotate` and runs the block again
-with the next key.
+acn.proxy("weather").postJson("/v1/alerts", Alert("Lisbon")).use { res ->
+    println("${res.code} via key ${res.header("X-Acnologia-Key-Id")}")
+}
+```
+
+- The upstream response comes back unchanged. A non-2xx status is not an exception.
+- Each response carries `X-Acnologia-Key-Id`, `X-Acnologia-Attempts` and `X-Acnologia-Service`.
+- Redirects are never followed, so the app token is not replayed to another host.
+- With the default client, proxy calls drop the call timeout because bodies may stream.
+
+Other methods:
+
+- `get(path, query, headers)`, `delete(path, query, headers)`, `url(path, query)`
+- `post(path, requestBody)`, `postJson(path, jsonElement)`, and `postJson(path, value)` for any value kotlinx.serialization can encode (a `@Serializable` class needs the serialization plugin in your build)
+- `request(method, path, query, headers, body)`
+- `send(request)`: uses only the path and query, so a request built against the provider's URL works
+
+To turn an Acnologia error from the proxy (a response without `X-Acnologia-Key-Id`) into an exception, call `ApiException.fromResponse(code, bodyText)`.
+
+## Lease a key with `withKey`
+
+`withKey(service, maxAttempts = 5, options = LeaseOptions()) { lease -> ... }` leases a key, runs the suspend block, reports the outcome, and rotates when the block throws one of the rotation exceptions:
 
 | The block | Reported outcome | Rotates |
 |---|---|---|
@@ -82,95 +99,108 @@ with the next key.
 | throws `InvalidKeyException()` | `invalid` | yes |
 | throws anything else | `error` | no, the exception is rethrown |
 
-A rotation exception is also recognized as the cause of another exception.
-After `maxAttempts` keys the last rotation exception is thrown; the final
-attempt is reported without asking for a next key. When the pool runs dry,
-`NoKeyAvailableException` is thrown. Every lease is reported, including when
-the coroutine is cancelled while the block runs (the report is sent in
-`NonCancellable`), and the secret is scrubbed from report messages.
-
 ```kotlin
-val audio = acn.withKey("elevenlabs", maxAttempts = 3, options = LeaseOptions(wait = 20.seconds)) { lease ->
-    speak(lease)
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
+
+val http = OkHttpClient()
+
+val json: String = acn.withKey("weather", maxAttempts = 3, options = LeaseOptions(wait = 10.seconds)) { lease ->
+    http.newCall(lease.request("/v1/forecast", mapOf("city" to "Lisbon"))).await().use { res -> // request adds the key
+        if (res.code == 429) throw RateLimitedException(1.hours, 429)
+        if (res.code == 402) throw QuotaExhaustedException(402)
+        if (res.code == 401) throw InvalidKeyException(401)
+        res.body!!.string()
+    }
 }
 ```
 
-## Lease, report and renew by hand
+How it ends:
+
+- A rotation exception is also recognized as the cause of another exception.
+- After `maxAttempts` keys the last rotation exception is thrown. The final attempt is reported without asking for a next key.
+- When the pool runs dry, `NoKeyAvailableException` is thrown (`AllKeysBusyException` when every usable key is at its concurrency limit).
+- Every lease is reported, including when the coroutine is cancelled while the block runs (the report is sent in `NonCancellable`). The secret is scrubbed from report messages.
+- `options` sets the first lease. Its `ttl`, `wait` and `exclusive` apply to every later lease.
+
+## Lease and report by hand
 
 ```kotlin
-val lease = acn.lease("serpapi", LeaseOptions(ttl = 5.minutes, wait = 10.seconds))
-// Report on every path: an unreported lease holds a concurrency slot until its TTL.
+val lease = acn.lease("weather", LeaseOptions(ttl = 5.minutes, wait = 10.seconds))
+// ... call the provider with lease.apply(request) ...
 val next: Lease? = lease.report(Outcome.RATE_LIMITED, statusCode = 429, retryAfter = 1.hours, rotate = true)
 ```
 
-`LeaseOptions` takes `excludeKeyIds`, `ttl`, `wait` (at most 60 seconds) and
-`exclusive`. Outcomes are `OK`, `RATE_LIMITED`, `QUOTA_EXHAUSTED`, `INVALID`,
-`ERROR`, `BUSY` and `BANNED`; `lease.report(Report(...))` takes the same fields
-as a data class. `lease.renew(10.minutes)` extends an open lease and returns
-the new expiry.
+Report on every path. On services with a concurrency limit, an unreported lease holds one of the key's slots until its TTL runs out. With `rotate = true` the report returns the next lease when another key is available. `lease.report(Report(...))` takes the same fields as a data class.
 
-`lease.apply(request)` returns a copy of an OkHttp `Request` with the secret
-where the provider expects it: query parameter `auth.name` for `query`, header
-`auth.name` for `header`, and `Authorization: Bearer <secret>` for `bearer`. A
-non empty `auth.prefix` goes in front of the secret, and for `bearer` it
-replaces `Bearer `. `lease.request(path, query)` builds a GET with the key
-applied, `lease.url(path, query)` joins the provider base URL without the
-secret, and `lease.apply(headers, query)` fills two mutable maps for other
-clients.
+`lease.renew(10.minutes)` extends an open lease for a long job and returns the new expiry (no argument uses the server default of two minutes). It throws `ApiException` 404 `lease_not_found` when the lease is no longer open.
 
-`Lease.toString()` and `Acnologia.toString()` never include the secret or the
-token, and the SDK logs nothing.
+A lease fails with `ForbiddenException`, code `lease_not_allowed`, when the app is proxy only or the service is shared to you by another Acnologia server. Call those services through the proxy.
 
-## Proxy
+**`LeaseOptions`**: `excludeKeyIds`, `ttl`, `wait` (at most 60 seconds, for a free slot when every key is busy) and `exclusive` (keep the key from every other caller until you report).
+
+**`Lease` fields**: `leaseId`, `keyId`, `service`, `secret`, `auth` (`type`, `name`, `prefix`), `baseUrl`, `expiresAt` and `exclusive`.
+
+**Placing the key**: `lease.apply(request)` returns a copy of an OkHttp `Request` with the secret where `auth.type` says:
+
+| `auth.type` | Where the secret goes |
+|---|---|
+| `query` | query parameter `auth.name` |
+| `header` | header `auth.name` |
+| `bearer` | header `auth.name` (default `Authorization`) as `Bearer <secret>` |
+
+A non-empty `auth.prefix` goes in front of the secret, and for `bearer` it replaces `Bearer `. `lease.request(path, query)` builds a GET with the key applied, `lease.url(path, query)` joins the provider base URL without the secret, and `lease.apply(headers, query)` fills two mutable maps for other clients.
+
+**Outcomes**: `OK`, `RATE_LIMITED`, `QUOTA_EXHAUSTED`, `INVALID`, `ERROR`, `BUSY` and `BANNED`.
+
+## List services
 
 ```kotlin
-acn.proxy("serpapi").get("/search.json", mapOf("engine" to "google", "q" to "coffee")).use { res ->
-    println(res.body!!.string())
-}
-
-@Serializable data class Tts(val text: String, val model_id: String)
-acn.proxy("elevenlabs").postJson("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
-    Tts("Hello from Acnologia", "eleven_multilingual_v2")).use { res -> File("hello.mp3").writeBytes(res.body!!.bytes()) }
+for (s in acn.services()) println("${s.slug} available=${s.available} auth=${s.auth.type}")
 ```
 
-Requests go to `/proxy/{service}/{path}` and return the OkHttp `Response`;
-close it. Upstream responses come back unchanged, so a non-2xx status is not an
-exception. Each response carries `X-Acnologia-Key-Id` and
-`X-Acnologia-Attempts`. Redirects are never followed, and the default client's
-call timeout is dropped for proxy calls because bodies may stream.
+## Handle errors
 
-Other methods: `delete`, `post(path, requestBody)`, `postJson(path, jsonElement)`,
-`request(method, path, query, headers, body)`, and `send(request)`, which uses
-only the path and query of a request built against the provider's URL. To turn
-an Acnologia error from the proxy (one without `X-Acnologia-Key-Id`) into an
-exception, call `ApiException.fromResponse(code, bodyText)`.
-
-## Errors
-
-Every exception extends `AcnologiaException`. Network failures are a plain
-`AcnologiaException` with the cause attached.
+Every exception extends `AcnologiaException`. Network failures are a plain `AcnologiaException` with the cause attached.
 
 | Exception | When |
 |---|---|
-| `ApiException` (`statusCode`, `code`, `errorMessage`) | any other non-2xx from the consumer API |
-| `UnauthenticatedException` | 401, the token is missing or wrong |
-| `ForbiddenException` | 403, the app is disabled or not allowed this service or mode |
-| `NoKeyAvailableException` (`retryAfter`, `isBusy`) | 503 `no_key_available` |
+| `ApiException` (`statusCode`, `code`, `errorMessage`) | any other non-2xx from the consumer API, such as 404 `lease_not_found` |
+| `UnauthenticatedException` | 401: the token is missing or wrong |
+| `ForbiddenException` | 403: the app is disabled or not allowed this service or mode |
+| `NoKeyAvailableException` (`retryAfter`, `isBusy`) | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
 | `AllKeysBusyException` (extends `NoKeyAvailableException`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
 | `ServiceUnavailableException` (`retryAfter`) | 503 `service_unavailable`: the provider's circuit breaker is open |
 | `RateLimitedException` (`retryAfter`) | you throw it from `withKey` |
 | `QuotaExhaustedException` | you throw it from `withKey` |
 | `InvalidKeyException` | you throw it from `withKey` |
 
-The three rotation exceptions extend the sealed `KeyRotationException` and take
-an optional status code, message and cause.
+The API exceptions extend `ApiException`. The three rotation exceptions extend the sealed `KeyRotationException` and take an optional status code, message and cause.
 
-## Tests
+```kotlin
+try {
+    acn.lease("weather")
+} catch (e: NoKeyAvailableException) {
+    delay(if (e.retryAfter.isPositive()) e.retryAfter else 1.seconds)
+}
+```
 
-The tests use OkHttp's MockWebServer.
+## Keep secrets out of logs
+
+`Lease.toString()` and `Acnologia.toString()` never include the secret or the token, and the SDK logs nothing.
+
+## Run the tests
+
+The tests use OkHttp's MockWebServer. From `sdk/kotlin`:
 
 ```sh
 gradle test
 # or, without Gradle installed:
 docker run --rm -v "$PWD":/w -w /w gradle:8-jdk17 gradle test --no-daemon
 ```
+
+## More
+
+- [SDK overview](../README.md): every language, install commands, test commands
+- [Consumer API reference](../../docs/api.md)
+- [Acnologia README](../../README.md)

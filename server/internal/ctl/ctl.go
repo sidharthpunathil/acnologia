@@ -346,7 +346,7 @@ func (c *cli) login(args []string) error {
 		raw = pos[0]
 	}
 	if raw == "" {
-		if raw, err = c.ask("Acnologia URL (for example https://key.sidharth.co): "); err != nil {
+		if raw, err = c.ask("Acnologia URL (for example https://key.example.com): "); err != nil {
 			return err
 		}
 	}

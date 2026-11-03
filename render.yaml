@@ -1,0 +1,47 @@
+# Render Blueprint: one web service built from the Dockerfile, with a 1 GB
+# persistent disk at /data. Deploy it with the button in docs/deploy.md, or
+# New, Blueprint in the Render dashboard.
+#
+# Disks need a paid instance type (the free one has no disk), and a service
+# with a disk runs as exactly one instance. Render fills ACNOLOGIA_MASTER_KEY
+# and ACNOLOGIA_ACCESS_PASSWORD with random values; copy both from the
+# Environment tab into your password manager after the first deploy.
+services:
+  - type: web
+    name: acnologia
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: 0.5c-512mb
+    healthCheckPath: /healthz
+    # Off for a button deploy: you pick when to upgrade (Manual Deploy).
+    autoDeployTrigger: "off"
+    disk:
+      name: acnologia-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      # Render mounts the disk owned by root; the image's nonroot user could
+      # not write to it. Passed to the build as a Docker build argument.
+      - key: ACNOLOGIA_IMAGE_USER
+        value: root
+      - key: ACNOLOGIA_DATA_DIR
+        value: /data
+      # A random 256-bit value, base64: exactly the key format expected.
+      - key: ACNOLOGIA_MASTER_KEY
+        generateValue: true
+      - key: ACNOLOGIA_ACCESS_PASSWORD
+        generateValue: true
+      - key: ACNOLOGIA_REQUIRE_ACCESS_PASSWORD
+        value: "true"
+      - key: ACNOLOGIA_SECURE_COOKIES
+        value: "true"
+      - key: ACNOLOGIA_TRUST_PROXY_HEADERS
+        value: "true"
+      # Your https://<name>.onrender.com address or custom domain, no
+      # trailing slash. Needed for sharing with other servers and acn login.
+      - key: ACNOLOGIA_PUBLIC_URL
+        sync: false
+      # Optional: turns on the Assistant, the provider builder and the
+      # offers refresh.
+      - key: ANTHROPIC_API_KEY
+        sync: false

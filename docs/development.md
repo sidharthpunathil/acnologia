@@ -1,19 +1,42 @@
 # Development
 
-Go 1.26, Node 22 and pnpm 10. On Windows, see [Windows](#windows) for the
-PowerShell equivalents.
+From a fresh clone to the tests and a running dashboard, then the repository
+layout, every test suite, CI, Windows builds, screenshot tests and the
+conventions a change should follow.
+
+## Quick start
+
+You need Go 1.26, Node 22 and pnpm 10 (the repo pins `pnpm@10.24.0`). On
+Windows, see [Windows](#windows) for the PowerShell equivalents.
 
 ```sh
-make dev    # Go on :8080 and Vite on :5173 with hot reload
-make test   # server tests with the race detector, plus the Go SDK
-make build  # bin/acnologia with the dashboard and llms.txt embedded
-make docker # local image
+git clone https://github.com/sidharthpunathil/acnologia.git
+cd acnologia
+make test                            # server tests with the race detector, plus the Go SDK
+(cd web && pnpm install)             # dashboard dependencies, once
+make dev                             # Go on :8080, Vite on :5173 with hot reload
 ```
 
-`make dev` runs the server from `server/`, so put a `.env` there or export the
-variables. A missing master key makes the server generate `data/master.key`;
-if you later start it with a different key it refuses to boot rather than
-mixing keys.
+Open http://localhost:5173 and create the first account. Vite forwards `/api`,
+`/proxy`, `/mcp`, `/healthz`, `/llms.txt`, `/llms-full.txt` and the raw docs to
+the server on :8080; set `ACNOLOGIA_BACKEND` to point it at another instance.
+
+Other targets:
+
+```sh
+make build   # bin/acnologia with the dashboard, docs and llms.txt embedded
+make cli     # bin/acn alone, no web build
+make run     # make build, then run bin/acnologia with ./data
+make docker  # local image tagged acnologia:<version> and acnologia:latest
+make clean   # remove bin/ and the built dashboard assets
+```
+
+`make dev` runs `make llms` first, then starts the server from `server/` with
+`ACNOLOGIA_DATA_DIR=../data`, so local data lands in `data/` at the repo root.
+The server reads a `.env` from the directory it starts in, so for `make dev`
+put one in `server/` (copy `.env.example`) or export the variables. With no
+master key set, the server generates `data/master.key`. Start it later with a
+different key and it refuses to boot rather than mix keys.
 
 ## Repository layout
 
@@ -22,17 +45,18 @@ mixing keys.
 | `server/cmd/acnologia` | Entry point and boot sequence. |
 | `server/cmd/acn` | The `acn` command line client. |
 | `server/internal/api` | HTTP handlers, middleware, proxy, MCP, sharing routes, the Assistant and its compaction. |
-| `server/internal/pool` | Key selection, concurrency slots, outcomes, health checks. |
+| `server/internal/pool` | Key selection, pacing, concurrency slots, outcomes, health checks. |
 | `server/internal/providers` | Provider spec format and engine, built in specs. |
 | `server/internal/catalog` | Provider publishing, versions, logos, live checks, SSRF safe client. |
 | `server/internal/agent` | The shared Claude client, the AI provider builder, Fill with AI, model choice per feature, model prices and the offers check. |
 | `server/internal/refresh` | Scheduled provider offers and Claude price refresh: settings, runs, diffs, reviews. |
-| `server/internal/peer` | Server identity, invites, the manifest client and sync with other servers. |
+| `server/internal/peer` | Server identity, invites, the manifest client, sync with other servers and key handover. |
 | `server/internal/store` | SQLite schema, migrations, queries. |
 | `server/internal/crypto` | Master key, encryption, hashing, scrubbing. |
 | `server/internal/redact` | Keeps secrets out of requests to Claude, stored text and logs. |
 | `server/internal/ctl` | The `acn` and `acnologia ctl` client. |
-| `server/internal/worker` | Housekeeping, background health checks, peer sync and the refresh schedule. |
+| `server/internal/mcpbridge` | The stdio MCP bridge shared by `acnologia mcp` and `acn mcp`. |
+| `server/internal/worker` | Housekeeping, background health checks, peer sync, sharing timers and the refresh schedule. |
 | `server/internal/breaker`, `egress`, `respcache`, `notify`, `keyparse` | Circuit breaker, egress proxies, response cache, webhooks, the key paste parser. |
 | `server/internal/config` | Environment settings and the default data directory per OS. |
 | `server/internal/docsmd`, `llmstxt`, `webui` | Embedded copies of the docs, `llms.txt` and the built dashboard. |
@@ -42,7 +66,7 @@ mixing keys.
 | `scripts/build.ps1` | The Makefile's build steps for Windows PowerShell. |
 | `install.sh`, `install.ps1` | `acn` installers for macOS and Linux, and for Windows. |
 | `docs/` | These docs, `llms.txt` (embedded and served at `/llms.txt`), design specs. |
-| `reference/` | Third party code used as reference only. Not built. |
+| `reference/` | Third party code kept for reference only. Not built. |
 
 See [architecture](architecture.md) for how the packages fit together.
 
@@ -50,41 +74,50 @@ See [architecture](architecture.md) for how the packages fit together.
 
 | Suite | Run | Covers |
 |---|---|---|
-| Server | `cd server && go test ./...` | API end to end against a fake SerpAPI (`internal/api/api_test.go`), concurrency, security regressions (`security_test.go`, `mcp_security_test.go`), provider engine, catalog, agent harness. |
+| Server | `cd server && go test ./...` | The API end to end against a fake upstream (`internal/api/api_test.go`), concurrency, security regressions (`security_test.go`, `mcp_security_test.go`), provider engine, catalog, agent harness, embedded docs (`docs_test.go`). |
 | Go SDK | `cd sdk/go && go test ./...` | Client, leases, `WithKey`, secret hygiene. |
-| TypeScript SDK | `cd sdk/typescript && npx vitest run` | Same for TS. |
-| Python SDK | `cd sdk/python && pytest` | Same for Python (needs `httpx`, `pytest`). |
-| Dashboard | `cd web && npx tsc --noEmit -p .` | Type check. |
-| Dashboard screens | `make test-screens` | Full page screenshots of every dashboard page, see below. |
-| Live provider checks | `cd server && ACNOLOGIA_LIVE_PROVIDERS=1 go test ./internal/providers -run TestInferenceLiveNoKey -v` | Calls the real LLM APIs with an invalid key. Needs the network, no secrets; skipped without the variable. See [providers](providers.md#testing-against-the-real-apis). |
+| TypeScript SDK | `cd sdk/typescript && pnpm install && pnpm test && pnpm typecheck` | The same for TypeScript. |
+| Python SDK | `cd sdk/python && pip install -e '.[test]' && pytest` | The same for Python. |
+| Dashboard | `cd web && pnpm typecheck` | Type check. `pnpm build` type checks and builds. |
+| Dashboard screens | `make test-screens` | Full page screenshots of every dashboard page, see [Screenshot tests](#screenshot-tests). |
+| Live provider checks | `cd server && ACNOLOGIA_LIVE_PROVIDERS=1 go test ./internal/providers -run TestInferenceLiveNoKey -v` | Calls the real LLM APIs with an invalid key. Needs the network but no secrets; skipped without the variable. See [providers](providers.md#testing-against-the-real-apis). |
 
-The API tests spin up the real router on `httptest` with a temporary SQLite
+The API tests start the real router on `httptest` with a temporary SQLite
 database, so they exercise middleware, auth and the proxy the way production
 does.
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request. All of
-it runs offline against fakes.
+### CI
+
+`.github/workflows/ci.yml` runs on every push and pull request, and on demand.
+Every job runs offline against fakes. A `changes` job first works out which
+areas a commit touched (a push is diffed against the last commit that passed
+CI, a pull request against its base), and only those jobs run. A change to
+`ci.yml` itself, a manual run, or a diff it cannot compute runs them all.
 
 | Job | Runs on | What |
 |---|---|---|
-| go | Linux, macOS, Windows | `go vet`, server and CLI tests (`-race` except on Windows), Go SDK tests; on Linux also a Windows arm64 cross compile |
+| go | Linux, macOS, Windows | `go vet`, server and CLI tests (`-race` except on Windows), and on Linux a Windows arm64 cross compile and vet |
+| embedded docs | Linux | The docs tests alone, when only the copies in `server/internal/docsmd` or `llmstxt` changed |
+| go sdk | Linux, macOS, Windows | `go test ./...` in `sdk/go` |
 | python sdk | Linux, macOS, Windows | `pytest` |
-| typescript sdk | Linux, macOS, Windows | tests and type check |
+| typescript sdk | Linux, macOS, Windows | `pnpm test` and `pnpm typecheck` |
 | dashboard build | Linux | `pnpm build` |
-| windows build | Windows | parses `install.ps1` and `scripts/build.ps1` in PowerShell 5.1 and 7, builds both binaries with `build.ps1` and runs them |
+| windows build | Windows | Parses `install.ps1` and `scripts/build.ps1` in PowerShell 5.1 and 7, builds both binaries with `build.ps1` and runs them |
 
-Releases are tag driven: a `v*` tag runs `release-server.yml`, which builds
-the server for Linux, macOS and Windows on amd64 and arm64 (`.tar.gz`, or
-`.zip` for Windows, plus `SHA256SUMS`); a `cli-v*` tag runs
-`release-cli.yml` for `acn` on the same six targets, which `install.sh` and
-`install.ps1` download.
+### Releases
+
+Releases are tag driven. A `v*` tag runs `release-server.yml`, which builds the
+server for Linux, macOS and Windows on amd64 and arm64 (`.tar.gz`, or `.zip`
+for Windows, plus `SHA256SUMS`). A `cli-v*` tag runs `release-cli.yml`, which
+builds `acn` for the same six targets; `install.sh` and `install.ps1`
+download from those releases.
 
 ## Windows
 
 Everything builds natively on Windows with Go 1.26, Node 22 and pnpm 10
-(`npm install -g pnpm@10.24.0`); CGO is not needed because the SQLite driver
-is pure Go. The Makefile needs `make` and `sh`, so use
-`scripts/build.ps1` instead, from Windows PowerShell 5.1 or PowerShell 7:
+(`npm install -g pnpm@10.24.0`). CGO is not needed because the SQLite driver
+is pure Go. The Makefile needs `make` and `sh`, so use `scripts/build.ps1`
+instead, from Windows PowerShell 5.1 or PowerShell 7:
 
 | make | PowerShell | Result |
 |---|---|---|
@@ -95,8 +128,8 @@ is pure Go. The Makefile needs `make` and `sh`, so use
 | `make test` | `.\scripts\build.ps1 test` | server and Go SDK tests, without `-race` |
 
 If scripts are blocked, run `Set-ExecutionPolicy -Scope CurrentUser
-RemoteSigned` once, or call it as `powershell -ExecutionPolicy Bypass -File
-.\scripts\build.ps1`. Without the script, the same steps by hand:
+RemoteSigned` once, or call the script as `powershell -ExecutionPolicy Bypass
+-File .\scripts\build.ps1`. The same steps by hand:
 
 ```powershell
 cd web; pnpm install --frozen-lockfile; pnpm build; cd ..
@@ -107,25 +140,32 @@ go build -trimpath -ldflags "-s -w -X main.version=dev" -o ..\bin\acnologia.exe 
 go build -trimpath -ldflags "-s -w -X main.version=dev" -o ..\bin\acn.exe .\cmd\acn
 ```
 
-For `make dev`, run the two halves in two terminals:
+For `make dev`, run `.\scripts\build.ps1 llms` once, then the two halves in two
+terminals:
 
 ```powershell
 cd server; $env:ACNOLOGIA_DATA_DIR = "..\data"; go run .\cmd\acnologia
 cd web; pnpm dev
 ```
 
-The repository's `.gitattributes` checks text files out with LF on every
-platform (PowerShell scripts with CRLF), so `core.autocrlf` does not change
-the embedded docs or test fixtures. `go test -race` needs cgo and a C
-compiler; on Windows run the tests without it. Cross compile from any OS with
-`GOOS=windows GOARCH=amd64` (or `arm64`) and `CGO_ENABLED=0`.
+Notes:
+
+- `.gitattributes` checks text files out with LF on every platform
+  (PowerShell scripts with CRLF), so `core.autocrlf` does not change the
+  embedded docs or test fixtures.
+- `go test -race` needs cgo and a C compiler, so on Windows run the tests
+  without it.
+- Without `ACNOLOGIA_DATA_DIR`, the data directory on Windows is
+  `%LocalAppData%\Acnologia`.
+- Cross compile for Windows from any OS with `GOOS=windows GOARCH=amd64` (or
+  `arm64`) and `CGO_ENABLED=0`.
 
 ## Screenshot tests
 
 `e2e/` holds a Playwright suite that screenshots every dashboard page and
 compares it with the committed baselines in `e2e/__screenshots__`. It has its
 own `package.json`, so it never touches the dashboard's dependencies, and it
-uses the installed Google Chrome (no browser download).
+uses the installed Google Chrome instead of downloading a browser.
 
 ```sh
 make build                   # the suite tests bin/acnologia as built
@@ -134,40 +174,45 @@ make test-screens UPDATE=1   # write new baselines after an intended change
 cd e2e && npm run report     # open the HTML report with diffs
 ```
 
-Global setup starts `bin/acnologia` on a free port with an empty temp data dir,
-a fresh master key and health checks off, then seeds a fixed demo workspace
-through the API: five services with keys (one invalid, one out of quota, two
-backups), a group, a webhook, an egress proxy, two apps, a second admin and an
-API token. The services point at a fake provider API on 127.0.0.1, so key
-checks and the seeded proxy traffic never leave the machine. Teardown stops
-the server and deletes the data dir.
+Global setup starts `bin/acnologia` on a free port with an empty temp data
+dir, a fresh master key and health checks off, then seeds a fixed demo
+workspace through the API: five services with keys (one invalid, one out of
+quota, two backups), a group, a webhook, an egress proxy, two apps, a second
+admin and an API token. The services point at a fake provider API on
+127.0.0.1, so key checks and the seeded proxy traffic never leave the
+machine. Teardown stops the server and deletes the data dir.
 
-Each page runs in four projects: desktop (1280x900) and phone (390x844), in
-light and dark. Every test fails on a console error, an uncaught page error
-or horizontal overflow. Before each capture the suite waits for network idle
-and for every `[aria-busy="true"]` skeleton to go, the page clock is frozen a
+Each page runs in four projects: desktop (1280x900) and phone (390x844), each
+in light and dark. A test fails on a console error, an uncaught page error or
+horizontal overflow. Before each capture the suite waits for network idle and
+for every `[aria-busy="true"]` skeleton to clear. The page clock is frozen a
 minute after seeding, and anything that changes from run to run (relative
 times, dates, local ports, the animated demos on `/docs`) is painted over.
 
-Baselines are rendered on macOS; other platforms differ in font rendering, so
-regenerate them on the machine that runs the suite. Review the diff images
-before committing new baselines.
+Baselines are rendered on macOS. Other platforms render fonts differently, so
+regenerate the baselines on the machine that runs the suite, and review the
+diff images before committing them.
 
 ## Conventions
 
-- Store secrets only through `crypto.Box`; never log a request query string,
+- Store secrets only through `crypto.Box`. Never log a request query string,
   a secret, or an unscrubbed upstream error (`crypto.Scrub`). Text that is
   stored or sent to Claude goes through `Store.Scrub` or the agent client,
   which both use `internal/redact`.
-- New dashboard routes go under `/api/admin` with the right `requireRole`
-  group; anything that can reveal or route a hidden key checks `isSuper` or the
-  `lease_hidden` / `target_trusted` flags.
-- Schema changes go in `store.migrate` with `addColumn`, so existing databases
-  upgrade on start.
+- New dashboard routes go under `/api/admin` in the right `requireRole`
+  group. Anything that can reveal or route a hidden key checks `isSuper` or
+  the `lease_hidden` / `target_trusted` flags.
+- A new route that must work while the access lock is on goes in
+  `gateOpenPrefixes` or `gateOpenExact` (`internal/api/gate.go`). Everything
+  else is locked by default.
+- Schema changes go in `store.migrate` with `addColumn`, so existing
+  databases upgrade on start.
 - Links built from server data use `safeHref` in the dashboard.
 - Update [`llms.txt`](llms.txt) and [`llms-full.txt`](llms-full.txt) when the
-  consumer API changes, then `make llms`. That target also copies `README.md`
-  (as the Overview page), `docs/*.md` and `docs/screenshots/*.png` into the
-  binary.
+  consumer API changes, then run `make llms`. That target also copies
+  `README.md` (as the Overview page), the docs and `docs/screenshots/*.png`
+  into the binary. A new doc must be added to the `llms` target, the
+  Dockerfile, `scripts/build.ps1` and the page list in
+  `server/internal/docsmd/docsmd.go`.
 - Refresh `docs/screenshots/` from a seeded server, not from the e2e
   baselines, which carry mask bars over dynamic values.

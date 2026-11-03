@@ -1,7 +1,55 @@
 # Security model
 
-Acnologia holds other people's API keys, so most of its design is about who can
-make a key leave the server, and where it can go.
+Acnologia holds other people's API keys, so most of its design is about who
+can make a key leave the server, and where it can go. This page states what
+is protected, how, and where the protection stops.
+
+## At a glance
+
+**What is protected:** the provider keys stored on the server, and the
+tokens that reach them.
+
+**What holds:**
+
+- Stored keys are encrypted with AES-256-GCM under a master key, and the
+  server refuses to start when the master key does not match the database.
+- An app in proxy mode is never handed the key. The server attaches it on
+  the way out and scrubs its raw, query escaped and path escaped forms from
+  response headers for every caller, and from response bodies for every
+  caller that may not lease it.
+- Members and admins never see hidden keys. A hidden key serves only apps a
+  superadmin cleared, and only at services whose target a superadmin
+  confirmed.
+- Every request to the AI model passes one redactor that replaces stored
+  keys and other known secrets, plus text shaped like common credentials
+  (exceptions in [What the model can and cannot see](#what-the-model-can-and-cannot-see)).
+  The same redactor runs on logs, events, the audit log and webhooks.
+- A share in proxy mode gives the other side a token, never a key. Revoke,
+  pause and expiry are checked on every request.
+- Roles are re-read on every request, so a demotion takes effect at once.
+
+**Where a key does leave the server, by design:**
+
+- A lease (an app in `lease` or `both` mode, or the MCP `get_key` tool)
+  returns the plain secret to the app.
+- A superadmin can reveal a key in the dashboard. Each reveal is audited.
+- A handover share sends keys to another server, and a reveal share shows
+  them to a person. Neither can be taken back: rotate those keys at the
+  provider when the share ends.
+- Any key that is not hidden is effectively readable by admins, because an
+  admin can route it to an app or a host they control. See
+  [Hidden keys](#hidden-keys-admins-operate-but-never-read-them).
+
+**Who is trusted:** superadmins, fully. Anyone holding both the database and
+the master key can decrypt every stored key. Provider responses, text that
+apps report, web pages the AI features read, and other servers are treated
+as untrusted input.
+
+**Where it stops:** upstreams on loopback and private addresses are allowed,
+an egress proxy resolves host names itself, the redactor can miss a short
+secret that is neither stored nor shaped like a credential, and the items
+under
+[Known limitations](#known-limitations).
 
 ## Trust boundaries
 
@@ -173,6 +221,96 @@ Windows ignores those modes, so there the folder's ACL does the job:
 - The SDKs scrub the secret from failure reports and redact it when a lease or
   client is printed.
 
+## What a proxied caller sees and can change
+
+The caller shapes a proxied request (path, query, headers, body) and reads
+what the upstream says back, so the proxy treats both directions as the
+caller's:
+
+- **The key stays out of answers.** A caller that may not lease the key (a
+  share's or a person's token, a proxy only app, any caller of a peer or
+  handover service) gets bodies with every spelling of the injected key
+  (raw, query escaped, path escaped) replaced by `[key]`, whether streamed,
+  buffered, cached, replayed or relayed as an error. Response headers are
+  scrubbed for every caller. An app that may lease the key gets the body as is.
+- **No key ids for shares.** Share and person tokens get no
+  `X-Acnologia-Key-Id` or `X-Acnologia-Attempts`, and the MCP `proxy_request`
+  tool leaves `key_id` out for them.
+- **No made up Acnologia headers.** Upstream `X-Acnologia-*` and `X-Cogito-*`
+  headers are dropped, except from the owner of a shared service. A receiver
+  marks its link revoked, paused or expired only when the owner's 403 carries
+  both the header and the matching `share_*` error code, which an answer the
+  owner relays from its upstream cannot.
+- **Limits hold under bursts.** An app's or share's request and budget limits
+  are checked and one request (and its estimated cost) reserved in one step
+  before the upstream call, for the proxy, MCP `proxy_request`, leases and
+  `get_key`, and released once the usage is recorded. Concurrent requests
+  cannot pass a limit that has one request left.
+- **Operators win over late results.** A request picked before an admin
+  disabled a key, or before a key was banned, cannot write `invalid` or
+  `exhausted` over that status when its answer lands.
+- **One caller cannot retire a shared key.** An answer classified as invalid,
+  banned or exhausted only lands on the key when something the caller does
+  not shape agrees: the provider's health check, run right then on that key
+  (at most once a minute per key), finds it invalid or out of quota, or a
+  second app got the same verdict for the key within 10 minutes. Until then
+  the request moves on to the next key, the key keeps serving everyone else,
+  and its last error reads `unconfirmed invalid: ...`. A success on the key
+  clears the suspicion. Providers without a health check therefore need two
+  apps to agree before a key is marked dead; check such keys from the
+  dashboard if a single app reports trouble.
+
+### The response cache
+
+The cache is shared by the apps of a service, so Acnologia never caches
+a response made with a hidden or restricted key, a response the upstream marks
+`private` or `no-store`, a partial (206) answer, or a body that contains the
+key. An entry is keyed by the service id and slug, the method, path, query and
+`Accept`, and a hash of every other forwarded header and the body, so one app
+cannot plant an answer for a request that differs from its own. A share's app
+gets entries of its own and never reads or writes what other apps see.
+Idempotent replays are stored per app. Deleting a service or an app drops its
+cached answers and replays, since SQLite can give the id to the next row.
+
+## Admin API tokens and the CLI
+
+Admin API tokens (`acnadm_`) are stored as SHA-256 hashes, carry a scope that
+never exceeds their owner's role, stop working when the owner is disabled, and
+cannot create tokens or change the account (a token may revoke itself, which
+is how `acn logout` works).
+
+`acn login` gets its token through a device flow (details in
+[Command line](cli.md#how-the-sign-in-works)):
+
+- The CLI's device code is 32 random bytes, kept only as a SHA-256 hash, in
+  memory, for 10 minutes.
+- The person approves the 8 letter user code on `/cli/authorize` with a
+  dashboard session past the site lock, picking a scope no higher than their
+  role. An API token cannot approve a sign in.
+- The token (90 days, named `acn on <hostname>`) is audit logged as
+  `token.create`.
+- Creating, polling and wrong user codes are rate limited per client address
+  or per user under a global ceiling. One address creates 5 a minute and 50
+  a day (30 a minute from all, with no global daily cap) and holds at most
+  10 waiting requests. Only polls for unknown codes count. One user gets 10
+  wrong codes a minute, after which only that user is refused.
+
+The CLI treats the server it talks to as untrusted input:
+
+- `acn login` opens the sign in link only when it is http or https on the
+  host that was typed (never a downgrade from https, never with user info).
+  Any other link (another host, `file://`, a local or UNC path, a custom
+  scheme) is not handed to the OS launcher; the CLI prints
+  `<server>/cli/authorize?code=...` instead.
+- `ACNOLOGIA_ACCESS_PASSWORD` is sent only to the server named by
+  `ACNOLOGIA_ACCESS_URL`, or else `ACNOLOGIA_URL`, never to a server being
+  signed in to or another saved one, and it is dropped from a redirect to
+  another origin.
+- Text from the server (labels, last errors, event details, error messages)
+  is printed with control characters, bidi overrides and invalid UTF-8
+  escaped, so a lease report or a peer's key label cannot drive the terminal.
+  `--json` output escapes them inside strings.
+
 ## Assistant chat
 
 - Tools call the dashboard API in process with your own session, so the
@@ -277,19 +415,53 @@ any client you would not hand a key to.
 - **Providers copied from a peer are skipped** unless a superadmin turns
   them on.
 
+## The AI builder
+
+The builder's `web_search` and `web_fetch` tools run on Anthropic's side, so
+fetched pages never reach Acnologia's network. Its `github_read` tool validates
+owner, repo and path. Text from fetched pages can steer the model, so its
+output is checked rather than trusted: the harness re-validates and re-tests
+every submitted spec, a create run cannot overwrite an existing provider,
+update runs wait for review by default, and the test key only goes to the
+provider's own domain.
+
+How the test key stays on that domain:
+
+- **Pinned to what the operator vouched for.** The key goes only to the
+  registrable domain of a URL the operator gave, or of the provider being
+  updated. A host on a shared hosting platform (`vercel.app`, `github.io`,
+  `supabase.co`, `workers.dev`, `amazonaws.com` and similar) pins only that
+  tenant's own host, and an IP address only itself.
+- **Nothing to pin to, no key sent.** A create run with no docs URL (or only
+  a GitHub link) never sends the test key. The draft is accepted without a
+  live check and waits for review even with auto publish on, because
+  publishing creates a service at `base_url` holding the test keys; the
+  review step names the host to confirm.
+- **Only a valid spec runs live.** `live_check` refuses a draft with schema
+  problems, so every health and example path starts with `/` and the health
+  method is GET or POST. The live check client also refuses any request whose
+  host, scheme or user info differs from `base_url`'s, and the engine's health
+  check does the same, so a path such as `@attacker.example/x` cannot move
+  the key to another host.
+
 ## Web protections
 
 - **Access password** (optional, for an instance on the internet): with
   `ACNOLOGIA_ACCESS_PASSWORD` set, a lock screen comes before setup, sign in
-  and every dashboard route, and only the app shell, `/healthz`,
-  `/robots.txt`, the app token routes and the CLI sign in's create and poll
-  calls stay open. A valid admin API token passes the lock on its own. The `acnologia_gate`
-  cookie is an issue time plus an HMAC keyed by the master key and the
-  password, refused after 30 days. Wrong guesses, on the lock screen or in
-  `X-Acnologia-Access`, are limited to 5 a minute and 50 a day per client
-  address, under a global ceiling of 20 a minute, so a flood makes the owner
-  wait a minute at most unless it comes from the owner's own address. See
-  [configuration](configuration.md#access-password).
+  and every dashboard route. Open while locked: the app shell, `/healthz`,
+  `/robots.txt`, `/api/gate*`, the landing page's GitHub star count, the
+  app token routes (`/proxy/*`, `/api/v1/*`, `/mcp`), the CLI sign in's
+  create and poll calls, and the sharing routes, which need an invite, a
+  share token, a claim code or the owner's signature. Every other route is
+  locked, including routes added later, and a path with dot segments or an
+  escaped form cannot borrow an open prefix. A valid admin API token passes
+  the lock on its own. The `acnologia_gate` cookie is an issue time plus an
+  HMAC keyed by the master key and the password, refused once it is older
+  than `ACNOLOGIA_ACCESS_TTL` (30 days by default). Wrong guesses, on the
+  lock screen or in `X-Acnologia-Access`, are limited to 5 a minute and 50 a
+  day per client address, under a global ceiling of 20 a minute, so a flood
+  makes the owner wait a minute at most unless it comes from the owner's own
+  address. See [configuration](configuration.md#access-password).
 - **No indexing**: every response carries `X-Robots-Tag: noindex, nofollow,
   noarchive, nosnippet` and `/robots.txt` disallows everything.
 - **CSRF**: every mutating dashboard call must send `Content-Type:
@@ -370,6 +542,11 @@ names one literally, but a host name is resolved by the proxy, which reaches
 whatever it can. Admins can add egress proxies; only use proxies that cannot
 reach your metadata service.
 
+`SafeClient` checks the resolved address at dial time, which also defeats DNS
+rebinding, and refuses loopback, private, link local (including cloud metadata
+at 169.254.169.254), CGNAT, benchmark, documentation and reserved ranges, plus
+NAT64 and 6to4 addresses that embed one of those.
+
 Webhook deliveries carry no key and go through `SafeClient` unless
 `ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE=true`. Webhook URLs are encrypted at rest (Slack,
 Discord and Telegram URLs are secrets) and only a host hint is ever returned.
@@ -385,120 +562,6 @@ service's target: assigning or changing it without an explicit superadmin
 confirm clears `target_trusted`, so hidden keys stop flowing until a
 superadmin confirms.
 Proxy URLs are encrypted at rest and shown without credentials.
-
-The response cache is shared by the apps of a service, so Acnologia never caches
-a response made with a hidden or restricted key, a response the upstream marks
-`private` or `no-store`, a partial (206) answer, or a body that contains the
-key. An entry is keyed by the service id and slug, the method, path, query and
-`Accept`, and a hash of every other forwarded header and the body, so one app
-cannot plant an answer for a request that differs from its own. A share's app
-gets entries of its own and never reads or writes what other apps see.
-Idempotent replays are stored per app. Deleting a service or an app drops its
-cached answers and replays, since SQLite can give the id to the next row.
-
-## What a proxied caller sees and can change
-
-The caller shapes a proxied request (path, query, headers, body) and reads
-what the upstream says back, so the proxy treats both directions as the
-caller's:
-
-- **The key stays out of answers.** A caller that may not lease the key (a
-  share's or a person's token, a proxy only app, any caller of a peer or
-  handover service) gets bodies with every spelling of the injected key
-  (raw, query escaped, path escaped) replaced by `[key]`, whether streamed,
-  buffered, cached, replayed or relayed as an error. Response headers are
-  scrubbed for every caller. An app that may lease the key gets the body as is.
-- **No key ids for shares.** Share and person tokens get no
-  `X-Acnologia-Key-Id` or `X-Acnologia-Attempts`, and the MCP `proxy_request`
-  tool leaves `key_id` out for them.
-- **No made up Acnologia headers.** Upstream `X-Acnologia-*` and `X-Cogito-*`
-  headers are dropped, except from the owner of a shared service. A receiver
-  marks its link revoked, paused or expired only when the owner's 403 carries
-  both the header and the matching `share_*` error code, which an answer the
-  owner relays from its upstream cannot.
-- **Limits hold under bursts.** An app's or share's request and budget limits
-  are checked and one request (and its estimated cost) reserved in one step
-  before the upstream call, for the proxy, MCP `proxy_request`, leases and
-  `get_key`, and released once the usage is recorded. Concurrent requests
-  cannot pass a limit that has one request left.
-- **Operators win over late results.** A request picked before an admin
-  disabled a key, or before a key was banned, cannot write `invalid` or
-  `exhausted` over that status when its answer lands.
-- **One caller cannot retire a shared key.** An answer classified as invalid,
-  banned or exhausted only lands on the key when something the caller does
-  not shape agrees: the provider's health check, run right then on that key
-  (at most once a minute per key), finds it invalid or out of quota, or a
-  second app got the same verdict for the key within 10 minutes. Until then
-  the request moves on to the next key, the key keeps serving everyone else,
-  and its last error reads `unconfirmed invalid: ...`. A success on the key
-  clears the suspicion. Providers without a health check therefore need two
-  apps to agree before a key is marked dead; check such keys from the
-  dashboard if a single app reports trouble.
-
-Admin API tokens (`acnadm_`) are stored as SHA-256 hashes, carry a scope that
-never exceeds their owner's role, stop working when the owner is disabled, and
-cannot create tokens or change the account (a token may revoke itself, which
-is how `acn logout` works).
-
-`acn login` gets its token through a device flow: the CLI's device code is 32
-random bytes kept only as a SHA-256 hash, in memory, for 10 minutes; the
-person approves the 8 letter user code on `/cli/authorize` with a dashboard
-session past the site lock, picking a scope no higher than their role, and the
-token (90 days, named `acn on <hostname>`) is audit logged as `token.create`.
-Creating, polling and wrong user codes are rate limited per client address
-or per user under a global ceiling: one address creates 5 a minute (30 from
-all, with no daily cap) and holds at most 10 waiting requests, only polls
-for unknown codes count, and one user gets 10 wrong codes a minute, after
-which only that user is refused. An API token cannot approve a sign in. See
-[Command line](cli.md#how-the-sign-in-works).
-
-The CLI treats the server it talks to as untrusted input:
-
-- `acn login` opens the sign in link only when it is http or https on the
-  host that was typed (never a downgrade from https, never with user info).
-  Any other link (another host, `file://`, a local or UNC path, a custom
-  scheme) is not handed to the OS launcher; the CLI prints
-  `<server>/cli/authorize?code=...` instead.
-- `ACNOLOGIA_ACCESS_PASSWORD` is sent only to the server named by
-  `ACNOLOGIA_ACCESS_URL`, or else `ACNOLOGIA_URL`, never to a server being
-  signed in to or another saved one, and it is dropped from a redirect to
-  another origin.
-- Text from the server (labels, last errors, event details, error messages)
-  is printed with control characters, bidi overrides and invalid UTF-8
-  escaped, so a lease report or a peer's key label cannot drive the terminal.
-  `--json` output escapes them inside strings.
-
-`SafeClient` checks the resolved address at dial time, which also defeats DNS
-rebinding, and refuses loopback, private, link local (including cloud metadata
-at 169.254.169.254), CGNAT, benchmark, documentation and reserved ranges, plus
-NAT64 and 6to4 addresses that embed one of those.
-
-The AI builder's `web_search` and `web_fetch` run on Anthropic's side, so
-fetched pages never reach Acnologia's network. Its `github_read` tool validates
-owner, repo and path. Text from fetched pages can steer the model, so its
-output is checked rather than trusted: the harness re-validates and re-tests
-every submitted spec, a create run cannot overwrite an existing provider,
-update runs wait for review by default, and the test key only goes to the
-provider's own domain.
-
-How the test key stays on that domain:
-
-- **Pinned to what the operator vouched for.** The key goes only to the
-  registrable domain of a URL the operator gave, or of the provider being
-  updated. A host on a shared hosting platform (`vercel.app`, `github.io`,
-  `supabase.co`, `workers.dev`, `amazonaws.com` and similar) pins only that
-  tenant's own host, and an IP address only itself.
-- **Nothing to pin to, no key sent.** A create run with no docs URL (or only
-  a GitHub link) never sends the test key. The draft is accepted without a
-  live check and waits for review even with auto publish on, because
-  publishing creates a service at `base_url` holding the test keys; the
-  review step names the host to confirm.
-- **Only a valid spec runs live.** `live_check` refuses a draft with schema
-  problems, so every health and example path starts with `/` and the health
-  method is GET or POST. The live check client also refuses any request whose
-  host, scheme or user info differs from `base_url`'s, and the engine's health
-  check does the same, so a path such as `@attacker.example/x` cannot move
-  the key to another host.
 
 ## Sharing between servers
 
@@ -539,9 +602,10 @@ section.
 - **Invites are one time and short lived.** `acninv_` codes carry the owner URL,
   the share id and 32 random bytes; only the SHA-256 of the secret is stored and
   it is compared in constant time. Redeeming burns it in the same transaction
-  that binds the peer. Preview and redeem count only refused invites, 10 a
-  minute per client address and 20 a minute (500 a day) from all, so junk
-  can never spend the budget a real invite needs.
+  that binds the peer. Preview and redeem count only refused invites: 10 a
+  minute and 100 a day per client address, and 20 a minute and 500 a day
+  from all. A valid invite never counts, so junk can never spend the budget
+  a real invite needs.
 - **An invite binds to the server that redeems it.** Redeem carries the
   receiver's public key and an Ed25519 signature over the owner's server id,
   the share id, the invite hash, a nonce and its id; the owner checks the id
@@ -630,9 +694,10 @@ docs say so plainly.
   pinned when it connected, refuses timestamps more than 5 minutes off and
   remembers nonces until they would be stale anyway, so it cannot be forged
   or replayed. It is best effort; its outcome is recorded on the share. The
-  route is public, so only failed attempts are rate limited, per client
-  address (20 a minute, 500 a day): junk from one address cannot hold back
-  an owner's signed revoke.
+  route is public, so only failed attempts are rate limited: 10 a minute and
+  100 a day per client address, and 20 a minute and 500 a day from all. A
+  valid signed revoke never spends that budget, so junk from other addresses
+  cannot hold back an owner's revoke.
 - **Rotate after revoke.** Because the push and the lease only bind a
   cooperating receiver, the owner should rotate every handed over key at its
   provider after revoking. The revoked share carries a rotate checklist of

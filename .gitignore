@@ -25,3 +25,6 @@ access-password*
 
 # Local agent skills. Kept on disk, never committed.
 agent/skills/
+
+# macOS folder metadata.
+.DS_Store

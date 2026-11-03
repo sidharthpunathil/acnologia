@@ -1,6 +1,8 @@
 # SDKs
 
-Acnologia has client libraries for twelve languages. They all speak the same consumer API (`/api/v1/...` and `/proxy/...`) with an app token, and they all have the same shape, so moving between them is mostly a matter of naming. None is on a package registry yet: the package column is the name each one will publish under, and the install column says how to get it today.
+Client libraries for twelve languages. Each one calls Acnologia with an app token (`acn_...`), so your code gets a working key, or a proxied response, without holding the key pool itself. They all speak the same consumer API (`/api/v1/...` and `/proxy/...`) and share one shape, so moving between them is mostly a matter of naming.
+
+None is on a package registry yet. The package column is the name each one will publish under, and the install column says how to get it today.
 
 | Language | Folder | Package | Minimum | Install today |
 |---|---|---|---|---|
@@ -19,9 +21,19 @@ Acnologia has client libraries for twelve languages. They all speak the same con
 
 ## What every SDK does
 
-Each SDK builds a client from a base URL and an app token, or from the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables. **Proxy mode** sends a request to `/proxy/{service}/{path}`; Acnologia injects a key, rotates on rate limits and hands back the provider's raw response, so the secret never reaches your process. **Lease mode** borrows a key (`lease`, with optional excluded keys, a TTL, a `wait` of up to 60 seconds for a free slot, and `exclusive` to keep the key from every other caller), and the lease puts the secret where the provider expects it (query parameter, header or bearer). You then `report` the outcome, optionally with `rotate` to get the next key in the same call, and `renew` a lease that a long job still needs. The `withKey` helper (`with_key` in Python, Ruby, Rust and C++) runs that loop for you: it leases, calls your function, reports every lease it takes, and rotates when your function signals a rate limit, used up quota or invalid key. Errors are typed: no key available, all keys busy (a kind of no key available), service unavailable when the provider's circuit breaker is open (each with the server's retry after), unauthenticated, forbidden, and a generic API error carrying the status and error code such as `lease_not_found`. Secrets and tokens are never printed: string forms, debug output and report messages redact them.
+**A client from a URL and a token.** Every SDK takes the server's base URL and an app token in its constructor. All except Go, PHP and TypeScript also fall back to the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables; in those three, read the variables yourself and pass them in.
 
-A service that another Acnologia server shares with yours is proxy only: a lease on it fails with a forbidden error, code `lease_not_allowed`, so call it in proxy mode.
+**Proxy mode.** A request goes to `/proxy/{service}/{path}`. Acnologia attaches a key, rotates on rate limits and hands back the provider's raw response, so the secret never reaches your process.
+
+**Lease mode.** `lease` borrows a key, with optional excluded keys, a TTL, a wait of up to 60 seconds for a free slot, and `exclusive` to keep the key from every other caller. The lease puts the secret where the provider expects it: a query parameter, a header or a bearer token. You then `report` the outcome, optionally with `rotate` to get the next key in the same call, and `renew` a lease that a long job still needs.
+
+**A retry loop.** `withKey` (`with_key` in Python, Ruby, Rust and C++) leases a key, calls your function, reports every lease it takes, and rotates when your function signals a rate limit, used up quota or invalid key.
+
+**Typed errors.** Every SDK has distinct errors for no key available, all keys busy (a kind of no key available) and service unavailable when the provider's circuit breaker is open, each carrying the server's retry after. Anything else is a generic API error with the HTTP status and the error code, such as `lease_not_found`. The C++, C#, Dart, Java, Kotlin, Rust and Swift SDKs also have their own unauthenticated (401) and forbidden (403) errors; the others report those as the generic API error.
+
+**Redacted secrets.** String forms, debug output and report messages never print the key or the app token.
+
+A lease fails with 403 `lease_not_allowed` when the app is proxy only, or when the service is one another Acnologia server shares with yours. Call those services in proxy mode.
 
 ## Install today
 
@@ -114,7 +126,7 @@ FetchContent_MakeAvailable(acnologia)
 target_link_libraries(my_app PRIVATE acnologia::acnologia)
 ```
 
-Each README has the full install notes, a quick start and the complete API.
+Each README has the full install notes, a quick start and the complete API. For how requests flow through the server, see [docs/flows.md](../docs/flows.md); for every error code, [docs/api.md](../docs/api.md).
 
 ## Running the tests
 
