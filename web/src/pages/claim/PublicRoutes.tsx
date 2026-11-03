@@ -1,6 +1,6 @@
-// Pages for a person a share was made for. They render outside the access
-// gate and the signed in shell: no account, no session, only the claim code
-// or the person's own token.
+// Pages for a person a share was made for, and the public home page. They
+// render outside the access gate and the signed in shell: no account, no
+// session, only the claim code or the person's own token.
 import type { ReactNode } from "react";
 import { Route, Routes, useParams } from "react-router-dom";
 import { Toaster } from "../../components/Toaster";
@@ -8,10 +8,11 @@ import { BRAND_NAME, Mark } from "@/components/acn/brand";
 import { ThemePicker } from "@/components/acn/theme-picker";
 import { ClaimPage } from "./ClaimPage";
 import { MePage } from "./MePage";
+import { LandingPage } from "../landing/Landing";
 
-/** /claim/<code> and /me. */
+/** /claim/<code>, /me and the public home page, /landing. */
 export function isPublicPath(pathname: string): boolean {
-  return /^\/claim\/[^/]+\/?$/.test(pathname) || /^\/me\/?$/.test(pathname);
+  return /^\/claim\/[^/]+\/?$/.test(pathname) || /^\/me\/?$/.test(pathname) || /^\/landing\/?$/.test(pathname);
 }
 
 export function PublicRoutes() {
@@ -20,6 +21,7 @@ export function PublicRoutes() {
       <Routes>
         <Route path="/claim/:code" element={<KeyedClaim />} />
         <Route path="/me" element={<MePage />} />
+        <Route path="/landing" element={<LandingPage />} />
       </Routes>
       <Toaster />
     </>
