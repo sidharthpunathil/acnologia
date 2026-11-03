@@ -243,7 +243,7 @@ func DBFileIn(dataDir string) string {
 func Open(dataDir string) (*Store, error) {
 	file := DBFileIn(dataDir)
 	slog.Info("opening database", "path", filepath.Join(dataDir, file))
-	dsn := "file:" + filepath.Join(dataDir, file) +
+	dsn := "file:" + uriPath(filepath.Join(dataDir, file)) +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

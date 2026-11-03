@@ -134,3 +134,16 @@ Every suite runs offline against a stub or fake server. Run each from its folder
 | C++ | `sdk/cpp` | `cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure` |
 
 Without a local toolchain, the Java, Kotlin, C#, Dart and PHP READMEs show how to run the same suite in Docker (`maven:3-eclipse-temurin-17`, `gradle:8-jdk17`, `mcr.microsoft.com/dotnet/sdk:8.0`, `dart:stable`, `php:8.1-cli`). The Swift suite also runs with `swift test` at the repository root, through the root `Package.swift`.
+
+### Windows
+
+The SDKs read no files and keep no config of their own: the base URL and the token come from the constructor or the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables, so they behave the same on Windows. CI runs the Go, Python and TypeScript suites on `windows-latest` as well as Linux and macOS. Set the variables for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only). The Python venv lives in `.venv\Scripts` on Windows, so the Python line becomes:
+
+```powershell
+cd sdk\python
+python -m venv .venv
+.venv\Scripts\pip install -e ".[test]"
+.venv\Scripts\pytest
+```
+
+The other commands in the table run as they are in PowerShell, except that `&&` needs PowerShell 7; in Windows PowerShell 5.1 run the steps one by one or join them with `;`.

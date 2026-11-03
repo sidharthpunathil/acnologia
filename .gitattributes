@@ -1,0 +1,39 @@
+# Text files are stored with LF and checked out with LF on every platform, so
+# a Windows checkout (core.autocrlf=true) builds the same embedded docs, test
+# fixtures and shell scripts as Linux and macOS. Go, gofmt and the web build
+# all read LF fine on Windows.
+* text=auto eol=lf
+
+# Shell scripts and makefiles break with CRLF.
+*.sh text eol=lf
+Makefile text eol=lf
+install.sh text eol=lf
+
+# Test fixtures are compared byte for byte.
+**/testdata/** text eol=lf
+e2e/__screenshots__/** binary
+
+# Windows only files keep CRLF.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binaries.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.gz binary
+*.db binary
+
+# Committed with CRLF; left as is rather than rewritten.
+web/src/stageshow/kit/brands/discover.svg -text
+*.sln -text

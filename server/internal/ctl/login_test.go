@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -130,13 +131,16 @@ func TestDeviceLogin(t *testing.T) {
 		}
 	}
 
-	// Saved per host, 0600 in a 0700 directory.
+	// Saved per host, 0600 in a 0700 directory. Windows has no Unix modes:
+	// the file takes the ACL of the user's profile folder instead.
 	p := c.configPath()
-	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
-		t.Fatalf("config mode %v", st.Mode().Perm())
-	}
-	if st, _ := os.Stat(filepath.Dir(p)); st.Mode().Perm() != 0o700 {
-		t.Fatalf("config dir mode %v", st.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+			t.Fatalf("config mode %v", st.Mode().Perm())
+		}
+		if st, _ := os.Stat(filepath.Dir(p)); st.Mode().Perm() != 0o700 {
+			t.Fatalf("config dir mode %v", st.Mode().Perm())
+		}
 	}
 	cf := c.load()
 	ctx := cf.Contexts[host]

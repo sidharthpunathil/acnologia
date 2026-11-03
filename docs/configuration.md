@@ -9,7 +9,7 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | Variable | Default | What it does |
 |---|---|---|
 | `ACNOLOGIA_ADDR` | `:8080` | Listen address. When unset and the host sets `PORT` (Railway, Render, Fly), the server listens on `0.0.0.0:$PORT`. |
-| `ACNOLOGIA_DATA_DIR` | `./data` | Holds `acnologia.db` (plus WAL files) and, when no env key is set, `master.key`. Created with mode 0700. |
+| `ACNOLOGIA_DATA_DIR` | `./data`; `%LocalAppData%\Acnologia` on Windows | Holds `acnologia.db` (plus WAL files) and, when no env key is set, `master.key`. Created with mode 0700 (on Windows it relies on the folder's ACL instead, see [Windows](#windows)). |
 | `ACNOLOGIA_MASTER_KEY` | empty | 32 bytes, base64 or hex, that encrypt stored keys. Generate with `acnologia gen-master-key`. When empty, `data/master.key` is used, or created on first boot. |
 | `ACNOLOGIA_PUBLIC_URL` | empty | Base URL written into `/llms.txt`, and the URL this server announces to other servers: in `/.well-known/acnologia` and in every share invite it makes. When empty, the URL a superadmin saved on the Sharing page is used, else the request host. Set it on any server that shares, so invites never carry an internal address. |
 | `ACNOLOGIA_SECURE_COOKIES` | `false` | Mark the session cookie `Secure`. Set `true` behind HTTPS. It is also set automatically for direct TLS. |
@@ -79,6 +79,80 @@ Acnologia keeps itself out of search results: every response carries
 `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet`, `/robots.txt`
 disallows everything, the page carries a robots meta tag, and pages cannot be
 framed. This holds whether or not the access password is set.
+
+## Windows
+
+The server is a single `acnologia.exe` with no runtime dependencies (the
+SQLite driver is pure Go). Download `acnologia_windows_amd64.zip` or
+`acnologia_windows_arm64.zip` from the
+[releases](https://github.com/sidharthpunathil/acnologia/releases), or build
+it with `.\scripts\build.ps1` (see [development](development.md#windows)).
+Docker Desktop runs the Linux image as on any other host.
+
+**Data dir.** Without `ACNOLOGIA_DATA_DIR`, the data lives in
+`%LocalAppData%\Acnologia` (for example
+`C:\Users\you\AppData\Local\Acnologia`), not in `.\data`, because a service
+or a Scheduled Task starts in `C:\Windows\System32`. Windows ignores Unix
+file modes, so the 0700 and 0600 the server asks for do nothing there: the
+database, `master.key` and `access-password` are protected by the folder's
+ACL. Keep the data dir inside the profile of the account that runs the
+server (its `AppData` is readable only by that account, SYSTEM and
+administrators), or lock a custom folder down yourself:
+
+```powershell
+icacls D:\acnologia /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F" "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F"
+```
+
+Paths take backslashes as they are, in the environment or in `.env`, with
+or without quotes: `ACNOLOGIA_DATA_DIR=D:\acnologia\data`. A `.env`,
+`access-password` or `master.key` saved by Notepad (CRLF line endings, or a
+byte order mark) reads the same as one written on Linux. Set variables for
+one PowerShell session with `$env:ACNOLOGIA_ADDR = "127.0.0.1:8080"`, or for
+your account with `setx ACNOLOGIA_ADDR 127.0.0.1:8080`.
+
+**Stopping.** Ctrl+C stops the server cleanly: it gives in flight requests
+up to 15 seconds and closes the database. Closing the console window,
+signing out and shutting down start the same shutdown, but Windows ends the
+process after about 5 seconds.
+
+**Running in the background.** `acnologia.exe` is a console program, not a
+native Windows service, so `sc.exe create` on its own fails with error 1053.
+Use one of these:
+
+- **NSSM** ([nssm.cc](https://nssm.cc)) wraps it as a service and stops it
+  with Ctrl+C:
+
+  ```powershell
+  nssm install Acnologia C:\Acnologia\acnologia.exe
+  nssm set Acnologia AppDirectory C:\Acnologia
+  nssm set Acnologia AppEnvironmentExtra ACNOLOGIA_DATA_DIR=C:\ProgramData\Acnologia ACNOLOGIA_ADDR=127.0.0.1:8080
+  nssm start Acnologia
+  ```
+
+  A service runs as LocalSystem by default, whose `%LocalAppData%` is under
+  `C:\Windows\System32\config\systemprofile`, so set `ACNOLOGIA_DATA_DIR`
+  explicitly and restrict that folder with `icacls` as above (or run the
+  service as a dedicated user with `nssm set Acnologia ObjectName`).
+
+- **A Scheduled Task** that starts at logon, as your own user, with no extra
+  tools:
+
+  ```powershell
+  $action = New-ScheduledTaskAction -Execute "C:\Acnologia\acnologia.exe" -WorkingDirectory "C:\Acnologia"
+  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  Register-ScheduledTask -TaskName Acnologia -Action $action -Trigger $trigger -Settings $settings
+  ```
+
+  Put settings in `C:\Acnologia\.env` (it is read from the working
+  directory). The data goes to your `%LocalAppData%\Acnologia`.
+
+- **sc.exe** works only through a wrapper that speaks the service protocol,
+  such as NSSM or WinSW; point `sc.exe create ... binPath=` at the wrapper,
+  not at `acnologia.exe`.
+
+Allow the port through Windows Defender Firewall only if other machines
+need to reach it; for local use bind to `127.0.0.1:8080`.
 
 ## Access password
 

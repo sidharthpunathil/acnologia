@@ -111,7 +111,10 @@ The server refuses to start when the master key does not match the database
 (checked through `meta.master_key_check`, or by decrypting a stored key on
 databases from before that check). It never generates a new key over an
 existing file it failed to read. The data directory is chmod 0700 and the
-database files 0600.
+database files 0600. Windows ignores those modes, so there the data
+directory's ACL does the job: the default, `%LocalAppData%\Acnologia`, is
+readable only by the user, SYSTEM and administrators (see
+[configuration](configuration.md#windows)).
 
 ## Keeping keys out of places people can read
 

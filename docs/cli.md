@@ -27,10 +27,24 @@ With Go 1.26 or newer:
 go install github.com/sidharthpunathil/acnologia/server/cmd/acn@latest
 ```
 
-Windows: download `acn_windows_amd64.zip` from the
-[releases](https://github.com/sidharthpunathil/acnologia/releases), unzip
-`acn.exe` and put it on your PATH. From a checkout, `make cli` builds
-`bin/acn`.
+Windows, in PowerShell (no administrator prompt):
+
+```powershell
+irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex
+```
+
+It picks the amd64 or arm64 zip from the newest `cli-v*` release, checks it
+against `SHA256SUMS`, installs `acn.exe` to
+`%LocalAppData%\Programs\acn` and adds that folder to your user PATH (open a
+new terminal to pick it up). `$env:ACN_VERSION = "cli-v0.1.0"` pins a
+release and `$env:ACN_INSTALL_DIR = "D:\tools\acn"` picks the folder; set
+them before running the line above. If script execution is blocked, run it
+from `powershell -ExecutionPolicy Bypass`. You can also download
+`acn_windows_amd64.zip` or `acn_windows_arm64.zip` from the
+[releases](https://github.com/sidharthpunathil/acnologia/releases) yourself.
+
+From a checkout, `make cli` builds `bin/acn`; on Windows without make,
+`.\scripts\build.ps1 cli` builds `bin\acn.exe`.
 
 ## Sign in
 
@@ -71,8 +85,12 @@ Already have a token from the dashboard? `acn login https://key.sidharth.co
 
 Servers are saved per host in `ctl.json` under your user config folder
 (`~/.config/acnologia/` on Linux, `~/Library/Application Support/acnologia/`
-on macOS, `%AppData%\acnologia\` on Windows), with the file at mode 0600 in
-a 0700 folder. `ACNOLOGIA_CTL_CONFIG` points it elsewhere. You can be signed
+on macOS, `%AppData%\acnologia\` on Windows, for example
+`C:\Users\you\AppData\Roaming\acnologia\ctl.json`), with the file at mode
+0600 in a 0700 folder. Windows has no Unix modes: the file inherits the
+ACL of your profile folder, which only you and administrators can read.
+Saves are atomic (written beside the file, then moved into place).
+`ACNOLOGIA_CTL_CONFIG` points it elsewhere. You can be signed
 in to several servers; the last `acn login` is the default.
 
 ```sh
@@ -118,6 +136,17 @@ that command:
 export ACNOLOGIA_URL=https://key.sidharth.co
 export ACNOLOGIA_TOKEN=acnadm_...   # from Account, API tokens, or acn login on your machine
 acn keys add serpapi < new-keys.txt
+acn keys check serpapi
+```
+
+In PowerShell, set them with `$env:` and pass the file by name, since
+PowerShell has no `<` redirection (a `Get-Content` pipe works too). Files
+saved on Windows with CRLF line endings or a byte order mark read the same:
+
+```powershell
+$env:ACNOLOGIA_URL = "https://key.sidharth.co"
+$env:ACNOLOGIA_TOKEN = "acnadm_..."
+acn keys add serpapi .\new-keys.txt
 acn keys check serpapi
 ```
 

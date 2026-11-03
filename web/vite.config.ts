@@ -11,11 +11,15 @@ const backend = env.ACNOLOGIA_BACKEND || env.COGITO_BACKEND || "http://localhost
 // and /docs/<slug> stay with the SPA.
 const proxied = ["/api", "/proxy", "/mcp", "/healthz", "/llms.txt", "/llms-full.txt", "^/docs/[^/]+\\.md$", "^/docs/assets/"];
 
+// web/src as a file path. On Windows a file URL's pathname is /C:/..., so the
+// slash before the drive letter goes (Vite takes forward slashes there).
+const srcDir = decodeURIComponent(new URL("./src", import.meta.url).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // "@/..." resolves to web/src, matching the paths entry in tsconfig.json (BoardUI imports use it).
   resolve: {
-    alias: { "@": decodeURIComponent(new URL("./src", import.meta.url).pathname) },
+    alias: { "@": srcDir },
   },
   build: {
     outDir: "../server/internal/webui/dist",

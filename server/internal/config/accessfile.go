@@ -24,7 +24,8 @@ func LoadOrCreateAccessPassword(dataDir string) (password string, created bool, 
 	path := filepath.Join(dataDir, AccessPasswordFile)
 	b, err := os.ReadFile(path)
 	if err == nil {
-		p := strings.TrimSpace(string(b))
+		// TrimSpace takes the CRLF Notepad adds; a byte order mark goes too.
+		p := strings.TrimSpace(strings.TrimPrefix(string(b), "\ufeff"))
 		if len(p) < MinAccessPasswordLen {
 			return "", false, fmt.Errorf("%s is shorter than %d characters: delete it to get a new one, or set ACNOLOGIA_ACCESS_PASSWORD", path, MinAccessPasswordLen)
 		}

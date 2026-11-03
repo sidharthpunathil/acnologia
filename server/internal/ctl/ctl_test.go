@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -66,7 +67,7 @@ func TestLoginAndCommands(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "ops@x.io") {
 		t.Fatalf("login: %d %s %s", code, out, errs)
 	}
-	if st, _ := os.Stat(cfg); st.Mode().Perm() != 0o600 {
+	if st, _ := os.Stat(cfg); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("config holds tokens and must be 0600, got %v", st.Mode().Perm())
 	}
 	if code, out, _ := run("", "services"); code != 0 || !strings.Contains(out, "serpapi") {
@@ -94,9 +95,10 @@ func TestReadsLegacyConfigDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	t.Setenv("ACNOLOGIA_CTL_CONFIG", "")
 	t.Setenv("COGITO_CTL_CONFIG", "")
-	dir, err := os.UserConfigDir()
+	dir, err := configDirFor(runtime.GOOS, os.Getenv)
 	if err != nil {
 		t.Skip(err)
 	}
