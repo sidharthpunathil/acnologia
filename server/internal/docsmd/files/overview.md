@@ -95,6 +95,9 @@ acn login        # asks for the URL, then you approve in the browser
 acn services
 ```
 
+**From Claude**, after `acn login`, run `claude mcp add acnologia -- acn mcp`
+and Claude can run the whole server as you ([Connect Claude](docs/cli.md#connect-claude)).
+
 Each service's **Integrate** tab has ready snippets in curl, Python,
 TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 

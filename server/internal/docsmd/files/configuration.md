@@ -34,7 +34,7 @@ server ignores them.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `ACNOLOGIA_URL`, `ACNOLOGIA_TOKEN` | empty | `acn` and `acnologia ctl`: use this server and admin token for one command instead of the saved one (for CI). `acnologia mcp` reads them too, as the base URL (default `http://localhost:8080`) and the app token. See [Command line](cli.md). |
+| `ACNOLOGIA_URL`, `ACNOLOGIA_TOKEN` | empty | `acn` and `acnologia ctl`: use this server and admin token for one command instead of the saved one (for CI). `acnologia mcp` reads them too, as the base URL (default `http://localhost:8080`) and the token: an app token (`acn_...`) bridges to `/mcp`, an admin token (`acnadm_...`) to the control MCP at `/mcp/control`. `acn mcp` uses the saved server instead. See [Command line](cli.md#connect-claude). |
 | `ACNOLOGIA_CTL_CONFIG` | `acnologia/ctl.json` in the user config folder | `acn`: where the saved servers live. |
 | `ACNOLOGIA_ACCESS_PASSWORD` | empty | `acn` and `acnologia ctl` send it as `X-Acnologia-Access` on every call. Rarely needed, since an admin token passes the lock on its own. |
 | `ACN_VERSION`, `ACN_INSTALL_DIR` | newest `cli-v*` release; `/usr/local/bin` or `~/.local/bin` (`%LocalAppData%\Programs\acn` on Windows) | `install.sh` and `install.ps1`: pin a release and pick the install folder. |
