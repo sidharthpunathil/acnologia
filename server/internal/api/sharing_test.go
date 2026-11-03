@@ -223,6 +223,29 @@ func TestShareRedeemChecks(t *testing.T) {
 	if code != 404 {
 		t.Fatalf("wrong secret: %d", code)
 	}
+	// A redeem B signed for another owner, passed on to A, is refused.
+	inv, _ := peer.ParseInvite(sh.Invite)
+	bSelf, bPriv, _ := peer.Self(context.Background(), b.st, b.api.Pool.Box, "test", b.srv.URL)
+	aSelf, _, _ := peer.Self(context.Background(), a.st, a.api.Pool.Box, "test", a.srv.URL)
+	signFor := func(owner string) func(*peer.RedeemRequest) {
+		return func(r *peer.RedeemRequest) {
+			r.OwnerID, r.BoxPublicKey = owner, bSelf.BoxPublicKey
+			r.Signature = peer.SignRedeemV3(bPriv, owner, inv.ShareID, peer.InviteHash(inv.Secret), r.Nonce, bSelf.ID, bSelf.BoxPublicKey)
+		}
+	}
+	if code, _ = a.redeemDirect(b, sh.Invite, signFor(peer.IDPrefix+"mmmmmmmmmmmmmmmmmmmm")); code != 401 {
+		t.Fatalf("redeem signed for another owner: %d", code)
+	}
+	// Claiming A as the owner does not help: the signature covers the id.
+	if code, _ = a.redeemDirect(b, sh.Invite, func(r *peer.RedeemRequest) {
+		signFor(peer.IDPrefix + "mmmmmmmmmmmmmmmmmmmm")(r)
+		r.OwnerID = aSelf.ID
+	}); code != 401 {
+		t.Fatalf("relabelled redeem: %d", code)
+	}
+	if aSelf.Redeem != peer.RedeemVersion {
+		t.Fatalf("identity redeem version %d", aSelf.Redeem)
+	}
 	// The real one works once.
 	code, tok := a.redeemDirect(b, sh.Invite, nil)
 	if code != 200 || !store.IsAppToken(tok) {

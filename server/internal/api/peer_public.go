@@ -175,11 +175,23 @@ func (s *Server) peerRedeem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad_identity", "the server id does not match its public key")
 		return
 	}
+	self, _, err := s.selfIdentity(r)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
 	signed := false
 	if len(in.Nonce) >= 16 && len(in.Nonce) <= 128 {
-		if in.BoxPublicKey != "" {
+		switch {
+		case in.OwnerID != "":
+			// The receiver signed for one owner; a redeem meant for another
+			// server and passed on here is refused.
+			signed = in.OwnerID == self.ID &&
+				peer.VerifyRedeemV3(pub, in.Signature, in.OwnerID, in.ShareID, peer.InviteHash(in.Invite), in.Nonce, in.ID, in.BoxPublicKey)
+		case in.BoxPublicKey != "":
+			// Older receivers sign without the owner; they still redeem.
 			signed = peer.VerifyRedeemBox(pub, in.Signature, in.ShareID, peer.InviteHash(in.Invite), in.Nonce, in.ID, in.BoxPublicKey)
-		} else {
+		default:
 			signed = peer.VerifyRedeem(pub, in.Signature, in.ShareID, peer.InviteHash(in.Invite), in.Nonce, in.ID)
 		}
 	}
@@ -195,11 +207,6 @@ func (s *Server) peerRedeem(w http.ResponseWriter, r *http.Request) {
 	}
 	if pending.IsHandover() && in.BoxPublicKey == "" {
 		writeErr(w, 400, "box_key_required", "this share hands keys over; the other server must be upgraded to a version that can take them")
-		return
-	}
-	self, _, err := s.selfIdentity(r)
-	if err != nil {
-		writeStoreErr(w, err)
 		return
 	}
 	if in.ID == self.ID {

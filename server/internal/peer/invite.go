@@ -96,6 +96,28 @@ func VerifyRedeemBox(pub ed25519.PublicKey, sig, shareID, inviteHash, nonce, rec
 	return ed25519.Verify(pub, RedeemMessageBox(shareID, inviteHash, nonce, receiverID, boxKey), b)
 }
 
+// RedeemMessageV3 is the redeem message this release signs. It also binds
+// the owner's server id, so an owner cannot pass a receiver's signed redeem
+// on to a third server and use that server's share in the receiver's name.
+// boxKey may be empty.
+func RedeemMessageV3(ownerID, shareID, inviteHash, nonce, receiverID, boxKey string) []byte {
+	return []byte("acnologia-redeem-v3\n" + ownerID + "\n" + shareID + "\n" + inviteHash + "\n" + nonce + "\n" + receiverID + "\n" + boxKey)
+}
+
+// SignRedeemV3 signs the redeem message that binds the owner.
+func SignRedeemV3(priv ed25519.PrivateKey, ownerID, shareID, inviteHash, nonce, receiverID, boxKey string) string {
+	return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, RedeemMessageV3(ownerID, shareID, inviteHash, nonce, receiverID, boxKey)))
+}
+
+// VerifyRedeemV3 checks a redeem signature that binds the owner.
+func VerifyRedeemV3(pub ed25519.PublicKey, sig, ownerID, shareID, inviteHash, nonce, receiverID, boxKey string) bool {
+	b, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil || len(b) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(pub, RedeemMessageV3(ownerID, shareID, inviteHash, nonce, receiverID, boxKey), b)
+}
+
 // SignRedeem signs the redeem message.
 func SignRedeem(priv ed25519.PrivateKey, shareID, inviteHash, nonce, receiverID string) string {
 	return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, RedeemMessage(shareID, inviteHash, nonce, receiverID)))
@@ -123,6 +145,9 @@ type RedeemRequest struct {
 	// BoxPublicKey is sent by servers that can take handed over keys; the
 	// signature then covers it (RedeemMessageBox).
 	BoxPublicKey string `json:"box_public_key,omitempty"`
+	// OwnerID is the server id the receiver means to redeem at; when set
+	// the signature is RedeemMessageV3, which covers it.
+	OwnerID string `json:"owner_id,omitempty"`
 }
 
 // RedeemResponse answers a redeem: the share token, shown once.

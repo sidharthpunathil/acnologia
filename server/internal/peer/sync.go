@@ -109,17 +109,19 @@ func (y *Syncer) Connect(ctx context.Context, code, prefix string, trusted bool,
 	if owner.ID == self.ID {
 		return nil, errors.New("that invite is from this server")
 	}
+	// Only the owner-bound message is ever signed: an older one could be
+	// passed on to another server. An owner that cannot check it must
+	// upgrade first.
+	if owner.Redeem < RedeemVersion {
+		return nil, errors.New("the owner's server runs an older release that cannot check this server's signature; ask its owner to upgrade")
+	}
 	nb := make([]byte, 16)
 	_, _ = rand.Read(nb)
 	nonce := base64.RawURLEncoding.EncodeToString(nb)
 	req := RedeemRequest{
 		Invite: inv.Secret, ShareID: inv.ShareID, ID: self.ID, Name: self.Name, URL: self.URL,
-		PublicKey: self.PublicKey, Nonce: nonce,
-		Signature: SignRedeem(priv, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID),
-	}
-	if self.BoxPublicKey != "" {
-		req.BoxPublicKey = self.BoxPublicKey
-		req.Signature = SignRedeemBox(priv, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID, self.BoxPublicKey)
+		PublicKey: self.PublicKey, Nonce: nonce, BoxPublicKey: self.BoxPublicKey, OwnerID: owner.ID,
+		Signature: SignRedeemV3(priv, owner.ID, inv.ShareID, InviteHash(inv.Secret), nonce, self.ID, self.BoxPublicKey),
 	}
 	res, err := Redeem(ctx, c, inv, req)
 	if err != nil {

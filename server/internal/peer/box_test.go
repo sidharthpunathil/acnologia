@@ -144,3 +144,17 @@ func TestRedeemBoxSignatureBindsBoxKey(t *testing.T) {
 		t.Fatal("v2 signature passed as v1")
 	}
 }
+
+func TestRedeemV3SignatureBindsOwner(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	sig := SignRedeemV3(priv, "acn_srv_o", "shr_1", "h", "nonce-0123456789", "acn_srv_b", "BOXKEY")
+	if !VerifyRedeemV3(pub, sig, "acn_srv_o", "shr_1", "h", "nonce-0123456789", "acn_srv_b", "BOXKEY") {
+		t.Fatal("valid redeem refused")
+	}
+	if VerifyRedeemV3(pub, sig, "acn_srv_m", "shr_1", "h", "nonce-0123456789", "acn_srv_b", "BOXKEY") {
+		t.Fatal("redeem verified for another owner")
+	}
+	if VerifyRedeemBox(pub, sig, "shr_1", "h", "nonce-0123456789", "acn_srv_b", "BOXKEY") {
+		t.Fatal("v3 signature passed as v2")
+	}
+}
