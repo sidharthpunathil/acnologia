@@ -265,6 +265,7 @@ export const api = {
   confirmChat: (id: number, pendingId: string, approve: boolean) =>
     request<ChatReply>("POST", `/api/admin/chat/threads/${id}/confirm`, { pending_id: pendingId, approve }),
   answerChat: (id: number, body: ChatAnswer) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/answer`, body),
+  compactChat: (id: number) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/compact`, {}),
 
   // Audit
   listAudit: () => request<{ audit: AuditEntry[] }>("GET", "/api/admin/audit"),

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
 import { maskSecret, parseKeys } from "../lib/keyparse";
+import { toast } from "./toast";
 import type { ChatAi, ChatAnswer, ChatItem, ChatReply, ChatThread, ChatTurn } from "../lib/types";
 
 /** Keys pasted or dropped, held beside the composer instead of inside it. */
@@ -69,6 +70,10 @@ interface AssistantStore {
   send: (text: string) => Promise<void>;
   confirm: (pendingId: string, approve: boolean) => Promise<void>;
   answer: (body: ChatAnswer) => Promise<void>;
+  /** Thread id with a Compact now request in flight. */
+  compacting: number | null;
+  /** Summarizes the open thread's older messages now, whatever its size. */
+  compact: () => Promise<void>;
 }
 
 let localSeq = 0;
@@ -104,12 +109,24 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     if (Object.keys(fresh).length) set({ secrets: { ...get().secrets, ...fresh } });
   };
 
+  /**
+   * Says so when the server summarized older messages on its own during a
+   * turn (a new "compact" item). Compact now has its own confirmation.
+   */
+  const noteCompaction = (threadId: number, next: ChatItem[]) => {
+    if (get().compacting === threadId || get().currentId !== threadId) return;
+    const seen = new Set(get().items.map((it) => it.id));
+    if (next.some((it) => it.kind === "compact" && !seen.has(it.id)))
+      toast.info("Earlier messages were summarized to keep this chat fast.");
+  };
+
   /** Merges a reply into local state by id: changed items replace old ones, secrets are kept. */
   const apply = (threadId: number, res: ChatReply) => {
     keepSecrets(res.items);
     keepSecrets(res.all ?? []);
     putThread(res.thread);
     if (get().currentId !== threadId) return;
+    noteCompaction(threadId, res.all ?? res.items);
     const base = res.all ?? get().items.filter((it) => !it.id.startsWith("local-"));
     const changed = new Map(res.items.map((it) => [it.id, it]));
     const merged = base.map((it) => changed.get(it.id) ?? it);
@@ -135,6 +152,7 @@ export const useAssistant = create<AssistantStore>((set, get) => {
           return;
         }
         keepSecrets(res.items ?? []);
+        noteCompaction(threadId, res.items ?? []);
         const turn = res.turn ?? { active: false };
         set({ items: withSecrets(res.items ?? []), turn });
         if (!turn.active) {
@@ -172,6 +190,7 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     loadingThread: false,
     sending: null,
     confirming: null,
+    compacting: null,
     turn: null,
     secrets: {},
     lastSent: {},
@@ -293,6 +312,25 @@ export const useAssistant = create<AssistantStore>((set, get) => {
 
     answer: async (body) => {
       await turnRequest((id) => api.answerChat(id, body));
+    },
+
+    compact: async () => {
+      const id = get().currentId;
+      if (id === null) return;
+      set({
+        compacting: id,
+        sending: id,
+        turn: { active: true, step: "Summarizing earlier messages", started_at: new Date().toISOString() },
+      });
+      try {
+        apply(id, await api.compactChat(id));
+      } catch (e) {
+        if (get().currentId === id) set({ turn: null });
+        throw e;
+      } finally {
+        if (get().sending === id) set({ sending: null });
+        if (get().compacting === id) set({ compacting: null });
+      }
     },
   };
 });

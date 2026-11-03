@@ -524,6 +524,49 @@ export function Steps({
   );
 }
 
+/**
+ * Where the server summarized the older part of the chat to keep the prompt
+ * small. Everything above stays on screen; Claude now works from the summary
+ * plus the latest messages. A quiet rule that opens to the summary itself.
+ */
+export function CompactDivider({ item }: { item: ChatItem }) {
+  const [open, setOpen] = useState(false);
+  const ease = "ease-[cubic-bezier(0.22,1,0.36,1)]";
+  return (
+    <Disclosure isExpanded={open} onExpandedChange={setOpen} className="group/compact">
+      <div className="flex items-center gap-3">
+        <span className="h-px flex-1 bg-separator-border" aria-hidden />
+        <AriaButton
+          slot="trigger"
+          className="inline-flex min-h-7 cursor-pointer pointer-coarse:min-h-10 items-center gap-1 rounded-md px-1 text-caption-1-medium text-text-tertiary outline-none transition-colors duration-150 hover:text-text-primary data-[focus-visible]:ring-2 data-[focus-visible]:ring-border-focus-ring"
+        >
+          Earlier messages summarized
+          <RiArrowDownSLine
+            className={cx(
+              "size-3.5 text-foreground-icon-tertiary transition-[rotate] duration-300 motion-reduce:transition-none group-data-[expanded]/compact:rotate-180",
+              ease,
+            )}
+            aria-hidden
+          />
+        </AriaButton>
+        <span className="h-px flex-1 bg-separator-border" aria-hidden />
+      </div>
+      <DisclosurePanel
+        className={cx("h-(--disclosure-panel-height) overflow-clip transition-[height] duration-300 motion-reduce:transition-none", ease)}
+      >
+        <div className="mt-2 rounded-2xl border border-border-button-default bg-background-secondary-default px-4 py-3">
+          <p className="text-caption-1-regular text-text-tertiary">
+            {item.summary ? `${item.summary}. ` : ""}Claude works from this summary and the latest messages; everything above stays here for you.
+          </p>
+          <div className="mt-2 text-body-2-regular text-text-secondary">
+            <RichText text={item.text || "No summary text."} />
+          </div>
+        </div>
+      </DisclosurePanel>
+    </Disclosure>
+  );
+}
+
 const RESOLVED: Record<string, { label: string; icon: typeof RiCheckLine; tone: string }> = {
   approved: { label: "Approved and done", icon: RiCheckLine, tone: "text-foreground-icon-primary" },
   cancelled: { label: "Cancelled. Nothing was changed.", icon: RiForbidLine, tone: "text-foreground-icon-tertiary" },
