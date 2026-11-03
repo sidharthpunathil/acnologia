@@ -373,16 +373,40 @@ func TestPersonShareClaimErrors(t *testing.T) {
 		t.Fatalf("ended before claim: %d", st)
 	}
 
-	// Rate limited, like the invite routes.
+	// Malformed codes cost no lookup and are not counted.
+	for i := 0; i < peerInviteLimit+2; i++ {
+		if st, _, _ := e.claim("preview", "garbage"); st != 404 {
+			t.Fatalf("malformed code %d: %d", i, st)
+		}
+	}
+	// Unknown ones are, like the invite routes.
 	limited := false
 	for i := 0; i < peerInviteLimit+2; i++ {
-		if st, out, _ := e.claim("preview", "garbage"); st == 429 {
+		if st, out, _ := e.claim("preview", store.ClaimPrefix+"doesnotexist0000000000000000"); st == 429 {
 			limited = errCode(out) == "rate_limited"
 			break
 		}
 	}
 	if !limited {
 		t.Fatal("claim routes are not rate limited")
+	}
+}
+
+// TestClaimLimitSpareRealLinks: junk from other addresses spending the
+// whole global budget, for the minute and the day, does not stop a real link.
+func TestClaimLimitSpareRealLinks(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "limkey1"})
+	_, code := e.newPersonShare(map[string]any{"name": "Real", "services": []string{"serpapi"}})
+	spendGlobal(e.api.claimLimit)
+	if st, out, _ := e.claim("preview", store.ClaimPrefix+"doesnotexist0000000000000000"); st != 429 || errCode(out) != "rate_limited" {
+		t.Fatalf("junk after the global budget: %d %v", st, out)
+	}
+	if st, out, _ := e.claim("preview", code); st != 200 {
+		t.Fatalf("real link refused: %d %v", st, out)
+	}
+	if st, out, _ := e.claim("redeem", code); st != 200 {
+		t.Fatalf("real link redeem refused: %d %v", st, out)
 	}
 }
 

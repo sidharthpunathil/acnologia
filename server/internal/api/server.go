@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -73,11 +74,11 @@ type Server struct {
 	// peers is the receiver side of sharing between servers (peer.Syncer).
 	peers *peer.Syncer
 	// peerLimit bounds invite preview and redeem calls (peer_public.go).
-	peerLimit *peerLimiter
+	peerLimit *secretLimit
 	// revokeLimit bounds revoke pushes from other servers (handover.go).
-	revokeLimit *peerLimiter
+	revokeLimit *secretLimit
 	// claimLimit bounds claim link preview and redeem calls (people.go).
-	claimLimit *peerLimiter
+	claimLimit *secretLimit
 	// Refresh keeps providers' offers current (refresh.go).
 	Refresh *refresh.Refresher
 	// ctlAppMu makes the control MCP create its app once (mcp_control.go).
@@ -93,9 +94,9 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 		limiter:  newLoginLimiter(),
 		devices:  newDeviceStore(),
 	}
-	s.peerLimit = newPeerLimiter()
-	s.revokeLimit = newPeerLimiter()
-	s.claimLimit = newPeerLimiter()
+	s.peerLimit = newSecretLimit()
+	s.revokeLimit = newSecretLimit()
+	s.claimLimit = newSecretLimit()
 	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat, FetchSiteLogo: peer.SiteLogo}
 	s.peers.OnHandover = s.onHandover
 	s.Refresh = &refresh.Refresher{Store: st, Catalog: cat, AI: serverAI{s}}
@@ -562,12 +563,30 @@ func writeStoreErr(w http.ResponseWriter, err error) {
 	}
 }
 
+// bodyReadTimeout bounds how long decode waits for a JSON body, so a client
+// that sends its body a byte at a time cannot hold a connection open. The
+// server has no ReadTimeout because that would cancel long streaming
+// responses (chat, MCP, proxied streams) when it passes.
+var bodyReadTimeout = 30 * time.Second
+
+// decode reads one JSON value from the body under a read deadline. It reads
+// whatever trails the value under the same deadline, so the server's own
+// discard of an unread body cannot wait on a slow client either, then lifts
+// the deadline so the response may take as long as it needs. On an error
+// the deadline stays, and the connection closes once it passes.
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
-	if err := dec.Decode(v); err != nil {
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Now().Add(bodyReadTimeout)) // not supported in-process: no socket to bound
+	body := http.MaxBytesReader(w, r.Body, 4<<20)
+	if err := json.NewDecoder(body).Decode(v); err != nil {
 		writeErr(w, 400, "bad_json", err.Error())
 		return false
 	}
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		writeErr(w, 400, "bad_json", err.Error())
+		return false
+	}
+	_ = rc.SetReadDeadline(time.Time{})
 	return true
 }
 

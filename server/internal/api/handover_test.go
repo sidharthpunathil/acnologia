@@ -487,6 +487,12 @@ func TestRevokePushChecks(t *testing.T) {
 	if n := len(handedKeys(t, b, link.ID)); n != 1 {
 		t.Fatalf("a refused push wiped keys: %d left", n)
 	}
+	// Junk from other addresses spends the whole global budget: more junk
+	// is refused, but a validly signed push still goes through.
+	spendGlobal(b.api.revokeLimit)
+	if c := post(peer.SignRevoke(recvPriv, owner.ID, sh.Share.ID, recv.ID, time.Now())); c != 429 {
+		t.Fatalf("junk after the global budget: %d", c)
+	}
 	good := peer.SignRevoke(ownerPriv, owner.ID, sh.Share.ID, recv.ID, time.Now())
 	if c := post(good); c != 200 {
 		t.Fatalf("valid push: %d", c)
@@ -494,6 +500,14 @@ func TestRevokePushChecks(t *testing.T) {
 	if n := len(handedKeys(t, b, link.ID)); n != 0 {
 		t.Fatalf("valid push left %d keys", n)
 	}
+	// A replay is refused like junk: 429 while the budget is spent, 409
+	// once it is back.
+	if c := post(good); c != 429 {
+		t.Fatalf("replay during the flood: %d", c)
+	}
+	b.api.revokeLimit.c.mu.Lock()
+	b.api.revokeLimit.c.all = windowLimit{perMin: peerInviteLimit, perDay: peerInviteDaily}
+	b.api.revokeLimit.c.mu.Unlock()
 	if c := post(good); c != 409 {
 		t.Fatalf("replay: %d", c)
 	}

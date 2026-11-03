@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
@@ -18,29 +17,42 @@ import (
 
 // Sharing between servers, the public side (server to server). The
 // well-known identity is open; preview and redeem need an invite secret and
-// are rate limited globally, like the CLI device routes; manifest and leave
-// need the share token. All are open in the access gate.
+// are rate limited (secretLimit); manifest and leave need the share token.
+// All are open in the access gate.
 
-// Global limits on invite guesses: an invite secret is 32 random bytes, so
-// these only bound load.
+// Limits on the open routes that take a secret: invite preview and redeem,
+// claim link preview and redeem, and revoke pushes, each with its own
+// budget. The secrets are 24 or 32 random bytes, so the limits only bound
+// load. Only misses count: a valid secret never spends the budget, so
+// nobody can spend it to lock out the person holding a real link. A client
+// address gets 10 misses a minute and 100 a day, and all clients together
+// 20 a minute and 500 a day; past that a miss answers 429.
 const (
-	peerInviteLimit = 20 // preview and redeem calls a minute
-	peerInviteDaily = 500
+	secretClientLimit = 10
+	secretClientDaily = 100
+	peerInviteLimit   = 20
+	peerInviteDaily   = 500
 )
 
-type peerLimiter struct {
-	mu sync.Mutex
-	l  windowLimit
+// secretLimit counts failed secrets per client address and globally.
+type secretLimit struct{ c *clientLimit }
+
+func newSecretLimit() *secretLimit {
+	return &secretLimit{newClientLimit(secretClientLimit, secretClientDaily, peerInviteLimit, peerInviteDaily)}
 }
 
-func newPeerLimiter() *peerLimiter {
-	return &peerLimiter{l: windowLimit{perMin: peerInviteLimit, perDay: peerInviteDaily}}
-}
+// allow reports whether r's address may try at all. Checked before the
+// lookup, so an address that spent its budget is refused unseen, even with
+// a valid secret.
+func (l *secretLimit) allow(r *http.Request) bool { return l.c.allow(clientKey(r), time.Now()) }
 
-func (p *peerLimiter) take() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.l.take(time.Now())
+// miss counts a failed secret from r's address and reports whether it was
+// within the limits; false means answer 429.
+func (l *secretLimit) miss(r *http.Request) bool { return l.c.take(clientKey(r), time.Now()) }
+
+func writeRateLimited(w http.ResponseWriter, what string) {
+	w.Header().Set("Retry-After", "60")
+	writeErr(w, 429, "rate_limited", "too many "+what+" attempts, try again in a minute")
 }
 
 // publicURL is how this server names itself to others: ACNOLOGIA_PUBLIC_URL,
@@ -110,27 +122,30 @@ func (s *Server) shareGate(ctx context.Context, shareID string) *authFail {
 // inviteShare finds the pending share an invite secret opens, writing the
 // error when there is none. It never burns the invite.
 func (s *Server) inviteShare(w http.ResponseWriter, r *http.Request, shareID, secret string) (*store.Share, bool) {
-	if !s.peerLimit.take() {
-		w.Header().Set("Retry-After", "60")
-		writeErr(w, 429, "rate_limited", "too many invite attempts, try again in a minute")
+	if !s.peerLimit.allow(r) {
+		writeRateLimited(w, "invite")
+		return nil, false
+	}
+	fail := func(status int, code, msg string) (*store.Share, bool) {
+		if !s.peerLimit.miss(r) {
+			writeRateLimited(w, "invite")
+		} else {
+			writeErr(w, status, code, msg)
+		}
 		return nil, false
 	}
 	sh, err := s.Store.GetShare(r.Context(), shareID)
 	if err != nil || secret == "" {
-		writeErr(w, 404, "invite_invalid", "that invite is not valid")
-		return nil, false
+		return fail(404, "invite_invalid", "that invite is not valid")
 	}
 	if sh.Status != store.SharePending || !sh.HasInvite() {
-		writeErr(w, 409, "invite_used", "that invite was already used")
-		return nil, false
+		return fail(409, "invite_used", "that invite was already used")
 	}
 	if !s.Store.ShareInviteMatches(r.Context(), sh.ID, peer.InviteHash(secret)) {
-		writeErr(w, 404, "invite_invalid", "that invite is not valid")
-		return nil, false
+		return fail(404, "invite_invalid", "that invite is not valid")
 	}
 	if sh.InviteExpires != nil && !sh.InviteExpires.After(time.Now()) {
-		writeErr(w, 410, "invite_expired", "that invite expired; ask for a new one")
-		return nil, false
+		return fail(410, "invite_expired", "that invite expired; ask for a new one")
 	}
 	return sh, true
 }

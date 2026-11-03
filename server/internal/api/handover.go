@@ -403,12 +403,13 @@ func (s *Server) pushRevoke(ctx context.Context, sh *store.Share, selfURL string
 // ---- receiver: revoke push ----
 
 // peerRevoke takes a signed revoke from an owner and deletes the keys it
-// handed over. Public; the signature is the authentication.
+// handed over. Public; the signature is the authentication. Only a refused
+// revoke counts against the limit, so junk cannot spend the budget a real,
+// signed revoke needs.
 func (s *Server) peerRevoke(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.revokeLimit.take() {
-		w.Header().Set("Retry-After", "60")
-		writeErr(w, 429, "rate_limited", "too many revoke attempts, try again in a minute")
+	if !s.revokeLimit.allow(r) {
+		writeRateLimited(w, "revoke")
 		return
 	}
 	var in peer.RevokeRequest
@@ -417,6 +418,10 @@ func (s *Server) peerRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, err := s.peers.HandleRevoke(r.Context(), in, time.Now())
+	if err != nil && !s.revokeLimit.miss(r) {
+		writeRateLimited(w, "revoke")
+		return
+	}
 	switch {
 	case errors.Is(err, peer.ErrRevokeUnknown):
 		writeErr(w, 404, "unknown_share", err.Error())
