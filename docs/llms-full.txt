@@ -28,7 +28,7 @@ GET /docs/{slug}.md      -> one doc as Markdown (see Docs as Markdown)
 GET /docs/assets/{name}  -> an image the docs show
 GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
-GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url}, for sharing between servers
+GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url, box_public_key}, for sharing between servers
 GET /api/gate            -> {required, locked, password_only}: whether the site has an access password and this caller is past it
 ```
 
@@ -759,12 +759,14 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
 | 403 | `share_revoked`, `share_paused`, `share_expired` | A service another Acnologia shares with this one was revoked, paused or expired by its owner. Also sent as `X-Acnologia-Share`. Revoked is final; paused may come back. |
-| 403 | `lease_not_allowed` | Leasing a service another Acnologia shares with this one. Use the proxy. |
+| 403 | `lease_not_allowed` | Leasing a service another Acnologia shares with this one, or one holding keys another Acnologia handed over. Use the proxy. |
 | 508 | `loop_detected` | The request passed through more than 3 Acnologia servers. |
 
 ## Services shared by another Acnologia
 
 A service in `GET /api/v1/services` whose provider is `acnologia-peer` is shared by another Acnologia server: this server forwards your proxied call to that server, which injects one of its own keys. Use it through `/proxy/{service}/{path}` like any other service. It cannot be leased, because a lease would hand out the share token. Errors the other server relays from the provider reach you unchanged; when the owner pauses or revokes the share you get 403 `share_paused` or `share_revoked`. The owner may limit a shared service to some of its keys, so the other server can run out of keys (503 `no_key_available`) while the owner's own apps still have some; the manifest's `available` count reflects only the keys shared with you.
+
+A share can also be a handover share: the owner seals its keys to this server, which stores them as hidden keys of a local service whose provider is the owner's (for example `a-serpapi` with provider `serpapi`). Your proxied calls then go straight to the provider with those keys, not through the owner. Use them only through `/proxy/{service}/{path}`; they are never leased, revealed or shared onward. Each one has a lease (1 hour to 7 days) that this server renews when it syncs with the owner; when the owner pauses, revokes or lets the share end, or the lease runs out, the keys are deleted and the service answers 503 `no_key_available`. Shares in both modes can have a timer (`ends_at`) that expires or revokes them.
 
 ## Admin API tokens and the acn CLI
 

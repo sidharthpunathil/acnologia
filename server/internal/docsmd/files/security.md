@@ -350,10 +350,11 @@ provider's own domain.
 ## Sharing between servers
 
 A share lets another Acnologia use some services through this server's proxy.
-The model is that the other server is a client with a token, never a holder of
-keys:
+In the default proxy mode the other server is a client with a token, never a
+holder of keys. A handover share is the exception, covered at the end of this
+section.
 
-- **No secret leaves the owner.** The receiver gets a share token, a manifest
+- **No secret leaves the owner (proxy mode).** The receiver gets a share token, a manifest
   and answers to its proxied requests. The manifest holds the share's name,
   status, limits and expiry, each shared service's name, description,
   provider and how many keys in its key scope can take a request now, and
@@ -415,7 +416,61 @@ keys:
   or would leave for a fourth server, gets 508 `loop_detected`.
 - **Roles.** Only superadmins create, edit, pause, resume, revoke, connect,
   sync and disconnect. Admins can view. Server to server routes sit outside
-  the access password lock; they need an invite or a share token.
+  the access password lock; they need an invite, a share token or (for a
+  revoke push) the owner's signature.
+
+### Key handover: what changes
+
+A handover share is the one place a key secret leaves the server that owns
+it, on purpose. The model there is different, and the dashboard and these
+docs say so plainly.
+
+- **What the receiver can do with a key.** Anything the provider lets the key
+  do, for as long as the provider honors it. A receiver that does not
+  cooperate (modified code, a copy of its database and master key, a
+  debugger, a proxy that logs its own outbound calls) can keep the secret
+  forever. Nothing in Acnologia can take it back. Request and budget limits
+  cannot be enforced either, because the owner never sees the requests; the
+  receiver's usage reports are cooperative.
+- **Why the lease exists.** A cooperating receiver deletes every handed over
+  key whose lease (1h to 7d) ended without renewal, on its own clock and
+  with no network: the worker checks every minute and zeroes the ciphertext
+  before deleting the row. So a receiver the owner can no longer reach, or
+  that loses the owner, keeps a key at most one lease past the last renewal.
+  The owner stops renewing on pause, expiry, revoke and scope changes.
+- **Why the push exists.** Revoke (and a timer that revokes) sends a signed
+  revoke to the receiver so a cooperating receiver deletes the keys now
+  rather than at the next sync or the end of the lease. It is Ed25519 signed
+  by the owner's identity key over the share id, the receiver id, a
+  timestamp and a nonce; the receiver verifies it against the owner key it
+  pinned when it connected, refuses timestamps more than 5 minutes off and
+  remembers nonces until they would be stale anyway, so it cannot be forged
+  or replayed. It is best effort; its outcome is recorded on the share.
+- **Rotate after revoke.** Because the push and the lease only bind a
+  cooperating receiver, the owner should rotate every handed over key at its
+  provider after revoking. The revoked share carries a rotate checklist of
+  every key the receiver ever held.
+- **Sealing.** Secrets travel sealed with HPKE (X25519, HKDF-SHA256,
+  AES-256-GCM) to the receiver's X25519 key, which the receiver signed into
+  its redeem request. The HPKE info binds the share id, the key id and the
+  receiver id, so a sealed key replayed to another server, another share or
+  as another key does not open. Sealed blobs (`acnseal1_...`) are a redactor
+  pattern and never appear in a manifest, log, event, audit detail, webhook
+  or anything sent to Claude; handed over secrets on the receiver are in its
+  redactor's list like any stored key.
+- **On the receiver the key stays inside the proxy.** A handed over key is a
+  hidden key of a service whose target the owner chose. Local apps use it
+  only through the proxy; `/keys/{id}/reveal` refuses it, leases (REST and
+  MCP `get_key`) refuse it even for apps with `lease_hidden`, it cannot be
+  shared onward (its service is a peer service), and its secret, hidden flag
+  and egress, and its service's base URL, auth, provider and egress, cannot
+  be changed to send it elsewhere. The assistant reaches keys only through
+  these routes. A base URL from an owner that is not on a private network
+  must resolve to public addresses, so an owner cannot aim the receiver's
+  apps at its internal network.
+- **Who decides.** Only a superadmin creates a handover share, and only a
+  superadmin connects a receiver to one. A receiver from before this
+  feature cannot redeem a handover share (it sends no box key).
 
 ## Operator checklist
 
@@ -431,7 +486,10 @@ keys:
 6. Use a fine grained, public read only `GITHUB_TOKEN` if you set one.
 7. On a server that shares, set `ACNOLOGIA_PUBLIC_URL`, send invites over a
    private channel with the shortest validity that works, and give each share
-   the narrowest key scope and limits it needs.
+   the narrowest key scope and limits it needs. Prefer proxy shares; use a
+   handover share only with a server you trust to delete keys, with the
+   shortest lease that works, and rotate its keys at the provider after you
+   revoke it.
 8. On Windows with a data directory outside your profile, restrict it with
    `icacls`.
 
