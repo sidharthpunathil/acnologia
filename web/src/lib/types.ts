@@ -552,6 +552,10 @@ export interface GenerateGuideResult {
   id?: number;
   status?: string;
   provider?: { slug: string; version: number };
+  /** False when the model could not read the docs and nothing was saved. */
+  updated?: boolean;
+  summary?: string;
+  cost_usd?: number;
 }
 
 export interface ProviderSpec {
@@ -752,7 +756,7 @@ export interface LogoUpload {
   mime: string;
 }
 
-export type AssistForm = "app" | "service" | "provider";
+export type AssistForm = "app" | "service" | "provider" | "guide";
 
 export interface AssistResult {
   fields: Record<string, unknown>;

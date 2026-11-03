@@ -898,7 +898,7 @@ export function ProviderEditorPage() {
                     fetchKey={`${draft.slug}:${detail?.version ?? 0}`}
                   />
                 )}
-                <GuideTab {...specTab} />
+                <GuideTab {...specTab} provider={detail ? draft.slug : undefined} />
               </div>
             </TabPanel>
             <TabPanel id="json">

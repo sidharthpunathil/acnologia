@@ -98,6 +98,7 @@ const PLACEHOLDER: Record<AssistForm, string> = {
   app: "marketing site that only needs search",
   service: "search pool for our scraper, gentle on rate limits",
   provider: "a transactional email API with a daily send limit",
+  guide: "focus on search and pagination, skip the admin endpoints",
 };
 
 /** Inline one line prompt plus the AI's notes. Render it at the top of the form. */

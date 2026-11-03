@@ -86,8 +86,10 @@ export function useGuideAi(slug: string, dirty: boolean, onDone: () => void): Gu
       if (r) {
         setRun(r);
         if (!ACTIVE_STATUSES.has(r.status)) done.current();
+      } else if (res.updated === false) {
+        toast.info(res.summary || "The AI could not read enough of the docs, so the guide was not changed.");
       } else {
-        toast.success("The guide is written and saved.");
+        toast.success("The guide is written and saved as a new version.");
         done.current();
       }
     } catch (e) {

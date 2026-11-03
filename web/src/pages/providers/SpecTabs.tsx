@@ -20,6 +20,7 @@ import { OUTCOMES } from "../../lib/types";
 import { STRATEGY_HELP } from "../../lib/format";
 import { ConcurrencyFields, StrategySelect } from "../../components/ServiceForm";
 import { JsonTextarea, KeyValueEditor, ListInput, MatchEditor, OptionalNumberInput } from "../../components/SpecInputs";
+import { AiFillButton, AiFillPanel, useAiFill } from "../../components/AiFill";
 import { Chip, type ChipColor } from "@/components/base/badges/chip";
 import { Button } from "@/components/base/buttons/button";
 import { IconButton } from "@/components/base/buttons/icon-button";
@@ -1351,25 +1352,40 @@ const GUIDE_STARTER: Guide = {
  * The guide as JSON: summary, endpoints with params, notes and free
  * Markdown. Auth is never part of it: Acnologia adds the key.
  */
-export function GuideTab({ spec, onChange, readOnly }: SpecTabProps) {
+export function GuideTab({ spec, onChange, readOnly, provider }: SpecTabProps & { provider?: string }) {
   const setGuide = (g: unknown) => {
     const next = { ...spec };
     if (g && typeof g === "object") next.guide = g as Guide;
     else delete next.guide;
     onChange(next);
   };
+  // Fill with AI drafts the guide fields from the provider's docs, examples
+  // and base URL; the result lands in the draft for review before saving.
+  const ai = useAiFill(
+    "guide",
+    () => ({ provider, ...(spec.guide ?? {}) }),
+    (fields) => {
+      if (typeof fields.summary === "string") setGuide({ ...(spec.guide ?? {}), ...fields });
+    },
+  );
   return (
     <Section
       title="Guide fields"
       description="Teaches an app or AI agent how to call this provider: a summary, the endpoints worth knowing with their parameters, and notes. Paths are relative to the base URL. Leave auth out: Acnologia adds the key."
       actions={
-        !spec.guide && !readOnly ? (
-          <Button size="small" variant="secondary" leadingIcon={RiAddLine} onClick={() => setGuide(GUIDE_STARTER)}>
-            Start a guide
-          </Button>
+        !readOnly ? (
+          <>
+            {provider && <AiFillButton ai={ai} />}
+            {!spec.guide && (
+              <Button size="small" variant="secondary" leadingIcon={RiAddLine} onClick={() => setGuide(GUIDE_STARTER)}>
+                Start a guide
+              </Button>
+            )}
+          </>
         ) : undefined
       }
     >
+      <AiFillPanel ai={ai} />
       <JsonTextarea
         label="Guide JSON"
         hint="Empty means no written guide. Acnologia then generates one from the examples, offers and docs link."
