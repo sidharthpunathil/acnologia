@@ -22,3 +22,6 @@ sdk/typescript/dist/
 
 # Access passwords downloaded from a deploy. Never commit them.
 access-password*
+
+# Local agent skills. Kept on disk, never committed.
+agent/skills/
