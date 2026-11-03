@@ -135,6 +135,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `PUT`, `DELETE /services/{id}/logo` | a | Service logo. |
 | `GET /ai/status`, `GET /ai/rules` | m | Whether AI is enabled; operator rules for the AI builder. |
 | `PUT /ai/rules` | s | Set the rules (max 20,000 characters). |
+| `GET /settings` | a | The configuration only the environment sets, for the Settings page: `{version, access_gate_on, env: [{name, set, secret, value}]}`. `value` is the effective value (the default when the variable is unset). Secrets such as `ACNOLOGIA_MASTER_KEY` and `ANTHROPIC_API_KEY` report only `set`. |
 | `GET /ai/runs`, `GET /ai/runs/{id}?after=n` | m | Runs and their live steps. |
 | `POST /ai/runs` | a | Start a run: `{kind, provider_slug, context, urls, test_key, auto_publish, create_service}`. |
 | `POST /ai/runs/{id}/cancel`, `POST /ai/runs/{id}/publish` | a | Cancel; publish a run waiting for review. |

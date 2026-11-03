@@ -249,6 +249,8 @@ func (s *Server) Router() http.Handler {
 			r.With(s.notShareApp).Patch("/apps/{id}/tokens/{tokenId}", s.renameAppToken)
 			r.With(s.notShareApp).Delete("/apps/{id}/tokens/{tokenId}", s.revokeAppToken)
 			r.With(s.notShareApp).Put("/apps/{id}/mcp", s.putAppMCP)
+			// Settings: the read only configuration the environment sets.
+			r.Get("/settings", s.settingsSummary)
 			// Sharing: admins may look.
 			r.Get("/identity", s.getIdentity)
 			r.Get("/shares", s.listShares)
