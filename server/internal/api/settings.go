@@ -1,10 +1,12 @@
 package api
 
 import (
+	"cmp"
 	"net/http"
 	"os"
 	"strconv"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/agent"
 	"github.com/sidharthpunathil/acnologia/server/internal/config"
 )
 
@@ -45,9 +47,10 @@ func (s *Server) settingsSummary(w http.ResponseWriter, r *http.Request) {
 		plain("ACNOLOGIA_MAX_BODY_MB", itoa(int(c.MaxBodyBytes>>20))),
 		plain("ACNOLOGIA_CACHE_MB", itoa(int(c.CacheBytes>>20))),
 		secret("ANTHROPIC_API_KEY", os.Getenv("ANTHROPIC_API_KEY") != ""),
-		plain("ACNOLOGIA_AI_MODEL", s.Agent.Model()),
-		// Unset means 60% of the model's context window; the value is the
-		// threshold in effect either way.
+		// The fallback model: the model saved on this page wins over it.
+		plain("ACNOLOGIA_AI_MODEL", cmp.Or(c.AIModel, agent.BuiltinModel)),
+		// Unset means 60% of the Assistant's model's context window; the
+		// value is the threshold in effect either way.
 		plain("ACNOLOGIA_CHAT_COMPACT_TOKENS", itoa(s.compactAt())),
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

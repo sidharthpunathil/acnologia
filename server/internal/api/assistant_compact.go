@@ -74,13 +74,18 @@ Key placeholders such as [key k3 ...c21e] and batch refs such as b2 stay exactly
 
 Write plain text in short lines or simple "- " lists, under 600 words, with no preamble. Do not use dashes as punctuation.`
 
-// compactAt is the prompt size, in tokens, that triggers compaction.
+// compactAt is the prompt size, in tokens, that triggers compaction: the
+// configured size, or a share of the Assistant's current model's context
+// window, so switching models moves it.
 func (s *Server) compactAt() int {
 	if s.Cfg.ChatCompactTokens > 0 {
 		return s.Cfg.ChatCompactTokens
 	}
-	return int(float64(agent.ContextWindow(s.Agent.Model())) * chatCompactRatio)
+	return compactAtFor(s.Agent.ContextWindowOf(s.Agent.ModelFor(context.Background(), agent.FeatureAssistant).Model))
 }
+
+// compactAtFor is the default compaction threshold for a context window.
+func compactAtFor(window int) int { return int(float64(window) * chatCompactRatio) }
 
 // trimAt is the prompt size at which a thread whose summary failed sends
 // only its latest messages.

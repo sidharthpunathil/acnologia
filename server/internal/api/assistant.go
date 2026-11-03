@@ -699,8 +699,13 @@ func toParams(msgs []chatMsg) []anthropic.BetaMessageParam {
 func (cs *chatSession) loop(ctx context.Context) error {
 	tools := chatToolParams(cs.user.Role)
 	system := cs.systemPrompt(ctx)
+	// One model for the whole turn: a switch on the Settings page applies
+	// from the next message.
+	model := cs.s.Agent.ModelFor(ctx, agent.FeatureAssistant).Model
 	for turn := 0; turn < chatMaxTurns; turn++ {
-		converse := cs.s.Agent.Converse
+		converse := func(ctx context.Context, system string, msgs []anthropic.BetaMessageParam, tools []anthropic.BetaToolUnionParam) (*anthropic.BetaMessage, error) {
+			return cs.s.Agent.ConverseWith(ctx, model, system, msgs, tools)
+		}
 		if cs.s.chatModel != nil {
 			converse = cs.s.chatModel
 		}

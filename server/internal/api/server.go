@@ -252,6 +252,7 @@ func (s *Server) Router() http.Handler {
 			r.With(s.notShareApp).Put("/apps/{id}/mcp", s.putAppMCP)
 			// Settings: the read only configuration the environment sets.
 			r.Get("/settings", s.settingsSummary)
+			r.Get("/ai/models", s.aiModels)
 			// Sharing: admins may look.
 			r.Get("/identity", s.getIdentity)
 			r.Get("/shares", s.listShares)
@@ -297,6 +298,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/users/{id}", s.deleteUser)
 			r.Get("/audit", s.listAudit)
 			r.Put("/ai/rules", s.aiSetRules)
+			r.Put("/ai/models", s.aiSetModels)
 			// Sharing: only a superadmin changes anything.
 			r.Patch("/identity", s.patchIdentity)
 			r.Post("/shares", s.createShare)
