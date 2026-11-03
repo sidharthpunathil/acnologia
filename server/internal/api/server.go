@@ -52,6 +52,9 @@ type Server struct {
 	WebFS   fs.FS
 	LLMsTxt []byte
 	limiter *loginLimiter
+	// admitted counts each app's admitted requests not yet in its usage
+	// (proxy_extras.go), keyed by app id.
+	admitted sync.Map
 	// devices holds pending CLI sign ins (clidevice.go).
 	devices *deviceStore
 	// gate is the site-wide access password lock (gate.go); off when

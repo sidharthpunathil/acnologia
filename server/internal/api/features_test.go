@@ -277,8 +277,12 @@ func TestBusyAndBannedOutcomes(t *testing.T) {
 		up.ServeHTTP(w, r)
 	}))
 	t.Cleanup(ts.Close)
+	var suspended atomic.Bool
 	up.answer = func(k string, r *http.Request) (int, map[string]string, string) {
 		switch {
+		case r.URL.Path == "/v1/user/subscription" && k == "gone" && suspended.Load():
+			// The health check confirms what the proxied answer said.
+			return 401, nil, `{"detail":{"status":"detected_unusual_activity","message":"Unusual activity"}}`
 		case r.URL.Path == "/v1/user/subscription":
 			return 200, nil, `{"character_count":0,"character_limit":100}`
 		case k == "busy":
@@ -292,6 +296,7 @@ func TestBusyAndBannedOutcomes(t *testing.T) {
 	e.do(e.super, "POST", "/api/admin/services/1/keys", map[string]any{"keys": []map[string]any{
 		{"secret": "busy", "priority": 1}, {"secret": "gone", "priority": 2}, {"secret": "good", "priority": 3}}}, 201, nil)
 	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"strategy": "fill_first"}, 200, nil)
+	suspended.Store(true)
 	_, tok := e.app(map[string]any{"name": "x"})
 	if r, _ := call(t, e, "POST", "/proxy/el/v1/tts", tok); r.StatusCode != 200 {
 		t.Fatalf("good key should answer: %d", r.StatusCode)

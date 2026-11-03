@@ -28,10 +28,10 @@ func usedKeys(t *testing.T, a *env, tok string, n int) map[string]int {
 			t.Fatalf("request %d: %d %s", i, code, body)
 		}
 		var got struct {
-			Key string `json:"key"`
+			Who string `json:"who"`
 		}
 		_ = json.Unmarshal([]byte(body), &got)
-		out[got.Key]++
+		out[strings.ToLower(got.Who)]++
 	}
 	return out
 }

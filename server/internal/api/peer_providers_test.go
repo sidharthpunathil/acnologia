@@ -132,7 +132,7 @@ func TestSharedServiceBringsItsProvider(t *testing.T) {
 	// A local app on B calls it through A, which adds A's key.
 	_, btok := b.app(map[string]any{"name": "b-app"})
 	code, body, _ := peerCall(t, "GET", b.srv.URL+"/proxy/"+sv.Slug+"/search.json?q=coffee", btok)
-	if code != 200 || !strings.Contains(body, `"key":"acmekey"`) {
+	if code != 200 || !strings.Contains(body, `"who":"ACMEKEY"`) || strings.Contains(body, "acmekey") {
 		t.Fatalf("proxy through A: %d %s", code, body)
 	}
 

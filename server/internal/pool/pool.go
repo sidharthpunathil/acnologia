@@ -75,6 +75,9 @@ type Pool struct {
 	// forward, so two picks never tie even where the clock is coarse
 	// (Windows), and round robin keeps spreading a burst.
 	lastPick atomic.Int64
+	// suspects holds verdicts from proxied answers that wait for
+	// corroboration (corroborate.go).
+	suspects suspects
 }
 
 func New(s *store.Store, box *crypto.Box) *Pool {

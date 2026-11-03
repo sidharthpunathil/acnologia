@@ -80,6 +80,10 @@ func (s *Server) serviceForApp(w http.ResponseWriter, r *http.Request, slug stri
 		}
 		return nil, false
 	}
+	if !s.sharedAs(r.Context(), a, sv) {
+		writeErr(w, 403, "service_not_allowed", "this app cannot use service "+slug)
+		return nil, false
+	}
 	return sv, true
 }
 
@@ -259,9 +263,11 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.appLimited(w, r, a) {
+	release, limited := s.appLimited(w, r, a, costPerRequest(sv, providers.Get(sv.Provider), "", ""))
+	if limited {
 		return
 	}
+	defer release()
 	wait := time.Duration(min(max(body.WaitSec, 0), 60)) * time.Second
 	l, err := s.issueLeaseOpts(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second, wait, body.Exclusive)
 	if errors.Is(err, errPeerLease) || errors.Is(err, errHandoverLease) {
@@ -314,7 +320,7 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 		return nil, 404, errors.New("service no longer exists")
 	}
 	// Access may have been revoked since the lease was issued.
-	if !a.AllowsLease() || !a.CanUse(sv.Slug) {
+	if !a.AllowsLease() || !a.CanUse(sv.Slug) || !s.sharedAs(ctx, a, sv) {
 		s.Pool.ReleaseLease(l.ID)
 		return nil, 403, errors.New("this app can no longer use service " + sv.Slug)
 	}

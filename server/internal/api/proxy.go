@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -216,13 +217,20 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.appLimited(w, r, a) {
+	est := 0.0
+	for _, sv := range targets {
+		est = max(est, costPerRequest(sv, providers.Get(sv.Provider), r.Method, "/"+path))
+	}
+	release, limited := s.appLimited(w, r, a, est)
+	if limited {
 		return
 	}
+	// Runs after the usage below is recorded.
+	defer release()
 	idemKey := idempotencyKey(r, a.ID, slug, path)
 	if idemKey != "" {
 		if e, ok := s.Cache.Get(idemKey); ok {
-			writeCached(w, e, "replay")
+			writeCached(w, e, "replay", hidesKey(a))
 			return
 		}
 	}
@@ -233,10 +241,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		prov := providers.Get(sv.Provider)
 		cacheKey, ttl := "", cacheTTL(sv, prov)
 		if ttl > 0 && r.Method == http.MethodGet && !noCache(r) {
-			cacheKey = responseCacheKey(sv.ID, r, path)
+			cacheKey = responseCacheKey(sv, a, r, path, body)
 			if e, ok := s.Cache.Get(cacheKey); ok {
 				setHeader(w.Header(), "Service", sv.Slug)
-				writeCached(w, e, "hit")
+				writeCached(w, e, "hit", hidesKey(a))
 				s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "cache_hit", ServiceID: sv.ID, AppID: a.ID, StatusCode: e.Status, Detail: r.Method + " /" + path})
 				_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, true)
 				return
@@ -271,7 +279,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		if idemKey != "" && last.resp.StatusCode < 500 {
 			s.Cache.Set(idemKey, &respcache.Entry{Status: last.resp.StatusCode, Header: last.resp.Header.Clone(), Body: last.body, KeyID: last.keyID}, idempotencyTTL)
 		}
-		relay(w, last.resp, last.keyID, last.attempts, last.body)
+		relay(w, last.resp, view(a, last.keyID, last.attempts), last.body)
 		return
 	}
 	var down *serviceDownError
@@ -396,6 +404,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			}
 			return out // relay an earlier answer instead of hiding it behind a 502
 		}
+		// Headers lose the key and any Acnologia header a non-Acnologia
+		// upstream made up, before anything reads or stores them.
+		sanitizeUpstreamHeaders(resp.Header, picked.Secret, sv.Provider == providers.PeerSlug)
 		detail := r.Method + " /" + path
 		if waited >= 100*time.Millisecond {
 			detail += " (queued " + waited.Round(10*time.Millisecond).String() + " for a free key)"
@@ -409,14 +420,14 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		if resp.StatusCode < 400 {
 			s.Breakers.Success(sv.ID)
 			verdict = true
-			_ = s.Pool.Apply(r.Context(), sv, k, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(resp.Header)})
+			_ = s.Pool.ApplyProxied(r.Context(), sv, k, a.ID, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(resp.Header)})
 			setHeader(w.Header(), "Service", sv.Slug)
 			// The slot stays held until the (possibly streamed) body is fully
 			// sent, or the upstream goes quiet for proxyIdleTimeout.
 			func() {
 				defer picked.Release()
 				defer cancel()
-				s.deliver(w, resp, k, attempt, cancel, picked.Secret, cap)
+				s.deliver(w, resp, k, view(a, k.ID, attempt), cancel, picked.Secret, !mayReadKey(a, sv), cap)
 			}()
 			out.served, out.cost = true, cost
 			return out
@@ -429,7 +440,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		if sv.Provider == providers.PeerSlug && sv.PeerLinkID != nil && resp.StatusCode == 403 {
 			// The owner says the share is revoked, paused or expired: mark
 			// the link and disable its services now, not at the next sync.
-			if st := resp.Header.Get("X-Acnologia-Share"); st == "revoked" || st == "paused" || st == "expired" {
+			// The owner's own refusal carries the matching error code too,
+			// which an upstream answer relayed through the owner cannot.
+			if st := resp.Header.Get("X-Acnologia-Share"); (st == "revoked" || st == "paused" || st == "expired") && errorCodeOf(rb) == "share_"+st {
 				s.peers.MarkRemoteState(context.WithoutCancel(r.Context()), *sv.PeerLinkID, st)
 			}
 		}
@@ -440,11 +453,13 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			s.Breakers.Success(sv.ID)
 		}
 		verdict = true
-		_ = s.Pool.Apply(r.Context(), sv, k, res)
+		_ = s.Pool.ApplyProxied(r.Context(), sv, k, a.ID, res)
 		if res.Outcome != providers.OK {
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: string(res.Outcome), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, Detail: res.Message})
 		}
-		scrubHeaders(resp.Header, picked.Secret)
+		if !mayReadKey(a, sv) {
+			rb = scrubBytes(rb, keyForms(picked.Secret))
+		}
 		out.resp, out.body, out.keyID, out.attempts, out.outcome, out.err = resp, rb, k.ID, len(tried), res.Outcome, nil
 		if !res.Outcome.Rotates() {
 			return out
@@ -456,22 +471,29 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 // deliver sends a successful upstream response to the client. When the
 // response may be cached it is buffered (up to maxCachedBody) and stored;
 // larger bodies stream through untouched.
-func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Key, attempt int, cancel context.CancelFunc, secret string, cap capture) {
+//
+// When scrubBody is set (the caller may not read the key), every form of the
+// secret in the body is replaced, streamed or buffered.
+func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Key, v relayView, cancel context.CancelFunc, secret string, scrubBody bool, cap capture) {
+	if scrubBody {
+		defer resp.Body.Close()
+		resp.Body = readCloser{newScrubReader(resp.Body, secret), resp.Body}
+	}
 	if !cap.any() || !s.Cache.Enabled() {
-		relayStream(w, resp, k.ID, attempt, cancel, secret)
+		relayStream(w, resp, v, cancel)
 		return
 	}
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxCachedBody+1))
 	if err != nil || len(buf) > maxCachedBody {
 		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
 		setHeader(w.Header(), "Cache", "bypass")
-		relayStream(w, resp, k.ID, attempt, cancel, secret)
+		relayStream(w, resp, v, cancel)
 		return
 	}
 	resp.Body.Close()
-	scrubHeaders(resp.Header, secret)
 	entry := &respcache.Entry{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: buf, KeyID: k.ID}
-	if cap.cacheKey != "" && cacheable(resp, buf, k, secret) {
+	// A scrubbed body may have had the key in it, which rules out sharing it.
+	if cap.cacheKey != "" && (!scrubBody || !bytes.Contains(buf, scrubMark)) && cacheable(resp, buf, k, secret) {
 		s.Cache.Set(cap.cacheKey, entry, cap.ttl)
 		setHeader(w.Header(), "Cache", "miss")
 	} else if cap.cacheKey != "" {
@@ -480,7 +502,7 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 	if cap.idemKey != "" {
 		s.Cache.Set(cap.idemKey, entry, idempotencyTTL)
 	}
-	relay(w, resp, k.ID, attempt, buf)
+	relay(w, resp, v, buf)
 }
 
 // droppedResponseHeaders never pass from an upstream to the client. Besides
@@ -501,7 +523,34 @@ var droppedResponseHeaders = map[string]bool{
 // origin, so an upstream returning HTML must not run script there.
 const proxyCSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
 
-func copyResponseHeaders(w http.ResponseWriter, resp *http.Response, keyID int64, attempts int) {
+// relayView is what one caller learns about how its request was served.
+type relayView struct {
+	keyID    int64
+	attempts int
+	// hideKey leaves out which key served and how many were tried: a share
+	// or person principal must not learn the owner's key ids or their count.
+	hideKey bool
+}
+
+func view(a *store.App, keyID int64, attempts int) relayView {
+	return relayView{keyID: keyID, attempts: attempts, hideKey: hidesKey(a)}
+}
+
+// hidesKey reports whether the app backs a share (with a server or a person).
+func hidesKey(a *store.App) bool { return a.ShareID != nil }
+
+// mayReadKey reports whether the app could hold the key anyway by leasing
+// it, so an echo of the key in a response body tells it nothing new. Share
+// and proxy only apps cannot, and no app may lease another server's token or
+// a handed over key.
+func mayReadKey(a *store.App, sv *store.Service) bool {
+	return a.ShareID == nil && a.AllowsLease() && sv.Provider != providers.PeerSlug && !isHandoverService(sv)
+}
+
+// keyHeaders name the key that served a request.
+var keyHeaders = []string{"Key-Id", "Attempts"}
+
+func copyResponseHeaders(w http.ResponseWriter, resp *http.Response, v relayView) {
 	for k, vs := range resp.Header {
 		ck := http.CanonicalHeaderKey(k)
 		if droppedResponseHeaders[ck] {
@@ -518,23 +567,29 @@ func copyResponseHeaders(w http.ResponseWriter, resp *http.Response, keyID int64
 	h.Set("Content-Security-Policy", proxyCSP)
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
-	setHeader(h, "Key-Id", itoa(int(keyID)))
-	setHeader(h, "Attempts", itoa(attempts))
+	if v.hideKey {
+		for _, n := range keyHeaders {
+			h.Del(headerPrefix + n)
+			h.Del(legacyHeaderPrefix + n)
+		}
+		return
+	}
+	setHeader(h, "Key-Id", itoa(int(v.keyID)))
+	setHeader(h, "Attempts", itoa(v.attempts))
 }
 
 // relay writes a buffered upstream response to the client.
-func relay(w http.ResponseWriter, resp *http.Response, keyID int64, attempts int, body []byte) {
-	copyResponseHeaders(w, resp, keyID, attempts)
+func relay(w http.ResponseWriter, resp *http.Response, v relayView, body []byte) {
+	copyResponseHeaders(w, resp, v)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
 }
 
 // relayStream streams the upstream body to the client. If no bytes arrive for
 // proxyIdleTimeout it calls cancel, which aborts the upstream read.
-func relayStream(w http.ResponseWriter, resp *http.Response, keyID int64, attempts int, cancel context.CancelFunc, secret string) {
+func relayStream(w http.ResponseWriter, resp *http.Response, v relayView, cancel context.CancelFunc) {
 	defer resp.Body.Close()
-	scrubHeaders(resp.Header, secret)
-	copyResponseHeaders(w, resp, keyID, attempts)
+	copyResponseHeaders(w, resp, v)
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	idle := time.AfterFunc(proxyIdleTimeout, cancel)
@@ -555,19 +610,40 @@ func relayStream(w http.ResponseWriter, resp *http.Response, keyID int64, attemp
 	}
 }
 
-// scrubHeaders removes the secret from upstream response headers. A
-// redirect that keeps the query string would otherwise hand a query-auth key
-// to the app in Location.
-func scrubHeaders(h http.Header, secret string) {
-	if secret == "" {
-		return
-	}
+// sanitizeUpstreamHeaders removes the secret from upstream response headers
+// (a redirect that keeps the query string would otherwise hand a query-auth
+// key to the app in Location). Unless the upstream is another Acnologia (the
+// owner of a shared service), it also drops X-Acnologia-* and X-Cogito-*
+// headers: a provider has no business stating share status or key ids, and
+// a made up X-Acnologia-Share would make a receiving server drop its link.
+func sanitizeUpstreamHeaders(h http.Header, secret string, fromPeer bool) {
 	for k, vs := range h {
+		ck := http.CanonicalHeaderKey(k)
+		if !fromPeer && (strings.HasPrefix(ck, headerPrefix) || strings.HasPrefix(ck, legacyHeaderPrefix)) {
+			delete(h, k)
+			continue
+		}
+		if secret == "" {
+			continue
+		}
 		for i, v := range vs {
 			vs[i] = crypto.Scrub(v, secret)
 		}
 		h[k] = vs
 	}
+}
+
+// errorCodeOf returns error.code from an Acnologia error body, or "".
+func errorCodeOf(body []byte) string {
+	var e struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &e) != nil {
+		return ""
+	}
+	return e.Error.Code
 }
 
 // scrub removes the secret from upstream messages before they are stored.

@@ -201,6 +201,9 @@ func migrateSharing(db *sql.DB) error {
 	if err := migrateKeyScopes(db); err != nil {
 		return err
 	}
+	if err := migrateShareServiceIDs(db); err != nil {
+		return err
+	}
 	if err := migrateHandover(db); err != nil {
 		return err
 	}
@@ -313,12 +316,16 @@ func (s *Store) CreateShare(ctx context.Context, sh *Share, inviteHash string, c
 		invHash, claimHash = "", inviteHash
 		invExp, claimExp = nil, sh.ClaimExpires
 	}
+	ids, err := bindServiceIDs(ctx, tx, sh.Services, nil)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO shares(id,name,note,status,services,providers,include_hidden,app_id,invite_hash,invite_expires_at,expires_at,created_by,created_at,key_scopes,
-		mode,lease_sec,end_action,private_network,recipient,label,email,claim_hash,claim_expires_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		mode,lease_sec,end_action,private_network,recipient,label,email,claim_hash,claim_expires_at,service_ids)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sh.ID, sh.Name, sh.Note, SharePending, string(svcs), string(provs), b2i(sh.IncludeHidden), appID, invHash,
 		fromTime(invExp), fromTime(sh.ExpiresAt), nz(createdBy), t, encodeScopes(sh.KeyScopes),
-		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Recipient, sh.Label, sh.Email, claimHash, fromTime(claimExp)); err != nil {
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Recipient, sh.Label, sh.Email, claimHash, fromTime(claimExp), ids); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -367,11 +374,19 @@ func (s *Store) UpdateShare(ctx context.Context, sh *Share) error {
 		status = ShareActive
 	}
 	sh.normalize()
+	var oldIDs string
+	if err := tx.QueryRowContext(ctx, `SELECT service_ids FROM shares WHERE id=?`, sh.ID).Scan(&oldIDs); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	ids, err := bindServiceIDs(ctx, tx, sh.Services, decodeServiceIDs(oldIDs))
+	if err != nil {
+		return err
+	}
 	// The mode is fixed once redeemed: only a pending share's mode changes.
 	if _, err := tx.ExecContext(ctx, `UPDATE shares SET name=?, note=?, services=?, providers=?, include_hidden=?, expires_at=?, status=?, key_scopes=?,
-		mode=CASE WHEN status='pending' THEN ? ELSE mode END, lease_sec=?, end_action=?, private_network=?, label=?, email=? WHERE id=?`,
+		mode=CASE WHEN status='pending' THEN ? ELSE mode END, lease_sec=?, end_action=?, private_network=?, label=?, email=?, service_ids=? WHERE id=?`,
 		sh.Name, sh.Note, string(svcs), string(provs), b2i(sh.IncludeHidden), fromTime(sh.ExpiresAt), status, encodeScopes(sh.KeyScopes),
-		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Label, sh.Email, sh.ID); err != nil {
+		sh.Mode, sh.LeaseSec, sh.EndAction, b2i(sh.PrivateNetwork), sh.Label, sh.Email, ids, sh.ID); err != nil {
 		return err
 	}
 	if sh.AppID != nil {

@@ -354,8 +354,52 @@ Proxy URLs are encrypted at rest and shown without credentials.
 
 The response cache is shared by the apps of a service, so Acnologia never caches
 a response made with a hidden or restricted key, a response the upstream marks
-`private` or `no-store`, or a body that contains the key. Idempotent replays
-are stored per app.
+`private` or `no-store`, a partial (206) answer, or a body that contains the
+key. An entry is keyed by the service id and slug, the method, path, query and
+`Accept`, and a hash of every other forwarded header and the body, so one app
+cannot plant an answer for a request that differs from its own. A share's app
+gets entries of its own and never reads or writes what other apps see.
+Idempotent replays are stored per app. Deleting a service or an app drops its
+cached answers and replays, since SQLite can give the id to the next row.
+
+## What a proxied caller sees and can change
+
+The caller shapes a proxied request (path, query, headers, body) and reads
+what the upstream says back, so the proxy treats both directions as the
+caller's:
+
+- **The key stays out of answers.** A caller that may not lease the key (a
+  share's or a person's token, a proxy only app, any caller of a peer or
+  handover service) gets bodies with every spelling of the injected key
+  (raw, query escaped, path escaped) replaced by `[key]`, whether streamed,
+  buffered, cached, replayed or relayed as an error. Response headers are
+  scrubbed for every caller. An app that may lease the key gets the body as is.
+- **No key ids for shares.** Share and person tokens get no
+  `X-Acnologia-Key-Id` or `X-Acnologia-Attempts`, and the MCP `proxy_request`
+  tool leaves `key_id` out for them.
+- **No made up Acnologia headers.** Upstream `X-Acnologia-*` and `X-Cogito-*`
+  headers are dropped, except from the owner of a shared service. A receiver
+  marks its link revoked, paused or expired only when the owner's 403 carries
+  both the header and the matching `share_*` error code, which an answer the
+  owner relays from its upstream cannot.
+- **Limits hold under bursts.** An app's or share's request and budget limits
+  are checked and one request (and its estimated cost) reserved in one step
+  before the upstream call, for the proxy, MCP `proxy_request`, leases and
+  `get_key`, and released once the usage is recorded. Concurrent requests
+  cannot pass a limit that has one request left.
+- **Operators win over late results.** A request picked before an admin
+  disabled a key, or before a key was banned, cannot write `invalid` or
+  `exhausted` over that status when its answer lands.
+- **One caller cannot retire a shared key.** An answer classified as invalid,
+  banned or exhausted only lands on the key when something the caller does
+  not shape agrees: the provider's health check, run right then on that key
+  (at most once a minute per key), finds it invalid or out of quota, or a
+  second app got the same verdict for the key within 10 minutes. Until then
+  the request moves on to the next key, the key keeps serving everyone else,
+  and its last error reads `unconfirmed invalid: ...`. A success on the key
+  clears the suspicion. Providers without a health check therefore need two
+  apps to agree before a key is marked dead; check such keys from the
+  dashboard if a single app reports trouble.
 
 Admin API tokens (`acnadm_`) are stored as SHA-256 hashes, carry a scope that
 never exceeds their owner's role, stop working when the owner is disabled, and
@@ -446,6 +490,13 @@ section.
   services, or an entry that matches nothing for a provider only share. It is
   proxy only, hidden from the Apps page, and the app routes refuse to change it
   (409 `share_app`).
+- **A share is bound to the services it was made with.** The share records
+  the service id behind each shared slug. If an admin renames a shared
+  service and gives the slug to another service or a group, the share's
+  calls to that slug get 403 `service_not_allowed` on the proxy, leases,
+  lease reports and MCP; it never reaches a group. Editing the share keeps
+  the old binding for slugs it already had; remove and add the slug again
+  to share the new service.
 - **Invites are one time and short lived.** `acninv_` codes carry the owner URL,
   the share id and 32 random bytes; only the SHA-256 of the secret is stored and
   it is compared in constant time. Redeeming burns it in the same transaction

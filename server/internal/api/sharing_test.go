@@ -134,7 +134,7 @@ func TestShareEndToEnd(t *testing.T) {
 	// A local app on B uses the shared service like any other.
 	_, btok := b.app(map[string]any{"name": "b-app"})
 	code, body, hdr := peerCall(t, "GET", b.srv.URL+"/proxy/a-serpapi/search.json?q=coffee", btok)
-	if code != 200 || !strings.Contains(body, `"key":"ownerkey1"`) {
+	if code != 200 || !strings.Contains(body, `"who":"OWNERKEY1"`) || strings.Contains(body, "ownerkey1") {
 		t.Fatalf("proxy through A: %d %s", code, body)
 	}
 	if hdr.Get("X-Acnologia-Service") != "a-serpapi" {
@@ -422,7 +422,7 @@ func TestShareReceiverSyncAddsAndDisables(t *testing.T) {
 	if len(got.LocalServices) != 2 || got.Services["serp2"] == 0 {
 		t.Fatalf("after sync %+v", got)
 	}
-	if code, body, _ := peerCall(t, "GET", b.srv.URL+"/proxy/a-serp2/search.json", btok); code != 200 || !strings.Contains(body, "ownerkey2") {
+	if code, body, _ := peerCall(t, "GET", b.srv.URL+"/proxy/a-serp2/search.json", btok); code != 200 || !strings.Contains(body, "OWNERKEY2") {
 		t.Fatalf("new service: %d %s", code, body)
 	}
 	if code, _, _ := peerCall(t, "GET", b.srv.URL+"/proxy/a-serpapi/search.json", btok); code != 503 {
