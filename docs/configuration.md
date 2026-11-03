@@ -36,7 +36,8 @@ server ignores them.
 |---|---|---|
 | `ACNOLOGIA_URL`, `ACNOLOGIA_TOKEN` | empty | `acn` and `acnologia ctl`: use this server and admin token for one command instead of the saved one (for CI). `acnologia mcp` reads them too, as the base URL (default `http://localhost:8080`) and the token: an app token (`acn_...`) bridges to `/mcp`, an admin token (`acnadm_...`) to the control MCP at `/mcp/control`. `acn mcp` uses the saved server instead. See [Command line](cli.md#connect-claude). |
 | `ACNOLOGIA_CTL_CONFIG` | `acnologia/ctl.json` in the user config folder | `acn`: where the saved servers live. |
-| `ACNOLOGIA_ACCESS_PASSWORD` | empty | `acn` and `acnologia ctl` send it as `X-Acnologia-Access` on every call. Rarely needed, since an admin token passes the lock on its own. |
+| `ACNOLOGIA_ACCESS_PASSWORD` | empty | `acn` and `acnologia ctl` send it as `X-Acnologia-Access`, only to the server it belongs to (`ACNOLOGIA_ACCESS_URL`, or else `ACNOLOGIA_URL`) and never across a redirect to another origin. Rarely needed, since an admin token passes the lock on its own. |
+| `ACNOLOGIA_ACCESS_URL` | `ACNOLOGIA_URL` | `acn` and `acnologia ctl`: the server `ACNOLOGIA_ACCESS_PASSWORD` is for, when that is a saved server rather than `ACNOLOGIA_URL`. With neither set, the password is not sent. |
 | `ACN_VERSION`, `ACN_INSTALL_DIR` | newest `cli-v*` release; `/usr/local/bin` or `~/.local/bin` (`%LocalAppData%\Programs\acn` on Windows) | `install.sh` and `install.ps1`: pin a release and pick the install folder. |
 | `ACNOLOGIA_LIVE_PROVIDERS` | empty | Set to `1` to let `go test ./internal/providers` call the real LLM provider APIs with no key (see [providers](providers.md)). |
 
@@ -205,7 +206,8 @@ each person still signs in with an email and password after unlocking.
   ```
 
   `acnologia ctl` sends it for you when `ACNOLOGIA_ACCESS_PASSWORD` is set in
-  its environment. The proxy strips the header, so it never reaches a provider.
+  its environment, to the server in `ACNOLOGIA_ACCESS_URL` or `ACNOLOGIA_URL`
+  only. The proxy strips the header, so it never reaches a provider.
 
 The password and the gate cookie are never logged and are scrubbed by the
 redactor if they turn up in a log line, event or prompt.

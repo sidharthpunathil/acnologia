@@ -334,6 +334,22 @@ Creating, polling and wrong user codes are rate limited globally (30, 600 and
 10 a minute), and an API token cannot approve a sign in. See
 [Command line](cli.md#how-the-sign-in-works).
 
+The CLI treats the server it talks to as untrusted input:
+
+- `acn login` opens the sign in link only when it is http or https on the
+  host that was typed (never a downgrade from https, never with user info).
+  Any other link (another host, `file://`, a local or UNC path, a custom
+  scheme) is not handed to the OS launcher; the CLI prints
+  `<server>/cli/authorize?code=...` instead.
+- `ACNOLOGIA_ACCESS_PASSWORD` is sent only to the server named by
+  `ACNOLOGIA_ACCESS_URL`, or else `ACNOLOGIA_URL`, never to a server being
+  signed in to or another saved one, and it is dropped from a redirect to
+  another origin.
+- Text from the server (labels, last errors, event details, error messages)
+  is printed with control characters, bidi overrides and invalid UTF-8
+  escaped, so a lease report or a peer's key label cannot drive the terminal.
+  `--json` output escapes them inside strings.
+
 `SafeClient` checks the resolved address at dial time, which also defeats DNS
 rebinding, and refuses loopback, private, link local (including cloud metadata
 at 169.254.169.254), CGNAT, benchmark, documentation and reserved ranges, plus
