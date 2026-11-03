@@ -181,13 +181,13 @@ func (s *Store) DeleteApp(ctx context.Context, id int64) error {
 }
 
 func (s *Store) GetApp(ctx context.Context, id int64) (*App, error) {
-	return scanApp(s.DB.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=?`, id))
+	return scanApp(s.r.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=?`, id))
 }
 
 // ListApps lists the apps people manage on the Apps page. Apps backing a
 // share are managed on the Sharing page and left out.
 func (s *Store) ListApps(ctx context.Context) ([]*App, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+appCols+` FROM apps WHERE share_id IS NULL ORDER BY name`)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+appCols+` FROM apps WHERE share_id IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ func nonNil(s []string) []string {
 // Leases
 
 func (s *Store) CreateLease(ctx context.Context, l *Lease) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO leases(id,key_id,app_id,service_id,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
+	_, err := s.w.ExecContext(ctx, `INSERT INTO leases(id,key_id,app_id,service_id,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
 		l.ID, l.KeyID, l.AppID, l.ServiceID, l.CreatedAt.Unix(), l.ExpiresAt.Unix())
 	return err
 }
@@ -221,7 +221,7 @@ func (s *Store) CreateLease(ctx context.Context, l *Lease) error {
 func (s *Store) GetLease(ctx context.Context, id string) (*Lease, error) {
 	var l Lease
 	var c, e int64
-	err := s.DB.QueryRowContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at,outcome FROM leases WHERE id=?`, id).
+	err := s.r.QueryRowContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at,outcome FROM leases WHERE id=?`, id).
 		Scan(&l.ID, &l.KeyID, &l.AppID, &l.ServiceID, &c, &e, &l.Outcome)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -235,7 +235,7 @@ func (s *Store) GetLease(ctx context.Context, id string) (*Lease, error) {
 
 // OpenLeases returns unexpired leases that have not been reported yet.
 func (s *Store) OpenLeases(ctx context.Context) ([]*Lease, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at FROM leases WHERE outcome='' AND expires_at>?`, now())
+	rows, err := s.r.QueryContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at FROM leases WHERE outcome='' AND expires_at>?`, now())
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ var ErrLeaseReported = errors.New("lease already reported")
 // ClaimLeaseOutcome sets the outcome only if none is set yet, so two
 // concurrent reports cannot both apply.
 func (s *Store) ClaimLeaseOutcome(ctx context.Context, id, outcome string) error {
-	res, err := s.DB.ExecContext(ctx, `UPDATE leases SET outcome=? WHERE id=? AND outcome=''`, outcome, id)
+	res, err := s.w.ExecContext(ctx, `UPDATE leases SET outcome=? WHERE id=? AND outcome=''`, outcome, id)
 	if err != nil {
 		return err
 	}

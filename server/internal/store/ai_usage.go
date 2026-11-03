@@ -74,7 +74,7 @@ func (s *Store) RecordAICall(ctx context.Context, c AICall) error {
 
 // ListAICalls returns ledger rows since a time, newest first.
 func (s *Store) ListAICalls(ctx context.Context, since time.Time) ([]AICall, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT ts, feature, COALESCE(user_id,0), user_email, model, input_tokens, cache_write_tokens,
+	rows, err := s.r.QueryContext(ctx, `SELECT ts, feature, COALESCE(user_id,0), user_email, model, input_tokens, cache_write_tokens,
 		cache_read_tokens, output_tokens, web_searches, cost_usd, ref FROM ai_usage WHERE ts>=? ORDER BY id DESC`, since.Unix())
 	if err != nil {
 		return nil, err
@@ -190,11 +190,11 @@ func (s *Store) UsageReport(ctx context.Context, at time.Time, days int, include
 	for _, w := range windows {
 		since := dayStart(at, w.n).Unix()
 		var t UsageTotals
-		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(cost_usd),0) FROM ai_usage WHERE ts>=?`, since).
+		if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(cost_usd),0) FROM ai_usage WHERE ts>=?`, since).
 			Scan(&t.AICalls, &t.AICostUSD); err != nil {
 			return nil, err
 		}
-		if err := s.DB.QueryRowContext(ctx, `SELECT `+providerSums+` FROM events e WHERE e.ts>=?`+hid, since).
+		if err := s.r.QueryRowContext(ctx, `SELECT `+providerSums+` FROM events e WHERE e.ts>=?`+hid, since).
 			Scan(&t.Requests, &t.ProviderCostUSD, &t.CacheHits); err != nil {
 			return nil, err
 		}
@@ -261,7 +261,7 @@ func (s *Store) UsageReport(ctx context.Context, at time.Time, days int, include
 }
 
 func (s *Store) aiRows(ctx context.Context, q string, args ...any) ([]AIUsageRow, error) {
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("ai usage: %w", err)
 	}
@@ -279,7 +279,7 @@ func (s *Store) aiRows(ctx context.Context, q string, args ...any) ([]AIUsageRow
 }
 
 func (s *Store) provRows(ctx context.Context, q string, args ...any) ([]ProviderUsageRow, error) {
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("provider usage: %w", err)
 	}

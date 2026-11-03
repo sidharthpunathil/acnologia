@@ -43,7 +43,7 @@ func (s *Store) GetAppLimits(ctx context.Context, appID int64) (AppLimits, error
 	var l AppLimits
 	var dr, mr sql.NullInt64
 	var db, mb sql.NullFloat64
-	err := s.DB.QueryRowContext(ctx, `SELECT daily_requests, monthly_requests, daily_budget, monthly_budget FROM apps WHERE id=?`, appID).Scan(&dr, &mr, &db, &mb)
+	err := s.r.QueryRowContext(ctx, `SELECT daily_requests, monthly_requests, daily_budget, monthly_budget FROM apps WHERE id=?`, appID).Scan(&dr, &mr, &db, &mb)
 	if err == sql.ErrNoRows {
 		return l, ErrNotFound
 	}
@@ -89,7 +89,7 @@ func (s *Store) GetAppUsage(ctx context.Context, appID int64, at time.Time) (App
 	var u AppUsage
 	today := dayOf(at)
 	month := today[:7] + "-01"
-	err := s.DB.QueryRowContext(ctx, `SELECT
+	err := s.r.QueryRowContext(ctx, `SELECT
 		COALESCE(SUM(CASE WHEN day=? THEN requests END),0), COALESCE(SUM(CASE WHEN day=? THEN cost END),0),
 		COALESCE(SUM(requests),0), COALESCE(SUM(cost),0),
 		COALESCE(SUM(CASE WHEN day=? THEN cache_hits END),0), COALESCE(SUM(cache_hits),0)
@@ -100,7 +100,7 @@ func (s *Store) GetAppUsage(ctx context.Context, appID int64, at time.Time) (App
 
 func (s *Store) AppUsageHistory(ctx context.Context, appID int64, days int) ([]UsageDay, error) {
 	since := dayOf(time.Now().AddDate(0, 0, -days+1))
-	rows, err := s.DB.QueryContext(ctx, `SELECT day, requests, cost, cache_hits FROM app_usage WHERE app_id=? AND day>=? ORDER BY day`, appID, since)
+	rows, err := s.r.QueryContext(ctx, `SELECT day, requests, cost, cache_hits FROM app_usage WHERE app_id=? AND day>=? ORDER BY day`, appID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +149,6 @@ func (s *Store) SpendSince(ctx context.Context, since time.Time, includeHidden b
 		q += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
 	}
 	var v float64
-	err := s.DB.QueryRowContext(ctx, q, since.Unix()).Scan(&v)
+	err := s.r.QueryRowContext(ctx, q, since.Unix()).Scan(&v)
 	return v, err
 }

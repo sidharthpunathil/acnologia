@@ -65,15 +65,15 @@ func (s *Store) DeleteService(ctx context.Context, id int64) error {
 }
 
 func (s *Store) GetService(ctx context.Context, id int64) (*Service, error) {
-	return scanService(s.DB.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE id=?`, id))
+	return scanService(s.r.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE id=?`, id))
 }
 
 func (s *Store) GetServiceBySlug(ctx context.Context, slug string) (*Service, error) {
-	return scanService(s.DB.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE slug=?`, slug))
+	return scanService(s.r.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE slug=?`, slug))
 }
 
 func (s *Store) ListServices(ctx context.Context) ([]*Service, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+serviceCols+` FROM services ORDER BY category, name`)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+serviceCols+` FROM services ORDER BY category, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 	if !includeHidden {
 		q += ` WHERE hidden=0`
 	}
-	rows, err := s.DB.QueryContext(ctx, q)
+	rows, err := s.r.QueryContext(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 	if !includeHidden {
 		rq += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
 	}
-	rows2, err := s.DB.QueryContext(ctx, rq+` GROUP BY e.service_id`, time.Now().Add(-24*time.Hour).Unix())
+	rows2, err := s.r.QueryContext(ctx, rq+` GROUP BY e.service_id`, time.Now().Add(-24*time.Hour).Unix())
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (s *Store) SetServiceLogo(ctx context.Context, id int64, data []byte, mime 
 func (s *Store) ServiceLogo(ctx context.Context, id int64) ([]byte, string, error) {
 	var data []byte
 	var mime string
-	err := s.DB.QueryRowContext(ctx, `SELECT logo, logo_mime FROM services WHERE id=? AND logo IS NOT NULL`, id).Scan(&data, &mime)
+	err := s.r.QueryRowContext(ctx, `SELECT logo, logo_mime FROM services WHERE id=? AND logo IS NOT NULL`, id).Scan(&data, &mime)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
 	}

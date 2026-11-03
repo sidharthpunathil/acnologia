@@ -42,48 +42,90 @@ func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 	return &k, nil
 }
 
+// queryKeys reads keys with a where clause built by the caller, and their
+// app lists. The SQL varies, so it is not kept prepared.
 func (s *Store) queryKeys(ctx context.Context, where string, args ...any) ([]*Key, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+keyCols+` FROM keys `+where, args...)
+	rows, err := s.rd.QueryContext(ctx, `SELECT `+keyCols+` FROM keys `+where, args...)
 	if err != nil {
 		return nil, err
 	}
+	out, err := scanKeys(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, s.attachApps(ctx, out)
+}
+
+// Key app lists for queryKeysPrep, selected by the same arguments as the keys.
+const (
+	keyAppsByID      = `SELECT key_id, app_id FROM key_apps WHERE key_id=?`
+	keyAppsByService = `SELECT ka.key_id, ka.app_id FROM key_apps ka JOIN keys k ON k.id=ka.key_id WHERE k.service_id=?`
+)
+
+// queryKeysPrep is queryKeys for a constant where clause: both statements
+// stay prepared. appsQ reads the app lists of (at least) the same keys with
+// the same args.
+func (s *Store) queryKeysPrep(ctx context.Context, where, appsQ string, args ...any) ([]*Key, error) {
+	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM keys `+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	out, err := scanKeys(rows)
+	if err != nil || len(out) == 0 {
+		return out, err
+	}
+	rows, err = s.r.QueryContext(ctx, appsQ, args...)
+	if err != nil {
+		return nil, err
+	}
+	return out, addKeyApps(rows, out)
+}
+
+func scanKeys(rows *sql.Rows) ([]*Key, error) {
+	defer rows.Close()
 	out := []*Key{}
 	for rows.Next() {
 		k, err := scanKey(rows)
 		if err != nil {
-			rows.Close()
 			return nil, err
 		}
 		out = append(out, k)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, s.attachApps(ctx, out)
+	return out, rows.Err()
 }
 
 func (s *Store) attachApps(ctx context.Context, keys []*Key) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	byID := map[int64]*Key{}
 	ids := make([]any, 0, len(keys))
 	for _, k := range keys {
-		byID[k.ID] = k
 		ids = append(ids, k.ID)
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT key_id, app_id FROM key_apps WHERE key_id IN (`+placeholders(len(ids))+`)`, ids...)
+	rows, err := s.rd.QueryContext(ctx, `SELECT key_id, app_id FROM key_apps WHERE key_id IN (`+placeholders(len(ids))+`)`, ids...)
 	if err != nil {
 		return err
 	}
+	return addKeyApps(rows, keys)
+}
+
+// addKeyApps adds each (key_id, app_id) row to its key's AppIDs. Rows of
+// keys not in keys are skipped: the two reads are separate, so a key can
+// appear or go in between.
+func addKeyApps(rows *sql.Rows, keys []*Key) error {
 	defer rows.Close()
+	byID := make(map[int64]*Key, len(keys))
+	for _, k := range keys {
+		byID[k.ID] = k
+	}
 	for rows.Next() {
 		var kid, aid int64
 		if err := rows.Scan(&kid, &aid); err != nil {
 			return err
 		}
-		byID[kid].AppIDs = append(byID[kid].AppIDs, aid)
+		if k := byID[kid]; k != nil {
+			k.AppIDs = append(k.AppIDs, aid)
+		}
 	}
 	return rows.Err()
 }
@@ -93,11 +135,11 @@ func placeholders(n int) string {
 }
 
 func (s *Store) ListKeys(ctx context.Context, serviceID int64, includeHidden bool) ([]*Key, error) {
-	where := `WHERE service_id=?`
+	where := `WHERE service_id=? ORDER BY tier DESC, priority, id`
 	if !includeHidden {
-		where += ` AND hidden=0`
+		where = `WHERE service_id=? AND hidden=0 ORDER BY tier DESC, priority, id`
 	}
-	return s.queryKeys(ctx, where+` ORDER BY tier DESC, priority, id`, serviceID)
+	return s.queryKeysPrep(ctx, where, keyAppsByService, serviceID)
 }
 
 func (s *Store) ListAllKeys(ctx context.Context, where string, args ...any) ([]*Key, error) {
@@ -105,7 +147,7 @@ func (s *Store) ListAllKeys(ctx context.Context, where string, args ...any) ([]*
 }
 
 func (s *Store) GetKey(ctx context.Context, id int64) (*Key, error) {
-	keys, err := s.queryKeys(ctx, `WHERE id=?`, id)
+	keys, err := s.queryKeysPrep(ctx, `WHERE id=?`, keyAppsByID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +160,7 @@ func (s *Store) GetKey(ctx context.Context, id int64) (*Key, error) {
 // CandidateKeys returns keys of a service that are active and not exhausted.
 // Cooldown and app restriction filtering happens in the pool.
 func (s *Store) CandidateKeys(ctx context.Context, serviceID int64) ([]*Key, error) {
-	return s.queryKeys(ctx, `WHERE service_id=? AND status='active'`, serviceID)
+	return s.queryKeysPrep(ctx, `WHERE service_id=? AND status='active'`, keyAppsByService, serviceID)
 }
 
 type NewKey struct {
@@ -410,7 +452,7 @@ func (s *Store) AppsExist(ctx context.Context, ids []int64) (bool, error) {
 
 // MarkUsed records a hand-out of the key.
 func (s *Store) MarkUsed(ctx context.Context, id int64) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE keys SET usage_total=usage_total+1, usage_today=usage_today+1, last_used_at=? WHERE id=?`, now(), id)
+	_, err := s.w.ExecContext(ctx, `UPDATE keys SET usage_total=usage_total+1, usage_today=usage_today+1, last_used_at=? WHERE id=?`, now(), id)
 	return err
 }
 

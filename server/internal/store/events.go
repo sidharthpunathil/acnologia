@@ -71,7 +71,8 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error)
 	}
 	q += ` ORDER BY e.id DESC LIMIT ?`
 	args = append(args, f.Limit)
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	// The filters make this SQL vary, so it is not kept prepared.
+	rows, err := s.rd.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +110,7 @@ func (s *Store) CountEvents(ctx context.Context, since time.Time, includeHidden 
 		}
 	}
 	var n int
-	err := s.DB.QueryRowContext(ctx, q, args...).Scan(&n)
+	err := s.rd.QueryRowContext(ctx, q, args...).Scan(&n)
 	return n, err
 }
 
@@ -119,7 +120,7 @@ func (s *Store) AddAudit(ctx context.Context, u *User, action, target, detail st
 	if u != nil {
 		uid, email = u.ID, u.Email
 	}
-	_, _ = s.DB.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
+	_, _ = s.w.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
 		now(), uid, email, action, s.Scrub(ctx, target), s.Scrub(ctx, detail))
 }
 
@@ -127,7 +128,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]*AuditEntry, error)
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, ts, user_email, action, target, detail FROM audit ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.r.QueryContext(ctx, `SELECT id, ts, user_email, action, target, detail FROM audit ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +155,7 @@ type DayStat struct {
 
 // KeyDailyStats counts a key's events per UTC day.
 func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT date(ts,'unixepoch') d,
+	rows, err := s.r.QueryContext(ctx, `SELECT date(ts,'unixepoch') d,
 		SUM(CASE WHEN kind='lease' OR (kind='proxy' AND status_code<400) THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind IN ('error','invalid','banned') THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind IN ('rate_limited','busy','quota_exhausted') THEN 1 ELSE 0 END)

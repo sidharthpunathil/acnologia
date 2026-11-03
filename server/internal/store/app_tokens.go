@@ -106,13 +106,13 @@ func (s *Store) CreateAppToken(ctx context.Context, appID int64, name, prefix, h
 
 // GetAppToken returns one token of an app.
 func (s *Store) GetAppToken(ctx context.Context, appID, id int64) (*AppToken, error) {
-	return scanAppToken(s.DB.QueryRowContext(ctx, `SELECT `+appTokenCols+` FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by
+	return scanAppToken(s.r.QueryRowContext(ctx, `SELECT `+appTokenCols+` FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by
 		WHERE t.app_id=? AND t.id=?`, appID, id))
 }
 
 // ListAppTokens lists an app's tokens, revoked ones included, newest first.
 func (s *Store) ListAppTokens(ctx context.Context, appID int64) ([]*AppToken, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+appTokenCols+` FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by
+	rows, err := s.r.QueryContext(ctx, `SELECT `+appTokenCols+` FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by
 		WHERE t.app_id=? ORDER BY t.revoked_at IS NOT NULL, t.id DESC`, appID)
 	if err != nil {
 		return nil, err
@@ -166,7 +166,7 @@ func (s *Store) RevokeOtherAppTokens(ctx context.Context, appID, keepID int64) (
 // AppByToken finds the app a token hash belongs to, and the token itself.
 // It returns revoked and expired tokens too; the caller decides.
 func (s *Store) AppByToken(ctx context.Context, hash string) (*App, *AppToken, error) {
-	t, err := scanAppToken(s.DB.QueryRowContext(ctx, `SELECT `+appTokenCols+` FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by
+	t, err := scanAppToken(s.r.QueryRowContext(ctx, `SELECT `+appTokenCols+` FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by
 		WHERE t.hash=?`, hash))
 	if err != nil {
 		return nil, nil, err

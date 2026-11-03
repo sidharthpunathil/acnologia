@@ -40,7 +40,7 @@ func scanGroup(row interface{ Scan(...any) error }) (*ServiceGroup, error) {
 }
 
 func (s *Store) ListGroups(ctx context.Context) ([]*ServiceGroup, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+groupCols+` FROM service_groups ORDER BY name`)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+groupCols+` FROM service_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -57,11 +57,11 @@ func (s *Store) ListGroups(ctx context.Context) ([]*ServiceGroup, error) {
 }
 
 func (s *Store) GetGroup(ctx context.Context, id int64) (*ServiceGroup, error) {
-	return scanGroup(s.DB.QueryRowContext(ctx, `SELECT `+groupCols+` FROM service_groups WHERE id=?`, id))
+	return scanGroup(s.r.QueryRowContext(ctx, `SELECT `+groupCols+` FROM service_groups WHERE id=?`, id))
 }
 
 func (s *Store) GetGroupBySlug(ctx context.Context, slug string) (*ServiceGroup, error) {
-	return scanGroup(s.DB.QueryRowContext(ctx, `SELECT `+groupCols+` FROM service_groups WHERE slug=?`, slug))
+	return scanGroup(s.r.QueryRowContext(ctx, `SELECT `+groupCols+` FROM service_groups WHERE slug=?`, slug))
 }
 
 func (s *Store) CreateGroup(ctx context.Context, g *ServiceGroup) (*ServiceGroup, error) {
