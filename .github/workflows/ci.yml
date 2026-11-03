@@ -54,11 +54,12 @@ permissions:
   # The changes job looks up the last successful run on the branch.
   actions: read
 
-# A newer push cancels an older run on a branch or pull request, but runs on
-# main always finish, so every commit there gets a real result and the CI
-# badge never shows a cancelled run as failing.
+# A newer push cancels an older run on a branch or pull request. On main each
+# commit gets its own group, so no run waits behind or is replaced by a newer
+# one: every commit there gets a real result and the CI badge never shows a
+# cancelled run as failing.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.ref == 'refs/heads/main' && format('ci-main-{0}', github.sha) || format('ci-{0}', github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 defaults:
