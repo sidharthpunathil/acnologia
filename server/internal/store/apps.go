@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -84,10 +85,49 @@ func (s *Store) CreateAppWithToken(ctx context.Context, a *App, tokenName, prefi
 	return created, tok, err
 }
 
-func (s *Store) UpdateApp(ctx context.Context, a *App) error {
-	allowed, _ := json.Marshal(nonNil(a.AllowedServices))
-	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET name=?, description=?, allowed_services=?, mode=?, active=?, lease_hidden=? WHERE id=?`,
-		a.Name, a.Description, string(allowed), a.Mode, b2i(a.Active), b2i(a.LeaseHidden), a.ID)
+// AppPatch lists the app fields an edit changes; a nil field keeps the
+// stored value.
+type AppPatch struct {
+	Name            *string
+	Description     *string
+	AllowedServices *[]string
+	Mode            *string
+	Active          *bool
+	LeaseHidden     *bool
+}
+
+// PatchApp writes only the fields the patch sets. An edit never rewrites a
+// column from a copy read earlier, so it cannot undo a change made in the
+// meantime, such as a token rotation clearing lease_hidden.
+func (s *Store) PatchApp(ctx context.Context, id int64, p AppPatch) error {
+	sets, args := []string{}, []any{}
+	add := func(col string, v any) {
+		sets = append(sets, col+"=?")
+		args = append(args, v)
+	}
+	if p.Name != nil {
+		add("name", *p.Name)
+	}
+	if p.Description != nil {
+		add("description", *p.Description)
+	}
+	if p.AllowedServices != nil {
+		allowed, _ := json.Marshal(nonNil(*p.AllowedServices))
+		add("allowed_services", string(allowed))
+	}
+	if p.Mode != nil {
+		add("mode", *p.Mode)
+	}
+	if p.Active != nil {
+		add("active", b2i(*p.Active))
+	}
+	if p.LeaseHidden != nil {
+		add("lease_hidden", b2i(*p.LeaseHidden))
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET `+strings.Join(sets, ", ")+` WHERE id=?`, append(args, id)...)
 	return err
 }
 

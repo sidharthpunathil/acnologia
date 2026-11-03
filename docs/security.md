@@ -76,7 +76,8 @@ must never see. Two flags enforce this:
 - **`apps.lease_hidden`**: only apps a superadmin marked may use hidden keys,
   through a lease or the proxy. Admins cannot set it. When anyone other than a
   superadmin rotates the app's tokens or adds a token, the flag is cleared,
-  because that person now holds a working token.
+  because that person now holds a working token. An app edit writes only the
+  fields it sends, so a slow edit cannot bring the flag back after that.
 - **`services.target_trusted`**: when anyone other than a superadmin changes a
   service's base URL, auth placement or provider, the service becomes
   untrusted, and hidden keys are not sent to it by the proxy, leases or health

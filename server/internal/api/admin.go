@@ -951,28 +951,41 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a, err := s.Store.GetApp(r.Context(), id)
-	if err != nil {
-		writeStoreErr(w, err)
-		return
-	}
 	var in appInput
 	if !decode(w, r, &in) {
 		return
 	}
-	if code, msg := in.apply(r, a); code != 0 {
+	if _, err := s.Store.GetApp(r.Context(), id); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	// Validate on a scratch app, then write only the fields sent. Writing the
+	// whole row from a copy read before the body arrived could restore
+	// lease_hidden after a token rotation cleared it.
+	probe := &store.App{Name: "app", Mode: "both"}
+	if code, msg := in.apply(r, probe); code != 0 {
 		writeErr(w, code, "invalid", msg)
 		return
 	}
-	if err := s.Store.UpdateApp(r.Context(), a); err != nil {
+	patch := store.AppPatch{Description: in.Description, AllowedServices: in.AllowedServices,
+		Mode: in.Mode, Active: in.Active, LeaseHidden: in.LeaseHidden}
+	if in.Name != nil {
+		patch.Name = &probe.Name
+	}
+	if err := s.Store.PatchApp(r.Context(), id, patch); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
 	if in.Limits != nil {
-		if err := s.Store.SetAppLimits(r.Context(), a.ID, a.Limits); err != nil {
+		if err := s.Store.SetAppLimits(r.Context(), id, probe.Limits); err != nil {
 			writeStoreErr(w, err)
 			return
 		}
+	}
+	a, err := s.Store.GetApp(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "app.update", a.Name, "")
 	writeJSON(w, 200, a)
