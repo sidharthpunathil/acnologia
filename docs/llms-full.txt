@@ -264,6 +264,8 @@ claude mcp add --transport http acnologia http://localhost:8080/mcp \
 acnologia mcp --url http://localhost:8080 --token acn_xxx
 ```
 
+On Windows the bridge is `acnologia.exe mcp` with the same flags; in a JSON client config write the path with doubled backslashes, such as `"command": "C:\\Acnologia\\acnologia.exe"`.
+
 ```json
 {
   "mcpServers": {
@@ -731,6 +733,12 @@ curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/ins
 go install github.com/sidharthpunathil/acnologia/server/cmd/acn@latest
 ```
 
+On Windows, in PowerShell (amd64 or arm64, checks SHA256SUMS, installs `acn.exe` to `%LocalAppData%\Programs\acn` and adds it to the user PATH, no admin; `ACN_VERSION` and `ACN_INSTALL_DIR` work as in install.sh):
+
+```powershell
+irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex
+```
+
 Sign in through the browser with `acn login` (or `acn login --domain https://keys.example.com --no-browser`). It asks for the server URL (a bare host means https; http only for localhost), shows a one-time code like `WDJB-MJHT` and opens `/cli/authorize?code=WDJB-MJHT`. After you unlock the site, sign in and approve with a scope, the CLI receives an admin API token named `acn on <hostname>` that lasts 90 days, and prints `Signed in to <host> as <email> (<scope>)`. A valid admin token passes the site lock, so the CLI never needs the site password.
 
 The device flow behind it (RFC 8628 style): `POST /api/cli/device {client, hostname, os}` returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in: 600, interval: 5}`; `POST /api/cli/device/token {device_code}` answers 400 with `authorization_pending`, `slow_down` (plus a longer `interval`), `access_denied` or `expired_token`, then 200 `{token, token_id, user, scope, expires_at}` once. Both are open in the site lock. `GET /api/cli/device/lookup?user_code=`, `POST /api/cli/device/approve {user_code, scope, label}` and `POST /api/cli/device/deny {user_code}` need a dashboard session.
@@ -751,7 +759,7 @@ acn services --json
 acn logout                                     # revokes the token, then forgets the server
 ```
 
-The CLI stores servers per host in `acnologia/ctl.json` under the user config folder (mode 0600, folder 0700). `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` override it for one command, for CI. `acn contexts` lists saved servers and `acn use <host>` switches; `services`, `keys <service>` and `cache purge <service>` round out the commands, and `--json` prints raw JSON for `whoami`, `status`, `services`, `keys`, `events` and `usage`. Every command also works as `acnologia ctl <command>` from the server binary.
+The CLI stores servers per host in `acnologia/ctl.json` under the user config folder (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%AppData%` on Windows; mode 0600, folder 0700, and on Windows the profile folder's ACL). `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` override it for one command, for CI. `acn contexts` lists saved servers and `acn use <host>` switches; `services`, `keys <service>` and `cache purge <service>` round out the commands, and `--json` prints raw JSON for `whoami`, `status`, `services`, `keys`, `events` and `usage`. Every command also works as `acnologia ctl <command>` from the server binary.
 
 ## Docs as Markdown
 

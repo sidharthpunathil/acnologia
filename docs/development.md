@@ -32,6 +32,8 @@ mixing keys.
 | `web/` | React, Vite, Zustand and Tailwind dashboard. Built into `server/internal/webui/dist`. |
 | `sdk/` | Go, Python, TypeScript, PHP and Ruby clients. |
 | `e2e/` | Playwright screenshot suite for the dashboard. |
+| `scripts/build.ps1` | The Makefile's build steps for Windows PowerShell. |
+| `install.sh`, `install.ps1` | `acn` installers for macOS and Linux, and for Windows. |
 | `docs/` | These docs, `llms.txt` (embedded and served at `/llms.txt`), design specs. |
 | `reference/` | Third party code used as reference only. Not built. |
 
@@ -51,6 +53,51 @@ See [architecture](architecture.md) for how the packages fit together.
 The API tests spin up the real router on `httptest` with a temporary SQLite
 database, so they exercise middleware, auth and the proxy the way production
 does.
+
+CI (`.github/workflows/ci.yml`) runs the server, the Go, Python and
+TypeScript SDKs on Linux, macOS and Windows for every push and pull request,
+plus a Windows job that builds both binaries with `scripts/build.ps1`.
+
+## Windows
+
+Everything builds natively on Windows with Go 1.26, Node 22 and pnpm 10
+(`npm install -g pnpm@10.24.0`); CGO is not needed because the SQLite driver
+is pure Go. The Makefile needs `make` and `sh`, so use
+`scripts/build.ps1` instead, from Windows PowerShell 5.1 or PowerShell 7:
+
+| make | PowerShell | Result |
+|---|---|---|
+| `make build` | `.\scripts\build.ps1` | dashboard, docs and `bin\acnologia.exe` |
+| `make cli` | `.\scripts\build.ps1 cli` | `bin\acn.exe` |
+| `make llms` | `.\scripts\build.ps1 llms` | copies `docs/` into the server's embedded copies |
+| `make web` | `.\scripts\build.ps1 web` | `pnpm install` and `pnpm build` in `web/` |
+| `make test` | `.\scripts\build.ps1 test` | server and Go SDK tests, without `-race` |
+
+If scripts are blocked, run `Set-ExecutionPolicy -Scope CurrentUser
+RemoteSigned` once, or call it as `powershell -ExecutionPolicy Bypass -File
+.\scripts\build.ps1`. Without the script, the same steps by hand:
+
+```powershell
+cd web; pnpm install --frozen-lockfile; pnpm build; cd ..
+.\scripts\build.ps1 llms
+cd server
+$env:CGO_ENABLED = "0"
+go build -trimpath -ldflags "-s -w -X main.version=dev" -o ..\bin\acnologia.exe .\cmd\acnologia
+go build -trimpath -ldflags "-s -w -X main.version=dev" -o ..\bin\acn.exe .\cmd\acn
+```
+
+For `make dev`, run the two halves in two terminals:
+
+```powershell
+cd server; $env:ACNOLOGIA_DATA_DIR = "..\data"; go run .\cmd\acnologia
+cd web; pnpm dev
+```
+
+The repository's `.gitattributes` checks text files out with LF on every
+platform (PowerShell scripts with CRLF), so `core.autocrlf` does not change
+the embedded docs or test fixtures. `go test -race` needs cgo and a C
+compiler; on Windows run the tests without it. Cross compile from any OS with
+`GOOS=windows GOARCH=amd64` (or `arm64`) and `CGO_ENABLED=0`.
 
 ## Screenshot tests
 
