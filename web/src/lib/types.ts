@@ -584,7 +584,10 @@ export interface ValidateResult {
 
 export interface AiStatus {
   enabled: boolean;
+  /** The effective default model. */
   model: string;
+  /** The effective model of each feature (assistant, builder, fill, summary, refresh). */
+  models?: Record<string, string>;
   reason: string;
 }
 
@@ -598,6 +601,8 @@ export interface AgentRun {
   /** One or two sentences on what the run builds. Empty until the server writes one. */
   description?: string;
   provider_slug: string;
+  /** The Claude model the run works with, fixed when it was queued. Empty for older runs. */
+  model?: string;
   input: {
     context: string;
     urls: string[];

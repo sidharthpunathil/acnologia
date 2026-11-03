@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { Textarea } from "@/components/base/textarea/textarea";
 import { ClaudeLogo } from "@/components/ClaudeLogo";
 import { cx } from "@/utils/cx";
+import { ModelsCard } from "./ModelsCard";
 import { SAVE_SHORTCUT, useLoad, useSaveShortcut, type Loaded } from "./hooks";
 import { EnvValue, LinkRow, ReadOnlyNote, SaveBar, SectionError, SettingRow, SettingsCard, SettingsSection } from "./parts";
 
@@ -229,11 +230,13 @@ export function AiSection({
   isSuper,
   summary,
   onDirty,
+  onModelsDirty,
 }: {
   isAdmin: boolean;
   isSuper: boolean;
   summary: Loaded<SettingsSummary>;
   onDirty: (dirty: boolean) => void;
+  onModelsDirty: (dirty: boolean) => void;
 }) {
   const env = (name: string) => envOf(summary.data, name);
   return (
@@ -250,20 +253,18 @@ export function AiSection({
               <SettingRow label="API key" description="Anthropic key used for every AI call. Restart after changing it.">
                 <EnvValue env={env("ANTHROPIC_API_KEY")} unsetLabel="AI stays off" />
               </SettingRow>
-              <SettingRow label="Model" description="The Claude model behind the Assistant and the builder.">
-                <EnvValue env={env("ACNOLOGIA_AI_MODEL")} unsetLabel="Using the default" />
-              </SettingRow>
               <SettingRow label="Chat compaction" description="When an Assistant thread's prompt grows past this size, older turns are summarized.">
                 <EnvValue
                   env={env("ACNOLOGIA_CHAT_COMPACT_TOKENS")}
                   format={(v) => `${num(Number(v))} tokens`}
-                  unsetLabel="60% of the model's context window"
+                  unsetLabel="60% of the Assistant model's context window"
                 />
               </SettingRow>
             </>
           ))}
         <LinkRow href="/providers/ai" icon={RiRobot2Line} label="Provider builder" description="Describe an API and let the AI write and test its spec." summary="" />
       </SettingsCard>
+      {isAdmin && <ModelsCard onDirty={onModelsDirty} onSaved={summary.reload} />}
       <RulesCard canEdit={isSuper} onDirty={onDirty} />
       <Guardrails />
     </SettingsSection>

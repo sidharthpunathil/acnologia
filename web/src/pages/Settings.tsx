@@ -32,19 +32,21 @@ export function SettingsPage() {
   const [serverDirty, setServerDirty] = useState(false);
   const [rulesDirty, setRulesDirty] = useState(false);
   const onServerDirty = useCallback((d: boolean) => setServerDirty(d), []);
+  const [modelsDirty, setModelsDirty] = useState(false);
   const onRulesDirty = useCallback((d: boolean) => setRulesDirty(d), []);
-  useUnsavedWarning(serverDirty || rulesDirty);
+  const onModelsDirty = useCallback((d: boolean) => setModelsDirty(d), []);
+  useUnsavedWarning(serverDirty || rulesDirty || modelsDirty);
 
   const items: SettingsNavItem[] = useMemo(
     () => [
       { id: "general", label: "General", icon: RiServerLine, dirty: serverDirty },
       { id: "appearance", label: "Appearance", icon: RiPaletteLine },
-      { id: "ai", label: "AI", icon: RiSparklingLine, dirty: rulesDirty },
+      { id: "ai", label: "AI", icon: RiSparklingLine, dirty: rulesDirty || modelsDirty },
       { id: "security", label: "Security and access", icon: RiShieldKeyholeLine },
       { id: "integrations", label: "Integrations", icon: RiPlugLine },
       { id: "advanced", label: "Advanced", icon: RiEqualizerLine },
     ],
-    [serverDirty, rulesDirty],
+    [serverDirty, rulesDirty, modelsDirty],
   );
   const ids = items.map((i) => i.id);
   const active = useActiveSection(ids);
@@ -58,7 +60,7 @@ export function SettingsPage() {
         <div className="flex min-w-0 flex-col gap-12">
           <ServerSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} onDirty={onServerDirty} />
           <AppearanceSection />
-          <AiSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} onDirty={onRulesDirty} />
+          <AiSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} onDirty={onRulesDirty} onModelsDirty={onModelsDirty} />
           <SecuritySection isAdmin={isAdmin} isSuper={isSuper} summary={summary} />
           <IntegrationsSection isAdmin={isAdmin} />
           <AdvancedSection isAdmin={isAdmin} summary={summary} />

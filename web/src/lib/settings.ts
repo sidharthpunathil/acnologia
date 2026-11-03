@@ -28,3 +28,65 @@ export function envOf(summary: SettingsSummary | null, name: string): EnvSetting
   if (!summary) return null;
   return summary.env.find((e) => e.name === name) ?? { name, set: false };
 }
+
+/** The features that can run on their own model, in display order. */
+export const MODEL_FEATURES = ["assistant", "builder", "fill", "summary", "refresh"] as const;
+export type ModelFeature = (typeof MODEL_FEATURES)[number];
+
+/** One model to pick from (GET /api/admin/ai/models). */
+export interface ModelInfo {
+  id: string;
+  display_name: string;
+  /** Input context window in tokens. */
+  context_window: number;
+  /** USD per million tokens; 0 when pricing_known is false. */
+  input_price: number;
+  output_price: number;
+  pricing_known: boolean;
+  /** In Acnologia's own table. */
+  builtin: boolean;
+}
+
+/** The saved choice. Empty means "use the default". */
+export type ModelSettings = Record<"default" | ModelFeature, string> & {
+  updated_at?: string;
+  updated_by?: string;
+};
+
+/** Where an effective model comes from, strongest first. */
+export type ModelSource = "override" | "saved" | "env" | "builtin";
+
+export interface ModelChoice {
+  model: string;
+  source: ModelSource;
+  context_window: number;
+}
+
+export interface ModelsState {
+  settings: ModelSettings;
+  effective: Record<"default" | ModelFeature, ModelChoice>;
+  /** ACNOLOGIA_AI_MODEL, empty when unset. */
+  env_model: string;
+  builtin_model: string;
+  /** The chat compaction threshold now in effect. */
+  compact_tokens: number;
+  compact_from_env: boolean;
+  ai_enabled: boolean;
+  /** Only a superadmin may save. */
+  can_edit: boolean;
+}
+
+export interface ModelsCatalog extends ModelsState {
+  models: ModelInfo[];
+  /** "api" from Anthropic's Models API, "builtin" from Acnologia's table. */
+  source: "api" | "builtin";
+  /** Why the list is the built in table, when it is. */
+  note?: string;
+}
+
+export type ModelsInput = Record<"default" | ModelFeature, string>;
+
+export const modelsApi = {
+  list: () => request<ModelsCatalog>("GET", "/api/admin/ai/models"),
+  save: (input: ModelsInput) => request<ModelsState & { warnings: string[] | null }>("PUT", "/api/admin/ai/models", input),
+};
