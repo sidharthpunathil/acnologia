@@ -1,5 +1,5 @@
-# Tests on Linux, macOS and Windows: the Go server and CLI, the Go, Python and
-# TypeScript SDKs, the dashboard build and the PowerShell scripts. Every job
+# Tests on Linux, macOS and Windows: the Go server and CLI, the Go, Python, Ruby
+# and TypeScript SDKs, the dashboard build and the PowerShell scripts. Every job
 # runs offline against fakes, so the whole run stays short.
 #
 # The changes job decides which of them a commit needs, so nothing is built or
@@ -8,6 +8,7 @@
 #   docs        only the embedded docs changed: their tests, on Linux
 #   go-sdk      sdk/go
 #   python-sdk  sdk/python
+#   ruby-sdk    sdk/ruby
 #   ts-sdk      sdk/typescript
 #   web         web/
 #   windows     the build tooling (build.ps1, install.ps1, go.mod, the web
@@ -75,6 +76,7 @@ jobs:
       docs: ${{ steps.diff.outputs.docs }}
       gosdk: ${{ steps.diff.outputs.gosdk }}
       python: ${{ steps.diff.outputs.python }}
+      ruby-sdk: ${{ steps.diff.outputs.ruby-sdk }}
       typescript: ${{ steps.diff.outputs.typescript }}
       web: ${{ steps.diff.outputs.web }}
       windows: ${{ steps.diff.outputs.windows }}
@@ -127,6 +129,7 @@ jobs:
           area go "$code" '^server/'
           area gosdk "$files" '^sdk/go/'
           area python "$files" '^sdk/python/'
+          area ruby-sdk "$files" '^sdk/ruby/'
           area typescript "$files" '^sdk/typescript/'
           area web "$files" '^web/'
           area windows "$files" '^scripts/|^install\.ps1$|^setup\.ps1$|^Makefile$|^server/go\.(mod|sum)$|^server/cmd/|^web/(package\.json|pnpm-lock\.yaml|vite\.config\.ts)$'
@@ -243,6 +246,30 @@ jobs:
         run: |
           python -m pip install -e ".[test]"
           python -m pytest -q
+
+  # Standard library and minitest only, so there is nothing to install.
+  ruby-sdk:
+    name: ruby sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.ruby-sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Test
+        working-directory: sdk/ruby
+        run: |
+          ruby --version
+          ruby -w -Ilib -Itest test/test_acnologia.rb
+          gem build acnologia.gemspec
 
   typescript-sdk:
     name: typescript sdk (${{ matrix.os }})
