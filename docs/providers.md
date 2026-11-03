@@ -12,7 +12,7 @@ can share a provider (for example two SerpAPI pools for different teams).
 
 ```mermaid
 flowchart LR
-    Built["built in specs<br/>(15, see below)"] -->|seeded on first boot| Store[("providers table<br/>+ provider_versions")]
+    Built["built in specs<br/>(27, see below)"] -->|seeded on first boot| Store[("providers table<br/>+ provider_versions")]
     Editor["dashboard editor<br/>(admin)"] -->|validate + fixture tests| Store
     AI["AI provider builder<br/>(admin starts a run)"] -->|"harness re-validates<br/>and re-tests"| Store
     API["PUT /api/admin/providers/{slug}"] --> Store
@@ -31,6 +31,8 @@ them.
 
 SerpAPI, Serper, Brave Search, Tavily, Exa, Firecrawl, Jina, SearchApi,
 Linkup, You.com, TinyFish Search, TinyFish Fetch, Google Gemini, ElevenLabs,
+the LLM APIs below (OpenAI, Anthropic, xAI, Mistral AI, DeepSeek, Cohere,
+Perplexity, Together AI, Groq, Fireworks AI, Cerebras and OpenRouter),
 and a generic spec ("Custom API")
 for any API that takes a key in a header, a bearer token or a query parameter.
 They are seeded on first boot and edited like any other provider.
@@ -47,6 +49,87 @@ services. Both are free within their limits (see [Offers](#offers)).
 
 Built in providers that were seeded by an older release get the offers this
 release ships on the next boot, as long as nobody has edited them (version 1).
+
+### LLM APIs
+
+Pool keys for model APIs the same way, including your team's Claude keys.
+Every one has a health check that spends nothing, and the invalid key
+responses below were checked against the real APIs (see
+[Testing against the real APIs](#testing-against-the-real-apis)).
+
+| Provider | Base URL | Key | Health check | Live quota |
+|---|---|---|---|---|
+| OpenAI | `https://api.openai.com` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Anthropic | `https://api.anthropic.com` | `x-api-key` | `GET /v1/models` | no |
+| xAI | `https://api.x.ai` | `Authorization: Bearer` | `GET /v1/api-key` (also catches blocked or disabled keys) | no |
+| Mistral AI | `https://api.mistral.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| DeepSeek | `https://api.deepseek.com` | `Authorization: Bearer` | `GET /user/balance` | balance, USD or CNY |
+| Cohere | `https://api.cohere.com` | `Authorization: Bearer` | `POST /v1/check-api-key` (`{"valid":false}` is invalid) | no |
+| Perplexity | `https://api.perplexity.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Together AI | `https://api.together.xyz` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Groq | `https://api.groq.com/openai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Fireworks AI | `https://api.fireworks.ai/inference` | `Authorization: Bearer` | `GET /v1/models` | no |
+| Cerebras | `https://api.cerebras.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
+| OpenRouter | `https://openrouter.ai/api` | `Authorization: Bearer` | `GET /v1/key` | credit limit and remaining, USD, for keys with a limit |
+
+Paths keep their version prefix, so an OpenAI compatible client uses
+`http://<acnologia>/proxy/<service>/v1` as its base URL (DeepSeek and
+Perplexity serve some routes without `/v1`).
+
+All of them treat a 429 as a rate limit and honor `Retry-After`, a 401 as a
+bad key, and 5xx (including Anthropic's 529) as the provider's fault, not
+the key's. Validation errors (400, 404, 422) are the caller's and leave the
+key alone. Notable rules:
+
+- **Anthropic**: specs cannot add static headers, so callers send
+  `anthropic-version` themselves, as the Anthropic SDKs do, and the proxy
+  forwards it. The health check cannot, so a 400 that asks for it counts as
+  a working key. The monthly spend cap (429 `enforced_spend_limit_reached`),
+  a Console usage limit, a low credit balance and `billing_error` are
+  `quota_exhausted`. A 403 `permission_error` is `ok`: the key works but may
+  not use that resource.
+- **OpenAI**: billing problems also answer 429, so `insufficient_quota`,
+  `credit_balance_exhausted` and the spend limit codes are `quota_exhausted`
+  before any other 429. A 403 for an unsupported region is `error`, since
+  every key would fail the same way.
+- **xAI** answers a wrong key with 400 `Incorrect API key provided`, which
+  is `invalid`. Running out of prepaid credit is matched loosely (402 or 403
+  mentioning credits or a spending limit) because the text is not
+  documented.
+- **DeepSeek**: 402 Insufficient Balance is `quota_exhausted`; 429 means the
+  account is at its concurrency limit, so it is `busy` for 2 seconds; 503
+  Server Overloaded is `error`. The balance is rounded to whole units, so a
+  key with less than 0.5 left reads as exhausted until a check finds more.
+- **Groq**: a 429 naming a daily window (RPD, TPD) is `quota_exhausted`
+  until `Retry-After`; a console spend limit (`blocked_api_access`) is
+  `quota_exhausted`; 498 Flex capacity is `error`.
+- **Cohere**: the trial key monthly cap is `quota_exhausted`, the per minute
+  limit `rate_limited`, a 498 deny listed key `banned`.
+- **OpenRouter**: a 402 for credit held by requests in flight is `busy`;
+  other 402s and 403 key or budget limits are `quota_exhausted`; 403
+  moderation and guardrail blocks are `ok`; the free model daily cap is
+  `quota_exhausted`; an error object inside a 200 is `error`.
+- **Perplexity**: a 429 whose `error.type` is `overloaded` is `error`, not
+  the key's limit.
+- **Fireworks AI**: 412 account suspended is `banned`; 503 while a
+  deployment scales up is `error`.
+- **Cerebras**: a 429 naming a daily window is `quota_exhausted`.
+
+None of them use `quota.headers`: their rate limit headers count per minute
+windows (and Groq's per day requests) with resets written as durations such
+as `6m0s`, which would read as a whole quota. Pacing comes from 429s and
+`Retry-After` instead.
+
+Offers list a few headline models per provider with input and output
+prices per million tokens, free tiers and credits, and published rate
+limits per tier in `notes`, each with its source page, checked 2026-11-03.
+The model is chosen in the request body, so a provider's model offers share
+their endpoint's match and only the first one selects a request; they are
+there for people and the AI tools, and token prices never decide a
+request's cost. Free offers (Groq's free plan, Mistral's free mode, Cohere
+trial keys, OpenRouter's `:free` models) come last for the same reason, so
+their limits never pace paid traffic. Only Perplexity's Search API has a per
+request price and a limit that holds on every tier (50 a second).
 
 ## Spec at a glance
 
@@ -218,3 +301,23 @@ Then create a service from the catalog and add keys.
   `checked_at` is a date and `source_url` is http(s).
 - Rule regexes are RE2 (no catastrophic backtracking); JSON paths are depth
   limited.
+
+## Testing against the real APIs
+
+Every built in spec's fixtures run in `go test ./...`. For the LLM APIs,
+`server/internal/providers/testdata/observed_no_key.json` also records what
+each real API answered on 2026-11-03 when called with no key and with an
+invalid one, on its health endpoint and an inference endpoint. A test
+replays those responses through the engine (each must classify as
+`invalid`) and through the health check (each must report the key invalid
+rather than fail).
+
+To call the real APIs again with an invalid key, which needs the network
+and no secrets:
+
+```bash
+cd server
+ACNOLOGIA_LIVE_PROVIDERS=1 go test ./internal/providers -run TestInferenceLiveNoKey -v
+```
+
+It is skipped unless that variable is set.
