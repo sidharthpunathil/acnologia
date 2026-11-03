@@ -16,6 +16,17 @@ export interface ServerIdentity {
   fingerprint: string;
 }
 
+/** Which keys of one shared service a share may use. A missing entry means all. */
+export type KeyScopeMode = "all" | "count" | "pick";
+
+export interface KeyScope {
+  mode: KeyScopeMode;
+  /** Count mode: at most this many keys, the first still in rotation by priority. */
+  count?: number;
+  /** Pick mode: only these keys. */
+  key_ids?: number[];
+}
+
 export type ShareStatus = "pending" | "active" | "paused" | "revoked" | "expired";
 
 export interface Share {
@@ -37,10 +48,15 @@ export interface Share {
   revoked_at: string | null;
   left_at: string | null;
   limits: AppLimits;
+  /** By service slug; a service without an entry shares every key. */
+  key_scopes: Record<string, KeyScope>;
+  /** By service slug: keys the scope resolves to now, of the keys the share could use. */
+  service_keys?: Record<string, { keys_shared: number; keys_total: number }>;
   usage?: {
     today_requests: number;
     today_cost: number;
     month_requests: number;
+    month_cost: number;
     last_used_at: string | null;
     history: UsageDay[];
     per_service?: Record<string, number>;
@@ -55,6 +71,7 @@ export interface ShareInput {
   providers?: string[];
   include_hidden?: boolean;
   limits?: AppLimits;
+  key_scopes?: Record<string, KeyScope>;
   /** RFC 3339, or "" for no expiry. */
   expires_at?: string;
   invite_valid?: InviteValidity;

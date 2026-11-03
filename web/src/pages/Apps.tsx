@@ -278,6 +278,7 @@ function AppFormModal({
               value={form.allowed_services}
               onChange={(v) => setForm({ ...form, allowed_services: v })}
               empty="No services yet. Add one from the catalog first."
+              searchLabel="services"
             />
           </div>
           <HintText>

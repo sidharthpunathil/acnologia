@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-aria-components";
 import {
   RiAddLine,
@@ -18,12 +18,14 @@ import { useProviders } from "../stores/providers";
 import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
+import { api } from "../lib/api";
 import { compact, dateTime, plural, relTime } from "../lib/format";
 import type { AppLimits } from "../lib/ops";
 import {
   lastDays,
   sharing,
   type InviteValidity,
+  type KeyScope,
   type LinkStatus,
   type PeerLink,
   type PeerPreview,
@@ -47,6 +49,8 @@ import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, CopyButton, EmptyState, PageHeader, PageSkeleton, Section, SecretBox } from "@/components/acn";
 import { UnpluggedArt } from "@/components/foundations/illustrations";
 import { cx } from "@/utils/cx";
+import { KeyScopes, visibleKeys, type KeyLists } from "./sharing/KeyScopes";
+import { LimitMeters, limitSummary } from "./sharing/Limits";
 
 const PROMISE = "Keys never leave the server that owns them.";
 
@@ -193,6 +197,7 @@ interface ShareDraft {
   services: string[];
   providers: string[];
   include_hidden: boolean;
+  key_scopes: Record<string, KeyScope>;
   limits: Record<LimitKey, string>;
   expires: string;
   invite_valid: InviteValidity;
@@ -210,6 +215,7 @@ function draftOf(s: Share | null): ShareDraft {
     services: s?.services ?? [],
     providers: s?.providers ?? [],
     include_hidden: s?.include_hidden ?? false,
+    key_scopes: { ...(s?.key_scopes ?? {}) },
     limits,
     expires: s?.expires_at ? s.expires_at.slice(0, 10) : "",
     invite_valid: "24h",
@@ -247,13 +253,32 @@ function ShareFormModal({
   const [d, setD] = useState<ShareDraft>(draftOf(null));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [keys, setKeys] = useState<KeyLists>({});
+  const requested = useRef(new Set<number>());
+  const now = useNow(30000);
 
   useEffect(() => {
     if (open) {
       setD(draftOf(initial));
       setErr(null);
+      setKeys({});
+      requested.current = new Set();
     }
   }, [open, initial]);
+
+  // Load the keys of each selected service once, for the key scope rows.
+  useEffect(() => {
+    if (!open) return;
+    for (const slug of d.services) {
+      const sv = services.find((s) => s.slug === slug);
+      if (!sv || requested.current.has(sv.id)) continue;
+      requested.current.add(sv.id);
+      api.listKeys(sv.id).then(
+        (r) => setKeys((k) => ({ ...k, [sv.id]: r.keys ?? [] })),
+        (e) => setKeys((k) => ({ ...k, [sv.id]: errorMessage(e) })),
+      );
+    }
+  }, [open, d.services, services]);
 
   // A service that came from another server cannot be shared onward.
   const serviceOptions = services
@@ -267,11 +292,31 @@ function ShareFormModal({
     if (!d.services.length && !d.providers.length) return setErr("Pick at least one service or provider to share.");
     const limits = parseDraftLimits(d);
     if (typeof limits === "string") return setErr(limits);
+    const key_scopes: Record<string, KeyScope> = {};
+    for (const slug of d.services) {
+      const sc = d.key_scopes[slug];
+      if (!sc || sc.mode === "all") continue;
+      if (sc.mode === "count") {
+        key_scopes[slug] = { mode: "count", count: Math.max(1, sc.count ?? 1) };
+        continue;
+      }
+      // Only keys still listed: a deleted key drops out, and so does a hidden one once hidden keys are off.
+      const sv = services.find((s) => s.slug === slug);
+      const loaded = sv ? keys[sv.id] : undefined;
+      let ids = sc.key_ids ?? [];
+      if (Array.isArray(loaded)) {
+        const ok = new Set(visibleKeys(loaded, d.include_hidden, isSuper).map((k) => k.id));
+        ids = ids.filter((id) => ok.has(id));
+      }
+      if (!ids.length) return setErr(`Pick at least one key of ${sv?.name ?? slug}, or share all its keys.`);
+      key_scopes[slug] = { mode: "pick", key_ids: ids };
+    }
     const body: ShareInput = {
       name: d.name.trim(),
       note: d.note,
       services: d.services,
       providers: d.providers,
+      key_scopes,
       limits,
       expires_at: d.expires ? new Date(`${d.expires}T23:59:59Z`).toISOString() : "",
     };
@@ -292,6 +337,9 @@ function ShareFormModal({
       setBusy(false);
     }
   };
+
+  const parsedLimits = parseDraftLimits(d);
+  const limitLine = typeof parsedLimits === "string" ? "" : limitSummary(parsedLimits);
 
   return (
     <Modal
@@ -318,19 +366,45 @@ function ShareFormModal({
         <div className="flex flex-col gap-1.5">
           <Label id="share-services-label">Services</Label>
           <div role="group" aria-labelledby="share-services-label">
-            <MultiSelect options={serviceOptions} value={d.services} onChange={(services) => setD({ ...d, services })} empty="No services to share yet." />
+            <MultiSelect
+              options={serviceOptions}
+              value={d.services}
+              onChange={(services) => setD({ ...d, services })}
+              empty="No services to share yet."
+              searchLabel="services"
+            />
           </div>
           <HintText>The other server proxies through this one. It never sees a key and cannot lease one.</HintText>
+          {d.services.length > 0 && (
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="text-body-medium text-text-primary">Keys to share</div>
+              <KeyScopes
+                services={services}
+                selected={d.services}
+                scopes={d.key_scopes}
+                keys={keys}
+                includeHidden={d.include_hidden}
+                isSuper={isSuper}
+                now={now}
+                onChange={(slug, sc) => setD((cur) => ({ ...cur, key_scopes: { ...cur.key_scopes, [slug]: sc } }))}
+              />
+            </div>
+          )}
         </div>
         <div className="flex flex-col gap-1.5">
           <Label id="share-providers-label">Provider specs</Label>
           <div role="group" aria-labelledby="share-providers-label">
-            <MultiSelect options={providerOptions} value={d.providers} onChange={(providers) => setD({ ...d, providers })} />
+            <MultiSelect options={providerOptions} value={d.providers} onChange={(providers) => setD({ ...d, providers })} searchLabel="provider specs" />
           </div>
           <HintText>Definitions only, no keys. The other server can add its own keys to them.</HintText>
         </div>
         <fieldset className="flex flex-col gap-3">
           <legend className="mb-1 text-body-medium text-text-primary">Limits</legend>
+          {limitLine && (
+            <p aria-live="polite" className="text-caption-1-medium text-text-primary">
+              {limitLine}
+            </p>
+          )}
           <p className="text-caption-1-regular text-text-secondary">Leave a field empty for no limit. Calls over a limit are refused until it resets.</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {LIMIT_KEYS.map((k) => (
@@ -457,11 +531,16 @@ function ShareRow({
             )}
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
-            {share.services.map((s) => (
-              <Chip key={`s-${s}`} variant="caption" color="purple" className="font-mono">
-                {s}
-              </Chip>
-            ))}
+            {share.services.map((s) => {
+              const k = share.service_keys?.[s];
+              const scoped = !!share.key_scopes?.[s] && share.key_scopes[s].mode !== "all";
+              return (
+                <Chip key={`s-${s}`} variant="caption" color="purple" className="font-mono">
+                  {s}
+                  {k && <> · {scoped ? `${k.keys_shared} of ${plural(k.keys_total, "key")}` : plural(k.keys_total, "key")}</>}
+                </Chip>
+              );
+            })}
             {share.providers.map((p) => (
               <Chip key={`p-${p}`} variant="caption" color="blue" className="font-mono">
                 spec: {p}
@@ -477,6 +556,9 @@ function ShareRow({
             {compact(share.usage?.today_requests ?? 0)} today · last used {relTime(share.usage?.last_used_at, now)}
             {share.expires_at && <> · expires {dateTime(share.expires_at)}</>}
             {share.usage?.limit_hit && <span className="text-text-error-primary"> · limit reached</span>}
+          </div>
+          <div className="mt-3">
+            <LimitMeters share={share} />
           </div>
         </div>
         <div className="flex shrink-0 flex-col gap-3 lg:items-end">
