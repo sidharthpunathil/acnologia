@@ -105,11 +105,14 @@ func checkTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = catalog.UpstreamDialer().DialContext
 	t.Proxy = catalog.GuardProxy(http.ProxyFromEnvironment)
-	return t
+	return egress.Tune(t)
 }
 
 func publicClient() *http.Client {
 	c := catalog.SafeClient(20 * time.Second)
+	if t, ok := c.Transport.(*http.Transport); ok {
+		egress.Tune(t)
+	}
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return c
 }

@@ -8,6 +8,7 @@ package egress
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -48,6 +49,31 @@ func Parse(raw string) (*url.URL, string, error) {
 	return u, hint, nil
 }
 
+// Connection reuse for upstream transports. With few idle connections kept
+// per host, a burst of parallel requests to one provider closed connections
+// and redialed them, each with a full TLS handshake. The session cache lets
+// a connection that must be dialed resume TLS instead.
+const (
+	maxIdleConns        = 1024
+	maxIdleConnsPerHost = 256
+	tlsSessionCacheSize = 256
+)
+
+// Tune sets the connection reuse limits and a TLS session cache on an
+// upstream transport and returns it. The dialer and proxy, and so the
+// address checks they make, stay as they are.
+func Tune(t *http.Transport) *http.Transport {
+	t.MaxIdleConns = maxIdleConns
+	t.MaxIdleConnsPerHost = maxIdleConnsPerHost
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{}
+	}
+	if t.TLSClientConfig.ClientSessionCache == nil {
+		t.TLSClientConfig.ClientSessionCache = tls.NewLRUClientSessionCache(tlsSessionCacheSize)
+	}
+	return t
+}
+
 // NewTransport builds the upstream transport, through proxyURL when given.
 // Its dialer refuses link local and cloud metadata addresses. Through a
 // proxy it dials only the proxy, which then reaches whatever it can; a URL
@@ -57,7 +83,6 @@ func NewTransport(proxyURL *url.URL) *http.Transport {
 		Proxy:                 catalog.GuardProxy(http.ProxyFromEnvironment),
 		DialContext:           catalog.UpstreamDialer().DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 180 * time.Second,
@@ -65,7 +90,7 @@ func NewTransport(proxyURL *url.URL) *http.Transport {
 	if proxyURL != nil {
 		t.Proxy = catalog.GuardProxy(http.ProxyURL(proxyURL))
 	}
-	return t
+	return Tune(t)
 }
 
 type Manager struct {

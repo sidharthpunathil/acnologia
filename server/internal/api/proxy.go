@@ -20,6 +20,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/egress"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
@@ -116,15 +117,14 @@ func newUpstreamClient() *http.Client {
 func newPublicUpstreamClient() *http.Client { return upstreamClientWith(catalog.PublicOnly, nil) }
 
 func upstreamClientWith(control func(network, address string, c syscall.RawConn) error, proxy func(*http.Request) (*url.URL, error)) *http.Client {
-	t := &http.Transport{
+	t := egress.Tune(&http.Transport{
 		Proxy:                 proxy,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: control}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 180 * time.Second,
-	}
+	})
 	return &http.Client{
 		Transport: t,
 		// Pass redirects through to the caller instead of following them with our key attached.

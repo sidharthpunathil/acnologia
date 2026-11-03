@@ -33,6 +33,8 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/config"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/redact"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
@@ -76,6 +78,17 @@ func hpLogging() {
 
 func newHPEnv(tb testing.TB) *hpEnv {
 	tb.Helper()
+	var secrets []string
+	for i := range 4 {
+		secrets = append(secrets, fmt.Sprintf("sk-bench-key-%04d-abcdefgh", i))
+	}
+	return newHPEnvWith(tb, hpUpstream{}, secrets...)
+}
+
+// newHPEnvWith serves service "gen" from upstream with the given keys, and
+// a normal app whose token is e.token.
+func newHPEnvWith(tb testing.TB, upstream http.Handler, secrets ...string) *hpEnv {
+	tb.Helper()
 	prev := slog.Default()
 	hpLogging()
 	tb.Cleanup(func() { slog.SetDefault(prev) })
@@ -86,7 +99,7 @@ func newHPEnv(tb testing.TB) *hpEnv {
 	}
 	tb.Cleanup(func() { st.Close() })
 	box, _ := crypto.New(bytes.Repeat([]byte{7}, 32))
-	e.up = httptest.NewUnstartedServer(hpUpstream{})
+	e.up = httptest.NewUnstartedServer(upstream)
 	e.up.Config.ConnState = func(_ net.Conn, s http.ConnState) {
 		if s == http.StateNew {
 			e.newConns.Add(1)
@@ -108,8 +121,8 @@ func newHPEnv(tb testing.TB) *hpEnv {
 	var sv store.Service
 	e.call(tb, super, "POST", "/api/admin/services", map[string]any{"provider": "generic", "slug": "gen", "base_url": e.up.URL}, &sv)
 	keys := []map[string]any{}
-	for i := range 4 {
-		keys = append(keys, map[string]any{"secret": fmt.Sprintf("sk-bench-key-%04d-abcdefgh", i)})
+	for _, k := range secrets {
+		keys = append(keys, map[string]any{"secret": k})
 	}
 	e.call(tb, super, "POST", fmt.Sprintf("/api/admin/services/%d/keys", sv.ID), map[string]any{"keys": keys}, nil)
 	var app struct {
@@ -356,5 +369,49 @@ func TestUpstreamConnChurn(t *testing.T) {
 		e.newConns.Store(0)
 		rps, _ := hpConc(t, w, 3*time.Second, func() *http.Request { return e.proxyReq("v1/small") }, e.client)
 		t.Logf("CHURN c=%d proxy %.0f rps, new upstream conns=%d", w, rps, e.newConns.Load())
+	}
+}
+
+// TestUpstreamTransportsReuseConnections: every upstream transport keeps
+// enough idle connections for a burst to one host and resumes TLS sessions,
+// and the address checks of their dialers still fire.
+func TestUpstreamTransportsReuseConnections(t *testing.T) {
+	e := newHPEnv(t)
+	p := pool.New(nil, nil)
+	transports := map[string]http.RoundTripper{
+		"proxy":        e.api.UpClient.Transport,
+		"public proxy": e.api.PublicUpClient.Transport,
+		"egress":       egress.NewTransport(nil),
+		"pool check":   p.Client.Transport,
+		"pool public":  p.PublicClient.Transport,
+	}
+	for name, rt := range transports {
+		tr, ok := rt.(*http.Transport)
+		if !ok {
+			t.Fatalf("%s: %T", name, rt)
+		}
+		if tr.MaxIdleConnsPerHost < 256 || tr.MaxIdleConns < 1024 {
+			t.Fatalf("%s: idle limits %d per host, %d total", name, tr.MaxIdleConnsPerHost, tr.MaxIdleConns)
+		}
+		if tr.TLSClientConfig == nil || tr.TLSClientConfig.ClientSessionCache == nil {
+			t.Fatalf("%s: no TLS session cache", name)
+		}
+	}
+	// PublicOnly refuses the loopback upstream. NoMetadata refuses the
+	// metadata address while the loopback upstream stays reachable.
+	if _, err := e.api.PublicUpClient.Get(e.up.URL); err == nil {
+		t.Fatal("the public only client reached a loopback address")
+	}
+	if _, err := p.PublicClient.Get(e.up.URL); err == nil {
+		t.Fatal("the pool's public client reached a loopback address")
+	}
+	hpDo(t, e.api.UpClient, e.directReq("v1/small"))
+	clients := map[string]*http.Client{"proxy": e.api.UpClient, "pool check": p.Client,
+		"egress": egress.Client(egress.NewTransport(nil), 5*time.Second)}
+	for name, c := range clients {
+		_, err := c.Get("http://169.254.169.254/latest/meta-data/")
+		if err == nil || !strings.Contains(err.Error(), catalog.ErrMetadataAddr) {
+			t.Fatalf("%s: metadata address not refused: %v", name, err)
+		}
 	}
 }
