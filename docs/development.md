@@ -60,7 +60,7 @@ different key and it refuses to boot rather than mix keys.
 | `server/internal/breaker`, `egress`, `respcache`, `notify`, `keyparse` | Circuit breaker, egress proxies, response cache, webhooks, the key paste parser. |
 | `server/internal/config` | Environment settings and the default data directory per OS. |
 | `server/internal/docsmd`, `llmstxt`, `webui` | Embedded copies of the docs, `llms.txt` and the built dashboard. |
-| `web/` | React, Vite, Zustand and Tailwind dashboard. Built into `server/internal/webui/dist`. |
+| `web/` | React, Vite, Zustand and Tailwind dashboard. Built into `server/internal/webui/dist`. Each page is its own chunk: a new page goes in with `lazyPage` and in the `PAGES` list in `App.tsx` (or `PublicRoutes.tsx`), so its code is fetched before the first render. |
 | `sdk/` | The seventeen client libraries, see [SDKs](sdks.md). |
 | `e2e/` | Playwright screenshot suite for the dashboard. |
 | `scripts/build.ps1` | The Makefile's build steps for Windows PowerShell. |

@@ -1,10 +1,12 @@
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, Suspense, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, useHref, useLocation, useNavigate, type NavigateOptions } from "react-router-dom";
 import { RouterProvider } from "react-aria-components";
-import { App } from "./App";
+import { App, preloadAppPage } from "./App";
 import { AccessGate } from "./pages/Lock";
-import { PublicRoutes, isPublicPath } from "./pages/claim/PublicRoutes";
+import { PublicRoutes, isPublicPath, preloadPublicPage } from "./pages/claim/PublicRoutes";
+import { ChunkErrorBoundary, reloadForNewBuild } from "./lazyPage";
+import { Spinner } from "@/components/base/spinner/spinner";
 import "./index.css";
 // Applies the saved theme and follows the OS setting while it is "system".
 import "./stores/theme";
@@ -40,12 +42,41 @@ function Root() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <AriaRouter>
-        <Root />
-      </AriaRouter>
-    </BrowserRouter>
-  </StrictMode>,
+/**
+ * Shown only while a page's code loads outside a navigation, such as right
+ * after signing in. A navigation keeps the current page on screen instead.
+ */
+function PageLoading() {
+  return (
+    <div className="delayed-in flex min-h-dvh items-center justify-center bg-background-full" role="status" aria-live="polite">
+      <Spinner size="lg" aria-label="Loading Acnologia" />
+    </div>
+  );
+}
+
+// Vite fires this when a chunk's script or stylesheet dependency fails to
+// load, which after a deploy means a new build is out.
+window.addEventListener("vite:preloadError", (e) => {
+  if (reloadForNewBuild()) e.preventDefault();
+});
+
+// The page being opened is fetched before the first render, so the first
+// paint never waits on a Suspense fallback.
+const { pathname } = window.location;
+const preload = isPublicPath(pathname) ? preloadPublicPage(pathname) : preloadAppPage(pathname);
+
+void preload.then(() =>
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AriaRouter>
+          <ChunkErrorBoundary>
+            <Suspense fallback={<PageLoading />}>
+              <Root />
+            </Suspense>
+          </ChunkErrorBoundary>
+        </AriaRouter>
+      </BrowserRouter>
+    </StrictMode>,
+  ),
 );
