@@ -113,11 +113,16 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 		if err != nil {
 			return err.Error(), true, false
 		}
-		_, errs, rep := catalog.Check(&d.Input)
+		checked, errs, rep := catalog.Check(&d.Input)
+		var gaps []string
+		if checked != nil {
+			gaps = GuideGaps(checked)
+		}
 		switch name {
 		case "validate_spec":
-			a.logf(ctx, id, "tool", fmt.Sprintf("Validated draft: %d problem(s), %d/%d tests pass", len(errs), rep.Passed, rep.Passed+rep.Failed), checkText(errs, rep))
-			return checkText(errs, rep), false, false
+			text := checkText(errs, rep) + guideText(gaps)
+			a.logf(ctx, id, "tool", fmt.Sprintf("Validated draft: %d problem(s), %d/%d tests pass", len(errs)+len(gaps), rep.Passed, rep.Passed+rep.Failed), text)
+			return text, false, false
 		case "live_check":
 			if s.liveChecks >= MaxLiveChecks {
 				return fmt.Sprintf("live_check is limited to %d calls per run. Submit the provider instead.", MaxLiveChecks), true, false
@@ -144,6 +149,12 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 		problems := append([]string{}, errs...)
 		if rep.Failed > 0 {
 			problems = append(problems, fmt.Sprintf("%d fixture test(s) fail", rep.Failed))
+		}
+		// The guide is required, but a provider that works should not fail
+		// on it alone: the last submit is accepted with the gap noted.
+		lastTry := s.submits >= MaxSubmits
+		if len(gaps) > 0 && (len(problems) > 0 || !lastTry) {
+			problems = append(problems, gaps...)
 		}
 		if len(problems) == 0 && s.testKey != "" {
 			spec, _ := providers.DecodeSpec(d.Spec)
@@ -172,6 +183,9 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 			return text + "\nFix these and submit again.", true, false
 		}
 		s.accepted, s.summary = d, in.Summary
+		if len(gaps) > 0 {
+			a.logf(ctx, id, "info", "Accepted without a full usage guide", strings.Join(gaps, "\n")+"\nWrite one later from the provider's Guide tab.")
+		}
 		a.nameFromDraft(ctx, s, d)
 		a.logf(ctx, id, "result", fmt.Sprintf("Accepted: %d/%d tests pass", rep.Passed, rep.Passed+rep.Failed), in.Summary)
 		return "Accepted. Acnologia will fetch the logo and publish it now. Reply with nothing more.", false, true
@@ -219,6 +233,14 @@ func checkText(errs []string, rep providers.TestReport) string {
 		fmt.Fprintf(&b, "%s %s: expected %s, got %s (%s)\n", mark, r.Name, r.Expect, r.Got, r.Detail)
 	}
 	return b.String()
+}
+
+// guideText reports the guide's gaps under the schema check.
+func guideText(gaps []string) string {
+	if len(gaps) == 0 {
+		return "Guide: ok.\n"
+	}
+	return "Guide problems (the guide is required):\n- " + strings.Join(gaps, "\n- ") + "\n"
 }
 
 func okWord(ok bool) string {
