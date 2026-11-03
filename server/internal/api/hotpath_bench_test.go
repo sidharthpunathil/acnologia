@@ -370,6 +370,13 @@ func TestUpstreamConnChurn(t *testing.T) {
 		rps, _ := hpConc(t, w, 3*time.Second, func() *http.Request { return e.proxyReq("v1/small") }, e.client)
 		t.Logf("CHURN c=%d proxy %.0f rps, new upstream conns=%d", w, rps, e.newConns.Load())
 	}
+	// The store paces the proxy, so the upstream client alone shows what
+	// its idle limits do once more requests are in flight to one host.
+	for _, w := range []int{8, 32, 64} {
+		e.newConns.Store(0)
+		rps, _ := hpConc(t, w, 3*time.Second, func() *http.Request { return e.directReq("v1/small") }, e.api.UpClient)
+		t.Logf("CHURN c=%d upstream client %.0f rps, new upstream conns=%d", w, rps, e.newConns.Load())
+	}
 }
 
 // TestUpstreamTransportsReuseConnections: every upstream transport keeps

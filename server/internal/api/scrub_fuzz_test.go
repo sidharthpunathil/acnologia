@@ -397,3 +397,30 @@ func TestRelayPooledBufferOnlyUnscrubbed(t *testing.T) {
 		t.Fatal("the unscrubbed relay never returned its buffer to the pool")
 	}
 }
+
+// BenchmarkScrubReader1MiB scrubs a 1 MiB stream read 32 KiB at a time, with
+// the current reader and the legacy one.
+func BenchmarkScrubReader1MiB(b *testing.B) {
+	body := bytes.Repeat([]byte("a"), 1<<20)
+	p := make([]byte, 32<<10)
+	run := func(b *testing.B, mk func() io.Reader) {
+		b.SetBytes(int64(len(body)))
+		b.ReportAllocs()
+		for b.Loop() {
+			r := mk()
+			for {
+				if _, err := r.Read(p); err != nil {
+					break
+				}
+			}
+		}
+	}
+	b.Run("current", func(b *testing.B) {
+		run(b, func() io.Reader { return newScrubReader(bytes.NewReader(body), echoSecret) })
+	})
+	b.Run("legacy", func(b *testing.B) {
+		run(b, func() io.Reader {
+			return &legacyScrubReader{r: bytes.NewReader(body), forms: keyForms(echoSecret), buf: make([]byte, 32<<10)}
+		})
+	})
+}
