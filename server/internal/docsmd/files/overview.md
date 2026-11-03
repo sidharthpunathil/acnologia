@@ -127,9 +127,23 @@ it. Every setting is in [.env.example](.env.example) and
 Run it anywhere a container or a Linux machine runs. Each guide ends with
 the server behind HTTPS and the access password, so it never comes up open.
 
-- [Every option](docs/deploy.md): one click on Render or Railway, Fly.io, or the container image
-- [Railway](docs/deploy-railway.md): a hosted deploy with a volume, step by step
-- [Any Linux server](docs/deploy-vps.md): one script with HTTPS, cloud-init, and one command setups on Hetzner and DigitalOcean
+- [Every option](docs/deploy.md): one click on a hosting platform (the
+  repository carries [render.yaml](render.yaml), [fly.toml](fly.toml) and
+  [.railway/railway.ts](.railway/railway.ts)), the container image
+  `ghcr.io/sidharthpunathil/acnologia` for amd64 and arm64, and the settings
+  a public deploy needs
+- [A hosted deploy, step by step](docs/deploy-railway.md), with a volume
+- [Any Linux server](docs/deploy-vps.md): one command sets up Docker, the
+  server and an HTTPS certificate, and a rerun upgrades it:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/deploy/install-server.sh \
+    | sudo bash -s -- --domain key.example.com --email you@example.com
+  ```
+
+  Paste [deploy/cloud-init.yaml](deploy/cloud-init.yaml) as user data to do
+  the same when you create a server on any cloud, or create one from your
+  machine with the scripts in [deploy](deploy).
 
 ## Use it
 
