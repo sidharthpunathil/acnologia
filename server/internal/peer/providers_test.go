@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
@@ -174,6 +176,55 @@ func TestApplyServiceSlugAvoidsGroups(t *testing.T) {
 	// The handover path checks the same.
 	if _, err := y.handoverService(ctx, l, HandoverService{Slug: "Bad/Slug", Provider: "serpapi", AuthType: "query", AuthName: "api_key", BaseURL: "https://serpapi.com"}); err == nil {
 		t.Fatal("handover service with an invalid slug accepted")
+	}
+}
+
+// A slow owner logo does not hold the sync lock, and a missing logo is not
+// asked for again on the next sync.
+func TestSyncLockFreeWhileLogoStalls(t *testing.T) {
+	release := make(chan struct{})
+	var hits atomic.Int32
+	owner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/logo") {
+			hits.Add(1)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		}
+		http.NotFound(w, r)
+	}))
+	defer owner.Close()
+	y, link := newSyncer(t, owner)
+	ctx := context.Background()
+	m := &Manifest{Status: LinkActive,
+		Services:  []ManifestService{{Slug: "widgets", Name: "Widgets", Provider: "widget"}},
+		Providers: []ManifestProvider{{Slug: "widget", Name: "Widget", Version: 1, Shared: true, Spec: spec(t, true)}}}
+	done := make(chan error, 1)
+	go func() { done <- y.apply(ctx, link, "acn_token", m) }()
+	for deadline := time.Now().Add(5 * time.Second); hits.Load() == 0; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatal("no logo request")
+		}
+	}
+	start := time.Now()
+	y.MarkRemoteState(ctx, link.ID, LinkPaused)
+	if d := time.Since(start); d > time.Second {
+		close(release)
+		t.Fatalf("lock held for %v while the owner stalled", d)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	before := hits.Load()
+	l, _ := y.Store.GetPeerLink(ctx, link.ID)
+	if err := y.apply(ctx, l, "acn_token", m); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != before {
+		t.Fatal("missing logo asked for again at once")
 	}
 }
 

@@ -119,32 +119,40 @@ func (y *Syncer) WipeExpired(ctx context.Context, now time.Time) int {
 	return n
 }
 
-// applyHandover brings a handover link's keys in line with the owner. It
-// returns problems worth showing on the link.
-func (y *Syncer) applyHandover(ctx context.Context, link *store.PeerLink, token, status string) []string {
+// applyHandover brings a handover link's keys in line with the owner's
+// answer, fetched before the lock (pre). It returns problems worth showing
+// on the link, and whether to report usage to the owner afterwards.
+func (y *Syncer) applyHandover(ctx context.Context, link *store.PeerLink, status string, pre *handoverFetch) ([]string, bool) {
 	if status != LinkActive {
 		y.wipeLink(ctx, link, "share "+status+" by "+link.PeerName)
-		return nil
+		return nil, false
 	}
-	c := y.client(link.Trusted)
-	hk, err := FetchHandoverKeys(ctx, c, link.PeerURL, token)
+	if pre == nil {
+		return []string{"handed over keys: not fetched"}, false
+	}
+	hk, err := pre.keys, pre.err
 	if err != nil {
 		if re := AsRemote(err); re != nil && re.ShareState() != "" {
 			y.wipeLink(ctx, link, "share "+re.ShareState()+" by "+link.PeerName)
-			return nil
+			return nil, false
 		}
 		// Unreachable: keep the keys; their lease still ends them.
-		return []string{"handed over keys: " + err.Error()}
+		return []string{"handed over keys: " + err.Error()}, false
 	}
 	priv, err := BoxKeys(ctx, y.Store, y.Box)
 	if err != nil {
-		return []string{"handed over keys: " + err.Error()}
+		return []string{"handed over keys: " + err.Error()}, false
 	}
 	self, err := y.selfID(ctx)
 	if err != nil {
-		return []string{"handed over keys: " + err.Error()}
+		return []string{"handed over keys: " + err.Error()}, false
 	}
+
 	var problems []string
+	if len(hk.Services) > maxManifestEntries {
+		problems = append(problems, fmt.Sprintf("the owner hands over %d services; only the first %d are taken", len(hk.Services), maxManifestEntries))
+		hk.Services = hk.Services[:maxManifestEntries]
+	}
 	svcByRemote := map[string]int64{}
 	for _, hs := range hk.Services {
 		id, err := y.handoverService(ctx, link, hs)
@@ -157,7 +165,7 @@ func (y *Syncer) applyHandover(ctx context.Context, link *store.PeerLink, token,
 	}
 	held, err := y.Store.HandoverKeys(ctx, link.ID)
 	if err != nil {
-		return append(problems, "handed over keys: "+err.Error())
+		return append(problems, "handed over keys: "+err.Error()), false
 	}
 	byRemote := map[int64]*store.Key{}
 	for _, k := range held {
@@ -239,8 +247,7 @@ func (y *Syncer) applyHandover(ctx context.Context, link *store.PeerLink, token,
 	}
 	y.wipe(ctx, link, gone, WipeNotShared)
 	y.notify(ctx, HandoverEvent{Link: link, Kind: "received", Keys: received})
-	y.report(ctx, link, token)
-	return problems
+	return problems, true
 }
 
 // report tells the owner which of its keys this server holds, with request

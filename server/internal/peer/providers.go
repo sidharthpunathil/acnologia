@@ -25,13 +25,21 @@ import (
 // superadmin pulls it with PullProvider. A provider this server already has
 // is never touched.
 
+// logoJob is an imported provider that has no logo yet.
+type logoJob struct {
+	mp          ManifestProvider
+	firstImport bool
+}
+
 // syncProviders imports what a manifest needs and records it. It returns the
-// problems worth showing on the link.
-func (y *Syncer) syncProviders(ctx context.Context, link *store.PeerLink, token string, m *Manifest) []string {
+// problems worth showing on the link and the providers still missing a logo,
+// which the caller fetches after letting go of the lock.
+func (y *Syncer) syncProviders(ctx context.Context, link *store.PeerLink, m *Manifest) ([]string, []logoJob) {
 	var problems []string
+	var logos []logoJob
 	rows, err := y.Store.ListPeerProviders(ctx, link.ID)
 	if err != nil {
-		return []string{"providers: " + err.Error()}
+		return []string{"providers: " + err.Error()}, nil
 	}
 	known := map[string]*store.PeerProvider{}
 	for _, r := range rows {
@@ -73,7 +81,9 @@ func (y *Syncer) syncProviders(ctx context.Context, link *store.PeerLink, token 
 				link.Providers = append(link.Providers, mp.Slug)
 				explicit[mp.Slug] = true
 			}
-			y.ensureLogo(ctx, link, token, mp, false)
+			if y.needsLogo(ctx, mp.Slug) {
+				logos = append(logos, logoJob{mp: mp})
+			}
 			continue
 		}
 		local, err := y.Store.GetProvider(ctx, mp.Slug)
@@ -115,7 +125,9 @@ func (y *Syncer) syncProviders(ctx context.Context, link *store.PeerLink, token 
 			link.Providers = append(link.Providers, mp.Slug)
 			explicit[mp.Slug] = true
 		}
-		y.ensureLogo(ctx, link, token, mp, true)
+		if y.needsLogo(ctx, mp.Slug) {
+			logos = append(logos, logoJob{mp: mp, firstImport: true})
+		}
 	}
 	// A shared service whose provider the owner did not describe still works
 	// through the proxy; say why it shows no provider details.
@@ -132,7 +144,7 @@ func (y *Syncer) syncProviders(ctx context.Context, link *store.PeerLink, token 
 	for _, slug := range missing {
 		problems = append(problems, fmt.Sprintf("provider %s (for %s): the owner sent no spec", slug, strings.Join(needs[slug], ", ")))
 	}
-	return problems
+	return problems, logos
 }
 
 // importProvider publishes an owner's provider spec as a local provider.
@@ -146,21 +158,64 @@ func (y *Syncer) importProvider(ctx context.Context, link *store.PeerLink, mp Ma
 	return p, err
 }
 
-// ensureLogo gives an imported provider a logo when it has none: the owner's
-// own logo through the share, else (on first import only) the one the
-// catalog finds on the provider's website. Best effort; failures are logged.
-func (y *Syncer) ensureLogo(ctx context.Context, link *store.PeerLink, token string, mp ManifestProvider, firstImport bool) {
-	if _, _, err := y.Store.ProviderLogo(ctx, mp.Slug); !errors.Is(err, store.ErrNotFound) {
+// needsLogo reports whether a provider has no logo yet.
+func (y *Syncer) needsLogo(ctx context.Context, slug string) bool {
+	_, _, err := y.Store.ProviderLogo(ctx, slug)
+	return errors.Is(err, store.ErrNotFound)
+}
+
+// tryLogo reports whether a logo may be asked for now, and records the try.
+// A missing logo is asked for at most once per logoRetry per link.
+func (y *Syncer) tryLogo(linkID int64, slug string, now time.Time) bool {
+	y.logoMu.Lock()
+	defer y.logoMu.Unlock()
+	if y.logoTried == nil {
+		y.logoTried = map[string]time.Time{}
+	}
+	k := fmt.Sprintf("%d/%s", linkID, slug)
+	if t, ok := y.logoTried[k]; ok && now.Sub(t) < logoRetry {
+		return false
+	}
+	y.logoTried[k] = now
+	return true
+}
+
+// fetchLogos gives imported providers a logo when they have none: the
+// owner's own logo through the share, else (on first import only) the one
+// the catalog finds on the provider's website. It runs without the lock,
+// within a budget for the whole sync. Best effort; failures are logged.
+func (y *Syncer) fetchLogos(ctx context.Context, link *store.PeerLink, token string, jobs []logoJob) {
+	if len(jobs) == 0 {
 		return
 	}
-	lctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	bctx, cancel := context.WithTimeout(ctx, logoBudget)
+	defer cancel()
+	n := 0
+	for _, j := range jobs {
+		if n >= maxLogoFetches || bctx.Err() != nil {
+			return
+		}
+		if !y.tryLogo(link.ID, j.mp.Slug, time.Now()) {
+			continue
+		}
+		n++
+		y.fetchLogo(bctx, link, token, j)
+	}
+}
+
+func (y *Syncer) fetchLogo(ctx context.Context, link *store.PeerLink, token string, j logoJob) {
+	mp := j.mp
+	lctx, cancel := context.WithTimeout(ctx, logoTimeout)
 	defer cancel()
 	data, mime, err := FetchProviderLogo(lctx, y.client(link.Trusted), link.PeerURL, token, mp.Slug)
-	if err != nil && firstImport && mp.Website != "" && y.FetchSiteLogo != nil {
+	if err != nil && j.firstImport && mp.Website != "" && y.FetchSiteLogo != nil {
 		data, mime, err = y.FetchSiteLogo(lctx, mp.Website)
 	}
 	if err != nil {
 		slog.Info("no logo for imported provider", "provider", mp.Slug, "peer", link.PeerID, "err", err)
+		return
+	}
+	if !y.needsLogo(ctx, mp.Slug) {
 		return
 	}
 	if err := y.Store.SetProviderLogo(ctx, mp.Slug, data, mime); err != nil {
@@ -191,10 +246,27 @@ var ErrEditedHere = errors.New("this provider was edited on this server since th
 // is only ever a superadmin's explicit action. When the base URL would
 // change, allowBaseURL must be set (the person saw the new URL).
 func (y *Syncer) PullProvider(ctx context.Context, linkID int64, slug string, allowBaseURL bool) (*store.PeerProvider, error) {
-	y.mu.Lock()
-	defer y.mu.Unlock()
 	link, err := y.Store.GetPeerLink(ctx, linkID)
 	if err != nil {
+		return nil, err
+	}
+	if len(link.TokenEnc) == 0 || link.Status != LinkActive {
+		return nil, errors.New("this connection is not active")
+	}
+	token, err := y.Box.Decrypt(link.TokenEnc)
+	if err != nil {
+		return nil, err
+	}
+	// Ask the owner without the lock, then check everything again under it.
+	mctx, cancel := context.WithTimeout(ctx, callTimeout)
+	m, err := FetchManifest(mctx, y.client(link.Trusted), link.PeerURL, token)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	y.mu.Lock()
+	defer y.mu.Unlock()
+	if link, err = y.Store.GetPeerLink(ctx, linkID); err != nil {
 		return nil, err
 	}
 	row, err := y.Store.GetPeerProvider(ctx, linkID, slug)
@@ -210,14 +282,6 @@ func (y *Syncer) PullProvider(ctx context.Context, linkID int64, slug string, al
 	}
 	if local.Version != row.LocalVersion || local.Source != "peer:"+link.PeerID {
 		return nil, ErrEditedHere
-	}
-	token, err := y.Box.Decrypt(link.TokenEnc)
-	if err != nil {
-		return nil, err
-	}
-	m, err := FetchManifest(ctx, y.client(link.Trusted), link.PeerURL, token)
-	if err != nil {
-		return nil, err
 	}
 	var mp *ManifestProvider
 	for i := range m.Providers {
