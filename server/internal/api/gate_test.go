@@ -3,11 +3,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -220,12 +223,105 @@ func TestGateAccessHeader(t *testing.T) {
 	e := newGateEnv(t)
 	e.do(e.super, "GET", "/api/admin/me", nil, 200, nil, accessHeader, testAccessPassword)
 	e.do(e.super, "GET", "/api/admin/me", nil, 401, nil, accessHeader, testAccessPassword+"x")
-	// The header is never rate limited: spend the limit, then use it.
-	for i := 0; i < gateFailLimit; i++ {
-		e.do(client(), "POST", "/api/gate/unlock", map[string]any{"password": "wrong-guess"}, 401, nil)
+	// The right header never counts against the limit.
+	for i := 0; i < 2*gateFailLimit; i++ {
+		e.do(e.super, "GET", "/api/admin/me", nil, 200, nil, accessHeader, testAccessPassword)
+	}
+	e.do(client(), "POST", "/api/gate/unlock", map[string]any{"password": testAccessPassword}, 200, nil)
+}
+
+// TestGateAccessHeaderIsLimited: a wrong X-Acnologia-Access value is a
+// guess like a lock screen one, so the header is no way around the limit.
+func TestGateAccessHeaderIsLimited(t *testing.T) {
+	e := newGateEnv(t)
+	now := time.Unix(1_800_000_000, 0)
+	e.api.gate.now = func() time.Time { return now }
+	// One wrong guess on the lock screen and the rest in the header, on a
+	// locked route and on the open gate state alike.
+	e.do(client(), "POST", "/api/gate/unlock", map[string]any{"password": "wrong-guess"}, 401, nil)
+	for i := 1; i < gateFailLimit; i++ {
+		if i%2 == 0 {
+			e.do(client(), "GET", "/api/gate", nil, 200, nil, accessHeader, "wrong-guess")
+		} else {
+			e.do(e.super, "GET", "/api/admin/me", nil, 401, nil, accessHeader, "wrong-guess")
+		}
+	}
+	// Limited now: the right header and the right password are refused unseen.
+	e.do(e.super, "GET", "/api/admin/me", nil, 401, nil, accessHeader, testAccessPassword)
+	var st struct {
+		Locked bool `json:"locked"`
+	}
+	e.do(client(), "GET", "/api/gate", nil, 200, &st, accessHeader, testAccessPassword)
+	if !st.Locked {
+		t.Fatalf("limited header passed the gate state: %v", st)
 	}
 	e.do(client(), "POST", "/api/gate/unlock", map[string]any{"password": testAccessPassword}, 429, nil)
+	// The next minute takes the header again.
+	now = now.Add(gateFailWindow)
 	e.do(e.super, "GET", "/api/admin/me", nil, 200, nil, accessHeader, testAccessPassword)
+}
+
+// TestGateLimitPerClient: one address that spends its daily budget waits
+// alone, and many addresses together meet a ceiling of a minute, never a day.
+func TestGateLimitPerClient(t *testing.T) {
+	g := newAccessGate(testAccessPassword, nil)
+	now := time.Unix(1_800_000_000, 0)
+	g.now = func() time.Time { return now }
+	// The attacker spends a whole day's budget from one address.
+	for i := 0; i < gateDailyLimit; i++ {
+		if i > 0 && i%gateFailLimit == 0 {
+			now = now.Add(gateFailWindow)
+		}
+		if _, limited, _ := g.tryUnlock("203.0.113.9", "wrong-guess"); limited {
+			t.Fatalf("guess %d limited early", i)
+		}
+	}
+	now = now.Add(gateFailWindow)
+	if ok, limited, wait := g.tryUnlock("203.0.113.9", testAccessPassword); ok || !limited || wait <= gateFailWindow {
+		t.Fatalf("attacker after its daily cap: ok=%v limited=%v wait=%v", ok, limited, wait)
+	}
+	// The owner, elsewhere, is not locked out.
+	if ok, limited, _ := g.tryUnlock("198.51.100.7", testAccessPassword); !ok || limited {
+		t.Fatalf("owner refused: ok=%v limited=%v", ok, limited)
+	}
+
+	// A rotating guesser meets the global ceiling within the minute...
+	now = now.Add(gateFailWindow)
+	for i := 0; i < gateGlobalFailLimit; i++ {
+		if _, limited, _ := g.tryUnlock(fmt.Sprintf("192.0.2.%d", i), "wrong-guess"); limited {
+			t.Fatalf("rotating guess %d limited early", i)
+		}
+	}
+	ok, limited, wait := g.tryUnlock("198.51.100.7", testAccessPassword)
+	if ok || !limited || wait > gateFailWindow {
+		t.Fatalf("global ceiling: ok=%v limited=%v wait=%v", ok, limited, wait)
+	}
+	// ...which lasts a minute, not a day.
+	now = now.Add(gateFailWindow)
+	if ok, limited, _ := g.tryUnlock("198.51.100.7", testAccessPassword); !ok || limited {
+		t.Fatalf("owner still refused after a minute: ok=%v limited=%v", ok, limited)
+	}
+}
+
+// TestGateLimitIsAtomic: parallel wrong guesses from one address cannot all
+// slip past the check before any is counted.
+func TestGateLimitIsAtomic(t *testing.T) {
+	g := newAccessGate(testAccessPassword, nil)
+	var wg sync.WaitGroup
+	var seen atomic.Int32
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, limited, _ := g.tryUnlock("203.0.113.9", "wrong-guess"); !limited {
+				seen.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := seen.Load(); n != gateFailLimit {
+		t.Fatalf("%d guesses were compared, want %d", n, gateFailLimit)
+	}
 }
 
 func TestGateRateLimit(t *testing.T) {

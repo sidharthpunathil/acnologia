@@ -251,8 +251,11 @@ any client you would not hand a key to.
   `/robots.txt`, the app token routes and the CLI sign in's create and poll
   calls stay open. A valid admin API token passes the lock on its own. The `acnologia_gate`
   cookie is an issue time plus an HMAC keyed by the master key and the
-  password, refused after 30 days; wrong guesses are limited to 5 a minute
-  and 50 a day globally. See [configuration](configuration.md#access-password).
+  password, refused after 30 days. Wrong guesses, on the lock screen or in
+  `X-Acnologia-Access`, are limited to 5 a minute and 50 a day per client
+  address, under a global ceiling of 20 a minute, so a flood makes the owner
+  wait a minute at most unless it comes from the owner's own address. See
+  [configuration](configuration.md#access-password).
 - **No indexing**: every response carries `X-Robots-Tag: noindex, nofollow,
   noarchive, nosnippet` and `/robots.txt` disallows everything.
 - **CSRF**: every mutating dashboard call must send `Content-Type:

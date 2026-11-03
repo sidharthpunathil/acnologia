@@ -53,16 +53,19 @@ const (
 	accessHeader = "X-Acnologia-Access"
 )
 
-// Wrong unlock attempts are limited globally, not per address: behind
-// Railway's proxy the address is whatever X-Forwarded-For claims, so a per
-// address limit is one header away from no limit. The cost is that a guesser
-// can make the owner wait; scripts that send X-Acnologia-Access are never
-// limited. 5 a minute still allows 7,200 a day, so a daily cap bounds it.
+// Wrong passwords are limited per client address (clientKey), on the lock
+// screen and in X-Acnologia-Access alike, so the header is no way around the
+// limit: 5 a minute and 50 a day from one address. A global ceiling of 20
+// wrong guesses a minute bounds a guesser that rotates addresses (or spoofs
+// X-Forwarded-For where a proxy passes it through). It is a minute, not a
+// day, so a flood can make the owner wait but never lock them out until
+// tomorrow. A right password never counts, and an admin API token is never
+// limited here, so the acn CLI keeps working during a flood.
 const (
-	gateFailLimit   = 5
-	gateFailWindow  = time.Minute
-	gateDailyLimit  = 50
-	gateDailyWindow = 24 * time.Hour
+	gateFailLimit       = 5
+	gateFailWindow      = time.Minute
+	gateDailyLimit      = 50
+	gateGlobalFailLimit = 20
 )
 
 type accessGate struct {
@@ -74,18 +77,17 @@ type accessGate struct {
 	// ttl is how long an unlocked browser stays unlocked.
 	ttl time.Duration
 
-	mu          sync.Mutex
-	failures    int
-	since       time.Time
-	dayFailures int
-	daySince    time.Time
-	now         func() time.Time
+	// mu makes a guess's check, compare and count one step, so a burst of
+	// parallel guesses cannot all slip past the check before any counts.
+	mu    sync.Mutex
+	fails *clientLimit
+	now   func() time.Time
 }
 
 // newAccessGate returns the gate for password; an empty password turns it
 // off. The MAC key mixes in the master key when there is one.
 func newAccessGate(password string, box *crypto.Box) *accessGate {
-	g := &accessGate{now: time.Now, ttl: gateTTL}
+	g := &accessGate{now: time.Now, ttl: gateTTL, fails: newClientLimit(gateFailLimit, gateDailyLimit, gateGlobalFailLimit, 0)}
 	if password == "" {
 		return g
 	}
@@ -156,7 +158,9 @@ func (g *accessGate) matches(secret string) bool {
 }
 
 // authorised reports whether r may pass: no password is set, it carries a
-// valid gate cookie, or it carries the password in X-Acnologia-Access.
+// valid gate cookie, or it carries the password in X-Acnologia-Access. The
+// header is a guess like a lock screen one: it goes through tryUnlock, so a
+// wrong value counts and a limited client is refused even with the right one.
 func (g *accessGate) authorised(r *http.Request) bool {
 	if !g.on() {
 		return true
@@ -165,7 +169,8 @@ func (g *accessGate) authorised(r *http.Request) bool {
 		return true
 	}
 	if v := r.Header.Get(accessHeader); v != "" {
-		return g.matches(v)
+		ok, _, _ := g.tryUnlock(clientKey(r), v)
+		return ok
 	}
 	return false
 }
@@ -177,32 +182,23 @@ func (s *Server) gatePasses(r *http.Request) bool {
 	return s.gate.authorised(r) || (s.gate.on() && s.validAdminToken(r))
 }
 
-// tryUnlock checks one lock screen guess against the limits. Checking and
-// counting happen under one lock, so a burst of parallel guesses cannot all
-// slip past the check before any is counted. limited means the guess was
-// refused unseen, so a locked out guesser learns nothing even when it is
-// right; wait is how long until another guess is taken.
-func (g *accessGate) tryUnlock(secret string) (ok, limited bool, wait time.Duration) {
+// tryUnlock checks one guess from client, from the lock screen or the
+// header, against the limits. Checking, comparing and counting happen under
+// one lock, so a burst of parallel guesses cannot all slip past the check
+// before any is counted. limited means the guess was refused unseen, so a
+// limited guesser learns nothing even when it is right; wait is how long
+// until another guess is taken.
+func (g *accessGate) tryUnlock(client, secret string) (ok, limited bool, wait time.Duration) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
-	if now.Sub(g.since) >= gateFailWindow {
-		g.failures, g.since = 0, now
-	}
-	if now.Sub(g.daySince) >= gateDailyWindow {
-		g.dayFailures, g.daySince = 0, now
-	}
-	if g.dayFailures >= gateDailyLimit {
-		return false, true, g.daySince.Add(gateDailyWindow).Sub(now)
-	}
-	if g.failures >= gateFailLimit {
-		return false, true, g.since.Add(gateFailWindow).Sub(now)
+	if free, wait := g.fails.ok(client, now); !free {
+		return false, true, wait
 	}
 	if g.matches(secret) {
 		return true, false, 0
 	}
-	g.failures++
-	g.dayFailures++
+	g.fails.take(client, now)
 	return false, false, 0
 }
 
@@ -312,13 +308,13 @@ func (s *Server) gateUnlock(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"required": false, "locked": false})
 		return
 	}
-	ok, limited, wait := s.gate.tryUnlock(body.Password)
+	ok, limited, wait := s.gate.tryUnlock(clientKey(r), body.Password)
 	if limited {
 		secs := max(1, int(wait.Round(time.Second).Seconds()))
 		w.Header().Set("Retry-After", strconv.Itoa(secs))
 		msg := "Too many wrong passwords. Wait a minute and try again."
 		if wait > gateFailWindow {
-			msg = "Too many wrong passwords today. Try again tomorrow, or restart the server."
+			msg = "Too many wrong passwords from this network today. Try again tomorrow, from another network, or restart the server."
 		}
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
 			"error":           apiError{Code: "too_many_attempts", Message: msg},

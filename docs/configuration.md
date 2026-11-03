@@ -195,11 +195,18 @@ each person still signs in with an email and password after unlocking.
   Changing the password signs every browser out. "Lock this browser" in the
   account menu calls `POST /api/gate/lock`. `GET /api/gate` answers
   `{"locked": bool, "required": bool, "password_only": bool}`.
-- **Wrong guesses:** 5 a minute and 50 a day across all clients, then `429`
-  with `retry_after_sec`. The limit is global, not per IP, because a client
-  behind a proxy can claim any `X-Forwarded-For`.
+- **Wrong guesses:** 5 a minute and 50 a day per client address (an IPv6
+  address counts by its /64), then `429` with `retry_after_sec`. A wrong
+  `X-Acnologia-Access` header counts the same as a wrong lock screen guess,
+  and a limited address is refused even with the right password. Across all
+  addresses, 20 wrong guesses a minute pause guessing for the rest of that
+  minute, which bounds a guesser that rotates addresses without locking the
+  owner out for a day. Behind a reverse proxy set
+  `ACNOLOGIA_TRUST_PROXY_HEADERS=true`, or every client shares the proxy's
+  address and so one budget.
 - **Scripts:** send the password in the `X-Acnologia-Access` header on every
-  dashboard call (it is compared in constant time and never rate limited):
+  dashboard call (it is compared in constant time; the right value never
+  counts against the limit):
 
   ```sh
   curl -H "X-Acnologia-Access: $ACNOLOGIA_ACCESS_PASSWORD" \

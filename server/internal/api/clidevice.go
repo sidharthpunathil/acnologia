@@ -75,6 +75,7 @@ type deviceRequest struct {
 }
 
 // windowLimit is a fixed window counter with a per minute and a daily cap.
+// A perDay of 0 means no daily cap.
 type windowLimit struct {
 	perMin, perDay  int
 	n, day          int
@@ -100,7 +101,28 @@ func (l *windowLimit) ok(now time.Time) bool {
 	if now.Sub(l.daySince) >= 24*time.Hour {
 		l.day, l.daySince = 0, now
 	}
-	return l.n < l.perMin && l.day < l.perDay
+	return l.n < l.perMin && (l.perDay <= 0 || l.day < l.perDay)
+}
+
+// wait is how long until the exhausted window resets, 0 when none is.
+// Call it after ok.
+func (l *windowLimit) wait(now time.Time) time.Duration {
+	if l.perDay > 0 && l.day >= l.perDay {
+		return l.daySince.Add(24 * time.Hour).Sub(now)
+	}
+	if l.n >= l.perMin {
+		return l.since.Add(time.Minute).Sub(now)
+	}
+	return 0
+}
+
+// idle reports whether every window has passed, so the counter holds
+// nothing worth keeping.
+func (l *windowLimit) idle(now time.Time) bool {
+	if now.Sub(l.since) < time.Minute {
+		return false
+	}
+	return l.perDay <= 0 || now.Sub(l.daySince) >= 24*time.Hour
 }
 
 type deviceStore struct {
