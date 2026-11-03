@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AcnKeyLease, AcnProxy } from "@/components/foundations/icons/acn";
 import { moreSnippets, type MoreLang } from "./snippets-more";
 import { Link } from "react-router-dom";
-import type { ProviderSpec, Service } from "../../lib/types";
+import type { Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
 import { docProviderSlug } from "../../lib/peerProviders";
 import { CodeBlock } from "@/components/acn";
@@ -42,7 +42,8 @@ function savedLang(): Lang {
   return "curl";
 }
 
-const TOKEN = "acn_...";
+const PLACEHOLDER = "acn_...";
+const TOKEN = PLACEHOLDER;
 
 /*
  * Every value below can come from the server (provider spec, service config),
@@ -73,9 +74,9 @@ const tpl = (v: string) => v.replace(/[\\`]/g, (c) => `\\${c}`).replace(/\$\{/g,
 const tsKey = (k: string) => (/^[A-Za-z_$][\w$]*$/.test(k) ? k : lit(k));
 
 /** A representative upstream call, taken from the provider spec, so snippets are runnable. */
-function example(_s: Service, spec?: ProviderSpec): { path: string; params: [string, string][] } {
+function example(spec?: SpecExamples): { path: string; params: [string, string][] } {
   // Prefer the provider's own first GET example so new providers get runnable snippets too.
-  const ex = spec?.examples?.find((e) => e.method === "GET") ?? null;
+  const ex = spec?.examples?.find((e) => (e.method ?? "GET").toUpperCase() === "GET") ?? null;
   if (ex) return { path: ex.path || "/", params: Object.entries(ex.query ?? {}) };
   return { path: "/", params: [] };
 }
@@ -93,7 +94,15 @@ function tsObj(params: [string, string][]): string {
 }
 
 /** How the leased secret must be attached upstream, per language. */
-function authFor(s: Service) {
+/** The parts of a service the snippets read. */
+type SnippetService = Pick<Service, "slug" | "base_url" | "auth_type" | "auth_name">;
+
+/** The parts of a provider spec the snippets read: its example calls. */
+interface SpecExamples {
+  examples?: { method?: string; path?: string; query?: Record<string, string> | null }[] | null;
+}
+
+function authFor(s: SnippetService) {
   const name = s.auth_name || (s.auth_type === "query" ? "api_key" : "Authorization");
   return {
     name,
@@ -103,8 +112,8 @@ function authFor(s: Service) {
   };
 }
 
-function snippets(s: Service, host: string, spec?: ProviderSpec): Record<Mode, Record<Lang, string>> {
-  const ex = example(s, spec);
+function snippets(s: SnippetService, host: string, spec?: SpecExamples, TOKEN = PLACEHOLDER): Record<Mode, Record<Lang, string>> {
+  const ex = example(spec);
   const slug = s.slug;
   const a = authFor(s);
   const q = qsOf(ex.params);
@@ -252,6 +261,21 @@ func main() {
 }`,
     },
   };
+}
+
+/**
+ * Proxy mode snippets for one service, for pages outside the dashboard (the
+ * claim page). `token` fills the curl and Python examples; TypeScript reads
+ * ACNOLOGIA_TOKEN from the environment.
+ */
+export function proxySnippets(
+  s: SnippetService,
+  host: string,
+  examples: SpecExamples["examples"],
+  token: string,
+): Record<"curl" | "python" | "typescript", string> {
+  const all = snippets(s, host, { examples }, token).proxy;
+  return { curl: all.curl, python: all.python, typescript: all.typescript };
 }
 
 export function IntegratePanel({ service }: { service: Service }) {

@@ -142,6 +142,17 @@ export interface Key {
    * (share.handover.keys).
    */
   handed_over?: KeyHandover[] | null;
+  /** People who were shown this key through a reveal share. Read from the shares list when missing. */
+  revealed_to?: KeyReveal[] | null;
+}
+
+/** One reveal share that showed this key to a person. */
+export interface KeyReveal {
+  share_id: string;
+  share_name?: string;
+  /** The person's name or label. */
+  label?: string;
+  revealed_at?: string | null;
 }
 
 /** One share that handed this key to another server. */

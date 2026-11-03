@@ -24,7 +24,7 @@ import { Pagination } from "@/components/base/pagination/pagination";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
 import { cx } from "@/utils/cx";
-import { HandoverChip, useLoadHandovers } from "../../components/HandoverChip";
+import { ExposureChips, useLoadHandovers } from "../../components/HandoverChip";
 import { withLiveStatus } from "./keyUtil";
 import { ActionIcon, CARD } from "./parts";
 
@@ -367,7 +367,7 @@ export function KeysTable({
                       <KeyBadges k={k} apps={apps} />
                     </span>
                   </div>
-                  <HandoverChip k={k} className="mt-1" />
+                  <ExposureChips k={k} className="mt-1" />
                   <AccountLine k={k} className="mt-0.5" />
                   <div className="mt-0.5 truncate font-mono text-caption-1-regular text-text-secondary">
                     {k.hint}
@@ -414,7 +414,7 @@ export function KeysTable({
                   <span className="wrap-anywhere min-w-0 text-body-medium text-text-primary">{k.label || "Untitled"}</span>
                   <KeyBadges k={k} apps={apps} />
                 </div>
-                <HandoverChip k={k} className="mt-1" />
+                <ExposureChips k={k} className="mt-1" />
                 <AccountLine k={k} wrap className="mt-0.5" />
                 <div className="mt-0.5 font-mono text-caption-1-regular text-text-secondary">
                   {k.hint}

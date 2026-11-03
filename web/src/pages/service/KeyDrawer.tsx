@@ -29,7 +29,7 @@ import { InUse, pillState } from "./KeysTable";
 import { KeyEditModal } from "./KeyEditModal";
 import { RevealModal } from "./RevealModal";
 import { withLiveStatus } from "./keyUtil";
-import { HandoverChip, useLoadHandovers } from "../../components/HandoverChip";
+import { ExposureChips, useLoadHandovers } from "../../components/HandoverChip";
 import { Callout } from "@/components/acn";
 
 type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
@@ -208,7 +208,7 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
                   hidden
                 </Chip>
               )}
-              <HandoverChip k={k} className="py-0.5" />
+              <ExposureChips k={k} className="py-0.5" />
             </div>
           </DrawerHeader>
         ) : (

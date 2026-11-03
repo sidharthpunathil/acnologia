@@ -29,8 +29,25 @@ export interface KeyScope {
 
 export type ShareStatus = "pending" | "active" | "paused" | "revoked" | "expired";
 
-/** proxy: requests go through this server. handover: the keys go to the other server. */
-export type ShareMode = "proxy" | "handover";
+/**
+ * proxy: requests go through this server. handover: the keys go to the other
+ * server. reveal: a person sees the scoped keys once on the claim page.
+ */
+export type ShareMode = "proxy" | "handover" | "reveal";
+
+/** Who a share is for: another Acnologia server, or a person with a claim link. */
+export type ShareRecipient = "server" | "person";
+
+/** The modes a person share can have. */
+export type PersonMode = "proxy" | "reveal";
+
+/** A key shown to a person on the claim page (no secret). */
+export interface RevealedKey {
+  key_id: number;
+  service: string;
+  label: string;
+  revealed_at?: string | null;
+}
 
 /** What happens when ends_at passes: expire (can be extended) or revoke for good. */
 export type EndAction = "expire" | "revoke";
@@ -112,8 +129,18 @@ export interface Share {
   ends_at?: string | null;
   end_action?: EndAction;
   handover?: { keys?: HandoverKey[] | null; last_revoke_push?: RevokePush | null } | null;
-  /** Set once a handover share is revoked. */
+  /** Set once a handover or reveal share ends. */
   rotate_checklist?: RotateItem[] | null;
+  // Sharing with people. Optional: a missing recipient means a server share.
+  recipient?: ShareRecipient;
+  /** The person's name, for person shares. */
+  label?: string;
+  /** Only a label; nothing is ever sent to it. */
+  email?: string;
+  claimed_at?: string | null;
+  claim_expires_at?: string | null;
+  /** Reveal shares: the keys the person was shown (no secrets). */
+  revealed_keys?: RevealedKey[] | null;
 }
 
 export interface ShareInput {
@@ -132,6 +159,11 @@ export interface ShareInput {
   /** RFC 3339, or "" for never. */
   ends_at?: string;
   end_action?: EndAction;
+  recipient?: ShareRecipient;
+  label?: string;
+  email?: string;
+  /** Person shares: how long the claim link works. Sent with invite_valid, which the server may read instead. */
+  claim_valid?: InviteValidity;
 }
 
 export type InviteValidity = "1h" | "24h" | "7d";
@@ -196,7 +228,8 @@ export const sharing = {
 
   listShares: () => request<{ shares: Share[] }>("GET", "/api/admin/shares"),
   getShare: (id: string) => request<Share>("GET", `/api/admin/shares/${id}`),
-  createShare: (body: ShareInput) => request<{ share: Share; invite: string }>("POST", "/api/admin/shares", body),
+  /** Server shares answer with `invite`, person shares with `claim_url`. */
+  createShare: (body: ShareInput) => request<{ share: Share; invite?: string; claim_url?: string }>("POST", "/api/admin/shares", body),
   updateShare: (id: string, body: ShareInput) => request<Share>("PATCH", `/api/admin/shares/${id}`, body),
   pauseShare: (id: string) => request<Share>("POST", `/api/admin/shares/${id}/pause`),
   resumeShare: (id: string) => request<Share>("POST", `/api/admin/shares/${id}/resume`),
@@ -205,6 +238,9 @@ export const sharing = {
   extendShare: (id: string, ends_at: string) => request<Share>("POST", `/api/admin/shares/${id}/extend`, { ends_at }),
   newInvite: (id: string, invite_valid: InviteValidity) =>
     request<{ share: Share; invite: string }>("POST", `/api/admin/shares/${id}/invite`, { invite_valid }),
+  /** A new claim link for a person share that is not claimed yet. The old link stops working. */
+  newClaimLink: (id: string, valid: InviteValidity) =>
+    request<{ share?: Share; claim_url: string; claim_expires_at?: string | null }>("POST", `/api/admin/shares/${id}/claim-link`, { valid }),
 
   listPeers: () => request<{ peers: PeerLink[] }>("GET", "/api/admin/peers"),
   previewPeer: (invite: string, trusted: boolean) => request<PeerPreview>("POST", "/api/admin/peers/preview", { invite, trusted }),
@@ -215,7 +251,20 @@ export const sharing = {
 };
 
 export function shareMode(s: { mode?: ShareMode | null }): ShareMode {
-  return s.mode === "handover" ? "handover" : "proxy";
+  return s.mode === "handover" || s.mode === "reveal" ? s.mode : "proxy";
+}
+
+export function shareRecipient(s: { recipient?: ShareRecipient | null }): ShareRecipient {
+  return s.recipient === "person" ? "person" : "server";
+}
+
+/** The person's name on a person share, falling back to the share name. */
+export function personLabel(s: Share): string {
+  return s.label?.trim() || s.name || "this person";
+}
+
+export function revealedKeys(s: Share): RevealedKey[] {
+  return s.revealed_keys ?? [];
 }
 
 /** When the share ends: ends_at, or the older expires_at. */
@@ -255,9 +304,10 @@ export function linkHandoverKeys(l: PeerLink): PeerHandoverKey[] {
   return l.handover?.keys ?? l.handover_keys ?? [];
 }
 
-/** The rotate checklist after revoke, or else every key that was handed over. */
+/** The rotate checklist after revoke, or else every key that was handed over or revealed. */
 export function rotateChecklist(s: Share): RotateItem[] {
   if (s.rotate_checklist?.length) return s.rotate_checklist;
+  if (shareMode(s) === "reveal") return revealedKeys(s).map((k) => ({ key_id: k.key_id, service: k.service, label: k.label }));
   return handoverKeys(s).map((k) => ({ key_id: k.key_id, service: k.service, label: k.label }));
 }
 

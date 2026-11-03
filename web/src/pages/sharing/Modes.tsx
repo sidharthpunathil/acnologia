@@ -1,11 +1,16 @@
 // Share modes: the proxy or handover choice, the renewal window, the handed
 // over keys (owner and receiver side) and the revoke flow for handover.
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { RiArrowDownSLine, RiExternalLinkLine, RiKey2Line, RiShieldKeyholeLine } from "@remixicon/react";
+import { RiArrowDownSLine, RiExternalLinkLine, RiEyeLine, RiKey2Line, RiServerLine, RiShieldKeyholeLine, RiUserLine } from "@remixicon/react";
 import {
   LEASES,
   handoverKeys,
+  personLabel,
+  revealedKeys,
   rotateChecklist,
+  shareMode,
+  type PersonMode,
+  type ShareRecipient,
   type HandoverKey,
   type Lease,
   type PeerHandoverKey,
@@ -40,14 +45,155 @@ const MODE_CARDS: { id: ShareMode; title: string; body: string; icon: typeof RiS
   },
 ];
 
-export const MODE_LABEL: Record<ShareMode, string> = { proxy: "Proxy", handover: "Handover" };
+export const MODE_LABEL: Record<ShareMode, string> = { proxy: "Proxy", handover: "Handover", reveal: "Keys shown" };
+
+const MODE_ICON: Record<ShareMode, typeof RiKey2Line> = { proxy: RiShieldKeyholeLine, handover: RiKey2Line, reveal: RiEyeLine };
 
 export function ModeChip({ mode }: { mode: ShareMode }) {
+  const Icon = MODE_ICON[mode];
   return (
-    <Chip variant="caption" color={mode === "handover" ? "orange" : "neutral"} className="gap-1">
-      {mode === "handover" ? <RiKey2Line className="size-3" aria-hidden /> : <RiShieldKeyholeLine className="size-3" aria-hidden />}
+    <Chip variant="caption" color={mode === "proxy" ? "neutral" : "orange"} className="gap-1">
+      <Icon className="size-3" aria-hidden />
       {MODE_LABEL[mode]}
     </Chip>
+  );
+}
+
+// ---- recipient and person modes ----
+
+const RECIPIENT_CARDS: { id: ShareRecipient; title: string; body: string; icon: typeof RiServerLine }[] = [
+  { id: "server", title: "Another server", body: "Someone who runs their own Acnologia. They redeem an invite on their server.", icon: RiServerLine },
+  { id: "person", title: "A person", body: "Anyone with a browser. They open a one time link and get a personal token, or see the keys once.", icon: RiUserLine },
+];
+
+/** "Share with": another server or a person. Fixed once the share exists. */
+export function RecipientPicker({ value, onChange }: { value: ShareRecipient; onChange: (r: ShareRecipient) => void }) {
+  const labelId = useId();
+  return (
+    <div className="flex flex-col gap-2">
+      <div id={labelId} className="text-body-medium text-text-primary">
+        Share with
+      </div>
+      <RadioGroup aria-labelledby={labelId} value={value} onChange={(v) => onChange(v as ShareRecipient)} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {RECIPIENT_CARDS.map((c) => (
+          <RadioCard
+            key={c.id}
+            value={c.id}
+            title={
+              <span className="flex items-center gap-2 whitespace-normal">
+                <c.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+                {c.title}
+              </span>
+            }
+            description={<span className="mt-1 block whitespace-normal text-body-2-regular">{c.body}</span>}
+            className={({ isSelected }) => cx("items-start rounded-3xl p-4", isSelected && "border-accent-line ring-1 ring-accent-line")}
+          />
+        ))}
+      </RadioGroup>
+    </div>
+  );
+}
+
+const PERSON_MODE_CARDS: { id: PersonMode; title: string; body: string; icon: typeof RiShieldKeyholeLine }[] = [
+  { id: "proxy", title: "Through this server", body: "They get a personal token. They never see your keys. Revoke is instant.", icon: RiShieldKeyholeLine },
+  { id: "reveal", title: "Show them the keys", body: "They see the keys once. Revoke cannot take them back; rotate keys when the share ends.", icon: RiEyeLine },
+];
+
+export const PERSON_MODE_LABEL: Record<PersonMode, string> = { proxy: "Through this server", reveal: "Keys shown" };
+
+/** How a person uses the share: a token through this server, or the keys themselves. */
+export function PersonModePicker({ value, onChange, readOnly }: { value: PersonMode; onChange: (m: PersonMode) => void; readOnly?: boolean }) {
+  const labelId = useId();
+  const hintId = useId();
+  return (
+    <div className="flex flex-col gap-2">
+      <div id={labelId} className="text-body-medium text-text-primary">
+        How they use your services
+      </div>
+      <RadioGroup
+        aria-labelledby={labelId}
+        aria-describedby={readOnly ? hintId : undefined}
+        value={value}
+        onChange={(v) => onChange(v as PersonMode)}
+        isDisabled={readOnly}
+        className="grid grid-cols-1 gap-3"
+      >
+        {PERSON_MODE_CARDS.map((m) => (
+          <RadioCard
+            key={m.id}
+            value={m.id}
+            title={
+              <span className="flex items-center gap-2 whitespace-normal">
+                <m.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+                {m.title}
+                {m.id === "proxy" && <span className="text-caption-1-regular text-text-tertiary">(recommended)</span>}
+              </span>
+            }
+            description={<span className="mt-1 block whitespace-normal text-body-2-regular">{m.body}</span>}
+            className={({ isSelected }) => cx("items-start rounded-3xl p-4", isSelected && "border-accent-line ring-1 ring-accent-line", readOnly && isSelected && "opacity-100")}
+          />
+        ))}
+      </RadioGroup>
+      {readOnly && (
+        <p id={hintId} className="text-caption-1-regular text-text-secondary">
+          The mode is fixed once the link is claimed. Create a new share to change it.
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function RevealWarning({ hiddenExcluded }: { hiddenExcluded: boolean }) {
+  return (
+    <Callout tone="warning" title="A key they have seen cannot be taken back">
+      Revoke and the timer stop the share, but the person keeps any key they copied. Rotate the keys at the provider when the share ends.
+      {hiddenExcluded && " Hidden keys are never shown, even if they are in scope."}
+    </Callout>
+  );
+}
+
+// ---- revealed keys (owner) ----
+
+/** "Keys shown to <label>", collapsed by default. */
+export function RevealedKeysList({ share, label }: { share: Share; label: string }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  const keys = revealedKeys(share);
+  return (
+    <div className="mt-3">
+      <Button
+        size="small"
+        variant="ghost"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((o) => !o)}
+        trailingIcon={RiArrowDownSLine}
+        className={cx("-ms-2 [&_svg:last-child]:transition-transform", open && "[&_svg:last-child]:rotate-180")}
+      >
+        Keys shown to {label} ({keys.length})
+      </Button>
+      {open && (
+        <div id={panelId} className="mt-2">
+          {keys.length === 0 ? (
+            <p className="text-caption-1-regular text-text-secondary">
+              {share.claimed_at ? "No keys were shown." : `The keys in scope are shown to ${label} once, when they open the link.`}
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {keys.map((k) => (
+                <li key={k.key_id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-xl bg-background-secondary-default px-3 py-2 text-caption-1-regular">
+                  <span className="min-w-0 wrap-anywhere text-text-primary">
+                    {k.label || `Key ${k.key_id}`}
+                    <span className="font-mono text-text-secondary"> · {k.service}</span>
+                  </span>
+                  {k.revealed_at && <span className="text-text-secondary">shown {dateTime(k.revealed_at)}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -302,14 +448,22 @@ export function RevokeResultModal({ share, deadline, onClose }: { share: Share |
     })
     .join("\n");
   const done = items.filter((it) => rotated.includes(it.key_id)).length;
+  // A reveal share has no copy to wipe: the person saw the keys, so rotating is the only way back.
+  const reveal = !!share && shareMode(share) === "reveal";
+  const who = share ? personLabel(share) : "";
+  const ended = share?.status === "expired" ? "Ended" : "Revoked";
 
   return (
     <Modal
       open={!!share}
       onClose={onClose}
       wide
-      title={`Revoked ${share?.name ?? ""}`}
-      description="The share is dead on this server. Here is what happened to the keys the other server held."
+      title={`${reveal ? ended : "Revoked"} ${share?.name ?? ""}`}
+      description={
+        reveal
+          ? `The share no longer works. ${who} may still have the keys they were shown, so rotate them at the provider.`
+          : "The share is dead on this server. Here is what happened to the keys the other server held."
+      }
       footer={
         <Button variant="primary" onClick={onClose}>
           Done
@@ -318,19 +472,23 @@ export function RevokeResultModal({ share, deadline, onClose }: { share: Share |
     >
       {share && (
         <div className="flex flex-col gap-4">
-          <PushOutcome push={share.handover?.last_revoke_push} deadline={deadline} />
+          {!reveal && <PushOutcome push={share.handover?.last_revoke_push} deadline={deadline} />}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-body-medium text-text-primary">Keys to rotate</div>
                 <p className="text-caption-1-regular text-text-secondary">
-                  Rotate each key at the provider if you do not trust the other server. Ticks are saved in this browser only.
+                  {reveal
+                    ? `Rotate each key ${who} saw at the provider. Ticks are saved in this browser only.`
+                    : "Rotate each key at the provider if you do not trust the other server. Ticks are saved in this browser only."}
                 </p>
               </div>
               {items.length > 0 && <CopyButton text={list} label="Copy list" />}
             </div>
             {items.length === 0 ? (
-              <p className="mt-3 text-caption-1-regular text-text-secondary">No keys were handed over, so there is nothing to rotate.</p>
+              <p className="mt-3 text-caption-1-regular text-text-secondary">
+                {reveal ? "No keys were shown, so there is nothing to rotate." : "No keys were handed over, so there is nothing to rotate."}
+              </p>
             ) : (
               <>
                 <p className="mt-2 text-caption-1-medium text-text-primary" aria-live="polite">
