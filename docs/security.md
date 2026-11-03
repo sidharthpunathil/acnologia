@@ -54,14 +54,20 @@ remains.
 
 Each app has its own token (stored as a hash), a list of services it may use
 (empty means all) and a mode: `proxy`, `lease` or `both`. An app learns
-whether a service has a key available, never how many keys exist.
+whether a service has a key available, never how many keys exist. Renewing a
+lease checks the app's access again, so an app whose mode, services, hidden
+key grant or share scope changed cannot keep a key (or an exclusive hold on
+it) by renewing; the lease ends. A lease that rotates through a report is a
+new lease and obeys the app's request and budget limits.
 
 Each key can carry flags:
 
 - `hidden`: visible only to superadmins, and handed only to apps a superadmin
   cleared with `lease_hidden` (below).
 - `restricted`: serves only the apps you name on the key.
-- `disabled`: stays stored but is never handed out.
+- `disabled`: stays stored but is never handed out. Only a person moves a key
+  out of it (or out of `banned`): proxy results, health checks and app
+  reports never change its status.
 - `backup` tier: serves only when every primary key is cooling, busy or out
   of quota.
 

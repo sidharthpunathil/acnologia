@@ -257,6 +257,21 @@ func (p *Pool) scopedKeys(ctx context.Context, svc *store.Service, appID int64, 
 	return res.IDs, nil
 }
 
+// MayUse reports whether the app may still be handed the key on the
+// service, by the same rules Pick applies: the key's service, its app
+// restriction, hidden keys, and the app's share scope.
+func (p *Pool) MayUse(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, k *store.Key) bool {
+	allowHidden = allowHidden && svc.TargetTrusted
+	if k.ServiceID != svc.ID || !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || k.IsHandedOver() {
+		return false
+	}
+	scoped, err := p.scopedKeys(ctx, svc, appID, allowHidden)
+	if err != nil {
+		return false
+	}
+	return scoped == nil || scoped[k.ID]
+}
+
 // StoreKeyScope is the KeyScope hook backed by the store's share scopes.
 func StoreKeyScope(st *store.Store) func(context.Context, int64, *store.Service) (*store.KeyScope, error) {
 	return func(ctx context.Context, appID int64, svc *store.Service) (*store.KeyScope, error) {
