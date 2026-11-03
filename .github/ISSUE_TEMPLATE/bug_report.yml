@@ -1,0 +1,58 @@
+name: Bug report
+description: Something does not work the way the docs say it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For a security issue, do not use this form: see SECURITY.md and report it privately.
+        Never paste a real API key, token, invite or claim link here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a service ...
+        2. Create an app ...
+        3. Call /proxy/...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown in Settings, or run `acnologia version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run it
+      options:
+        - Docker
+        - Release binary
+        - Built from source
+        - Hosted platform
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Remove any secrets first. Acnologia redacts keys it knows about, but check anyway.
+      render: shell

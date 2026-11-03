@@ -4,6 +4,14 @@
 
 Share your API keys without giving them away.
 
+<p>
+  <a href="https://github.com/sidharthpunathil/acnologia/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sidharthpunathil/acnologia/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/sidharthpunathil/acnologia/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/sidharthpunathil/acnologia?sort=semver"></a>
+  <img alt="Go 1.26" src="https://img.shields.io/badge/go-1.26-00ADD8">
+  <img alt="Linux, macOS and Windows" src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-555">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-6b46c1">
+</p>
+
 API keys get passed around in `.env` files, chat messages and CI settings.
 Once a key is out, you cannot take it back, you cannot see who is using it,
 and the only way to stop them is to rotate it for everyone.
@@ -180,6 +188,13 @@ there are [SDKs](sdk/README.md) for the same twelve languages.
 - [Provider specs](docs/providers.md): the spec format, offers, building one with AI
 - [Architecture](docs/architecture.md) and [Development](docs/development.md)
 - For agents: [llms.txt](docs/llms.txt) and [llms-full.txt](docs/llms-full.txt), also served at `/llms.txt` and `/llms-full.txt`
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+to set up a dev environment and run the tests, and report security problems
+privately as described in [SECURITY.md](SECURITY.md). If Acnologia is useful
+to you, a star helps other people find it.
 
 ## License
 
