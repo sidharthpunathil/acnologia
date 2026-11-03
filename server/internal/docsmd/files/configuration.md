@@ -17,6 +17,7 @@ environment win over the file. [`.env.example`](../.env.example) lists them all.
 | `ACNOLOGIA_ACCESS_PASSWORD` | empty | Locks the whole site behind one shared password, in front of the user accounts. At least 12 characters. Unset, nothing changes. See [Access password](#access-password). |
 | `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `false` | When `true`, a public deploy can never come up unlocked: a set password must be at least 12 characters, and a missing one is generated into `access-password` in the data dir. |
 | `ACNOLOGIA_ACCESS_SIGNS_IN` | `true` | With an access password, that password is the whole login: unlocking signs the browser in as the owner (the first superadmin), with no email form, and signing out locks it again. Set `false` to keep separate accounts behind the lock. |
+| `ACNOLOGIA_ACCESS_TTL` | `30d` | How long a browser stays unlocked before the lock screen asks again. Days (`7`, `7d`, `0.5d`) or a Go duration (`12h`). The lock screen states the value. A shorter value also cuts off browsers unlocked longer ago; zero, negative or malformed values fall back to 30 days. |
 | `ACNOLOGIA_BOOTSTRAP_EMAIL`, `ACNOLOGIA_BOOTSTRAP_PASSWORD` | empty | Create the first superadmin on boot instead of the setup screen. Used only while there are no users. |
 | `ACNOLOGIA_HEALTH_INTERVAL` | `6h` | How often each key is re-checked with the provider. `0` or `off` disables background checks. Exhausted keys are re-checked hourly. |
 | `ACNOLOGIA_EVENT_RETENTION_DAYS` | `30` | How long request events are kept. `0` or less keeps them forever. |

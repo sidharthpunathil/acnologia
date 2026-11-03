@@ -37,6 +37,8 @@ func (s *Server) settingsSummary(w http.ResponseWriter, r *http.Request) {
 		secret("ACNOLOGIA_ACCESS_PASSWORD", isSet("ACNOLOGIA_ACCESS_PASSWORD")),
 		plain("ACNOLOGIA_REQUIRE_ACCESS_PASSWORD", b(c.RequireAccessPassword)),
 		plain("ACNOLOGIA_ACCESS_SIGNS_IN", b(c.AccessSignsIn)),
+		// In seconds; the page words it ("30 days").
+		plain("ACNOLOGIA_ACCESS_TTL", itoa(int(s.gate.ttl.Seconds()))),
 		secret("ACNOLOGIA_MASTER_KEY", isSet("ACNOLOGIA_MASTER_KEY")),
 		plain("ACNOLOGIA_SECURE_COOKIES", b(c.SecureCookies)),
 		plain("ACNOLOGIA_TRUST_PROXY_HEADERS", b(c.TrustProxyHeaders)),

@@ -288,9 +288,9 @@ func TestGateAdminTokenPasses(t *testing.T) {
 
 	// A valid admin token passes the lock with no password and no cookie.
 	e.do(http.DefaultClient, "GET", "/api/admin/me", nil, 200, nil, "Authorization", "Bearer "+tok.Token)
-	var st map[string]bool
+	var st gateStateBody
 	e.do(http.DefaultClient, "GET", "/api/gate", nil, 200, &st, "Authorization", "Bearer "+tok.Token)
-	if st["locked"] {
+	if st.Locked {
 		t.Fatalf("gate state with a token: %v", st)
 	}
 

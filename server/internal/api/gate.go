@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/config"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 )
 
@@ -39,13 +40,13 @@ import (
 // the password. Nothing is stored, so a restart signs nobody out; changing
 // the password (or the master key) signs every browser out at once. A leaked
 // cookie cannot be brute forced back into the password without the master
-// key, and the server refuses one older than gateTTL whatever the browser
+// key, and the server refuses one older than the gate's ttl whatever the browser
 // keeps.
 const (
 	gateCookie = "acnologia_gate"
-	// gateTTL is a month: a browser used weekly never sees the lock screen
-	// again, and a borrowed laptop stops working eventually.
-	gateTTL = 30 * 24 * time.Hour
+	// gateTTL is the default unlock lifetime; ACNOLOGIA_ACCESS_TTL sets the
+	// one in use (accessGate.ttl).
+	gateTTL = config.DefaultAccessTTL
 	// gateClockSkew tolerates an issue time slightly in the future.
 	gateClockSkew = 5 * time.Minute
 	// accessHeader carries the password for scripts.
@@ -70,6 +71,8 @@ type accessGate struct {
 	// hash is sha256(password). Comparing digests keeps the comparison
 	// constant time whatever the lengths.
 	hash [sha256.Size]byte
+	// ttl is how long an unlocked browser stays unlocked.
+	ttl time.Duration
 
 	mu          sync.Mutex
 	failures    int
@@ -82,7 +85,7 @@ type accessGate struct {
 // newAccessGate returns the gate for password; an empty password turns it
 // off. The MAC key mixes in the master key when there is one.
 func newAccessGate(password string, box *crypto.Box) *accessGate {
-	g := &accessGate{now: time.Now}
+	g := &accessGate{now: time.Now, ttl: gateTTL}
 	if password == "" {
 		return g
 	}
@@ -104,6 +107,9 @@ func newAccessGate(password string, box *crypto.Box) *accessGate {
 func (s *Server) setAccessPassword(password string) {
 	s.Cfg.AccessPassword = password
 	s.gate = newAccessGate(password, s.Pool.Box)
+	if s.Cfg.AccessTTL > 0 {
+		s.gate.ttl = s.Cfg.AccessTTL
+	}
 	if password != "" {
 		s.Store.Redactor().AlsoKnow(password)
 	}
@@ -125,7 +131,7 @@ func (g *accessGate) issue(t time.Time) string {
 	return issued + "." + g.mac(issued)
 }
 
-// valid reports whether v is a cookie this gate issued within gateTTL. The
+// valid reports whether v is a cookie this gate issued within its ttl. The
 // MAC is compared, in constant time, before the time is trusted.
 func (g *accessGate) valid(v string) bool {
 	issued, mac, ok := strings.Cut(v, ".")
@@ -140,7 +146,7 @@ func (g *accessGate) valid(v string) bool {
 		return false
 	}
 	age := g.now().Sub(time.Unix(secs, 0))
-	return age >= -gateClockSkew && age <= gateTTL
+	return age >= -gateClockSkew && age <= g.ttl
 }
 
 // matches reports whether secret is the password, in constant time.
@@ -281,13 +287,14 @@ func (s *Server) gateRequests(next http.Handler) http.Handler {
 }
 
 // gateState answers the lock screen: is there a lock, and is this browser
-// past it. It says nothing about the password.
+// past it, and how long an unlock lasts. It says nothing about the password.
 func (s *Server) gateState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"required":      s.gate.on(),
-		"locked":        !s.gatePasses(r),
-		"password_only": s.soloMode(),
+		"required":       s.gate.on(),
+		"locked":         !s.gatePasses(r),
+		"password_only":  s.soloMode(),
+		"unlock_ttl_sec": int(s.gate.ttl.Seconds()),
 	})
 }
 
@@ -334,8 +341,8 @@ func (s *Server) gateUnlock(w http.ResponseWriter, r *http.Request) {
 		// opened from a link in a chat or an email.
 		SameSite: http.SameSiteLaxMode,
 		Secure:   s.secureCookie(r),
-		Expires:  now.Add(gateTTL),
-		MaxAge:   int(gateTTL.Seconds()),
+		Expires:  now.Add(s.gate.ttl),
+		MaxAge:   int(s.gate.ttl.Seconds()),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"required": true, "locked": false})
 }

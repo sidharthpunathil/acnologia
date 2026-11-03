@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCheckAccess(t *testing.T) {
@@ -60,5 +61,26 @@ func TestListenAddrHonoursPort(t *testing.T) {
 	t.Setenv("ACNOLOGIA_ADDR", "127.0.0.1:9999")
 	if got := Load("test").Addr; got != "127.0.0.1:9999" {
 		t.Fatalf("ACNOLOGIA_ADDR must win, got %q", got)
+	}
+}
+
+func TestAccessTTL(t *testing.T) {
+	day := 24 * time.Hour
+	cases := map[string]time.Duration{
+		"":        DefaultAccessTTL,
+		"7":       7 * day,
+		"7d":      7 * day,
+		"0.5d":    12 * time.Hour,
+		"12h":     12 * time.Hour,
+		"0":       DefaultAccessTTL,
+		"-3":      DefaultAccessTTL,
+		"-1h":     DefaultAccessTTL,
+		"forever": DefaultAccessTTL,
+	}
+	for v, want := range cases {
+		t.Setenv("ACNOLOGIA_ACCESS_TTL", v)
+		if got := Load("test").AccessTTL; got != want {
+			t.Errorf("ACNOLOGIA_ACCESS_TTL=%q: got %v, want %v", v, got, want)
+		}
 	}
 }

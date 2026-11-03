@@ -1,6 +1,6 @@
 import { RiShieldCheckLine, RiTeamLine, RiUser3Line } from "@remixicon/react";
 import { api } from "@/lib/api";
-import { plural } from "@/lib/format";
+import { formatUnlockTtl, plural } from "@/lib/format";
 import { ops } from "@/lib/ops";
 import { envOf, type SettingsSummary } from "@/lib/settings";
 import { Chip } from "@/components/base/badges/chip";
@@ -67,6 +67,9 @@ export function SecuritySection({ isAdmin, isSuper, summary }: { isAdmin: boolea
         </SettingRow>
         <SettingRow label="Password is the whole login" description="Past the lock screen, a browser is signed in as the owner.">
           <EnvValue env={env("ACNOLOGIA_ACCESS_SIGNS_IN")} format={onOff} />
+        </SettingRow>
+        <SettingRow label="Stays unlocked for" description="How long a browser stays past the lock screen before it asks again.">
+          <EnvValue env={env("ACNOLOGIA_ACCESS_TTL")} format={(v) => formatUnlockTtl(Number(v))} unsetLabel="Default: 30 days" />
         </SettingRow>
         <SettingRow label="Secure cookies" description="Send cookies over HTTPS only. Turn on behind a TLS proxy.">
           <EnvValue env={env("ACNOLOGIA_SECURE_COOKIES")} format={onOff} unsetLabel="On anyway for HTTPS requests" />

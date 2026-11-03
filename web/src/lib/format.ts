@@ -90,3 +90,12 @@ export function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
+
+/** "30 days", "1 day", "12 hours", "45 minutes": how long an unlock lasts. */
+export function formatUnlockTtl(sec: number): string {
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (sec >= 86400 && sec % 86400 === 0) return unit(sec / 86400, "day");
+  if (sec >= 86400) return unit(Math.round(sec / 86400), "day");
+  if (sec >= 3600) return unit(Math.round(sec / 3600), "hour");
+  return unit(Math.max(1, Math.round(sec / 60)), "minute");
+}

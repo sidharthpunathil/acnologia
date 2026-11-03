@@ -31,7 +31,7 @@ GET /docs/assets/{name}  -> an image the docs show
 GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
 GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url, box_public_key}, for sharing between servers
-GET /api/gate            -> {required, locked, password_only}: whether the site has an access password and this caller is past it
+GET /api/gate            -> {required, locked, password_only, unlock_ttl_sec}: whether the site has an access password and this caller is past it
 POST /api/claim/v1/preview {code} -> what a claim link shares (no secret); see Access shared with you by link
 POST /api/claim/v1/redeem  {code} -> the token (or, for a reveal share, the keys), once
 ```

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { RiLockLine, RiRefreshLine } from "@remixicon/react";
 import { ApiError } from "@/lib/api";
+import { formatUnlockTtl } from "@/lib/format";
 import { useGate } from "@/stores/gate";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonSpinner, Spinner } from "@/components/base/spinner/spinner";
@@ -60,6 +61,7 @@ function formatWait(sec: number): string {
 export function LockScreen() {
   const unlock = useGate((s) => s.unlock);
   const passwordOnly = useGate((s) => s.passwordOnly);
+  const unlockTtlSec = useGate((s) => s.unlockTtlSec);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [wrong, setWrong] = useState(false);
@@ -156,7 +158,7 @@ export function LockScreen() {
             Unlock
           </Button>
           <p className="text-caption-1-regular text-text-secondary">
-            This browser stays unlocked for 30 days. Ask whoever runs this instance for the password.
+            {unlockTtlSec ? `This browser stays unlocked for ${formatUnlockTtl(unlockTtlSec)}. ` : ""}Ask whoever runs this instance for the password.
           </p>
         </form>
       </div>

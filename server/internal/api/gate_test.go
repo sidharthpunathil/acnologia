@@ -29,6 +29,14 @@ func newGateEnv(t *testing.T) *env {
 	return e
 }
 
+// gateStateBody is the GET /api/gate answer.
+type gateStateBody struct {
+	Required     bool `json:"required"`
+	Locked       bool `json:"locked"`
+	PasswordOnly bool `json:"password_only"`
+	UnlockTTLSec int  `json:"unlock_ttl_sec"`
+}
+
 func gateCookieFrom(resp *http.Response) *http.Cookie {
 	for _, c := range resp.Cookies() {
 		if c.Name == gateCookie {
@@ -83,9 +91,9 @@ func TestGateOpenRoutes(t *testing.T) {
 
 	e.do(client(), "GET", "/healthz", nil, 200, nil)
 	e.do(client(), "GET", "/robots.txt", nil, 200, nil)
-	var st map[string]bool
+	var st gateStateBody
 	e.do(client(), "GET", "/api/gate", nil, 200, &st)
-	if !st["required"] || !st["locked"] {
+	if !st.Required || !st.Locked {
 		t.Fatalf("gate state = %v", st)
 	}
 	// Consumer routes need their app token, not the gate.
@@ -140,9 +148,9 @@ func TestGateUnlockSetsCookie(t *testing.T) {
 	if strings.Contains(c.Value, testAccessPassword) {
 		t.Fatal("cookie carries the password")
 	}
-	var st map[string]bool
+	var st gateStateBody
 	e.do(e.super, "GET", "/api/gate", nil, 200, &st)
-	if st["locked"] {
+	if st.Locked {
 		t.Fatal("still locked after unlock")
 	}
 	e.do(e.super, "GET", "/api/admin/me", nil, 200, nil)
@@ -265,9 +273,9 @@ func TestGateRateLimit(t *testing.T) {
 
 func TestGateOffChangesNothing(t *testing.T) {
 	e := newEnv(t)
-	var st map[string]bool
+	var st gateStateBody
 	e.do(client(), "GET", "/api/gate", nil, 200, &st)
-	if st["required"] || st["locked"] {
+	if st.Required || st.Locked {
 		t.Fatalf("gate state = %v", st)
 	}
 	e.do(e.super, "GET", "/api/admin/me", nil, 200, nil)
@@ -348,5 +356,33 @@ func TestGateUnlockNeverLogsPassword(t *testing.T) {
 	log := buf.String()
 	if strings.Contains(log, testAccessPassword) || strings.Contains(log, "wrong-guess-123") || (c != nil && strings.Contains(log, c.Value)) {
 		t.Fatalf("log carries a secret: %s", log)
+	}
+}
+
+// ACNOLOGIA_ACCESS_TTL sets how long an unlock lasts: the cookie's lifetime,
+// the server's own cutoff, and what /api/gate tells the lock screen.
+func TestGateCustomTTL(t *testing.T) {
+	e := newEnv(t)
+	e.api.Cfg.AccessTTL = 7 * 24 * time.Hour
+	e.api.setAccessPassword(testAccessPassword)
+	srv := httptest.NewServer(e.api.Router())
+	t.Cleanup(srv.Close)
+	e.srv = srv
+
+	var st gateStateBody
+	e.do(client(), "GET", "/api/gate", nil, 200, &st)
+	if st.UnlockTTLSec != 7*24*3600 {
+		t.Fatalf("unlock_ttl_sec: %d", st.UnlockTTLSec)
+	}
+	resp := e.do(client(), "POST", "/api/gate/unlock", map[string]any{"password": testAccessPassword}, 200, nil)
+	if c := gateCookieFrom(resp); c == nil || c.MaxAge != 7*24*3600 {
+		t.Fatalf("cookie lifetime: %+v", c)
+	}
+	g := e.api.gate
+	if !g.valid(g.issue(time.Now().Add(-6 * 24 * time.Hour))) {
+		t.Fatal("a 6 day old unlock should still pass a 7 day ttl")
+	}
+	if g.valid(g.issue(time.Now().Add(-8 * 24 * time.Hour))) {
+		t.Fatal("an 8 day old unlock passed a 7 day ttl")
 	}
 }

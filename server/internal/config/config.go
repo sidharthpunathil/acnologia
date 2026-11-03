@@ -49,6 +49,9 @@ type Config struct {
 	// AccessSignsIn makes the access password the whole login: a browser
 	// past the lock screen is signed in as the owner. On by default.
 	AccessSignsIn bool
+	// AccessTTL is how long an unlocked browser stays unlocked before the
+	// lock screen asks again. ACNOLOGIA_ACCESS_TTL, 30 days by default.
+	AccessTTL time.Duration
 }
 
 // MinAccessPasswordLen is the shortest ACNOLOGIA_ACCESS_PASSWORD accepted.
@@ -103,6 +106,7 @@ func Load(version string) Config {
 		AccessPassword:        Getenv("ACNOLOGIA_ACCESS_PASSWORD"),
 		RequireAccessPassword: envBool("ACNOLOGIA_REQUIRE_ACCESS_PASSWORD", false),
 		AccessSignsIn:         envBool("ACNOLOGIA_ACCESS_SIGNS_IN", true),
+		AccessTTL:             envDays("ACNOLOGIA_ACCESS_TTL", DefaultAccessTTL),
 	}
 }
 
@@ -152,6 +156,32 @@ func envInt(k string, def int) int {
 func envBool(k string, def bool) bool {
 	if v, err := strconv.ParseBool(Getenv(k)); err == nil {
 		return v
+	}
+	return def
+}
+
+// DefaultAccessTTL is how long an unlocked browser stays unlocked when
+// ACNOLOGIA_ACCESS_TTL is unset: a month, so a browser used weekly never sees
+// the lock screen again and a borrowed laptop stops working eventually.
+const DefaultAccessTTL = 30 * 24 * time.Hour
+
+// envDays reads a positive duration that may be written in days: "7" and "7d"
+// are a week, and any Go duration ("12h", "90m") works too. A missing,
+// malformed, zero or negative value is def, so it can never lock nobody out
+// for good or let a cookie live forever.
+func envDays(k string, def time.Duration) time.Duration {
+	v := strings.ToLower(Getenv(k))
+	if v == "" {
+		return def
+	}
+	if n, err := strconv.ParseFloat(strings.TrimSuffix(v, "d"), 64); err == nil {
+		if n > 0 {
+			return time.Duration(n * float64(24*time.Hour))
+		}
+		return def
+	}
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		return d
 	}
 	return def
 }

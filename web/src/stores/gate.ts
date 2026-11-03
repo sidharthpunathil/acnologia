@@ -15,6 +15,8 @@ interface GateStore {
   required: boolean;
   /** Unlocking signs in as the owner; signing out locks the browser. */
   passwordOnly: boolean;
+  /** How long an unlock lasts, in seconds; null when the server does not say. */
+  unlockTtlSec: number | null;
   load: () => Promise<void>;
   unlock: (password: string) => Promise<void>;
   lock: () => Promise<void>;
@@ -24,11 +26,12 @@ export const useGate = create<GateStore>((set) => ({
   status: "loading",
   required: false,
   passwordOnly: false,
+  unlockTtlSec: null,
 
   load: async () => {
     try {
       const s = await api.gateState();
-      set({ status: s.locked ? "locked" : "open", required: s.required, passwordOnly: !!s.password_only });
+      set({ status: s.locked ? "locked" : "open", required: s.required, passwordOnly: !!s.password_only, unlockTtlSec: s.unlock_ttl_sec ?? null });
     } catch {
       // A server that cannot say whether there is a lock must not be read as
       // "no lock": show that it is unreachable, with a retry.

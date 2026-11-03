@@ -24,6 +24,7 @@ failure up to 10 times).
    | `ACNOLOGIA_ACCESS_PASSWORD` | A long random password, 12 characters at least. `openssl rand -base64 24` makes one. |
    | `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `true`: the site can never come up unlocked. If `ACNOLOGIA_ACCESS_PASSWORD` is missing, the server generates a random one into `/data/access-password` and uses it (see below). |
    | `ACNOLOGIA_ACCESS_SIGNS_IN` | Leave unset (`true`): the access password is the only login. `false` keeps email accounts behind the lock. |
+   | `ACNOLOGIA_ACCESS_TTL` | Optional. How long a browser stays unlocked: `30d` by default, `7d` for a week, `12h` for half a day. |
    | `ACNOLOGIA_PUBLIC_URL` | `https://key.sidharth.co` (your domain, no trailing slash). Written into `/llms.txt` and into every share invite, so another server reaches this one at the right address instead of the `*.up.railway.app` one. |
    | `ACNOLOGIA_SECURE_COOKIES` | `true`: Railway serves HTTPS, so every cookie is `Secure`. |
    | `ACNOLOGIA_TRUST_PROXY_HEADERS` | `true`: Railway's proxy sets `X-Forwarded-For`, which the sign in limiter uses. |

@@ -71,7 +71,7 @@ Open while the site is locked, so the lock screen can reach them. See
 
 | Route | Role | Purpose |
 |---|---|---|
-| `GET /api/gate` | public | `{required, locked, password_only}`. `password_only` is true when the access password is the whole login (`ACNOLOGIA_ACCESS_SIGNS_IN`). |
+| `GET /api/gate` | public | `{required, locked, password_only, unlock_ttl_sec}`. `password_only` is true when the access password is the whole login (`ACNOLOGIA_ACCESS_SIGNS_IN`). `unlock_ttl_sec` is how long an unlock lasts (`ACNOLOGIA_ACCESS_TTL`). |
 | `POST /api/gate/unlock` | public | `{password}`. Sets the `acnologia_gate` cookie and returns `{required, locked: false}`. 401 `wrong_password`; 429 `too_many_attempts` with `retry_after_sec` after 5 wrong guesses a minute or 50 a day. |
 | `POST /api/gate/lock` | public | Drops this browser's gate cookie. |
 

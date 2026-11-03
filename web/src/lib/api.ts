@@ -151,6 +151,8 @@ export interface GateState {
   locked: boolean;
   /** The access password is the whole login: no email form behind it. */
   password_only?: boolean;
+  /** How long an unlock lasts, in seconds (ACNOLOGIA_ACCESS_TTL). */
+  unlock_ttl_sec?: number;
 }
 
 export const api = {
