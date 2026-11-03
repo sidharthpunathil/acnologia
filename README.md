@@ -9,6 +9,7 @@ Share your API keys without giving them away.
   <a href="https://github.com/sidharthpunathil/acnologia/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/sidharthpunathil/acnologia?sort=semver"></a>
   <img alt="Go 1.26" src="https://img.shields.io/badge/go-1.26-00ADD8">
   <img alt="Linux, macOS and Windows" src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-555">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2ea44f"></a>
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-6b46c1">
 </p>
 
@@ -198,7 +199,8 @@ to you, a star helps other people find it.
 
 ## License
 
-The SDKs in `sdk/` are MIT licensed. The server has no license file yet.
+[MIT](LICENSE). The server, the dashboard, the CLI and the SDKs are all
+released under the MIT license.
 
 Product and company names that appear in the built in provider catalog belong
 to their owners. Acnologia is not affiliated with or endorsed by any of them.
