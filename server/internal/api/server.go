@@ -236,6 +236,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/apps/{id}/mcp", s.getAppMCP)
 		r.Get("/apps/{id}/tokens", s.listAppTokens)
 		r.Get("/providers/{slug}", s.getProvider)
+		r.Get("/providers/{slug}/guide", s.providerGuide)
+		r.Get("/services/{id}/guide", s.adminServiceGuide)
 		r.Post("/providers/validate", s.validateProvider)
 		r.Get("/ai/status", s.aiStatus)
 		r.Get("/ai/rules", s.aiGetRules)
@@ -366,6 +368,7 @@ func (s *Server) Router() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireApp)
 			r.Get("/services", s.v1Services)
+			r.Get("/services/{slug}/guide", s.v1ServiceGuide)
 			r.Post("/lease", s.v1Lease)
 			r.Post("/leases/{id}/report", s.v1Report)
 			r.Post("/leases/{id}/renew", s.v1Renew)

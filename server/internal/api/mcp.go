@@ -44,6 +44,17 @@ type mcpCtxKey int
 // mcpLimitKey carries the app's max result size (KB) into tool handlers.
 const mcpLimitKey mcpCtxKey = 1
 
+// mcpBaseKey carries this server's public URL, for proxy URLs in guides.
+const mcpBaseKey mcpCtxKey = 2
+
+// mcpBase is the public URL stored by mcpDispatch, else the configured one.
+func mcpBase(ctx context.Context, s *Server) string {
+	if b, ok := ctx.Value(mcpBaseKey).(string); ok && b != "" {
+		return b
+	}
+	return strings.TrimRight(s.Cfg.PublicURL, "/")
+}
+
 func obj(props map[string]any, required ...string) map[string]any {
 	return map[string]any{"type": "object", "properties": props, "required": required}
 }
@@ -99,6 +110,9 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		st.Insights, st.Manage = false, false
 	}
 	ctx = context.WithValue(ctx, mcpLimitKey, st.MaxResultKB)
+	if r != nil {
+		ctx = context.WithValue(ctx, mcpBaseKey, s.publicURL(r))
+	}
 	switch req.Method {
 	case "initialize":
 		var p struct {
@@ -116,7 +130,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if st.Prompts {
 			caps["prompts"] = map[string]any{"listChanged": false}
 		}
-		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself."
+		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself. Read service_guide before calling a service you have not used: it lists the endpoints, parameters, limits and errors."
 		if strings.TrimSpace(st.Instructions) != "" {
 			instr += "\n\n" + strings.TrimSpace(st.Instructions)
 		}
@@ -166,7 +180,10 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if !st.Resources {
 			return nil, &rpcErr{-32601, "resources are off for this app"}
 		}
-		return map[string]any{"resourceTemplates": []map[string]any{{"uriTemplate": "acnologia://services/{slug}", "name": "service", "title": "A service", "mimeType": "application/json"}}}, nil
+		return map[string]any{"resourceTemplates": []map[string]any{
+			{"uriTemplate": "acnologia://services/{slug}", "name": "service", "title": "A service", "mimeType": "application/json"},
+			{"uriTemplate": "acnologia://services/{slug}/guide", "name": "service_guide", "title": "How to call a service", "mimeType": "text/markdown"},
+		}}, nil
 	case "resources/read":
 		if !st.Resources {
 			return nil, &rpcErr{-32601, "resources are off for this app"}
@@ -301,6 +318,12 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 			res["next"] = toMap(next)
 		}
 		return res, nil
+	case "service_guide":
+		d, err := s.mcpServiceGuide(ctx, a, args.Service)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"service": args.Service, "generated": d.Generated, "markdown": d.Render(false)}, nil
 	case "proxy_request":
 		if _, err := svcFor(); err != nil {
 			return nil, err

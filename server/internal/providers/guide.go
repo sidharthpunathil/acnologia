@@ -83,8 +83,12 @@ func BuildGuide(in GuideInput) GuideDoc {
 	if svc == "" {
 		svc = ServicePlaceholder
 	}
+	name := m.Name
+	if n := strings.TrimSpace(in.Ctx.ServiceName); n != "" && n != m.Name && m.Name != "" {
+		name = n + " (" + m.Name + ")"
+	}
 	d := GuideDoc{
-		Provider: m.Slug, Name: m.Name, Service: in.Ctx.Service,
+		Provider: m.Slug, Name: name, Service: in.Ctx.Service,
 		ProxyBase: strings.TrimRight(in.Ctx.PublicURL, "/") + "/proxy/" + svc,
 		DocsURL:   httpsOnly(m.DocsURL), Website: httpsOnly(m.Website),
 		Endpoints: []GuideEndpoint{}, Examples: []GuideExample{},
