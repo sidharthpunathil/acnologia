@@ -22,6 +22,46 @@ type Spec struct {
 	Health           *Health   `json:"health"`
 	Examples         []Example `json:"examples"`
 	Tests            []Fixture `json:"tests"`
+	// Guide teaches an app or AI agent how to call the provider through
+	// Acnologia. Optional; rendered as Markdown with RenderGuide.
+	Guide *Guide `json:"guide,omitempty"`
+}
+
+// Guide is a provider's usage guide, written for AI agents and developers.
+// Auth is never described here: Acnologia adds the key, so callers only send
+// their app token. Paths are relative to the base URL, as in Examples.
+type Guide struct {
+	// Summary says what the API is for and when to pick it, in 1 to 3
+	// sentences.
+	Summary string `json:"summary"`
+	// Endpoints are the calls worth knowing, most useful first.
+	Endpoints []GuideEndpoint `json:"endpoints,omitempty"`
+	// Notes are short facts an agent gets wrong without: pagination, model
+	// names, streaming, error shapes, size limits, cost traps.
+	Notes []string `json:"notes,omitempty"`
+	// Markdown is free form extra content appended after the endpoints.
+	Markdown string `json:"markdown,omitempty"`
+}
+
+type GuideEndpoint struct {
+	Name        string       `json:"name"`
+	Method      string       `json:"method"`
+	Path        string       `json:"path"`
+	Description string       `json:"description"`
+	Params      []GuideParam `json:"params,omitempty"`
+	// Body is an example JSON request body.
+	Body any `json:"body,omitempty"`
+	// Response says what comes back and the fields that matter.
+	Response string `json:"response,omitempty"`
+}
+
+type GuideParam struct {
+	Name string `json:"name"`
+	// In is query, path, body or header.
+	In          string `json:"in"`
+	Type        string `json:"type,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Description string `json:"description"`
 }
 
 type Auth struct {
@@ -191,6 +231,7 @@ func (s *Spec) Validate() []string {
 		add("quota.free_tier must be at most 200 characters")
 	}
 	s.validateOffers(add)
+	s.validateGuide(add)
 	if qh := s.Quota.Headers; qh != nil {
 		if qh.Limit == "" && qh.Remaining == "" && qh.Reset == "" {
 			add("quota.headers needs at least one of limit, remaining or reset")
@@ -297,4 +338,43 @@ func (m Match) validate(label string) []string {
 		}
 	}
 	return errs
+}
+
+func (s *Spec) validateGuide(add func(string, ...any)) {
+	g := s.Guide
+	if g == nil {
+		return
+	}
+	if strings.TrimSpace(g.Summary) == "" {
+		add("guide.summary is required")
+	}
+	if len(g.Summary) > 1000 {
+		add("guide.summary must be at most 1,000 characters")
+	}
+	if len(g.Endpoints) > 40 {
+		add("guide.endpoints must be at most 40")
+	}
+	for i, e := range g.Endpoints {
+		if strings.TrimSpace(e.Name) == "" || !strings.HasPrefix(e.Path, "/") {
+			add("guide.endpoints[%d] needs a name and a path starting with /", i)
+		}
+		switch strings.ToUpper(e.Method) {
+		case "GET", "POST", "PUT", "PATCH", "DELETE":
+		default:
+			add("guide.endpoints[%d].method must be GET, POST, PUT, PATCH or DELETE", i)
+		}
+		for j, p := range e.Params {
+			switch p.In {
+			case "query", "path", "body", "header":
+			default:
+				add("guide.endpoints[%d].params[%d].in must be query, path, body or header", i, j)
+			}
+		}
+	}
+	if len(g.Notes) > 30 {
+		add("guide.notes must be at most 30")
+	}
+	if len(g.Markdown) > 20000 {
+		add("guide.markdown must be at most 20,000 characters")
+	}
 }
