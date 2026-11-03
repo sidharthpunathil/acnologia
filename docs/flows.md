@@ -11,8 +11,10 @@ Mermaid and render on GitHub.
 - [Health checks](#health-checks)
 - [Dashboard sign in](#dashboard-sign-in)
 - [MCP](#mcp)
+- [Choosing the AI model](#choosing-the-ai-model)
 - [AI provider builder](#ai-provider-builder)
-- [Assistant chat](#assistant-chat)
+- [Keeping provider offers fresh](#keeping-provider-offers-fresh)
+- [Assistant chat](#assistant-chat) and its [compaction](#compaction)
 - [Sharing between servers](#sharing-between-servers)
 
 ## Proxy request
@@ -289,6 +291,40 @@ sequenceDiagram
     M-->>Ag: status, headers, body
 ```
 
+## Choosing the AI model
+
+Every AI feature runs on a model picked at call time, so a switch in
+Settings, AI takes effect on the next call with no restart. The features are
+the Assistant, the provider builder, Fill with AI, chat summaries (used by
+[compaction](#compaction)) and offer refresh. Each resolves its model in this
+order, first set wins:
+
+1. the feature's own model, saved under Settings, AI, "Use a different model
+   for...",
+2. the saved default model from the same card,
+3. `ACNOLOGIA_AI_MODEL`,
+4. the built in default, `claude-opus-5-5`.
+
+The card shows each feature's effective model and where it came from. Only a
+superadmin saves models (`PUT /api/admin/ai/models`, audited as `ai.models`);
+admins can see them. The picker lists Anthropic's Models API (cached for an
+hour) merged with Acnologia's built in table, with each model's price per
+million tokens and context window. A model id is accepted when it is in
+either list or already in use. A model with no known price is accepted with a
+warning, and its cost is estimated at `claude-opus-5-5` prices. Smaller
+models such as Haiku suit Fill with AI, chat summaries and offer refresh; the
+builder writes better specs on a larger one. The Assistant's model also sets
+when a chat compacts, since the threshold is a share of its context window.
+
+**Model prices.** The Usage page prices every Claude call from a built in
+table. Under Settings, AI, Model prices, a superadmin can override a model's
+input, output and cache prices and its context window
+(`PUT /api/admin/ai/prices/{model}`), or reset it to the built in values
+(`DELETE`). Each change is audited as `ai.prices`. The
+[provider refresh](#keeping-provider-offers-fresh) can propose new prices
+too. An override changes how cost is counted from then on, not past usage,
+and a context window override moves the compaction threshold.
+
 ## AI provider builder
 
 An admin starts a run with context, URLs and optionally a test key. The run
@@ -366,8 +402,8 @@ the controls, the history and the changes waiting for review. It needs
 
 **When.** A run starts in one of three ways:
 
-- On the schedule: off, weekly, every 2 weeks, monthly (on the 1st) or every
-  N days (1–365), at a chosen UTC hour. The worker asks once a minute whether
+- On the schedule: off, weekly, every 2 weeks, monthly (on the 1st, the
+  default) or every N days (1–365), at a chosen UTC hour (03:00 by default). The worker asks once a minute whether
   a run is due. The first run is the first time the clock reaches the hour
   after the schedule was saved; weekly and every N days count from the day of
   the last scheduled run; monthly runs on the 1st of the next month. A run
@@ -387,8 +423,9 @@ within the last N days (default 25, from its last refresh check or the
 newest `checked_at` on its offers) is skipped. The rest go oldest checked
 first, at most N per run (default 10).
 
-**How one provider is checked.** The refresh model (the refresh slot in
-Settings, Models; a small model such as Haiku is enough) gets the provider's
+**How one provider is checked.** The offer refresh model (see
+[Choosing the AI model](#choosing-the-ai-model); until you set one it is the
+default model, so pick a small one such as Haiku) gets the provider's
 name, base URL, website, docs URL, the `source_url` of each offer, its
 example names and its current offers. Keys never leave the server, and every
 request passes the same redaction as the rest of the AI features. It may run
@@ -430,8 +467,8 @@ proposes new input, output and cache prices. The same rule applies: a change
 saves as price overrides on its own only when every changed price cites its
 page, else it waits for review. The model picker shows each price's source
 and the date it was checked. Superadmins can also edit a model's price and
-context window by hand in Settings, Models, Model prices, and reset it to the
-built in table.
+context window by hand under Settings, AI, Model prices, and reset it to the
+built in table (see [Model prices](#choosing-the-ai-model)).
 
 **Budget and safety.** Before each provider, a run stops if it has spent its
 per run cap (default $2) or the refresh feature has spent its monthly cap
@@ -580,7 +617,22 @@ private key encrypted with the master key, in `meta`), an id `acn_srv_` plus
 20 characters derived from the public key, a name (the hostname until a
 superadmin renames it) and a public URL (`ACNOLOGIA_PUBLIC_URL`, else the one
 saved on the Sharing page, else the request origin). It is published at
-`/.well-known/acnologia`.
+`/.well-known/acnologia`. Set `ACNOLOGIA_PUBLIC_URL` on any server that
+shares, so invites never carry an internal address.
+
+Both sides work from the Sharing page, and only a superadmin changes
+anything there; admins can look.
+
+- **Owner:** New share picks the services, any provider specs to give away,
+  a key scope per service, limits, an optional expiry, whether hidden keys
+  may serve it, and how long the invite lasts (1 hour, 24 hours by default,
+  or 7 days). The invite is shown once. While nobody has redeemed it, New
+  invite replaces it with a fresh one (409 `not_pending` after a redeem).
+  Editing a redeemed share reaches the receiver at its next sync.
+- **Receiver:** Connect takes the invite, previews the owner's id, name, key
+  fingerprint and what is shared, then asks for a slug prefix and whether the
+  owner is on a private network (which lets the calls reach a private
+  address). Each shared service then appears as a local service.
 
 ```mermaid
 sequenceDiagram
@@ -611,11 +663,13 @@ any other service. B injects the share token as a bearer token and adds
 `X-Acnologia-Hop: n+1`; A authenticates the token, checks the share is active
 and unexpired, applies its limits and proxies with its own keys. The service's
 provider is `acnologia-peer`, whose rules count only A's own refusals against
-the token: 403 `share_revoked` or `share_paused` and 401 mark it invalid, 429
-`app_limit_reached` makes it exhausted until the reset, 503 `no_key_available`,
-`all_keys_busy` or `service_unavailable` cool it for `retry_after_sec`, and
-anything A relays from the upstream is passed on untouched (A already rotated).
-Shared services are proxy only: a lease would hand out the token.
+the token: 403 `share_revoked`, `share_paused` or `share_expired` and 401
+mark it invalid, 429 `app_limit_reached` makes it exhausted until the reset,
+503 `no_key_available`, `all_keys_busy` or `service_unavailable` cool it for
+`retry_after_sec`, and anything A relays from the upstream is passed on
+untouched (A already rotated). Shared services are proxy only: a lease would
+hand out the token, so `/api/v1/lease` answers 403 `lease_not_allowed` and
+MCP `get_key` is refused the same way.
 
 **Which keys.** Each shared service can be limited to all its keys, up to N
 keys, or a picked list (`key_scopes`, see [the API](api.md#sharing-between-servers)).
@@ -626,6 +680,14 @@ invalid, banned or disabled the next one takes its place, while a key that is
 only cooling down or out of quota keeps its slot. The Sharing page shows each
 service as `serpapi · 3 of 10 keys` and each set limit as a meter of what was
 used today or this month against its cap.
+
+**Limits.** A share's limits are those of its backing app: requests a day,
+requests a month, USD a day and USD a month, counted from the cost of A's
+own requests. Past one, A answers 429 `app_limit_reached` until the window
+resets, and B treats the token as out of quota until then. Once an expiry
+date passes, A answers 403 `share_expired` and B's services stop. The manifest tells B the
+limits, the expiry and how many keys can take a request now (counted within
+the key scope), never the keys themselves.
 
 **Sync.** B reads each link's manifest every 10 minutes and on Sync now. New
 services are created; services no longer shared keep their row (events and app
@@ -690,9 +752,11 @@ under those limits and enforces the share's request and budget caps.
 its token in the same transaction, so the very next request through A gets
 403 `share_revoked` with `X-Acnologia-Share: revoked`. B marks the link
 revoked as soon as it sees that answer (from the proxy or the manifest),
-deletes the token and the services' key, and the services stop. Pause is the
-same with `share_paused` and can be undone; B turns its services back on at
-the next sync after a resume. Expiry is checked on every request.
+deletes the token and the services' key, and the services stop. Revoking is
+final: a revoked share cannot be edited or resumed, so share again with a
+new invite. Pause answers `share_paused` and expiry `share_expired`, checked
+on every request; B disables the services' key but keeps the token, and a
+resume turns the services back on at the next sync.
 
 **Disconnect.** B tells A (`POST /api/peer/v1/leave`, best effort), deletes the
 token and the keys holding it and leaves the services in place without a key.
