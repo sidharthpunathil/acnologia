@@ -328,6 +328,35 @@ from its description, examples, offers and rules, and marked as generated
 (`generated: true`). It is useful, but a written guide is better: it says
 which parameters matter and what comes back.
 
+**How a provider gets its guide.** Every way a provider is added or changed
+can write one:
+
+- **AI builder.** A guide is required output. A submit with no guide, or one
+  with no endpoints, goes back to the agent like any other spec problem. On
+  the last allowed submit, a guide gap alone does not fail an otherwise
+  working provider: the run accepts it and notes "Accepted without a full
+  usage guide". Publishing a run saves the guide with the spec.
+- **Editor.** The Guide tab holds the guide fields as JSON, with **Start a
+  guide** for a template and **Fill with AI** (`POST /api/admin/ai/assist`
+  with `form: "guide"`), which drafts the fields from the provider's base URL,
+  docs URL and examples into the draft for you to review and save. A provider
+  saved without a guide shows a quiet hint on its Overview tab.
+- **Write guide with AI.** On a saved provider, admins can press **Write guide
+  with AI** (or **Rewrite with AI**) on the Guide tab, which calls
+  `POST /api/admin/providers/{slug}/guide/generate`. The model reads the docs
+  URL (web search and fetch), the spec's examples, offers and current guide,
+  and the server saves only the `guide` part of the spec as a new version
+  labelled `ai`. It uses the builder's model, follows the AI rules, and its
+  spend shows on the Usage page. When the model cannot read the docs, nothing
+  changes. The button is disabled, with the reason, when AI is not set up.
+- **Assistant.** `provider_guide` (members) reads a provider's guide;
+  `write_provider_guide` (admins) runs the same writer. The Assistant offers
+  it after `create_service` or a published build when the provider has no
+  written guide, and only runs it if you agree.
+- **Offer refresh** reads pricing pages only and keeps an existing guide
+  exactly as it is. It does not propose guide changes: its reviews carry
+  offers only.
+
 **Where guides show up.**
 
 - Dashboard: the provider page's **Guide** tab (with Copy for LLM, and the

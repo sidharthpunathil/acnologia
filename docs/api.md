@@ -148,6 +148,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /providers`, `PUT /providers/{slug}` | a | Create or publish a new version of a provider. |
 | `DELETE /providers/{slug}` | a | Delete an unused, non built-in provider. |
 | `POST /providers/{slug}/rollback` | a | Publish an earlier version again. |
+| `POST /providers/{slug}/guide/generate` | a | Write or rewrite the provider's usage guide with AI from its docs URL, examples and offers, and save it as a new version (source `ai`). Optional body `{instruction}` (up to 4,000 characters). Synchronous, up to 5 minutes. Answers `{provider, updated, verified, summary, guide, markdown, model, cost_usd}`; `updated: false` when nothing changed. 503 `ai_disabled` without AI, 422 `invalid_spec`, 400 `ai_error`. |
 | `POST /providers/{slug}/live-check` | a | Run the health check and safe GET examples with a key you supply. |
 | `PUT`, `DELETE /providers/{slug}/logo`, `POST /providers/{slug}/logo/fetch` | a | Upload, remove, or discover a logo from the website. |
 | `PUT`, `DELETE /services/{id}/logo` | a | Service logo. |
@@ -170,7 +171,7 @@ Role column: **m** member, **a** admin, **s** superadmin (minimum role).
 | `POST /ai/runs/{id}/cancel`, `POST /ai/runs/{id}/publish` | a | Cancel; publish a run waiting for review. |
 | `DELETE /ai/runs/{id}` | a | Delete a finished run and its steps. 409 `run_busy` while it is queued, running, testing or publishing. Audited. Spend already recorded stays in Usage. |
 | `DELETE /ai/runs` | a | Clear finished runs: deletes every failed, cancelled and published run and returns `{deleted}`. Runs waiting for review are kept. |
-| `POST /ai/assist` | a | "Fill with AI" for dashboard forms. |
+| `POST /ai/assist` | a | "Fill with AI" for dashboard forms. `form: "guide"` with `current: {provider: <slug>, ...guide}` drafts a provider's usage guide fields. |
 | `GET /chat/threads`, `POST /chat/threads` | m | Your assistant conversations (never other users'), and whether AI is enabled. |
 | `GET /chat/threads/{id}`, `DELETE /chat/threads/{id}` | m | One conversation's transcript; delete it. |
 | `POST /chat/threads/{id}/messages` | m | `{text}`, up to 1 MB. Keys in the text go to the thread's vault before anything reaches Claude. Runs the assistant until it answers; returns the new transcript items. 409 while a previous message is still running, 503 when AI is off. |
