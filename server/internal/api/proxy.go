@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -486,9 +487,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		if res.Outcome != providers.OK {
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: string(res.Outcome), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, Detail: res.Message})
 		}
-		if !mayReadKey(a, sv) {
-			rb = scrubBytes(rb, keyForms(picked.Secret))
-		}
+		// rb was scrubbed above, right after it was classified.
 		out.resp, out.body, out.keyID, out.attempts, out.outcome, out.err = resp, rb, k.ID, len(tried), res.Outcome, nil
 		if !res.Outcome.Rotates() {
 			return out
@@ -509,14 +508,14 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 		resp.Body = readCloser{newScrubReader(resp.Body, secret), resp.Body}
 	}
 	if !cap.any() || !s.Cache.Enabled() {
-		relayStream(w, resp, v, cancel)
+		relayStream(w, resp, v, cancel, !scrubBody)
 		return
 	}
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxCachedBody+1))
 	if err != nil || len(buf) > maxCachedBody {
 		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
 		setHeader(w.Header(), "Cache", "bypass")
-		relayStream(w, resp, v, cancel)
+		relayStream(w, resp, v, cancel, !scrubBody)
 		return
 	}
 	resp.Body.Close()
@@ -614,22 +613,43 @@ func relay(w http.ResponseWriter, resp *http.Response, v relayView, body []byte)
 	_, _ = w.Write(body)
 }
 
+// relayBufSize is the copy buffer of a streamed relay.
+const relayBufSize = 32 << 10
+
+// relayBufs holds copy buffers for relays that pass the upstream body
+// through unchanged, so a proxied request does not allocate one each time.
+var relayBufs = sync.Pool{New: func() any { b := make([]byte, relayBufSize); return &b }}
+
 // relayStream streams the upstream body to the client. If no bytes arrive for
 // proxyIdleTimeout it calls cancel, which aborts the upstream read.
-func relayStream(w http.ResponseWriter, resp *http.Response, v relayView, cancel context.CancelFunc) {
+//
+// pooled takes the copy buffer from relayBufs. Only the unscrubbed relay
+// sets it; the buffer goes back, cleared, after the last Write has returned.
+func relayStream(w http.ResponseWriter, resp *http.Response, v relayView, cancel context.CancelFunc, pooled bool) {
 	defer resp.Body.Close()
 	copyResponseHeaders(w, resp, v)
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	idle := time.AfterFunc(proxyIdleTimeout, cancel)
 	defer idle.Stop()
-	var out io.Writer = w
-	buf := make([]byte, 32<<10)
+	var buf []byte
+	used := 0 // high water mark of buf, cleared before it is pooled again
+	if pooled {
+		bp := relayBufs.Get().(*[]byte)
+		buf = *bp
+		defer func() {
+			clear(buf[:used])
+			relayBufs.Put(bp)
+		}()
+	} else {
+		buf = make([]byte, relayBufSize)
+	}
 	for {
 		n, err := resp.Body.Read(buf)
+		used = max(used, n)
 		if n > 0 {
 			idle.Reset(proxyIdleTimeout)
-			if _, werr := out.Write(buf[:n]); werr != nil {
+			if _, werr := w.Write(buf[:n]); werr != nil {
 				return
 			}
 			_ = rc.Flush()
