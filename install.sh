@@ -9,6 +9,9 @@
 # yourself if you want it somewhere only root can write.
 #
 # ACN_VERSION=cli-v0.1.0 picks a release, ACN_INSTALL_DIR=/some/bin a place.
+# On Windows use install.ps1 from PowerShell:
+#
+#   irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex
 set -eu
 
 REPO="sidharthpunathil/acnologia"
@@ -22,7 +25,8 @@ fail() {
 case "$(uname -s)" in
 Darwin) os=darwin ;;
 Linux) os=linux ;;
-*) fail "this script handles macOS and Linux; on Windows download acn_windows_amd64.zip from https://github.com/$REPO/releases" ;;
+MINGW* | MSYS* | CYGWIN* | Windows_NT) fail "this script handles macOS and Linux; on Windows run this in PowerShell instead: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
+*) fail "no acn build for $(uname -s); see https://github.com/$REPO/releases" ;;
 esac
 
 case "$(uname -m)" in
