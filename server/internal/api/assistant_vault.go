@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -174,21 +173,31 @@ var keyWords = map[string]bool{
 // proseOnly is the user's message without its keys: lines that held only
 // keys (with their labels) go, keys inside a sentence are cut out with the
 // label right before them, and blank runs collapse to one blank line.
+//
+// It runs in time linear in the message: one replacer marks every key, then
+// a scan of each marked line cuts the key with its label and quotes. One
+// regexp per key over every line cost keys times bytes, which a 1 MB paste
+// of 5000 keys turned into seconds of CPU per message.
 func proseOnly(text string, keys []keyparse.Key) string {
 	if t := strings.TrimSpace(text); strings.HasPrefix(t, "[") && json.Valid([]byte(t)) {
 		return "" // a JSON array of keys is all data
 	}
-	cuts := make([]*regexp.Regexp, 0, len(keys))
 	labels := map[string]bool{}
 	sorted := append([]keyparse.Key(nil), keys...)
 	sort.SliceStable(sorted, func(i, j int) bool { return len(sorted[i].Secret) > len(sorted[j].Secret) })
-	for _, k := range sorted {
-		q := regexp.QuoteMeta(k.Secret)
+	pairs := make([]string, 0, 2*len(sorted))
+	for i, k := range sorted {
 		if k.Label != "" {
 			labels[strings.ToLower(k.Label)] = true
-			q = `(?:` + regexp.QuoteMeta(k.Label) + `["'\x60]?\s*[:=,;|]?\s*)?["'\x60]?` + q + `["'\x60]?`
 		}
-		cuts = append(cuts, regexp.MustCompile(q))
+		if k.Secret != "" {
+			// Longer secrets come first, so they win where keys overlap.
+			pairs = append(pairs, k.Secret, keyMarkOpen+strconv.Itoa(i)+keyMarkClose)
+		}
+	}
+	text = strings.ReplaceAll(text, keyMarkOpen, "")
+	if len(pairs) > 0 {
+		text = strings.NewReplacer(pairs...).Replace(text)
 	}
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
@@ -201,17 +210,11 @@ func proseOnly(text string, keys []keyparse.Key) string {
 				continue
 			}
 		}
-		had := false
-		for _, re := range cuts {
-			if re.MatchString(t) {
-				had = true
-				t = re.ReplaceAllString(t, "")
-			}
-		}
-		if !had {
+		if !strings.Contains(t, keyMarkOpen) {
 			out = append(out, strings.TrimRight(l, " \t"))
 			continue
 		}
+		t = cutMarkedKeys(t, sorted)
 		t = emptyPairs.Replace(t)
 		t = strings.Join(strings.Fields(t), " ")
 		t = strings.TrimLeft(t, ",;|")
@@ -230,6 +233,64 @@ func proseOnly(text string, keys []keyparse.Key) string {
 		res = append(res, l)
 	}
 	return strings.TrimSpace(strings.Join(res, "\n"))
+}
+
+// keyMarkOpen and keyMarkClose wrap the index of a key in a marked line.
+const keyMarkOpen, keyMarkClose = "\x00", "\x01"
+
+// cutMarkedKeys removes each marked key from a line. For a labeled key it
+// also removes the label right before it, written as label, optional quote,
+// optional : = , ; or | separator and optional quotes around the key.
+func cutMarkedKeys(line string, keys []keyparse.Key) string {
+	buf := make([]byte, 0, len(line))
+	for i := 0; i < len(line); {
+		if line[i] != keyMarkOpen[0] {
+			buf = append(buf, line[i])
+			i++
+			continue
+		}
+		end := strings.IndexByte(line[i:], keyMarkClose[0])
+		if end < 0 {
+			i++
+			continue
+		}
+		n, _ := strconv.Atoi(line[i+1 : i+end])
+		i += end + 1
+		if n < 0 || n >= len(keys) || keys[n].Label == "" {
+			continue
+		}
+		j := len(buf)
+		if j > 0 && isQuoteByte(buf[j-1]) {
+			j--
+		}
+		k := j
+		for k > 0 && isSpaceByte(buf[k-1]) {
+			k--
+		}
+		if k > 0 && strings.IndexByte(":=,;|", buf[k-1]) >= 0 {
+			k--
+		}
+		for k > 0 && isSpaceByte(buf[k-1]) {
+			k--
+		}
+		if k > 0 && isQuoteByte(buf[k-1]) {
+			k--
+		}
+		if label := keys[n].Label; k >= len(label) && string(buf[k-len(label):k]) == label {
+			j = k - len(label)
+		}
+		buf = buf[:j]
+		if i < len(line) && isQuoteByte(line[i]) {
+			i++
+		}
+	}
+	return string(buf)
+}
+
+func isQuoteByte(b byte) bool { return b == '"' || b == '\'' || b == '`' }
+
+func isSpaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\f' || b == '\r'
 }
 
 var emptyPairs = strings.NewReplacer(`""`, "", "''", "", "``", "", "()", "", "[]", "", "{}", "", "<>", "")
