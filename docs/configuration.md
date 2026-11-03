@@ -307,6 +307,9 @@ Migrations run automatically on start. Notable behavior changes:
   hidden keys until a superadmin confirms it.
 - **Behind a proxy**, set `ACNOLOGIA_TRUST_PROXY_HEADERS=true`. The server logs a
   warning when it sees `X-Forwarded-For` while the setting is off.
+- **Event indexes.** The first start of a version with the per key and per
+  app event indexes builds them and analyzes the events table before it
+  serves requests, about a second per half million stored events.
 
 ## Upgrading from Cogito
 
