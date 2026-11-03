@@ -416,7 +416,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        lua: ["5.1", "5.4", "luajit-2.1"]
+        # LuaJIT cannot load the luarocks.org manifest any more (more than
+        # 65536 constants), so CI cannot install the test rocks for it.
+        # Lua 5.1 covers the same language level; run LuaJIT locally.
+        lua: ["5.1", "5.4"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

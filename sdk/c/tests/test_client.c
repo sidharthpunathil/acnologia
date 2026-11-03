@@ -934,8 +934,8 @@ static void test_scrubbing(void) {
     char msg[1100];
     size_t n = 0;
     while (n + 2 < 1000) {
-        msg[n++] = (char)0xC3; /* U+00E9, two bytes */
-        msg[n++] = (char)0xA9;
+        msg[n++] = '\xC3'; /* U+00E9, two bytes */
+        msg[n++] = '\xA9';
     }
     msg[n] = '\0';
     snprintf(body, sizeof body, "{\"error\":{\"code\":\"x\",\"message\":\"a%s\"}}", msg);
