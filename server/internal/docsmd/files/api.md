@@ -3,14 +3,14 @@
 All bodies are JSON. Errors look like
 `{"error": {"code": "string", "message": "string"}}` with a matching status.
 
-There are three ways in:
+There are four ways in:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia` | none |
-| Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`) or a share token (`manifest`, `leave`); see [Sharing between servers](#sharing-between-servers) |
+| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/robots.txt`, `/.well-known/acnologia` and `/api/gate` stay open) |
+| Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`) or a share token (`manifest`, `leave`, `providers/{slug}/logo`); see [Sharing between servers](#sharing-between-servers) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
-| Dashboard | `/api/auth`, `/api/admin`, `/api/logos` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
+| Dashboard | `/api/auth`, `/api/admin`, `/api/logos`, `/api/cli/device` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
 
 The consumer API is documented for app and agent authors in
 [llms-full.txt](llms-full.txt) (served at `/llms-full.txt`, with a summary at `/llms.txt`). This page covers
@@ -34,6 +34,7 @@ Status codes an app should handle:
 | 401 | `unauthenticated` | Token missing or wrong. |
 | 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
 | 400 | `bad_path` | Proxy path with a literal `?`, `#`, or a `.` / `..` segment. |
+| 400 | `bad_body` | The proxy could not read the request body. |
 | 405 | `method_not_allowed` | Proxy method other than GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. |
 | 413 | `body_too_large` | Proxy body over `ACNOLOGIA_MAX_BODY_MB`. |
 | 503 | `no_key_available` | Every usable key is cooling down, exhausted or disabled. Wait `retry_after_sec`. |
@@ -41,6 +42,7 @@ Status codes an app should handle:
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
 | 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
+| 404 | `unknown_service` | No service (or, for the proxy, service group) has that slug. |
 | 404 | `lease_not_found` | Renewing a lease that is not open. |
 | 409 | `report_failed` | Lease already reported. |
 | 410 | `report_failed` | Lease expired more than 10 minutes ago. |
@@ -57,6 +59,17 @@ apps simply never see them; if a service has only hidden keys, those apps get
 
 Mutating calls (anything but GET, HEAD, OPTIONS) must send `Content-Type:
 application/json` or `X-Requested-With`. The dashboard sends both.
+
+### Access lock (`/api/gate`)
+
+Open while the site is locked, so the lock screen can reach them. See
+[Access password](configuration.md#access-password).
+
+| Route | Role | Purpose |
+|---|---|---|
+| `GET /api/gate` | public | `{required, locked, password_only}`. `password_only` is true when the access password is the whole login (`ACNOLOGIA_ACCESS_SIGNS_IN`). |
+| `POST /api/gate/unlock` | public | `{password}`. Sets the `acnologia_gate` cookie and returns `{required, locked: false}`. 401 `wrong_password`; 429 `too_many_attempts` with `retry_after_sec` after 5 wrong guesses a minute or 50 a day. |
+| `POST /api/gate/lock` | public | Drops this browser's gate cookie. |
 
 ### Auth (`/api/auth`)
 
@@ -187,7 +200,7 @@ model in [security.md](security.md#sharing-between-servers).
 |---|---|---|
 | `GET /.well-known/acnologia` | none | `{id, name, version, public_key (base64 Ed25519), url}`. The id is `acn_srv_` and the first 20 characters of the lowercase base32 SHA-256 of the key. |
 | `POST /api/peer/v1/preview` | invite | `{invite, share_id}`: the share's name, services and providers. Does not use the invite up. |
-| `POST /api/peer/v1/redeem` | invite and signature | `{invite, share_id, id, name, url, public_key, nonce, signature}`. The signature is Ed25519 over `acnologia-redeem-v1\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>`. Returns `{token, owner, manifest}` once. 409 `invite_used`, 410 `invite_expired`, 404 `invite_invalid`, 401 `bad_signature`, 400 `bad_identity`. |
+| `POST /api/peer/v1/redeem` | invite and signature | `{invite, share_id, id, name, url, public_key, nonce, signature}`. The signature is Ed25519 over `acnologia-redeem-v1\n<share id>\n<sha256 hex of the invite secret>\n<nonce>\n<receiver id>`. Returns `{token, owner, manifest}` once. 409 `invite_used`, 410 `invite_expired`, 404 `invite_invalid`, 401 `bad_signature`, 400 `bad_identity`, 400 `self_redeem` when a server redeems its own invite. |
 | `GET /api/peer/v1/manifest` | share token | `{share_id, name, status, limits, expires_at, services: [{slug, name, provider, category, description, logo_url, available}], providers: [{slug, name, version, shared, spec, ...}]}`. No key data. |
 | `POST /api/peer/v1/leave` | share token | The receiver disconnected; the share is revoked and shows as left by the peer. |
 | `GET /api/peer/v1/providers/{slug}/logo` | share token | The logo of a provider in this share's manifest (shared, or used by a shared service). 404 for any other provider or when it has none. |
@@ -209,7 +222,9 @@ the scope on every pick, so a scope that leaves no usable key answers 503
 scope.
 
 Preview and redeem share a global limit of 20 calls a minute and 500 a day
-(429 `rate_limited`). All four routes, and the well-known identity, are open
+(429 `rate_limited`). A share token route called with an ordinary app token gets 403
+`not_a_share`; with the token of a revoked, paused or expired share, 403
+`share_revoked`, `share_paused` or `share_expired`. All five routes, and the well-known identity, are open
 through the access password lock.
 
 ### Logos (`/api/logos`)
