@@ -14,6 +14,16 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
+// TestCleanName keeps another server's name to one plain line.
+func TestCleanName(t *testing.T) {
+	if got := CleanName("  Evil\n\tCorp‮\x00 "); got != "Evil Corp" {
+		t.Fatalf("got %q", got)
+	}
+	if got := CleanName(strings.Repeat("a", 300)); len(got) > 100 {
+		t.Fatalf("name kept %d bytes", len(got))
+	}
+}
+
 func boxPair(t *testing.T) (*ecdh.PrivateKey, string) {
 	t.Helper()
 	priv, err := ecdh.X25519().GenerateKey(rand.Reader)

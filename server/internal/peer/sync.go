@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
@@ -98,6 +99,19 @@ func (y *Syncer) client(trusted bool) *http.Client {
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
+// CleanName keeps a server name another server sent to one line of up to
+// 100 bytes with no control or formatting characters, which could break or
+// disguise the dashboard, the audit log and notifications.
+func CleanName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return ' '
+		}
+		return r
+	}, name)
+	return strings.TrimSpace(crypto.Truncate(strings.Join(strings.Fields(name), " "), 100))
+}
+
 // SlugPrefix turns a server name into a service slug prefix.
 func SlugPrefix(name string) string {
 	p := strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(name), "-"), "-")
@@ -162,11 +176,12 @@ func (y *Syncer) Connect(ctx context.Context, code, prefix string, trusted bool,
 	if err != nil {
 		return nil, err
 	}
+	ownerName := CleanName(owner.Name)
 	if prefix == "" {
-		prefix = SlugPrefix(owner.Name)
+		prefix = SlugPrefix(ownerName)
 	}
 	link, err := y.Store.CreatePeerLink(ctx, &store.PeerLink{
-		PeerID: owner.ID, PeerName: owner.Name, PeerURL: inv.URL, PeerPublicKey: owner.PublicKey,
+		PeerID: owner.ID, PeerName: ownerName, PeerURL: inv.URL, PeerPublicKey: owner.PublicKey,
 		RemoteShareID: inv.ShareID, TokenEnc: enc, Status: LinkActive, Prefix: prefix, Trusted: trusted,
 		Mode: res.Manifest.Mode,
 	}, userID)

@@ -213,7 +213,7 @@ func (s *Server) peerRedeem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "self_redeem", "a server cannot redeem its own invite")
 		return
 	}
-	name := strings.TrimSpace(crypto.Truncate(in.Name, 100))
+	name := peer.CleanName(in.Name)
 	url := strings.TrimRight(crypto.Truncate(in.URL, 500), "/")
 	tok, prefix, hash := newAppToken()
 	sh, err := s.Store.RedeemShare(r.Context(), in.ShareID, peer.InviteHash(in.Invite),

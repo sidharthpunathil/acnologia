@@ -270,7 +270,7 @@ const maxReportRetryAfter = 24 * 60 * 60
 func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in reportInput) (*leaseDTO, int, error) {
 	out, ok := providers.ParseOutcome(in.Outcome)
 	if !ok {
-		return nil, 400, errors.New("outcome must be ok, rate_limited, quota_exhausted, invalid or error")
+		return nil, 400, errors.New("outcome must be ok, rate_limited, busy, quota_exhausted, invalid, banned or error")
 	}
 	l, err := s.Store.GetLease(ctx, leaseID)
 	if err != nil || l.AppID != a.ID {
