@@ -398,6 +398,9 @@ review. The guardrails are in code, not in the prompt:
 - The harness re-validates and re-tests every submission itself, and a failing
   test blocks publishing.
 - Logo fetches and live checks cannot reach private networks.
+- The test key only goes to the domain of a URL you gave (or of the provider
+  being updated). With a test key but no docs URL, the live check is skipped
+  and the draft waits for your review, even with auto publish on.
 - Test keys are encrypted, never shown to the model (see
   [security](security.md#what-the-model-can-and-cannot-see)), and wiped when
   the run ends.

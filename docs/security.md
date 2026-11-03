@@ -363,6 +363,25 @@ every submitted spec, a create run cannot overwrite an existing provider,
 update runs wait for review by default, and the test key only goes to the
 provider's own domain.
 
+How the test key stays on that domain:
+
+- **Pinned to what the operator vouched for.** The key goes only to the
+  registrable domain of a URL the operator gave, or of the provider being
+  updated. A host on a shared hosting platform (`vercel.app`, `github.io`,
+  `supabase.co`, `workers.dev`, `amazonaws.com` and similar) pins only that
+  tenant's own host, and an IP address only itself.
+- **Nothing to pin to, no key sent.** A create run with no docs URL (or only
+  a GitHub link) never sends the test key. The draft is accepted without a
+  live check and waits for review even with auto publish on, because
+  publishing creates a service at `base_url` holding the test keys; the
+  review step names the host to confirm.
+- **Only a valid spec runs live.** `live_check` refuses a draft with schema
+  problems, so every health and example path starts with `/` and the health
+  method is GET or POST. The live check client also refuses any request whose
+  host, scheme or user info differs from `base_url`'s, and the engine's health
+  check does the same, so a path such as `@attacker.example/x` cannot move
+  the key to another host.
+
 ## Sharing between servers
 
 A share lets another Acnologia use some services through this server's proxy.

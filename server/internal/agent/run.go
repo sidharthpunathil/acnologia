@@ -39,6 +39,9 @@ type runState struct {
 	liveChecks int
 	// pinNoted is set once the "nothing to pin to" note has been logged.
 	pinNoted bool
+	// unpinned is set when a draft was accepted with test keys but no URL
+	// vouched for its base_url host. Such a run always waits for review.
+	unpinned bool
 }
 
 const (
@@ -234,11 +237,24 @@ func (a *Agent) finish(ctx context.Context, s *runState) {
 	logo, mime := a.findLogo(ctx, id, d)
 	summary := s.summary
 	_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Draft: d, Report: s.report, Live: s.live, Summary: &summary, ProviderSlug: &d.Slug})
-	if !s.run.Input.AutoPublish {
+	if !s.run.Input.AutoPublish || s.unpinned {
 		st := "needs_review"
 		_ = a.Store.UpdateRun(ctx, id, store.RunPatch{Status: &st, Finished: true})
 		a.storePendingLogo(id, pendingLogo{logo, mime})
-		a.logf(ctx, id, "done", "Ready for review", "All checks passed. Review the draft and publish it.")
+		msg := "All checks passed. Review the draft and publish it."
+		if s.unpinned {
+			// Publishing creates a service at base_url with the test keys,
+			// so a host nobody vouched for needs a person to confirm it.
+			host := "its base_url"
+			if spec, err := providers.DecodeSpec(d.Spec); err == nil {
+				if h := URLHost(spec.BaseURL); h != "" {
+					host = h
+				}
+			}
+			msg = "No docs URL said where this API lives, so the test keys were not sent. Confirm that " + host +
+				" is the provider's own API host before publishing: the keys go there."
+		}
+		a.logf(ctx, id, "done", "Ready for review", msg)
 		return
 	}
 	if err := a.publish(ctx, s.run, d, "ai:"+s.run.CreatedBy, logo, mime, s.run.Input.CreateService); err != nil {

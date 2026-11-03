@@ -82,16 +82,67 @@ func TestPinKeyHost(t *testing.T) {
 	if msg := a.pinKeyHost(ctx, su, "https://evil.example"); msg == "" {
 		t.Error("evil host allowed for serpapi update")
 	}
+	// With nothing to pin to (no URL, or only a repo link) the key goes nowhere.
+	for _, urls := range [][]string{nil, {"https://github.com/x/y"}} {
+		r, _ := a.Store.CreateRun(ctx, &store.AgentRun{Kind: "create_provider", Status: "running", Input: store.AgentInput{URLs: urls}})
+		if msg := a.pinKeyHost(ctx, &runState{run: r, testKey: "sk-test"}, "https://evil.example/v1"); msg == "" {
+			t.Errorf("urls %v: unpinned host allowed", urls)
+		}
+	}
 }
 
 func TestRegistrableDomain(t *testing.T) {
 	for in, want := range map[string]string{
 		"api.example.com": "example.com", "example.com": "example.com", "a.b.example.co.uk": "example.co.uk",
 		"api.ibm.de": "ibm.de", "localhost": "localhost",
+		// Shared hosting: a tenant is its own domain, the platform is nobody's.
+		"acme.vercel.app": "acme.vercel.app", "api.acme.vercel.app": "api.acme.vercel.app",
+		"x.github.io": "x.github.io", "abc.supabase.co": "abc.supabase.co", "vercel.app": "",
+		"203.0.113.5": "203.0.113.5",
 	} {
-		if got := registrableDomain(in); got != want {
-			t.Errorf("registrableDomain(%s) = %s, want %s", in, got, want)
+		if got := RegistrableDomain(in); got != want {
+			t.Errorf("RegistrableDomain(%s) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestPinKeyHostOnSharedHosting(t *testing.T) {
+	a := newTestAgent(t)
+	ctx := context.Background()
+	for from, cases := range map[string]map[string]bool{
+		"https://acme.vercel.app/docs": {"https://acme.vercel.app": true, "https://api.acme.vercel.app": true, "https://evil.vercel.app": false},
+		"https://user.github.io":       {"https://user.github.io/api": true, "https://other.github.io": false},
+		"http://203.0.113.5/docs":      {"http://203.0.113.5": true, "http://198.51.113.5": false, "http://x.203.0.113.5": false},
+	} {
+		run, err := a.Store.CreateRun(ctx, &store.AgentRun{Kind: "create_provider", Status: "running",
+			Input: store.AgentInput{URLs: []string{from}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := &runState{run: run, testKey: "sk-test"}
+		for u, ok := range cases {
+			if got := a.pinKeyHost(ctx, s, u) == ""; got != ok {
+				t.Errorf("from %s: pinKeyHost(%s) allowed=%v, want %v", from, u, got, ok)
+			}
+		}
+	}
+	// An update of a provider on a shared platform pins to its own tenant.
+	p, _ := a.Store.GetProvider(ctx, "serpapi")
+	p.Slug, p.Name, p.Website, p.DocsURL, p.Builtin = "edgefn", "Edge", "", "", false
+	var m map[string]any
+	_ = json.Unmarshal(p.Spec, &m)
+	m["base_url"] = "https://abc.supabase.co/functions/v1"
+	p.Spec, _ = json.Marshal(m)
+	if _, err := a.Store.SaveProvider(ctx, p, "x", "test"); err != nil {
+		t.Fatal(err)
+	}
+	up, _ := a.Store.CreateRun(ctx, &store.AgentRun{Kind: "update_provider", Status: "running", ProviderSlug: "edgefn"})
+	su := &runState{run: up, fixedSlug: "edgefn", testKey: "sk-test"}
+	if msg := a.pinKeyHost(ctx, su, "https://abc.supabase.co/functions/v1"); msg != "" {
+		t.Errorf("own tenant blocked: %s", msg)
+	}
+	if msg := a.pinKeyHost(ctx, su, "https://xyz.supabase.co"); msg == "" {
+		t.Error("another supabase tenant allowed")
 	}
 }
 

@@ -165,17 +165,25 @@ func (s *Spec) Check(ctx context.Context, c *http.Client, baseURL, secret string
 	if method == "" {
 		method = http.MethodGet
 	}
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	// The request carries the key, so its path may only add to base_url:
+	// "@host" or ".host" would move it to another host.
+	if !strings.HasPrefix(h.Path, "/") {
+		return nil, fmt.Errorf("health.path must start with /")
+	}
 	target := strings.TrimRight(baseURL, "/") + h.Path
 	if h.FromOrigin {
-		u, err := url.Parse(baseURL)
-		if err != nil {
-			return nil, err
-		}
-		target = u.Scheme + "://" + u.Host + h.Path
+		target = base.Scheme + "://" + base.Host + h.Path
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
 		return nil, err
+	}
+	if req.URL.User != nil || !strings.EqualFold(req.URL.Host, base.Host) {
+		return nil, fmt.Errorf("the health check would leave base_url's host")
 	}
 	s.Auth.Apply(req, q, secret)
 	req.URL.RawQuery = q.Encode()

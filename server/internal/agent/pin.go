@@ -9,14 +9,20 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 )
 
+// unpinnedMsg is what the model hears when nothing tells the harness where
+// the API lives, so the test key goes nowhere.
+const unpinnedMsg = "No docs URL from the operator or existing provider says where this API lives, so the operator's test key is not sent anywhere. " +
+	"Submit without a live check and name the API host in your summary; the run waits for the operator to confirm it."
+
 // pinKeyHost decides whether the operator's test key may be sent to baseURL.
 // The model chooses base_url, and text on a fetched page could steer it to an
 // attacker host, so the key only goes to the site the operator pointed at:
 // the registrable domain of a URL they gave, or of the provider being updated.
-// It returns an empty string when sending is allowed, else a message for the model.
+// With nothing to pin to it refuses. It returns an empty string when sending
+// is allowed, else a message for the model.
 func (a *Agent) pinKeyHost(ctx context.Context, s *runState, baseURL string) string {
 	u, err := url.Parse(baseURL)
-	if err != nil || u.Hostname() == "" {
+	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 		return "base_url must be an absolute http(s) URL before a live check can run"
 	}
 	host := strings.ToLower(u.Hostname())
@@ -24,13 +30,13 @@ func (a *Agent) pinKeyHost(ctx context.Context, s *runState, baseURL string) str
 	if len(allowed) == 0 {
 		if !s.pinNoted {
 			s.pinNoted = true
-			a.logf(ctx, s.run.ID, "info", "Test key host not pinned",
-				"No docs URL or existing provider to compare with, so the test key goes to "+host+".")
+			a.logf(ctx, s.run.ID, "info", "Test key not sent",
+				"No docs URL or existing provider to compare "+host+" with, so the run waits for review.")
 		}
-		return ""
+		return unpinnedMsg
 	}
 	for _, d := range allowed {
-		if host == d || strings.HasSuffix(host, "."+d) {
+		if HostWithin(host, d) {
 			return ""
 		}
 	}
@@ -60,7 +66,7 @@ func (a *Agent) pinnedDomains(ctx context.Context, s *runState) []string {
 		if h == "github.com" || strings.HasSuffix(h, ".github.com") {
 			return // a repo link says nothing about where the API lives
 		}
-		if d := registrableDomain(h); !seen[d] {
+		if d := RegistrableDomain(h); d != "" && !seen[d] {
 			seen[d] = true
 			out = append(out, d)
 		}
@@ -78,21 +84,4 @@ func (a *Agent) pinnedDomains(ctx context.Context, s *runState) []string {
 		}
 	}
 	return out
-}
-
-// secondLevel are common second level labels under country code TLDs.
-var secondLevel = map[string]bool{"co": true, "com": true, "net": true, "org": true, "gov": true, "ac": true, "edu": true, "ne": true, "or": true}
-
-// registrableDomain approximates the public suffix rule: the last two labels,
-// or the last three under a country second level such as co.uk or com.au.
-func registrableDomain(host string) string {
-	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
-	if len(labels) <= 2 {
-		return strings.Join(labels, ".")
-	}
-	n := 2
-	if secondLevel[labels[len(labels)-2]] && len(labels[len(labels)-1]) == 2 {
-		n = 3
-	}
-	return strings.Join(labels[len(labels)-n:], ".")
 }

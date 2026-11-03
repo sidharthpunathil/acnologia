@@ -56,7 +56,8 @@ func (f *recordingAnthropic) all() string {
 
 func TestBuilderNeverSendsOrLogsTheTestKey(t *testing.T) {
 	f := &recordingAnthropic{fallback: `{"content":[{"type":"text","text":"{\"title\":\"Echo\",\"description\":\"Echo API\"}"}],"stop_reason":"end_turn"}`}
-	spec := `{"base_url":"http://127.0.0.1:9","auth":{"type":"query","name":"key"},"health":{"method":"GET","path":"/health"}}`
+	spec := `{"base_url":"http://127.0.0.1:9","auth":{"type":"query","name":"key"},"health":{"method":"GET","path":"/health"},` +
+		`"tests":[{"name":"ok","status":200,"body":"{}","expect":"ok"}]}`
 	provider := `{"slug":"echo","name":"Echo","category":"test","description":"d","website":"http://127.0.0.1","docs_url":"http://127.0.0.1","color":"#000000","spec":` + spec + `}`
 	f.replies = []string{
 		// The model runs a live check; the request carries the key in the query.

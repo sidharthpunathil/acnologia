@@ -127,6 +127,12 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 			if s.liveChecks >= MaxLiveChecks {
 				return fmt.Sprintf("live_check is limited to %d calls per run. Submit the provider instead.", MaxLiveChecks), true, false
 			}
+			// The real key only rides on a spec that passes the schema: its
+			// paths start with / and its health method is GET or POST, so
+			// no path can move the request off base_url's host.
+			if len(errs) > 0 {
+				return "Fix these schema problems before a live check:\n- " + strings.Join(errs, "\n- "), true, false
+			}
 			spec, err := providers.DecodeSpec(d.Spec)
 			if err != nil {
 				return err.Error(), true, false
@@ -158,7 +164,11 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 		}
 		if len(problems) == 0 && s.testKey != "" {
 			spec, _ := providers.DecodeSpec(d.Spec)
-			if msg := a.pinKeyHost(ctx, s, spec.BaseURL); msg != "" {
+			if len(a.pinnedDomains(ctx, s)) == 0 {
+				// Nothing vouches for base_url's host: accept without a live
+				// check and let the operator confirm the host on review.
+				s.unpinned = true
+			} else if msg := a.pinKeyHost(ctx, s, spec.BaseURL); msg != "" {
 				problems = append(problems, msg)
 			} else {
 				lr := catalog.LiveCheck(ctx, spec, s.testKey)

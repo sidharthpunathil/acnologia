@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -35,11 +36,28 @@ type LiveReport struct {
 
 // LiveCheck runs the health check and the first safe example with a real key.
 func LiveCheck(ctx context.Context, spec *providers.Spec, secret string) LiveReport {
+	return liveCheck(ctx, SafeClient(20*time.Second), spec, secret)
+}
+
+func liveCheck(ctx context.Context, c *http.Client, spec *providers.Spec, secret string) LiveReport {
 	var rep LiveReport
-	c := SafeClient(20 * time.Second)
-	// The request carries a real key, so never follow a redirect to another host.
+	base, err := url.Parse(spec.BaseURL)
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.User != nil {
+		rep.Health.Detail = "base_url must be an absolute http(s) URL with no user info"
+		return rep
+	}
+	// The request carries a real key, so never follow a redirect, and never
+	// send anything to a host other than base_url's, whatever the spec's
+	// paths say.
+	next := c.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	c.Transport = pinnedTransport{next: next, scheme: base.Scheme, host: base.Host}
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	if spec.Health != nil {
+	if h := spec.Health; h != nil && !liveHealthOK(h) {
+		rep.Health.Detail = "health check refused: its path must start with / and its method must be GET, HEAD or POST"
+	} else if h != nil {
 		res, err := spec.Check(ctx, c, spec.BaseURL, secret)
 		switch {
 		case err != nil:
@@ -59,7 +77,7 @@ func LiveCheck(ctx context.Context, spec *providers.Spec, secret string) LiveRep
 	}
 	for _, ex := range spec.Examples {
 		// Only read-only requests run with a real key, whatever the spec claims.
-		if !ex.Safe || !LiveSafeMethod(ex.Method) {
+		if !ex.Safe || !LiveSafeMethod(ex.Method) || !strings.HasPrefix(ex.Path, "/") {
 			continue
 		}
 		rep.Example.Ran = true
@@ -116,6 +134,32 @@ func runExample(ctx context.Context, c *http.Client, spec *providers.Spec, ex pr
 		detail += "\n" + preview
 	}
 	return resp.StatusCode, string(res.Outcome), scrub(detail, secret)
+}
+
+// liveHealthOK reports whether a health check may run with a real key: the
+// rules Spec.Validate enforces, checked again here because a live check can
+// run on a draft that has not passed validation.
+func liveHealthOK(h *providers.Health) bool {
+	switch strings.ToUpper(strings.TrimSpace(h.Method)) {
+	case "", http.MethodGet, http.MethodHead, http.MethodPost:
+	default:
+		return false
+	}
+	return strings.HasPrefix(h.Path, "/")
+}
+
+// pinnedTransport refuses any request that would leave one scheme and host,
+// so a key cannot be carried anywhere else.
+type pinnedTransport struct {
+	next         http.RoundTripper
+	scheme, host string
+}
+
+func (t pinnedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.User != nil || req.URL.Scheme != t.scheme || !strings.EqualFold(req.URL.Host, t.host) {
+		return nil, fmt.Errorf("refusing to send the key outside %s", t.host)
+	}
+	return t.next.RoundTrip(req)
 }
 
 // LiveSafeMethod reports whether an example may run against the real API
