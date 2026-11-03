@@ -547,3 +547,43 @@ func TestHandoverWebhooksCarryNoSecret(t *testing.T) {
 		}
 	}
 }
+
+// TestHandoverUntrustedLinkDialsPublicOnly: on a link that is not on a
+// private network the owner's base URL passed the public address check at
+// sync, but its name now points at a private address (DNS rebinding). The
+// proxy and the health check refuse to connect there.
+func TestHandoverUntrustedLinkDialsPublicOnly(t *testing.T) {
+	a, b := newEnv(t), newEnv(t)
+	a.addKeys(map[string]any{"secret": "ownerkey1"})
+	sh := a.newShare(map[string]any{"name": "Keys for B", "services": []string{"serpapi"}, "mode": "handover", "lease": "6h",
+		"limits": map[string]any{"daily_requests": nil, "monthly_requests": nil, "daily_budget": nil, "monthly_budget": nil}})
+	a.up.mu.Lock()
+	before := a.up.hits["ownerkey1"]
+	a.up.mu.Unlock()
+	// The owner's server and base URL looked public when B synced.
+	b.api.peers.Client = func(bool) *http.Client { return &http.Client{Timeout: 20 * time.Second} }
+	b.api.peers.CheckHost = func(context.Context, string) error { return nil }
+	var link linkResp
+	b.do(b.super, "POST", "/api/admin/peers", map[string]any{"invite": sh.Invite, "prefix": "a", "trusted": false}, 201, &link)
+	keys := handedKeys(t, b, link.ID)
+	if len(keys) != 1 {
+		t.Fatalf("handed keys %+v", keys)
+	}
+	_, btok := b.app(map[string]any{"name": "b-app"})
+	if code, body, _ := peerCall(t, "GET", b.srv.URL+"/proxy/a-serpapi/search.json?q=coffee", btok); code == 200 {
+		t.Fatalf("proxy reached a private address: %s", body)
+	}
+	sv, err := b.st.GetServiceBySlug(context.Background(), "a-serpapi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.api.Pool.Check(context.Background(), sv, keys[0]); err == nil || !strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("health check: %v", err)
+	}
+	a.up.mu.Lock()
+	hits := a.up.hits["ownerkey1"]
+	a.up.mu.Unlock()
+	if hits != before {
+		t.Fatalf("private upstream got %d requests", hits-before)
+	}
+}

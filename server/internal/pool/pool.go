@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/egress"
 	"github.com/sidharthpunathil/acnologia/server/internal/notify"
@@ -56,6 +57,9 @@ type Pool struct {
 	Store  *store.Store
 	Box    *crypto.Box
 	Client *http.Client
+	// PublicClient is Client restricted to public addresses, for health
+	// checks of services from a share whose link is not on a private network.
+	PublicClient *http.Client
 	// Notify receives key and pool events for webhooks; nil is fine.
 	Notify *notify.Notifier
 	// Egress routes health checks through a key's or service's proxy; nil connects directly.
@@ -86,7 +90,14 @@ func New(s *store.Store, box *crypto.Box) *Pool {
 			// auth headers (x-api-key and friends) to the new host.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
+		PublicClient: publicClient(),
 	}
+}
+
+func publicClient() *http.Client {
+	c := catalog.SafeClient(20 * time.Second)
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
 }
 
 func (p *Pool) lock(serviceID int64) *sync.Mutex {

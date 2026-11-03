@@ -11,11 +11,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
+	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
@@ -98,10 +100,21 @@ func authPrefix(sv *store.Service) string {
 	return a.Prefix
 }
 
-func newUpstreamClient() *http.Client {
+func newUpstreamClient() *http.Client { return upstreamClientWith(nil) }
+
+// newPublicUpstreamClient connects only to public addresses, checked on the
+// resolved address of each connection. It never uses an environment proxy,
+// which would hide the real target from the check.
+func newPublicUpstreamClient() *http.Client { return upstreamClientWith(catalog.PublicOnly) }
+
+func upstreamClientWith(control func(network, address string, c syscall.RawConn) error) *http.Client {
+	proxy := http.ProxyFromEnvironment
+	if control != nil {
+		proxy = nil
+	}
 	t := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		Proxy:                 proxy,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: control}).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,

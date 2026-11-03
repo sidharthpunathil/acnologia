@@ -97,7 +97,16 @@ type Service struct {
 	// stays acnologia-peer (it classifies the share token's answers); this
 	// one names the provider for display, docs, examples and MCP tools.
 	PeerProvider string `json:"peer_provider,omitempty"`
+	// PeerTrusted is the link's private network flag. Without it the owner
+	// controls where this service connects, so connections go to public
+	// addresses only (checked when dialing, not once at sync).
+	PeerTrusted bool `json:"-"`
 }
+
+// PublicOnly reports whether connections for this service must go to public
+// addresses only: it belongs to another server's share on a link that is
+// not on a private network.
+func (s *Service) PublicOnly() bool { return s.PeerLinkID != nil && !s.PeerTrusted }
 
 // DocProvider is the provider whose name, logo, docs and examples describe
 // the service: the owner's provider for a peer service, else its own.

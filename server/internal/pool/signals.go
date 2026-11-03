@@ -58,6 +58,12 @@ func applyQuotaReading(e *store.KeyEffect, r providers.Result, now time.Time) {
 func (p *Pool) checkClient(ctx context.Context, svc *store.Service, k *store.Key) (*http.Client, error) {
 	id := egress.Pick(k.EgressID, svc.EgressID)
 	if id == nil || p.Egress == nil {
+		if svc.PublicOnly() {
+			if p.PublicClient == nil {
+				return publicClient(), nil
+			}
+			return p.PublicClient, nil
+		}
 		return p.Client, nil
 	}
 	rt, err := p.Egress.Transport(ctx, id)

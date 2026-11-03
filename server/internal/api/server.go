@@ -44,6 +44,9 @@ type Server struct {
 	Catalog  *catalog.Catalog
 	Agent    *agent.Agent
 	UpClient *http.Client
+	// PublicUpClient is UpClient restricted to public addresses, for services
+	// of a share whose link is not on a private network.
+	PublicUpClient *http.Client
 	// Breakers pause traffic to services whose provider keeps failing.
 	Breakers *breaker.Set
 	// Cache holds cached GET responses and idempotent replays.
@@ -87,11 +90,12 @@ type Server struct {
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
 	s := &Server{
 		Cfg: cfg, Store: st, Pool: p, Catalog: cat, Agent: ag, WebFS: web, LLMsTxt: llms,
-		UpClient: newUpstreamClient(),
-		Breakers: breaker.New(),
-		Cache:    respcache.New(cfg.CacheBytes),
-		limiter:  newLoginLimiter(),
-		devices:  newDeviceStore(),
+		UpClient:       newUpstreamClient(),
+		PublicUpClient: newPublicUpstreamClient(),
+		Breakers:       breaker.New(),
+		Cache:          respcache.New(cfg.CacheBytes),
+		limiter:        newLoginLimiter(),
+		devices:        newDeviceStore(),
 	}
 	s.peerLimit = newPeerLimiter()
 	s.revokeLimit = newPeerLimiter()
