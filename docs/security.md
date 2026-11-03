@@ -331,6 +331,19 @@ keys:
 - **Outbound calls.** Preview, redeem, sync and leave use `SafeClient` unless the
   superadmin ticked "this server is on my private network" for that link.
   Proxied calls go to the service's base URL like any other service.
+- **Imported specs never change on their own.** A provider spec from a peer,
+  whether shared on purpose or pulled in because a shared service uses it, is
+  imported once with source `peer:<owner id>` and only when this server has no
+  provider with that slug; an existing one is never overwritten. A newer owner
+  version is only reported. Pulling it is a superadmin action, refused when the
+  spec was edited here and confirmed separately when the base URL moves, so an
+  owner can never point keys this server added to its provider somewhere else.
+  The local service keeps provider `acnologia-peer` for classification and the
+  token; the owner's provider only describes it.
+- **Logos from a peer.** The share token is sent only to the owner's URL. The
+  owner serves logos only for providers in that share's manifest. The receiver
+  accepts an allowed image type up to 512 KB whose bytes match the declared
+  type and serves it with the same sandboxing CSP as every logo.
 - **No chains.** Services from a peer (provider `acnologia-peer`) cannot be
   shared onward, cannot be leased, and `X-Acnologia-Hop` stops a request after 3
   servers.
