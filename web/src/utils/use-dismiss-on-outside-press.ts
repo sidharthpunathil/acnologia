@@ -9,12 +9,15 @@ import type { RefObject } from "react";
  * lock / focus trap that comes with a modal popover) also silently disables
  * its built-in outside-click-to-close behavior. This restores just that
  * piece manually: closes when a pointerdown lands outside every given ref
- * (typically the trigger + the popover's own content).
+ * (typically the trigger + the popover's own content). Presses inside an
+ * element matching `ignore` (a nested layer the popover opened, such as a
+ * submenu in its own portal) do not count as outside.
  */
 export function useDismissOnOutsidePress(
   isOpen: boolean,
   onDismiss: () => void,
   refs: RefObject<HTMLElement | null>[],
+  ignore?: string,
 ) {
   useEffect(() => {
     if (!isOpen) return;
@@ -22,12 +25,13 @@ export function useDismissOnOutsidePress(
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (refs.some((ref) => ref.current?.contains(target))) return;
+      if (ignore && target instanceof Element && target.closest(ignore)) return;
       onDismiss();
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [isOpen, onDismiss, refs]);
+  }, [isOpen, onDismiss, refs, ignore]);
 }
 
 /**

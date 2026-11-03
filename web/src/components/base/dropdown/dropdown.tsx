@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useId, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
@@ -56,6 +56,7 @@ import { useDismissOnOutsidePress, useTriggerToggle } from "@/utils/use-dismiss-
 interface DropdownContextValue {
   triggerRef: RefObject<HTMLButtonElement | null>;
   popoverRef: RefObject<HTMLElement | null>;
+  layerId: string;
 }
 
 const DropdownContext = createContext<DropdownContextValue | null>(null);
@@ -79,6 +80,7 @@ export interface DropdownProps {
 export function Dropdown({ isOpen: controlledOpen, onOpenChange, children }: DropdownProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLElement>(null);
+  const layerId = useId();
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
 
   const isOpen = controlledOpen ?? uncontrolledOpen;
@@ -87,17 +89,26 @@ export function Dropdown({ isOpen: controlledOpen, onOpenChange, children }: Dro
     onOpenChange?.(next);
   };
 
-  useDismissOnOutsidePress(isOpen, () => setOpen(false), [triggerRef, popoverRef]);
+  useDismissOnOutsidePress(isOpen, () => setOpen(false), [triggerRef, popoverRef], `[data-dropdown-layer="${layerId}"]`);
   // Pressing the trigger while open closes the menu instead of reopening
   const allowOpenChange = useTriggerToggle(isOpen, triggerRef);
 
   return (
-    <DropdownContext.Provider value={{ triggerRef, popoverRef }}>
+    <DropdownContext.Provider value={{ triggerRef, popoverRef, layerId }}>
       <AriaDialogTrigger isOpen={isOpen} onOpenChange={(o) => allowOpenChange(o) && setOpen(o)}>
         {children}
       </AriaDialogTrigger>
     </DropdownContext.Provider>
   );
+}
+
+/**
+ * Props for a layer the panel opens in its own portal, such as a submenu
+ * popover: presses inside it do not close the dropdown.
+ */
+export function useDropdownLayer() {
+  const context = useContext(DropdownContext);
+  return { "data-dropdown-layer": context?.layerId };
 }
 
 /** The element that opens the menu. Style it entirely via className. */

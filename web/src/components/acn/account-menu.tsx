@@ -1,39 +1,150 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-aria-components";
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Menu, MenuItem, Popover, SubmenuTrigger, type MenuItemProps } from "react-aria-components";
 import { useLocation } from "react-router-dom";
-import { RiArrowDownSLine, RiLockLine, RiLogoutBoxRLine } from "@remixicon/react";
-import { Dropdown, DropdownPopover, DropdownTrigger } from "@/components/base/dropdown/dropdown";
-import { MENU_ITEM, MENU_ITEM_ACTIVE, MENU_ITEM_INTERACTIVE } from "@/components/base/dropdown/menu-styles";
+import { RiArrowDownSLine, RiArrowLeftSLine, RiLockLine, RiLogoutBoxRLine } from "@remixicon/react";
+import { Dropdown, DropdownPopover, DropdownTrigger, useDropdownLayer } from "@/components/base/dropdown/dropdown";
+import { MENU_ITEM, MENU_ITEM_ACTIVE, MENU_POPOVER_SURFACE } from "@/components/base/dropdown/menu-styles";
+import { useDirection } from "@/components/foundations/direction/direction";
 import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/scroll-fade";
 import { useAuth } from "@/stores/auth";
 import { useGate } from "@/stores/gate";
 import { cx } from "@/utils/cx";
-import { ACCOUNT_ITEM, SIGN_OUT_ROW, grouped, isActivePath, menuRowKeys, useSignOut, type NavItem } from "./nav";
+import { ACCOUNT_ITEM, NAV_GROUP_ICON, SIGN_OUT_ROW, grouped, isActivePath, useSignOut, type NavGroup, type NavItem } from "./nav";
 import { ThemePicker } from "./theme-picker";
+import type { IconComponent } from "./types";
 
-const ROW = cx(MENU_ITEM, "text-body-medium");
 const ROW_ICON = "size-[18px] shrink-0";
+const MENU_LIST = "flex flex-col gap-0.5 outline-none";
 
-/** One navigation row in a menu panel. */
-function MenuLink({ item, active }: { item: NavItem; active: boolean }) {
+/** How long the pointer rests on a group row before its pages fly out. */
+const SUBMENU_DELAY_MS = 150;
+
+/** Row classes from React Aria's state: hover, keyboard focus and an open submenu share the highlight. */
+function rowClass(extra?: string) {
+  return ({ isHovered, isFocusVisible, isOpen }: { isHovered: boolean; isFocusVisible: boolean; isOpen?: boolean }) =>
+    cx(
+      MENU_ITEM,
+      "text-body-medium",
+      (isHovered || isFocusVisible || isOpen) && MENU_ITEM_ACTIVE,
+      isFocusVisible && "ring-2 ring-border-focus-ring",
+      extra,
+    );
+}
+
+const ActiveDot = () => <span className="size-1.5 shrink-0 rounded-full bg-accent-fill" aria-hidden />;
+
+/** A menu row: icon, label, and the dot on the open page. */
+function Row({
+  icon: Icon,
+  active = false,
+  children,
+  className,
+  ...props
+}: Omit<MenuItemProps, "children" | "className"> & { icon: IconComponent; active?: boolean; className?: string; children: ReactNode }) {
   return (
-    <Link
-      href={item.to}
-      data-menu-row=""
-      aria-current={active ? "page" : undefined}
-      className={cx(ROW, active ? MENU_ITEM_ACTIVE : MENU_ITEM_INTERACTIVE, "focus-visible:ring-2 focus-visible:ring-border-focus-ring")}
-    >
-      <item.icon className={cx(ROW_ICON, active ? "text-foreground-icon-primary" : "text-foreground-icon-secondary")} aria-hidden />
-      <span className={cx("min-w-0 flex-1 truncate", active && "text-text-primary")}>{item.label}</span>
-      {active && <span className="size-1.5 shrink-0 rounded-full bg-accent-fill" aria-hidden />}
-    </Link>
+    // React Aria's MenuItem drops aria-current, so the open page says so in text.
+    <MenuItem {...props} className={rowClass(className)}>
+      <Icon className={cx(ROW_ICON, active ? "text-foreground-icon-primary" : "text-foreground-icon-secondary")} aria-hidden />
+      <span className="min-w-0 flex-1 truncate">
+        {children}
+        {active && <span className="sr-only">, current page</span>}
+      </span>
+      {active && <ActiveDot />}
+    </MenuItem>
   );
 }
 
 /**
- * Desktop account menu: who you are, the secondary pages grouped, theme,
- * your account and sign out. While one of its pages is open, the pill names
- * that page before your name, since the top bar has no tab for it.
+ * One group's row and the flyout with its pages. The flyout opens towards
+ * the start (left in LTR, since the menu sits at the end of the top bar) and
+ * flips to the end when the start has no room. React Aria opens it on hover
+ * after a short rest, on a press, and on Enter, Space or the arrow towards
+ * the end; it keeps it open while the pointer crosses towards it.
+ */
+function GroupSubmenu({ group, items, pathname }: { group: NavGroup; items: NavItem[]; pathname: string }) {
+  const direction = useDirection();
+  const layer = useDropdownLayer();
+  const current = items.find((l) => isActivePath(pathname, l.to));
+  const Icon = NAV_GROUP_ICON[group];
+  // The flyout is named by the group alone, not the whole row with its summary.
+  const labelId = useId();
+  return (
+    <SubmenuTrigger delay={SUBMENU_DELAY_MS}>
+      <MenuItem id={group} textValue={group} className={rowClass("py-1.5")}>
+        <Icon className={cx(ROW_ICON, current ? "text-foreground-icon-primary" : "text-foreground-icon-secondary")} aria-hidden />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span id={labelId} className="truncate text-text-primary">{group}</span>
+          {/* What is inside, or the open page when it is one of them. */}
+          <span className="truncate text-caption-1-regular text-text-tertiary">
+            {current ? (
+              <>
+                {current.label}
+                <span className="sr-only">, current page</span>
+              </>
+            ) : (
+              items.map((l) => l.label).join(", ")
+            )}
+          </span>
+        </span>
+        {current && <ActiveDot />}
+        <RiArrowLeftSLine className="-me-1 size-5 shrink-0 text-foreground-icon-tertiary rtl:-scale-x-100" aria-hidden />
+      </MenuItem>
+      {/* offset 13 = the panel's 8px padding, its 1px border and a 4px gap;
+          crossOffset -7 lines the first page up with the group's row. */}
+      <Popover
+        {...layer}
+        aria-labelledby={labelId}
+        dir={direction}
+        placement="start top"
+        offset={13}
+        crossOffset={-7}
+        className={cx(MENU_POPOVER_SURFACE, "w-[224px] p-1.5 motion-reduce:transition-none")}
+      >
+        <Menu aria-labelledby={labelId} className={MENU_LIST}>
+          {items.map((l) => {
+            const active = isActivePath(pathname, l.to);
+            return (
+              <Row key={l.to} id={l.to} href={l.to} textValue={l.label} icon={l.icon} active={active}>
+                <span className={cx(active && "text-text-primary")}>{l.label}</span>
+              </Row>
+            );
+          })}
+        </Menu>
+      </Popover>
+    </SubmenuTrigger>
+  );
+}
+
+/**
+ * The pages menu and the account menu are two React Aria menus with the
+ * theme control between them. ArrowDown on the last row of one moves to the
+ * first row of the next (and ArrowUp back), so the panel reads as one list.
+ * Keys from a submenu (portalled, outside this container) are left alone.
+ */
+function bridgeMenus(e: KeyboardEvent<HTMLElement>) {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const item = (e.target as HTMLElement).closest<HTMLElement>('[role="menuitem"]');
+  const menu = item?.closest('[role="menu"]');
+  const menus = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="menu"]')];
+  const i = menu ? menus.indexOf(menu as HTMLElement) : -1;
+  if (!item || i < 0) return;
+  const rows = [...menus[i].querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  const down = e.key === "ArrowDown";
+  const next = down ? menus[i + 1] : menus[i - 1];
+  if (!next || item !== (down ? rows[rows.length - 1] : rows[0])) return;
+  const nextRows = next.querySelectorAll<HTMLElement>('[role="menuitem"]');
+  const target = down ? nextRows[0] : nextRows[nextRows.length - 1];
+  if (!target) return;
+  e.preventDefault();
+  e.stopPropagation();
+  target.focus();
+}
+
+/**
+ * Desktop account menu: who you are, one row per group of secondary pages
+ * (each opens its pages in a flyout), theme, your account and sign out.
+ * While one of its pages is open, the pill names that page before your
+ * name, since the top bar has no tab for it.
  */
 export function AccountMenu({ items }: { items: NavItem[] }) {
   const user = useAuth((s) => s.user);
@@ -54,7 +165,9 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
   useEffect(() => {
     if (!open) return;
     const t = window.setTimeout(() => {
-      document.querySelector<HTMLElement>('[aria-label="Account menu"][role="dialog"] [data-menu-row]')?.focus({ preventScroll: true });
+      document
+        .querySelector<HTMLElement>('[aria-label="Account menu"][role="dialog"] [role="menuitem"]')
+        ?.focus({ preventScroll: true });
     }, 0);
     return () => window.clearTimeout(t);
   }, [open]);
@@ -88,7 +201,7 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
         aria-label="Account menu"
         placement="bottom end"
         offset={8}
-        className="flex w-[300px] flex-col overflow-hidden p-0"
+        className="flex w-[300px] flex-col overflow-hidden p-0 motion-reduce:transition-none"
         dialogClassName="min-h-0 flex-1 gap-0"
       >
         <div className="border-b border-separator-border px-4 pt-3.5 pb-3">
@@ -98,52 +211,45 @@ export function AccountMenu({ items }: { items: NavItem[] }) {
           </div>
         </div>
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div onScroll={fade.onScroll} onKeyDown={menuRowKeys} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
-            <nav aria-label="Menu" className="flex flex-col">
-              {grouped(items).map(([group, list], gi) => (
-                <div key={group} className={cx("flex flex-col gap-0.5", gi > 0 && "mt-2 border-t border-separator-border pt-2")}>
-                  <div className="px-2 pt-1 pb-1 text-caption-2-semibold uppercase tracking-wider text-text-tertiary">{group}</div>
-                  {list.map((l) => (
-                    <MenuLink key={l.to} item={l} active={isActivePath(pathname, l.to)} />
-                  ))}
-                </div>
+          <div onScroll={fade.onScroll} onKeyDownCapture={bridgeMenus} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
+            <Menu aria-label="Pages" className={MENU_LIST}>
+              {grouped(items).map(([group, list]) => (
+                <GroupSubmenu key={group} group={group} items={list} pathname={pathname} />
               ))}
-            </nav>
+            </Menu>
             <div className="mt-2 border-t border-separator-border px-2 pt-3 pb-2">
               <div className="mb-2 text-caption-1-medium text-text-secondary">Theme</div>
               <ThemePicker />
             </div>
-            <div className="mt-1 flex flex-col gap-0.5 border-t border-separator-border pt-2">
-              <MenuLink item={ACCOUNT_ITEM} active={isActivePath(pathname, ACCOUNT_ITEM.to)} />
-            </div>
-            <div className="mt-2 flex flex-col gap-0.5 border-t border-separator-border pt-2">
-              <button
-                type="button"
-                data-menu-row=""
-                onClick={() => {
+            <Menu aria-label="Account" className={cx(MENU_LIST, "mt-1 border-t border-separator-border pt-2")}>
+              <Row id="account" href={ACCOUNT_ITEM.to} textValue={ACCOUNT_ITEM.label} icon={ACCOUNT_ITEM.icon} active={isActivePath(pathname, ACCOUNT_ITEM.to)}>
+                {ACCOUNT_ITEM.label}
+              </Row>
+              <Row
+                id="sign-out"
+                icon={RiLogoutBoxRLine}
+                className={SIGN_OUT_ROW}
+                onAction={() => {
                   setOpen(false);
                   void signOut();
                 }}
-                className={cx(ROW, MENU_ITEM_INTERACTIVE, SIGN_OUT_ROW, "focus-visible:ring-2 focus-visible:ring-border-focus-ring")}
               >
-                <RiLogoutBoxRLine className={cx(ROW_ICON, "text-foreground-icon-secondary")} aria-hidden />
                 Sign out
-              </button>
+              </Row>
               {gateOn && !passwordOnly && (
-                <button
-                  type="button"
-                  data-menu-row=""
-                  onClick={() => {
+                <Row
+                  id="lock"
+                  icon={RiLockLine}
+                  className={SIGN_OUT_ROW}
+                  onAction={() => {
                     setOpen(false);
                     void lockBrowser();
                   }}
-                  className={cx(ROW, MENU_ITEM_INTERACTIVE, SIGN_OUT_ROW, "focus-visible:ring-2 focus-visible:ring-border-focus-ring")}
                 >
-                  <RiLockLine className={cx(ROW_ICON, "text-foreground-icon-secondary")} aria-hidden />
                   Lock this browser
-                </button>
+                </Row>
               )}
-            </div>
+            </Menu>
           </div>
           <ScrollFade progress={fade.progress} />
         </div>
