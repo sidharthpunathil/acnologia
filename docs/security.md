@@ -105,6 +105,9 @@ Hidden keys and their traffic are also left out of everything a non-superadmin
 sees: key lists, counts, events, request totals, and the events of a deleted
 hidden key.
 
+A health check sends the secret to the service's base URL, so a key is only
+ever checked against its own service, and MCP `check_keys` needs a service.
+
 ## Secrets at rest
 
 | Item | Stored as |

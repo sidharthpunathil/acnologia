@@ -416,6 +416,11 @@ func (p *Pool) Check(ctx context.Context, svc *store.Service, k *store.Key) erro
 }
 
 func (p *Pool) check(ctx context.Context, svc *store.Service, k *store.Key) error {
+	// A check sends the secret to the service's base URL, so a key is only
+	// ever checked against its own service.
+	if k.ServiceID != svc.ID {
+		return ErrWrongService
+	}
 	secret, err := p.Box.Decrypt(k.SecretEnc)
 	if err != nil {
 		return err
@@ -517,7 +522,10 @@ func (e *scrubbedErr) Timeout() bool { return e.timeout }
 
 // ErrUntrustedTarget means a hidden key would be sent to a base URL that a
 // superadmin has not confirmed.
-var ErrUntrustedTarget = errors.New("hidden keys are not sent to this service until a superadmin saves its base URL")
+var ErrUntrustedTarget = errors.New("hidden keys are not sent to this service until a superadmin confirms its target")
+
+// ErrWrongService refuses to check a key against a service it does not belong to.
+var ErrWrongService = errors.New("this key belongs to another service")
 
 // ErrNoHealthCheck means the provider has no free endpoint to test keys, so
 // validity is learned from real traffic instead.
