@@ -1,0 +1,704 @@
+[
+ {
+  "text": "Your",
+  "start": 0.0,
+  "end": 0.232,
+  "id": "w0"
+ },
+ {
+  "text": "API",
+  "start": 0.313,
+  "end": 0.789,
+  "id": "w1"
+ },
+ {
+  "text": "keys",
+  "start": 0.882,
+  "end": 1.184,
+  "id": "w2"
+ },
+ {
+  "text": "end",
+  "start": 1.254,
+  "end": 1.393,
+  "id": "w3"
+ },
+ {
+  "text": "up",
+  "start": 1.44,
+  "end": 1.533,
+  "id": "w4"
+ },
+ {
+  "text": "everywhere.",
+  "start": 1.591,
+  "end": 2.241,
+  "id": "w5"
+ },
+ {
+  "text": "Pasted",
+  "start": 2.624,
+  "end": 3.03,
+  "id": "w6"
+ },
+ {
+  "text": "into",
+  "start": 3.077,
+  "end": 3.228,
+  "id": "w7"
+ },
+ {
+  "text": "every",
+  "start": 3.32,
+  "end": 3.599,
+  "id": "w8"
+ },
+ {
+  "text": "app,",
+  "start": 3.68,
+  "end": 4.04,
+  "id": "w9"
+ },
+ {
+  "text": "every",
+  "start": 4.156,
+  "end": 4.423,
+  "id": "w10"
+ },
+ {
+  "text": "agent,",
+  "start": 4.493,
+  "end": 4.946,
+  "id": "w11"
+ },
+ {
+  "text": "every",
+  "start": 5.027,
+  "end": 5.283,
+  "id": "w12"
+ },
+ {
+  "text": "teammate's",
+  "start": 5.329,
+  "end": 5.735,
+  "id": "w13"
+ },
+ {
+  "text": "laptop.",
+  "start": 5.793,
+  "end": 6.455,
+  "id": "w14"
+ },
+ {
+  "text": "And",
+  "start": 6.664,
+  "end": 6.815,
+  "id": "w15"
+ },
+ {
+  "text": "once",
+  "start": 6.885,
+  "end": 7.105,
+  "id": "w16"
+ },
+ {
+  "text": "a",
+  "start": 7.14,
+  "end": 7.163,
+  "id": "w17"
+ },
+ {
+  "text": "key",
+  "start": 7.221,
+  "end": 7.396,
+  "id": "w18"
+ },
+ {
+  "text": "leaks,",
+  "start": 7.488,
+  "end": 7.976,
+  "id": "w19"
+ },
+ {
+  "text": "you",
+  "start": 8.092,
+  "end": 8.185,
+  "id": "w20"
+ },
+ {
+  "text": "can't",
+  "start": 8.255,
+  "end": 8.464,
+  "id": "w21"
+ },
+ {
+  "text": "take",
+  "start": 8.499,
+  "end": 8.661,
+  "id": "w22"
+ },
+ {
+  "text": "it",
+  "start": 8.696,
+  "end": 8.754,
+  "id": "w23"
+ },
+ {
+  "text": "back.",
+  "start": 8.789,
+  "end": 9.23,
+  "id": "w24"
+ },
+ {
+  "text": "Acnologia",
+  "start": 9.671,
+  "end": 10.588,
+  "id": "w25"
+ },
+ {
+  "text": "is",
+  "start": 10.658,
+  "end": 10.797,
+  "id": "w26"
+ },
+ {
+  "text": "one",
+  "start": 10.879,
+  "end": 11.146,
+  "id": "w27"
+ },
+ {
+  "text": "server",
+  "start": 11.204,
+  "end": 11.54,
+  "id": "w28"
+ },
+ {
+  "text": "that",
+  "start": 11.598,
+  "end": 11.714,
+  "id": "w29"
+ },
+ {
+  "text": "holds",
+  "start": 11.761,
+  "end": 11.993,
+  "id": "w30"
+ },
+ {
+  "text": "your",
+  "start": 12.028,
+  "end": 12.132,
+  "id": "w31"
+ },
+ {
+  "text": "keys.",
+  "start": 12.19,
+  "end": 12.748,
+  "id": "w32"
+ },
+ {
+  "text": "Everyone",
+  "start": 12.957,
+  "end": 13.34,
+  "id": "w33"
+ },
+ {
+  "text": "else",
+  "start": 13.375,
+  "end": 13.549,
+  "id": "w34"
+ },
+ {
+  "text": "gets",
+  "start": 13.584,
+  "end": 13.758,
+  "id": "w35"
+ },
+ {
+  "text": "their",
+  "start": 13.793,
+  "end": 13.944,
+  "id": "w36"
+ },
+ {
+  "text": "own",
+  "start": 14.013,
+  "end": 14.234,
+  "id": "w37"
+ },
+ {
+  "text": "token.",
+  "start": 14.292,
+  "end": 14.838,
+  "id": "w38"
+ },
+ {
+  "text": "Your",
+  "start": 15.081,
+  "end": 15.255,
+  "id": "w39"
+ },
+ {
+  "text": "app",
+  "start": 15.302,
+  "end": 15.464,
+  "id": "w40"
+ },
+ {
+  "text": "calls",
+  "start": 15.522,
+  "end": 15.789,
+  "id": "w41"
+ },
+ {
+  "text": "Acnologia.",
+  "start": 15.882,
+  "end": 16.823,
+  "id": "w42"
+ },
+ {
+  "text": "Acnologia",
+  "start": 17.101,
+  "end": 17.984,
+  "id": "w43"
+ },
+ {
+  "text": "attaches",
+  "start": 18.053,
+  "end": 18.588,
+  "id": "w44"
+ },
+ {
+  "text": "the",
+  "start": 18.646,
+  "end": 18.715,
+  "id": "w45"
+ },
+ {
+  "text": "real",
+  "start": 18.831,
+  "end": 19.075,
+  "id": "w46"
+ },
+ {
+  "text": "key",
+  "start": 19.156,
+  "end": 19.389,
+  "id": "w47"
+ },
+ {
+  "text": "on",
+  "start": 19.47,
+  "end": 19.586,
+  "id": "w48"
+ },
+ {
+  "text": "the",
+  "start": 19.621,
+  "end": 19.69,
+  "id": "w49"
+ },
+ {
+  "text": "way",
+  "start": 19.737,
+  "end": 19.888,
+  "id": "w50"
+ },
+ {
+  "text": "out,",
+  "start": 19.957,
+  "end": 20.259,
+  "id": "w51"
+ },
+ {
+  "text": "and",
+  "start": 20.283,
+  "end": 20.433,
+  "id": "w52"
+ },
+ {
+  "text": "the",
+  "start": 20.48,
+  "end": 20.55,
+  "id": "w53"
+ },
+ {
+  "text": "API",
+  "start": 20.619,
+  "end": 21.095,
+  "id": "w54"
+ },
+ {
+  "text": "answers.",
+  "start": 21.177,
+  "end": 21.769,
+  "id": "w55"
+ },
+ {
+  "text": "The",
+  "start": 22.094,
+  "end": 22.21,
+  "id": "w56"
+ },
+ {
+  "text": "key",
+  "start": 22.279,
+  "end": 22.477,
+  "id": "w57"
+ },
+ {
+  "text": "never",
+  "start": 22.593,
+  "end": 22.872,
+  "id": "w58"
+ },
+ {
+  "text": "leaves",
+  "start": 22.941,
+  "end": 23.185,
+  "id": "w59"
+ },
+ {
+  "text": "your",
+  "start": 23.22,
+  "end": 23.336,
+  "id": "w60"
+ },
+ {
+  "text": "server.",
+  "start": 23.382,
+  "end": 23.928,
+  "id": "w61"
+ },
+ {
+  "text": "When",
+  "start": 24.253,
+  "end": 24.427,
+  "id": "w62"
+ },
+ {
+  "text": "a",
+  "start": 24.451,
+  "end": 24.474,
+  "id": "w63"
+ },
+ {
+  "text": "key",
+  "start": 24.543,
+  "end": 24.718,
+  "id": "w64"
+ },
+ {
+  "text": "hits",
+  "start": 24.776,
+  "end": 24.95,
+  "id": "w65"
+ },
+ {
+  "text": "a",
+  "start": 24.985,
+  "end": 25.019,
+  "id": "w66"
+ },
+ {
+  "text": "rate",
+  "start": 25.089,
+  "end": 25.286,
+  "id": "w67"
+ },
+ {
+  "text": "limit,",
+  "start": 25.321,
+  "end": 25.693,
+  "id": "w68"
+ },
+ {
+  "text": "the",
+  "start": 25.809,
+  "end": 25.913,
+  "id": "w69"
+ },
+ {
+  "text": "next",
+  "start": 25.983,
+  "end": 26.204,
+  "id": "w70"
+ },
+ {
+  "text": "one",
+  "start": 26.262,
+  "end": 26.424,
+  "id": "w71"
+ },
+ {
+  "text": "takes",
+  "start": 26.459,
+  "end": 26.714,
+  "id": "w72"
+ },
+ {
+  "text": "over.",
+  "start": 26.773,
+  "end": 27.225,
+  "id": "w73"
+ },
+ {
+  "text": "Share",
+  "start": 27.55,
+  "end": 27.794,
+  "id": "w74"
+ },
+ {
+  "text": "a",
+  "start": 27.829,
+  "end": 27.852,
+  "id": "w75"
+ },
+ {
+  "text": "service",
+  "start": 27.922,
+  "end": 28.317,
+  "id": "w76"
+ },
+ {
+  "text": "with",
+  "start": 28.351,
+  "end": 28.479,
+  "id": "w77"
+ },
+ {
+  "text": "another",
+  "start": 28.514,
+  "end": 28.816,
+  "id": "w78"
+ },
+ {
+  "text": "server,",
+  "start": 28.886,
+  "end": 29.35,
+  "id": "w79"
+ },
+ {
+  "text": "a",
+  "start": 29.443,
+  "end": 29.536,
+  "id": "w80"
+ },
+ {
+  "text": "teammate,",
+  "start": 29.617,
+  "end": 30.198,
+  "id": "w81"
+ },
+ {
+  "text": "or",
+  "start": 30.291,
+  "end": 30.442,
+  "id": "w82"
+ },
+ {
+  "text": "anyone",
+  "start": 30.5,
+  "end": 30.813,
+  "id": "w83"
+ },
+ {
+  "text": "with",
+  "start": 30.836,
+  "end": 30.952,
+  "id": "w84"
+ },
+ {
+  "text": "a",
+  "start": 30.987,
+  "end": 31.011,
+  "id": "w85"
+ },
+ {
+  "text": "link.",
+  "start": 31.08,
+  "end": 31.475,
+  "id": "w86"
+ },
+ {
+  "text": "Then",
+  "start": 31.8,
+  "end": 31.997,
+  "id": "w87"
+ },
+ {
+  "text": "revoke",
+  "start": 32.079,
+  "end": 32.497,
+  "id": "w88"
+ },
+ {
+  "text": "it",
+  "start": 32.531,
+  "end": 32.578,
+  "id": "w89"
+ },
+ {
+  "text": "in",
+  "start": 32.624,
+  "end": 32.706,
+  "id": "w90"
+ },
+ {
+  "text": "one",
+  "start": 32.798,
+  "end": 33.007,
+  "id": "w91"
+ },
+ {
+  "text": "click,",
+  "start": 33.054,
+  "end": 33.414,
+  "id": "w92"
+ },
+ {
+  "text": "without",
+  "start": 33.449,
+  "end": 33.774,
+  "id": "w93"
+ },
+ {
+  "text": "touching",
+  "start": 33.82,
+  "end": 34.122,
+  "id": "w94"
+ },
+ {
+  "text": "the",
+  "start": 34.168,
+  "end": 34.238,
+  "id": "w95"
+ },
+ {
+  "text": "key.",
+  "start": 34.285,
+  "end": 34.668,
+  "id": "w96"
+ },
+ {
+  "text": "AI",
+  "start": 35.109,
+  "end": 35.469,
+  "id": "w97"
+ },
+ {
+  "text": "agents",
+  "start": 35.527,
+  "end": 35.887,
+  "id": "w98"
+ },
+ {
+  "text": "connect",
+  "start": 35.945,
+  "end": 36.258,
+  "id": "w99"
+ },
+ {
+  "text": "over",
+  "start": 36.328,
+  "end": 36.56,
+  "id": "w100"
+ },
+ {
+  "text": "MCP,",
+  "start": 36.63,
+  "end": 37.384,
+  "id": "w101"
+ },
+ {
+  "text": "and",
+  "start": 37.419,
+  "end": 37.57,
+  "id": "w102"
+ },
+ {
+  "text": "use",
+  "start": 37.64,
+  "end": 37.791,
+  "id": "w103"
+ },
+ {
+  "text": "your",
+  "start": 37.826,
+  "end": 37.93,
+  "id": "w104"
+ },
+ {
+  "text": "services",
+  "start": 37.977,
+  "end": 38.453,
+  "id": "w105"
+ },
+ {
+  "text": "without",
+  "start": 38.511,
+  "end": 38.836,
+  "id": "w106"
+ },
+ {
+  "text": "ever",
+  "start": 38.882,
+  "end": 39.068,
+  "id": "w107"
+ },
+ {
+  "text": "seeing",
+  "start": 39.138,
+  "end": 39.405,
+  "id": "w108"
+ },
+ {
+  "text": "a",
+  "start": 39.463,
+  "end": 39.486,
+  "id": "w109"
+ },
+ {
+  "text": "key.",
+  "start": 39.544,
+  "end": 39.985,
+  "id": "w110"
+ },
+ {
+  "text": "Acnologia.",
+  "start": 40.368,
+  "end": 41.367,
+  "id": "w111"
+ },
+ {
+  "text": "Self",
+  "start": 41.692,
+  "end": 41.982,
+  "id": "w112"
+ },
+ {
+  "text": "host",
+  "start": 42.052,
+  "end": 42.33,
+  "id": "w113"
+ },
+ {
+  "text": "it.",
+  "start": 42.388,
+  "end": 42.655,
+  "id": "w114"
+ },
+ {
+  "text": "MIT",
+  "start": 42.934,
+  "end": 43.282,
+  "id": "w115"
+ },
+ {
+  "text": "licensed.",
+  "start": 43.41,
+  "end": 44.118,
+  "id": "w116"
+ }
+]

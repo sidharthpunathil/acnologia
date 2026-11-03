@@ -1,0 +1,86 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: var(--canvas);
+      overflow: hidden;
+    }
+    #p-key-wrap {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 380px;
+      text-align: center;
+    }
+    #p-key {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 64px;
+      font-weight: 500;
+      color: var(--ink);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    #p-key .v {
+      color: var(--violet);
+    }
+    .p-card {
+      position: absolute;
+      width: 470px;
+      height: 150px;
+      background: var(--card);
+      border: 2px solid var(--line);
+      border-radius: 28px;
+      padding: 28px 32px;
+      opacity: 0;
+    }
+    .p-card .lbl {
+      font-family: var(--sans);
+      font-size: 28px;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+    .p-card .k {
+      font-family: var(--mono);
+      font-size: 30px;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    #p-c1 { left: 205px; top: 410px; }
+    #p-c2 { left: 725px; top: 410px; }
+    #p-c3 { left: 1245px; top: 410px; }
+    #p-c4 { left: 465px; top: 610px; }
+    #p-c5 { left: 985px; top: 610px; }
+  </style>
+  <div id="root" data-composition-id="problem" data-width="1920" data-height="1080">
+    <div id="p-key-wrap">
+      <div id="p-key">API_KEY=<span class="v">9f3c••••a91f</span></div>
+    </div>
+    <div class="p-card" id="p-c1"><div class="lbl">.env in your app</div><div class="k">API_KEY=9f3c••••a91f</div></div>
+    <div class="p-card" id="p-c2"><div class="lbl">CI settings</div><div class="k">API_KEY=9f3c••••a91f</div></div>
+    <div class="p-card" id="p-c3"><div class="lbl">Agent config</div><div class="k">API_KEY=9f3c••••a91f</div></div>
+    <div class="p-card" id="p-c4"><div class="lbl">Chat message</div><div class="k">API_KEY=9f3c••••a91f</div></div>
+    <div class="p-card" id="p-c5"><div class="lbl">A teammate's laptop</div><div class="k">API_KEY=9f3c••••a91f</div></div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // The key is on screen from the first frame (it is the thumbnail).
+      // On "everywhere" it lifts to make room for the copies.
+      tl.fromTo("#p-key-wrap", { y: 0, scale: 1 }, { y: -210, scale: 0.72, duration: 0.7, ease: "expo.out" }, 2.0);
+      // One copy per place, on the word that names it.
+      const at = [3.15, 4.15, 4.95, 5.45, 5.85];
+      ["#p-c1", "#p-c2", "#p-c3", "#p-c4", "#p-c5"].forEach((id, i) => {
+        tl.fromTo(id, { opacity: 0, y: 30, filter: "blur(8px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.55, ease: "expo.out" }, at[i]);
+      });
+      // "leaks": every copy turns red at once.
+      tl.to(".p-card .k, #p-key, #p-key .v", { color: "#c8372d", duration: 0.25, ease: "power2.out" }, 7.95);
+      tl.to(".p-card", { borderColor: "#e9b4ad", backgroundColor: "#fdf3f1", duration: 0.25, ease: "power2.out" }, 7.95);
+      // Exit: blur out, staggered.
+      tl.to(".p-card, #p-key-wrap", { opacity: 0, filter: "blur(10px)", duration: 0.25, ease: "power3.in", stagger: 0.04 }, 9.45);
+      window.__timelines["problem"] = tl;
+    })();
+  </script>
+</template>

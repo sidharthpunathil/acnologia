@@ -1,0 +1,223 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: var(--canvas);
+      overflow: hidden;
+    }
+    #r-lockup {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 330px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 44px;
+    }
+    #r-logo {
+      width: 220px;
+      height: 220px;
+      border-radius: 50px;
+      display: block;
+    }
+    #r-word {
+      font-family: var(--mono);
+      font-size: 104px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+    #r-sub {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 620px;
+      text-align: center;
+      font-family: var(--mono);
+      font-size: 32px;
+      color: var(--muted);
+      opacity: 0;
+    }
+    .r-chip {
+      position: absolute;
+      left: 0;
+      top: 0;
+      font-family: var(--mono);
+      font-size: 28px;
+      padding: 12px 20px;
+      border-radius: 14px;
+      background: var(--card);
+      border: 2px solid var(--line);
+      color: var(--violet);
+      white-space: nowrap;
+      opacity: 0;
+    }
+    /* Apps page: the real header from the dashboard, then the rows rebuilt with neutral names. */
+    #r-panel {
+      position: absolute;
+      left: 210px;
+      top: 118px;
+      width: 1500px;
+      height: 790px;
+      opacity: 0;
+    }
+    #r-panel-inner {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1460px;
+      height: 770px;
+      transform-origin: 0 0;
+      transform: scale(1.0274);
+    }
+    #r-head {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1460px;
+      height: 292px;
+      overflow: hidden;
+    }
+    #r-head img {
+      position: absolute;
+      left: -270px;
+      top: 0;
+      width: 2000px;
+      height: auto;
+    }
+    .r-row {
+      position: absolute;
+      left: 17px;
+      width: 1426px;
+      height: 143px;
+      background: var(--card);
+      border: 1px solid #e3e1db;
+      border-radius: 28px;
+      padding: 22px 28px;
+    }
+    .r-row .t {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 22px;
+      font-weight: 500;
+      height: 34px;
+    }
+    .r-tag {
+      font-family: var(--mono);
+      font-size: 17px;
+      padding: 3px 9px;
+      border-radius: 7px;
+      font-weight: 400;
+    }
+    .r-tag.proxy { background: var(--violet-soft); color: var(--violet); }
+    .r-tag.lease { background: #dbe8fd; color: #1f4fa8; }
+    .r-tag.both { background: #e8e7e2; color: #4a4945; }
+    .r-row .d {
+      font-family: var(--mono);
+      font-size: 17px;
+      color: #55544f;
+      margin-top: 10px;
+      line-height: 33px;
+    }
+    .r-right {
+      position: absolute;
+      right: 150px;
+      top: 50px;
+      display: flex;
+      align-items: center;
+      gap: 34px;
+      font-size: 20px;
+      font-weight: 500;
+    }
+    .r-tog {
+      width: 40px;
+      height: 22px;
+      border-radius: 11px;
+      background: var(--violet);
+      position: relative;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+    .r-tog::after {
+      content: "";
+      position: absolute;
+      right: 4px;
+      top: 4px;
+      width: 14px;
+      height: 14px;
+      border-radius: 7px;
+      background: #fff;
+    }
+    .r-active { color: #6b6a66; font-weight: 400; }
+    .r-token {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 500;
+      color: #fff;
+      background: var(--violet);
+      padding: 4px 12px;
+      border-radius: 8px;
+      margin-left: 10px;
+      opacity: 0;
+    }
+  </style>
+  <div id="root" data-composition-id="reveal" data-width="1920" data-height="1080">
+    <div id="r-lockup">
+      <img id="r-logo" src="assets/logo.png" alt="Acnologia logo" />
+      <div id="r-word">Acnologia</div>
+    </div>
+    <div class="r-chip" id="r-k1">9f3c••••a91f</div>
+    <div class="r-chip" id="r-k2">41d0••••77be</div>
+    <div class="r-chip" id="r-k3">c2a8••••0e15</div>
+    <div class="r-chip" id="r-k4">7b6e••••d3c9</div>
+    <div class="r-chip" id="r-k5">e05f••••19aa</div>
+
+    <div id="r-panel">
+      <div id="r-panel-inner">
+        <div id="r-head"><img src="assets/apps-header.png" alt="Acnologia dashboard, Apps page header" /></div>
+        <div class="r-row" style="top: 294px">
+          <div class="t">Nightly crawler <span class="r-tag proxy">proxy</span><span class="r-token" id="r-t1">acn_••••7Hq2</span></div>
+          <div class="d">1 active token · 2 services · MCP: 6 tools<br />today 0 req, $0.00 &nbsp; month 0 req, $0.00</div>
+          <div class="r-right"><span>MCP</span><span>Tokens</span><span><i class="r-tog"></i><span class="r-active">Active</span></span></div>
+        </div>
+        <div class="r-row" style="top: 456px">
+          <div class="t">Research agent <span class="r-tag lease">lease</span><span class="r-token" id="r-t2">acn_••••Lw9d</span></div>
+          <div class="d">1 active token · 2 services · MCP: 5 tools<br />today 0 of 2,000 req, $0.00</div>
+          <div class="r-right"><span>MCP</span><span>Tokens</span><span><i class="r-tog"></i><span class="r-active">Active</span></span></div>
+        </div>
+        <div class="r-row" style="top: 618px">
+          <div class="t">Website <span class="r-tag both">both</span><span class="r-token" id="r-t3">acn_••••c4Pz</span></div>
+          <div class="d">1 active token · all services · MCP: 13 tools<br />today 18 of 500 req, $0.26 &nbsp; month 18 req, $0.26 of $20.00</div>
+          <div class="r-right"><span>MCP</span><span>Tokens</span><span><i class="r-tog"></i><span class="r-active">Active</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // The mark arrives on its name.
+      tl.fromTo("#r-logo", { scale: 0.7, opacity: 0, filter: "blur(10px)" }, { scale: 1, opacity: 1, filter: "blur(0px)", duration: 0.8, ease: "expo.out" }, 0.15);
+      tl.fromTo("#r-word", { opacity: 0, x: -24, filter: "blur(8px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.6, ease: "expo.out" }, 0.4);
+      // The scattered keys fly into the server (the logo centre is about x 657, y 440).
+      const from = [[120, 160], [1600, 140], [80, 760], [1640, 760], [880, 40]];
+      ["#r-k1", "#r-k2", "#r-k3", "#r-k4", "#r-k5"].forEach((id, i) => {
+        const t = 1.55 + i * 0.09;
+        tl.fromTo(id, { x: from[i][0], y: from[i][1], opacity: 0, scale: 1 }, { opacity: 1, duration: 0.15 }, t);
+        tl.to(id, { x: 540, y: 415, scale: 0.3, duration: 0.6, ease: "power3.in" }, t + 0.05);
+        tl.to(id, { opacity: 0, duration: 0.1 }, t + 0.55);
+      });
+      tl.fromTo("#r-logo", { scale: 1 }, { scale: 1.06, duration: 0.12, ease: "power2.out", yoyo: true, repeat: 1, immediateRender: false }, 2.25);
+      // The lockup leaves upward as the Apps page rises: everyone else gets a token.
+      tl.to("#r-lockup", { y: -160, opacity: 0, filter: "blur(10px)", duration: 0.35, ease: "power3.in" }, 3.05);
+      tl.fromTo("#r-panel", { opacity: 0, y: 140 }, { opacity: 1, y: 0, duration: 0.7, ease: "expo.out" }, 3.2);
+      ["#r-t1", "#r-t2", "#r-t3"].forEach((id, i) => {
+        tl.fromTo(id, { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(1.6)" }, 4.75 + i * 0.08);
+      });
+      window.__timelines["reveal"] = tl;
+    })();
+  </script>
+</template>

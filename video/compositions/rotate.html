@@ -1,0 +1,115 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: var(--canvas);
+      overflow: hidden;
+    }
+    #k-card {
+      position: absolute;
+      left: 360px;
+      top: 190px;
+      width: 1200px;
+      background: var(--card);
+      border: 2px solid var(--line);
+      border-radius: 32px;
+      padding: 40px 48px 28px;
+    }
+    #k-head {
+      display: flex;
+      align-items: baseline;
+      gap: 20px;
+      margin-bottom: 26px;
+    }
+    #k-head .n {
+      font-family: var(--mono);
+      font-size: 44px;
+      font-weight: 500;
+    }
+    #k-head .m {
+      font-family: var(--mono);
+      font-size: 24px;
+      color: var(--muted);
+    }
+    .k-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      height: 104px;
+      border-top: 1px solid #ebe9e3;
+      font-size: 32px;
+    }
+    .k-row .id {
+      width: 200px;
+      font-weight: 500;
+    }
+    .k-row .val {
+      width: 420px;
+      font-family: var(--mono);
+      font-size: 28px;
+      color: var(--muted);
+    }
+    .k-pill {
+      position: absolute;
+      left: 640px;
+      top: 30px;
+      font-family: var(--mono);
+      font-size: 24px;
+      padding: 6px 16px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .k-pill.ok { background: var(--green-soft); color: var(--green); }
+    .k-pill.bad { background: var(--red-soft); color: var(--red); opacity: 0; }
+    .k-use {
+      position: absolute;
+      right: 0;
+      top: 34px;
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--violet);
+      opacity: 0;
+    }
+    #k-bar {
+      position: absolute;
+      left: -48px;
+      top: 0;
+      width: 8px;
+      height: 104px;
+      border-radius: 4px;
+      background: var(--violet);
+    }
+  </style>
+  <div id="root" data-composition-id="rotate" data-width="1920" data-height="1080">
+    <div id="k-card">
+      <div id="k-head"><span class="n">Your API</span><span class="m">3 keys · round robin</span></div>
+      <div id="k-rows" style="position: relative">
+        <div id="k-bar"></div>
+        <div class="k-row"><span class="id">key-1</span><span class="val">9f3c••••a91f</span>
+          <span class="k-pill ok" id="k-ok1">available</span><span class="k-pill bad" id="k-bad1">429 · resting</span>
+          <span class="k-use" id="k-use1">in use</span></div>
+        <div class="k-row"><span class="id">key-2</span><span class="val">41d0••••77be</span>
+          <span class="k-pill ok">available</span><span class="k-use" id="k-use2">in use</span></div>
+        <div class="k-row"><span class="id">key-3</span><span class="val">c2a8••••0e15</span>
+          <span class="k-pill ok">available</span></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#k-card", { opacity: 0, scale: 0.96, filter: "blur(8px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.5, ease: "expo.out" }, 0);
+      tl.fromTo("#k-use1", { opacity: 0 }, { opacity: 1, duration: 0.2 }, 0.2);
+      // "hits a rate limit": key-1 is told to wait.
+      tl.to("#k-ok1", { opacity: 0, duration: 0.12 }, 1.0);
+      tl.fromTo("#k-bad1", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(1.6)" }, 1.0);
+      tl.to("#k-use1", { opacity: 0, duration: 0.15 }, 1.6);
+      // "the next one takes over".
+      tl.fromTo("#k-bar", { y: 0 }, { y: 104, duration: 0.45, ease: "power3.inOut" }, 1.75);
+      tl.fromTo("#k-use2", { opacity: 0 }, { opacity: 1, duration: 0.2 }, 2.1);
+      tl.to("#k-card", { opacity: 0, filter: "blur(10px)", duration: 0.22, ease: "power3.in" }, 3.05);
+      window.__timelines["rotate"] = tl;
+    })();
+  </script>
+</template>

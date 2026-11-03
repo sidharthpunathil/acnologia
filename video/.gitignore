@@ -1,0 +1,10 @@
+# Only the source, assets, the two renders and the poster are tracked.
+node_modules/
+.hyperframes/
+renders/
+.cache/
+.debug/
+*.log
+frames/
+snapshots/
+.DS_Store

@@ -1,0 +1,57 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .cap {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 84px;
+      text-align: center;
+      overflow: visible;
+    }
+    .cap span {
+      font-family: var(--sans);
+      font-size: 36px;
+      font-weight: 500;
+      color: #3d3c39;
+      letter-spacing: -0.005em;
+    }
+  </style>
+  <div id="root" data-composition-id="captions" data-width="1920" data-height="1080">
+    <div id="cap-0" class="cap clip" data-start="0.45" data-duration="2.624" data-track-index="0"><span>Your API keys end up everywhere.</span></div>
+    <div id="cap-1" class="cap clip" data-start="3.074" data-duration="4.04" data-track-index="0"><span>Pasted into every app, every agent, every teammate&#x27;s laptop.</span></div>
+    <div id="cap-2" class="cap clip" data-start="7.114" data-duration="1.428" data-track-index="0"><span>And once a key leaks,</span></div>
+    <div id="cap-3" class="cap clip" data-start="8.542" data-duration="1.538" data-track-index="0"><span>you can&#x27;t take it back.</span></div>
+    <div id="cap-4" class="cap clip" data-start="10.121" data-duration="3.286" data-track-index="0"><span>Acnologia is one server that holds your keys.</span></div>
+    <div id="cap-5" class="cap clip" data-start="13.407" data-duration="2.124" data-track-index="0"><span>Everyone else gets their own token.</span></div>
+    <div id="cap-6" class="cap clip" data-start="15.531" data-duration="2.02" data-track-index="0"><span>Your app calls Acnologia.</span></div>
+    <div id="cap-7" class="cap clip" data-start="17.551" data-duration="3.182" data-track-index="0"><span>Acnologia attaches the real key on the way out,</span></div>
+    <div id="cap-8" class="cap clip" data-start="20.733" data-duration="1.811" data-track-index="0"><span>and the API answers.</span></div>
+    <div id="cap-9" class="cap clip" data-start="22.544" data-duration="2.159" data-track-index="0"><span>The key never leaves your server.</span></div>
+    <div id="cap-10" class="cap clip" data-start="24.703" data-duration="1.556" data-track-index="0"><span>When a key hits a rate limit,</span></div>
+    <div id="cap-11" class="cap clip" data-start="26.259" data-duration="1.741" data-track-index="0"><span>the next one takes over.</span></div>
+    <div id="cap-12" class="cap clip" data-start="28.0" data-duration="1.893" data-track-index="0"><span>Share a service with another server,</span></div>
+    <div id="cap-13" class="cap clip" data-start="29.893" data-duration="2.357" data-track-index="0"><span>a teammate, or anyone with a link.</span></div>
+    <div id="cap-14" class="cap clip" data-start="32.25" data-duration="1.649" data-track-index="0"><span>Then revoke it in one click,</span></div>
+    <div id="cap-15" class="cap clip" data-start="33.899" data-duration="1.619" data-track-index="0"><span>without touching the key.</span></div>
+    <div id="cap-16" class="cap clip" data-start="35.559" data-duration="2.31" data-track-index="0"><span>AI agents connect over MCP,</span></div>
+    <div id="cap-17" class="cap clip" data-start="37.869" data-duration="2.731" data-track-index="0"><span>and use your services without ever seeing a key.</span></div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      document.querySelectorAll(".cap").forEach((el) => {
+        const s = parseFloat(el.dataset.start);
+        const d = parseFloat(el.dataset.duration);
+        const span = el.querySelector("span");
+        tl.fromTo(span, { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "power2.out" }, s);
+        tl.to(span, { opacity: 0, duration: 0.1, ease: "power2.in" }, s + d - 0.1);
+      });
+      window.__timelines["captions"] = tl;
+    })();
+  </script>
+</template>

@@ -1,0 +1,196 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: var(--canvas);
+      overflow: hidden;
+    }
+    .f-node {
+      position: absolute;
+      top: 330px;
+      width: 360px;
+      height: 210px;
+      background: var(--card);
+      border: 2px solid var(--line);
+      border-radius: 30px;
+      padding: 30px 34px;
+      opacity: 0;
+    }
+    .f-node .lbl {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .f-node .name {
+      font-size: 42px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .f-node .name img {
+      width: 60px;
+      height: 60px;
+      border-radius: 14px;
+    }
+    .f-node .sub {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--muted);
+      margin-top: 14px;
+    }
+    #f-app { left: 90px; }
+    #f-acn { left: 780px; border-color: var(--violet); }
+    #f-api { left: 1470px; }
+    #f-acn .name { font-family: var(--mono); font-weight: 500; font-size: 38px; }
+    .f-line {
+      position: absolute;
+      top: 434px;
+      height: 3px;
+      background: #c9c6bd;
+      transform-origin: 0 50%;
+    }
+    #f-l1 { left: 450px; width: 330px; }
+    #f-l2 { left: 1140px; width: 330px; }
+    .f-dot {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 11px;
+      background: var(--violet);
+      opacity: 0;
+    }
+    .f-chip {
+      position: absolute;
+      top: 360px;
+      width: 330px;
+      text-align: center;
+      opacity: 0;
+    }
+    .f-chip span {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 24px;
+      padding: 8px 16px;
+      border-radius: 12px;
+      background: var(--card);
+      border: 2px solid var(--line);
+      white-space: nowrap;
+    }
+    #f-c1 { left: 450px; }
+    #f-c2 { left: 1140px; }
+    #f-c2 span { color: var(--violet); border-color: #cfc3f3; background: var(--violet-soft); }
+    .f-ok {
+      position: absolute;
+      top: 470px;
+      width: 330px;
+      text-align: center;
+      opacity: 0;
+    }
+    .f-ok span {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 26px;
+      padding: 8px 16px;
+      border-radius: 12px;
+      color: var(--green);
+      background: var(--green-soft);
+      white-space: nowrap;
+    }
+    #f-ok1 { left: 450px; }
+    #f-ok2 { left: 1140px; }
+    #f-box {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      pointer-events: none;
+    }
+    #f-boxlbl {
+      position: absolute;
+      left: 700px;
+      width: 520px;
+      top: 640px;
+      text-align: center;
+      font-family: var(--mono);
+      font-size: 30px;
+      color: var(--violet);
+      opacity: 0;
+    }
+  </style>
+  <div id="root" data-composition-id="flow" data-width="1920" data-height="1080">
+    <div class="f-line" id="f-l1"></div>
+    <div class="f-line" id="f-l2"></div>
+    <div class="f-node" id="f-app">
+      <div class="lbl">caller</div>
+      <div class="name">Your app</div>
+      <div class="sub">acn_ token only</div>
+    </div>
+    <div class="f-node" id="f-acn">
+      <div class="lbl">your server</div>
+      <div class="name"><img src="assets/logo.png" alt="" />Acnologia</div>
+      <div class="sub">holds the keys</div>
+    </div>
+    <div class="f-node" id="f-api">
+      <div class="lbl">upstream</div>
+      <div class="name">Any API</div>
+      <div class="sub">api.example.com</div>
+    </div>
+    <div class="f-chip" id="f-c1"><span>Bearer acn_••••7Hq2</span></div>
+    <div class="f-chip" id="f-c2"><span>key 9f3c••••a91f</span></div>
+    <div class="f-ok" id="f-ok1"><span>200 OK</span></div>
+    <div class="f-ok" id="f-ok2"><span>200 OK</span></div>
+    <div class="f-dot" id="f-d1"></div>
+    <div class="f-dot" id="f-d2"></div>
+    <div class="f-dot" id="f-d3"></div>
+    <svg id="f-box" viewBox="0 0 1920 1080">
+      <rect id="f-rect" x="750" y="300" width="420" height="270" rx="44" fill="none" stroke="#6d4bd8" stroke-width="3"
+        stroke-dasharray="14 12" opacity="0" />
+    </svg>
+    <div id="f-boxlbl">your app never sees the key</div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      const rise = (id, t) =>
+        tl.fromTo(id, { opacity: 0, y: 26, filter: "blur(8px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.55, ease: "expo.out" }, t);
+      // "Your app calls Acnologia."
+      rise("#f-app", 0.2);
+      rise("#f-acn", 0.95);
+      tl.fromTo("#f-l1", { scaleX: 0 }, { scaleX: 1, duration: 0.4, ease: "power2.inOut" }, 0.7);
+      tl.fromTo("#f-d1", { x: 440, y: 425, opacity: 0 }, { opacity: 1, duration: 0.1 }, 1.15);
+      tl.to("#f-d1", { x: 770, duration: 0.6, ease: "power2.inOut" }, 1.15);
+      tl.to("#f-d1", { opacity: 0, duration: 0.1 }, 1.7);
+      tl.fromTo("#f-c1", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: "expo.out" }, 1.2);
+      // "Acnologia attaches the real key on the way out."
+      rise("#f-api", 2.6);
+      tl.fromTo("#f-l2", { scaleX: 0 }, { scaleX: 1, duration: 0.4, ease: "power2.inOut" }, 3.0);
+      tl.fromTo("#f-acn", { scale: 1 }, { scale: 1.04, duration: 0.14, ease: "power2.out", yoyo: true, repeat: 1, immediateRender: false }, 3.9);
+      tl.fromTo("#f-c2", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: "expo.out" }, 4.0);
+      tl.fromTo("#f-d2", { x: 1130, y: 425, opacity: 0 }, { opacity: 1, duration: 0.1 }, 4.5);
+      tl.to("#f-d2", { x: 1460, duration: 0.6, ease: "power2.inOut" }, 4.5);
+      tl.to("#f-d2", { opacity: 0, duration: 0.1 }, 5.05);
+      // "and the API answers": the response comes all the way back.
+      tl.fromTo("#f-d3", { x: 1460, y: 425, opacity: 0, backgroundColor: "#2f8a4c" }, { opacity: 1, duration: 0.1 }, 5.5);
+      tl.to("#f-d3", { x: 440, duration: 1.0, ease: "power2.inOut" }, 5.5);
+      tl.to("#f-d3", { opacity: 0, duration: 0.1 }, 6.45);
+      tl.fromTo("#f-ok2", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.3, ease: "expo.out" }, 5.7);
+      tl.fromTo("#f-ok1", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.3, ease: "expo.out" }, 6.15);
+      // "The key never leaves your server."
+      tl.fromTo("#f-rect", { opacity: 0, scale: 0.94, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, duration: 0.5, ease: "expo.out" }, 6.95);
+      tl.fromTo("#f-boxlbl", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power4.out" }, 7.1);
+      tl.to("#f-app, #f-api, #f-l1, #f-l2, #f-c1, #f-ok1, #f-ok2", { opacity: 0.35, duration: 0.4, ease: "power2.inOut" }, 7.1);
+      // Exit: the frame lifts away.
+      tl.to("#root > *", { opacity: 0, filter: "blur(10px)", duration: 0.25, ease: "power3.in" }, 8.85);
+      window.__timelines["flow"] = tl;
+    })();
+  </script>
+</template>

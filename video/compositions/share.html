@@ -1,0 +1,227 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: var(--canvas);
+      overflow: hidden;
+    }
+    #s-node {
+      position: absolute;
+      left: 140px;
+      top: 330px;
+      width: 430px;
+      height: 260px;
+      background: var(--card);
+      border: 2px solid var(--violet);
+      border-radius: 32px;
+      padding: 34px 36px;
+      opacity: 0;
+    }
+    #s-node .name {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-family: var(--mono);
+      font-size: 40px;
+      font-weight: 500;
+    }
+    #s-node img {
+      width: 68px;
+      height: 68px;
+      border-radius: 16px;
+    }
+    #s-key {
+      display: inline-block;
+      margin-top: 36px;
+      font-family: var(--mono);
+      font-size: 28px;
+      padding: 10px 18px;
+      border-radius: 12px;
+      color: var(--violet);
+      background: var(--violet-soft);
+    }
+    #s-keylbl {
+      position: absolute;
+      left: 140px;
+      width: 430px;
+      top: 620px;
+      text-align: center;
+      font-family: var(--mono);
+      font-size: 28px;
+      color: var(--violet);
+      opacity: 0;
+    }
+    #s-lines {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+    }
+    #s-lines path {
+      fill: none;
+      stroke: #c9c6bd;
+      stroke-width: 3;
+    }
+    .s-row {
+      position: absolute;
+      left: 860px;
+      width: 920px;
+      height: 150px;
+      background: var(--card);
+      border: 2px solid var(--line);
+      border-radius: 30px;
+      padding: 30px 36px;
+      opacity: 0;
+    }
+    #s-r1 { top: 190px; }
+    #s-r2 { top: 380px; }
+    #s-r3 { top: 570px; }
+    .s-row .t {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 34px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+    }
+    .s-tag {
+      font-family: var(--mono);
+      font-size: 24px;
+      font-weight: 400;
+      padding: 3px 10px;
+      border-radius: 8px;
+      background: var(--violet-soft);
+      color: var(--violet);
+    }
+    .s-row .d {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--muted);
+      margin-top: 12px;
+    }
+    .s-state {
+      position: absolute;
+      right: 36px;
+      top: 52px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 26px;
+      color: var(--muted);
+    }
+    .s-tog {
+      width: 52px;
+      height: 30px;
+      border-radius: 15px;
+      background: var(--violet);
+      position: relative;
+    }
+    .s-tog::after {
+      content: "";
+      position: absolute;
+      right: 5px;
+      top: 5px;
+      width: 20px;
+      height: 20px;
+      border-radius: 10px;
+      background: #fff;
+    }
+    #s-btn {
+      position: absolute;
+      right: 32px;
+      top: 42px;
+      font-size: 28px;
+      font-weight: 500;
+      color: var(--red);
+      background: #fff;
+      border: 2px solid #ecc5c0;
+      border-radius: 14px;
+      padding: 10px 24px;
+    }
+    #s-revoked {
+      position: absolute;
+      right: 36px;
+      top: 50px;
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--red);
+      background: var(--red-soft);
+      padding: 6px 16px;
+      border-radius: 999px;
+      opacity: 0;
+    }
+    #s-cursor {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 56px;
+      height: 56px;
+      opacity: 0;
+    }
+  </style>
+  <div id="root" data-composition-id="share" data-width="1920" data-height="1080">
+    <svg id="s-lines" viewBox="0 0 1920 1080">
+      <path id="s-p1" d="M570 460 C 720 460, 710 265, 860 265" />
+      <path id="s-p2" d="M570 460 C 720 460, 710 455, 860 455" />
+      <path id="s-p3" d="M570 460 C 720 460, 710 645, 860 645" />
+    </svg>
+    <div id="s-node">
+      <div class="name"><img src="assets/logo.png" alt="" />Acnologia</div>
+      <div id="s-key">key 9f3c••••a91f</div>
+    </div>
+    <div id="s-keylbl">key untouched</div>
+    <div class="s-row" id="s-r1">
+      <div class="t">Another server <span class="s-tag">proxy</span></div>
+      <div class="d">invite bound to its identity</div>
+      <div class="s-state"><span class="s-tog"></span>Active</div>
+    </div>
+    <div class="s-row" id="s-r2">
+      <div class="t">A teammate <span class="s-tag">proxy</span></div>
+      <div class="d">personal token · 500 requests a day</div>
+      <div class="s-state"><span class="s-tog"></span>Active</div>
+    </div>
+    <div class="s-row" id="s-r3">
+      <div class="t">Anyone with a link <span class="s-tag">proxy</span></div>
+      <div class="d">shared link · 12 people claimed</div>
+      <div id="s-btn">Revoke</div>
+      <div id="s-revoked">revoked</div>
+    </div>
+    <svg id="s-cursor" viewBox="0 0 24 24">
+      <path d="M4 2 L4 19 L8.6 14.8 L11.6 21.6 L14.6 20.3 L11.7 13.6 L18 13.6 Z" fill="#18181a" stroke="#ffffff" stroke-width="1.4"
+        stroke-linejoin="round" />
+    </svg>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      const L = 340; // a little over each path's length
+      ["#s-p1", "#s-p2", "#s-p3"].forEach((p) => gsap.set(p, { strokeDasharray: L, strokeDashoffset: L }));
+      tl.fromTo("#s-node", { opacity: 0, x: -30, filter: "blur(8px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.6, ease: "expo.out" }, 0.2);
+      // One share per name in the line: server, teammate, link.
+      const at = [1.15, 2.3, 3.2];
+      [1, 2, 3].forEach((n, i) => {
+        tl.fromTo("#s-p" + n, { strokeDashoffset: L }, { strokeDashoffset: 0, duration: 0.45, ease: "power2.inOut" }, at[i] - 0.15);
+        tl.fromTo("#s-r" + n, { opacity: 0, x: 40, filter: "blur(8px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.55, ease: "expo.out" }, at[i]);
+      });
+      // The cursor comes in from the lower right and lands on Revoke.
+      tl.fromTo("#s-cursor", { x: 1900, y: 1000, opacity: 0 }, { opacity: 1, duration: 0.2 }, 4.0);
+      tl.to("#s-cursor", { x: 1668, y: 635, duration: 1.1, ease: "power3.inOut" }, 4.0);
+      // The click (5.6 s here, 33.4 s in the film; the sound lands on it).
+      tl.to("#s-cursor", { scale: 0.88, duration: 0.07, ease: "power2.in", transformOrigin: "15% 10%" }, 5.53);
+      tl.to("#s-cursor", { scale: 1, duration: 0.12, ease: "power2.out" }, 5.6);
+      tl.to("#s-btn", { scale: 0.94, duration: 0.07, ease: "power2.in" }, 5.53);
+      tl.to("#s-btn", { opacity: 0, duration: 0.1 }, 5.62);
+      tl.fromTo("#s-revoked", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(1.6)" }, 5.62);
+      tl.to("#s-p3", { strokeDashoffset: L, duration: 0.4, ease: "power3.in" }, 5.62);
+      tl.to("#s-r3 .t, #s-r3 .d", { opacity: 0.4, duration: 0.3 }, 5.7);
+      tl.to("#s-cursor", { x: 1960, y: 900, opacity: 0, duration: 0.5, ease: "power3.in" }, 6.0);
+      // "without touching the key".
+      tl.fromTo("#s-key", { scale: 1 }, { scale: 1.08, duration: 0.15, ease: "power2.out", yoyo: true, repeat: 1, immediateRender: false }, 6.15);
+      tl.fromTo("#s-keylbl", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power4.out" }, 6.2);
+      tl.to("#s-node, #s-keylbl, .s-row, #s-lines", { opacity: 0, filter: "blur(10px)", duration: 0.25, ease: "power3.in", stagger: 0.03 }, 7.1);
+      window.__timelines["share"] = tl;
+    })();
+  </script>
+</template>

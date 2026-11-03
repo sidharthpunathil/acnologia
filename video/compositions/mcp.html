@@ -1,0 +1,123 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: var(--canvas);
+      overflow: hidden;
+    }
+    #m-term {
+      position: absolute;
+      left: 150px;
+      top: 220px;
+      width: 900px;
+      height: 560px;
+      background: var(--ink);
+      border-radius: 32px;
+      padding: 36px 44px;
+      opacity: 0;
+    }
+    #m-term .lbl {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: #8d8c87;
+      margin-bottom: 22px;
+    }
+    #m-code {
+      font-family: var(--mono);
+      font-size: 27px;
+      line-height: 44px;
+      color: #e9e8e3;
+      white-space: pre;
+    }
+    #m-code .s { color: #b9a6f5; }
+    #m-code .k { color: #e9e8e3; }
+    #m-right {
+      position: absolute;
+      left: 1130px;
+      top: 220px;
+      width: 640px;
+    }
+    #m-right .lbl {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--muted);
+      margin-bottom: 18px;
+      opacity: 0;
+    }
+    .m-tool {
+      display: block;
+      width: max-content;
+      font-family: var(--mono);
+      font-size: 30px;
+      padding: 12px 22px;
+      margin-bottom: 14px;
+      border-radius: 14px;
+      background: var(--card);
+      border: 2px solid var(--line);
+      opacity: 0;
+    }
+    #m-res {
+      margin-top: 30px;
+      width: 640px;
+      background: var(--card);
+      border: 2px solid var(--violet);
+      border-radius: 24px;
+      padding: 24px 28px;
+      opacity: 0;
+    }
+    #m-res .a {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--green);
+    }
+    #m-res .b {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--violet);
+      margin-top: 10px;
+    }
+  </style>
+  <div id="root" data-composition-id="mcp" data-width="1920" data-height="1080">
+    <div id="m-term">
+      <div class="lbl">agent config · MCP</div>
+      <div id="m-code">{
+  <span class="s">"mcpServers"</span>: {
+    <span class="s">"acnologia"</span>: {
+      <span class="s">"url"</span>: <span class="s">"https://keys.example.com/mcp"</span>,
+      <span class="s">"headers"</span>: {
+        <span class="s">"Authorization"</span>: <span class="s">"Bearer acn_••••7Hq2"</span>
+      }
+    }
+  }
+}</div>
+    </div>
+    <div id="m-right">
+      <div class="lbl" id="m-tl">tools the agent sees</div>
+      <span class="m-tool" id="m-t1">list_services</span>
+      <span class="m-tool" id="m-t2">proxy_request</span>
+      <span class="m-tool" id="m-t3">pool_status</span>
+      <div id="m-res">
+        <div class="a">proxy_request: 200 OK</div>
+        <div class="b">keys the agent saw: 0</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#m-term", { opacity: 0, y: 30, filter: "blur(8px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.6, ease: "expo.out" }, 0.25);
+      // The config reveals line by line as the agent connects.
+      tl.fromTo("#m-code", { clipPath: "inset(0 0 100% 0)" }, { clipPath: "inset(0 0 0% 0)", duration: 1.2, ease: "steps(10)" }, 0.75);
+      // "use your services": the tools arrive.
+      tl.fromTo("#m-tl", { opacity: 0 }, { opacity: 1, duration: 0.2 }, 2.6);
+      ["#m-t1", "#m-t2", "#m-t3"].forEach((id, i) => {
+        tl.fromTo(id, { opacity: 0, x: 24, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.45, ease: "expo.out" }, 2.75 + i * 0.08);
+      });
+      // "without ever seeing a key".
+      tl.fromTo("#m-res", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out" }, 3.7);
+      tl.to("#m-term, #m-right", { opacity: 0, filter: "blur(10px)", duration: 0.25, ease: "power3.in", stagger: 0.04 }, 5.0);
+      window.__timelines["mcp"] = tl;
+    })();
+  </script>
+</template>

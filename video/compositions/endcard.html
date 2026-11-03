@@ -1,0 +1,64 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: var(--canvas);
+      overflow: hidden;
+    }
+    #e-lockup {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 330px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 44px;
+    }
+    #e-logo {
+      width: 200px;
+      height: 200px;
+      border-radius: 46px;
+      display: block;
+    }
+    #e-word {
+      font-family: var(--mono);
+      font-size: 104px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      display: flex;
+    }
+    #e-word span { opacity: 0; }
+    #e-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 640px;
+      text-align: center;
+      font-size: 52px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+    #e-line span { opacity: 0; }
+    #e-l2 { color: var(--violet); }
+  </style>
+  <div id="root" data-composition-id="endcard" data-width="1920" data-height="1080">
+    <div id="e-lockup">
+      <img id="e-logo" src="assets/logo.png" alt="Acnologia logo" />
+      <div id="e-word"><span>A</span><span>c</span><span>n</span><span>o</span><span>l</span><span>o</span><span>g</span><span>i</span><span>a</span></div>
+    </div>
+    <div id="e-line"><span id="e-l1">Self host it.</span> <span id="e-l2">MIT licensed.</span></div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // The mark opens from its centre, then the name types in beside it.
+      tl.fromTo("#e-logo", { clipPath: "circle(0% at 50% 50%)", scale: 0.9 }, { clipPath: "circle(75% at 50% 50%)", scale: 1, duration: 0.7, ease: "expo.out" }, 0.15);
+      tl.fromTo("#e-word span", { opacity: 0, filter: "blur(4px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out", stagger: 0.045 }, 0.3);
+      tl.fromTo("#e-l1", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power4.out" }, 1.55);
+      tl.fromTo("#e-l2", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power4.out" }, 2.8);
+      window.__timelines["endcard"] = tl;
+    })();
+  </script>
+</template>
