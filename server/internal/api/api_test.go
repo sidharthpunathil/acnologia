@@ -26,12 +26,15 @@ type fakeSerp struct {
 	mu   sync.Mutex
 	hits map[string]int
 	bad  map[string]string // key -> error text
+	// drained makes the account page agree with a "run out" error.
+	drained bool
 }
 
 func (f *fakeSerp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	k := r.URL.Query().Get("api_key")
 	f.mu.Lock()
 	f.hits[k]++
+	drained := f.drained
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	q := r.URL.Query()
@@ -52,7 +55,11 @@ func (f *fakeSerp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/account.json" {
-		_ = json.NewEncoder(w).Encode(map[string]any{"searches_per_month": 100, "total_searches_left": 42})
+		left := 42
+		if drained && strings.Contains(f.bad[k], "run out") {
+			left = 0 // the account page agrees the plan is used up
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"searches_per_month": 100, "total_searches_left": left})
 		return
 	}
 	// key echoes the key as given, which the proxy hides from callers that
@@ -163,6 +170,9 @@ func TestProxyRotatesOnRateLimit(t *testing.T) {
 	e.up.bad["k2"] = "Your searches for the past hour have exceeded the limit."
 	e.addKeys(map[string]any{"secret": "k1", "priority": 1}, map[string]any{"secret": "k2", "priority": 2}, map[string]any{"secret": "k3", "priority": 3})
 	e.do(e.super, "PATCH", "/api/admin/services/1", map[string]any{"strategy": "fill_first"}, 200, nil)
+	e.up.mu.Lock()
+	e.up.drained = true
+	e.up.mu.Unlock()
 	_, tok := e.app(map[string]any{"name": "site"})
 
 	var body map[string]any

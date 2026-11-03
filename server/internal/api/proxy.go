@@ -420,7 +420,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		if resp.StatusCode < 400 {
 			s.Breakers.Success(sv.ID)
 			verdict = true
-			_ = s.Pool.Apply(r.Context(), sv, k, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(resp.Header)})
+			_ = s.Pool.ApplyProxied(r.Context(), sv, k, a.ID, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(resp.Header)})
 			setHeader(w.Header(), "Service", sv.Slug)
 			// The slot stays held until the (possibly streamed) body is fully
 			// sent, or the upstream goes quiet for proxyIdleTimeout.
@@ -453,7 +453,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			s.Breakers.Success(sv.ID)
 		}
 		verdict = true
-		_ = s.Pool.Apply(r.Context(), sv, k, res)
+		_ = s.Pool.ApplyProxied(r.Context(), sv, k, a.ID, res)
 		if res.Outcome != providers.OK {
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: string(res.Outcome), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, Detail: res.Message})
 		}
