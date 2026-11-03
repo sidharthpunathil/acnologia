@@ -84,14 +84,18 @@ test("a navigation keeps the current page on screen while the next page's code l
     await new Promise((r) => setTimeout(r, 800));
     await route.continue();
   });
-  // Samples every frame. The loading spinner, or no visible page heading
-  // (Suspense hides the old page with display: none), is a flash.
+  // Samples every frame. The loading spinner, a hidden top bar or an empty
+  // main area (Suspense hides the old page with display: none) is a flash.
+  // A page's own skeleton is not: it is content.
   await page.evaluate(() => {
     const w = window as unknown as { __flash: string[] };
     w.__flash = [];
     const tick = () => {
       if (document.querySelector('[aria-label="Loading Acnologia"]')) w.__flash.push("spinner");
-      if (![...document.querySelectorAll("h1")].some((h) => h.checkVisibility())) w.__flash.push("no visible heading");
+      const banner = document.querySelector("header");
+      if (!banner || !banner.checkVisibility()) w.__flash.push("no top bar");
+      const main = document.querySelector("main");
+      if (!main || ![...main.children].some((c) => c.checkVisibility() && c.getBoundingClientRect().height > 0)) w.__flash.push("empty main");
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);

@@ -1,4 +1,5 @@
-import { expect, test, type Locator } from "../support/fixtures";
+import type { Locator } from "@playwright/test";
+import { expect, test } from "../support/fixtures";
 
 // The mark is drawn from small webp files picked by srcset (96, 144 and
 // 256px) instead of one 512px PNG. At 1x and at 3x, each place shows the
