@@ -2,6 +2,12 @@
 # TypeScript SDKs, the dashboard build and the PowerShell scripts. Every job
 # runs offline against fakes, so the whole run stays short.
 #
+# The changes job decides which of them a commit needs: a job runs only when
+# its own files changed (an SDK change does not rebuild the dashboard, a
+# dashboard change does not test six SDK matrices). A change to this file, a
+# new branch, a force push, or anything it cannot diff runs them all. A
+# skipped job counts as passed for branch protection.
+#
 # checkout and setup-go are pinned to the same commits as the release
 # workflows; the other first-party actions to a major version.
 name: ci
@@ -22,8 +28,56 @@ defaults:
     shell: bash
 
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.diff.outputs.go }}
+      python: ${{ steps.diff.outputs.python }}
+      typescript: ${{ steps.diff.outputs.typescript }}
+      web: ${{ steps.diff.outputs.web }}
+      windows: ${{ steps.diff.outputs.windows }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Find the changed areas
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          SHA: ${{ github.sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) from="$BASE"; range="$BASE...$SHA" ;;
+            push) from="$BEFORE"; range="$BEFORE..$SHA" ;;
+            *) from="" ;;
+          esac
+          all=false
+          if [ -z "$from" ] || [ -z "${from//0/}" ] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then
+            all=true
+            echo "Cannot diff this run, so every job runs."
+          else
+            files=$(git diff --name-only "$range")
+            printf 'Changed files:\n%s\n' "$files"
+            if grep -qx '.github/workflows/ci.yml' <<<"$files"; then all=true; fi
+          fi
+          area() {
+            if [ "$all" = true ] || grep -qE "$2" <<<"$files"; then v=true; else v=false; fi
+            echo "$1=$v" | tee -a "$GITHUB_OUTPUT"
+          }
+          area go '^(server|sdk/go)/'
+          area python '^sdk/python/'
+          area typescript '^sdk/typescript/'
+          area web '^web/'
+          area windows '^(server|web|scripts)/|^install\.ps1$'
+
   go:
     name: go (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -65,6 +119,8 @@ jobs:
 
   python-sdk:
     name: python sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +143,8 @@ jobs:
 
   typescript-sdk:
     name: typescript sdk (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -109,6 +167,8 @@ jobs:
 
   web:
     name: dashboard build
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -128,6 +188,8 @@ jobs:
   # dashboard built by pnpm on Windows, and both binaries started once.
   windows-build:
     name: windows build (build.ps1)
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
