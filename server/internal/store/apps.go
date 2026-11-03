@@ -271,26 +271,46 @@ func (s *Store) ClaimLeaseOutcome(ctx context.Context, id, outcome string) error
 
 // Housekeeping
 
+// pruneBatch is how many rows one prune statement deletes. Each batch is its
+// own short write, so requests waiting on the writer get it between batches
+// instead of after one long delete.
+const pruneBatch = 1000
+
+// Prune deletes expired sessions, leases older than a week and events older
+// than eventRetention (zero or less keeps events forever), then refreshes
+// planner statistics.
 func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 	t := time.Now()
-	stmts := []struct {
-		q string
-		a any
-	}{
-		{`DELETE FROM sessions WHERE expires_at<?`, t.Unix()},
-		{`DELETE FROM leases WHERE created_at<?`, t.Add(-7 * 24 * time.Hour).Unix()},
+	if _, err := s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at<?`, t.Unix()); err != nil {
+		return err
 	}
-	// A retention of zero or less means keep events forever.
+	if err := s.pruneBatched(ctx, `DELETE FROM leases WHERE rowid IN (SELECT rowid FROM leases WHERE created_at<? LIMIT ?)`,
+		t.Add(-7*24*time.Hour).Unix()); err != nil {
+		return err
+	}
 	if eventRetention > 0 {
-		stmts = append(stmts, struct {
-			q string
-			a any
-		}{`DELETE FROM events WHERE ts<?`, t.Add(-eventRetention).Unix()})
-	}
-	for _, st := range stmts {
-		if _, err := s.DB.ExecContext(ctx, st.q, st.a); err != nil {
+		if err := s.pruneBatched(ctx, `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE ts<? LIMIT ?)`,
+			t.Add(-eventRetention).Unix()); err != nil {
 			return err
 		}
 	}
+	optimize(ctx, s.DB)
 	return nil
+}
+
+// pruneBatched runs a DELETE of at most pruneBatch rows until one deletes
+// fewer.
+func (s *Store) pruneBatched(ctx context.Context, q string, before int64) error {
+	for {
+		res, err := s.w.ExecContext(ctx, q, before, pruneBatch)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n < pruneBatch {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 }
