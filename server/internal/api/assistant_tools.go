@@ -41,6 +41,10 @@ type chatTool struct {
 	// the user cannot take.
 	Role    store.Role
 	Confirm bool
+	// ConfirmIf asks for the user's Confirm only for some inputs: changes
+	// to where keys go or who may use them, which text the model read
+	// (an event detail, a key note) must never be able to make on its own.
+	ConfirmIf func(in map[string]any) bool
 	// SecretFields are input fields holding credentials (a proxy URL with a
 	// password), redacted from the stored conversation like key secrets.
 	SecretFields []string
@@ -463,7 +467,9 @@ func init() {
 				"cache_ttl_sec":     map[string]any{"type": "integer", "description": "cache successful GET responses this long; 0 turns caching off"},
 				"cost_per_request":  map[string]any{"type": "number", "description": "cost of one request, used for app budgets"},
 			},
-			Desc: "Change a service's settings: name, base URL, rotation strategy, cooldown, attempts, concurrency, egress proxy, response cache and cost per request.",
+			Desc:      "Change a service's settings: name, base URL, rotation strategy, cooldown, attempts, concurrency, egress proxy, response cache and cost per request. A new base URL or egress proxy needs the user's Confirm.",
+			ConfirmIf: hasAny("base_url", "auth_type", "auth_name", "provider", "egress_id", "target_trusted"),
+			Describe:  describeServiceTarget,
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				sv, err := cs.resolveService(argStr(in, "service"))
 				if err != nil {
@@ -507,7 +513,17 @@ func init() {
 				"secret":          map[string]any{"type": "string", "description": "only to replace the key with a new secret the user gave"},
 				"egress_id":       map[string]any{"type": "integer", "description": "egress proxy for this key; 0 uses the service's"},
 			}),
-			Desc: "Change a key: label, account details, status (active or disabled), tier, notes, weight, priority, quota limit, concurrency, or replace its secret.",
+			Desc:      "Change a key: label, account details, status (active or disabled), tier, notes, weight, priority, quota limit, concurrency, or replace its secret. A new egress proxy needs the user's Confirm.",
+			ConfirmIf: hasAny("egress_id"),
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				id, _ := argNum(in, "key_id")
+				k, err := cs.s.Store.GetKey(cs.ctx, id)
+				if err != nil || (k.Hidden && cs.user.Role != store.RoleSuperadmin) {
+					return "", fmt.Errorf("no key %d", id)
+				}
+				eid, _ := argNum(in, "egress_id")
+				return fmt.Sprintf("Send key %s through %s", k.Label, cs.egressName(eid, "the service's egress proxy")), nil
+			},
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "key_id")
 				body := pick(in, "label", "account_name", "account_email", "account_phone", "account_ref", "tier", "notes",
@@ -598,7 +614,9 @@ func init() {
 						"daily_budget": map[string]any{"type": "number"}, "monthly_budget": map[string]any{"type": "number"},
 					}},
 			},
-			Desc: "Change an app's name, mode, allowed services, request and budget limits, or turn it on or off.",
+			Desc:      "Change an app's name, mode, allowed services, request and budget limits, or turn it on or off. A new mode or allowed services list needs the user's Confirm.",
+			ConfirmIf: hasAny("mode", "allowed_services", "lease_hidden"),
+			Describe:  describeAppAccess,
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "app_id")
 				body := pick(in, "name", "description", "mode", "allowed_services", "active", "limits")
@@ -795,4 +813,91 @@ func init() {
 			},
 		},
 	}
+}
+
+// hasAny is a ConfirmIf that holds when the input sets any of the fields.
+func hasAny(fields ...string) func(in map[string]any) bool {
+	return func(in map[string]any) bool {
+		for _, f := range fields {
+			if _, ok := in[f]; ok {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// urlHost is the scheme and host of a URL without any credentials, for confirmations.
+func urlHost(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "an invalid URL"
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// egressName names an egress proxy for a confirmation; id 0 is none.
+func (cs *chatSession) egressName(id int64, none string) string {
+	if id <= 0 {
+		return none
+	}
+	p, err := cs.s.Store.GetEgress(cs.ctx, id)
+	if err != nil {
+		return fmt.Sprintf("egress proxy %d (not found)", id)
+	}
+	return fmt.Sprintf("egress proxy %s (%d)", p.Name, p.ID)
+}
+
+// describeServiceTarget states where a service will send its keys after
+// an update_service, in full, for the user's Confirm.
+func describeServiceTarget(cs *chatSession, in map[string]any) (string, error) {
+	sv, err := cs.resolveService(argStr(in, "service"))
+	if err != nil {
+		return "", err
+	}
+	base := sv.BaseURL
+	if v, ok := in["base_url"].(string); ok {
+		base = strings.TrimRight(strings.TrimSpace(v), "/")
+	}
+	eid := int64(0)
+	if sv.EgressID != nil {
+		eid = *sv.EgressID
+	}
+	if v, ok := argNum(in, "egress_id"); ok {
+		eid = v
+	}
+	return fmt.Sprintf("Send the keys of service %s to %s through %s. Hidden keys pause until a superadmin confirms the target in the service's edit form",
+		sv.Slug, base, cs.egressName(eid, "no egress proxy")), nil
+}
+
+// describeAppAccess states an app's resulting mode and services in full.
+func describeAppAccess(cs *chatSession, in map[string]any) (string, error) {
+	id, _ := argNum(in, "app_id")
+	a, err := cs.s.Store.GetApp(cs.ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("no app %d", id)
+	}
+	mode := a.Mode
+	if v, ok := in["mode"].(string); ok {
+		mode = v
+	}
+	svcs := a.AllowedServices
+	if v, ok := in["allowed_services"].([]any); ok {
+		svcs = []string{}
+		for _, x := range v {
+			svcs = append(svcs, fmt.Sprint(x))
+		}
+	}
+	allowed := "all services"
+	if len(svcs) > 0 {
+		allowed = strings.Join(svcs, ", ")
+	}
+	desc := fmt.Sprintf("Let app %s use %s in %s mode", a.Name, allowed, mode)
+	if mode != "proxy" {
+		desc += " (lease mode hands it plain key secrets)"
+	}
+	if v, ok := in["lease_hidden"].(bool); ok {
+		desc += fmt.Sprintf(", lease_hidden %v", v)
+	}
+	return desc, nil
 }

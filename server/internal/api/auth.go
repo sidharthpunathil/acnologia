@@ -43,6 +43,18 @@ func isSuper(r *http.Request) bool {
 	return u != nil && u.Role == store.RoleSuperadmin
 }
 
+// assistantCtxKey marks a request the Assistant made in process for a tool
+// call. Nothing outside this package can set it.
+type assistantCtxKey struct{}
+
+// fromAssistant reports whether the request is an Assistant tool call. Such
+// a request acts as the signed in user but carries what the model chose, so
+// it must never vouch for anything on the user's behalf.
+func fromAssistant(r *http.Request) bool {
+	v, _ := r.Context().Value(assistantCtxKey{}).(bool)
+	return v
+}
+
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && store.IsAdminToken(tok) {

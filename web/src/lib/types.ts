@@ -86,7 +86,7 @@ export type ServiceInput = Pick<
   | "max_attempts"
   | "icon"
 > &
-  Partial<Pick<Service, "max_concurrency" | "queue_timeout_sec" | "egress_id" | "cache_ttl_sec" | "cost_per_request">>;
+  Partial<Pick<Service, "max_concurrency" | "queue_timeout_sec" | "egress_id" | "cache_ttl_sec" | "cost_per_request" | "target_trusted">>;
 
 export type KeyStatus = "active" | "disabled" | "exhausted" | "invalid" | "banned";
 export type EffectiveStatus = KeyStatus | "cooling";
