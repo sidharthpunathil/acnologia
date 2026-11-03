@@ -12,8 +12,12 @@
 #   web         web/
 #   windows     the build tooling (build.ps1, install.ps1, go.mod, the web
 #               lockfile): server code on Windows is go (windows-latest)'s job
-# A change to this file, a new branch, a force push, or anything it cannot
-# diff runs them all. A skipped job counts as passed for branch protection.
+# A push is diffed against the last commit a ci run passed on, not the push
+# before it: a newer push cancels an older run, and a failed run's changes
+# must be tested again, so nothing is skipped because a run never finished.
+# A pull request is diffed against its base. A change to this file, a branch
+# with no passing run yet, a manual run, or anything it cannot diff runs them
+# all. A skipped job counts as passed for branch protection.
 #
 # checkout and setup-go are pinned to the same commits as the release
 # workflows; the other first-party actions to a major version.
@@ -22,9 +26,13 @@ name: ci
 on:
   push:
   pull_request:
+  # Runs every job, for a full check on demand.
+  workflow_dispatch:
 
 permissions:
   contents: read
+  # The changes job looks up the last successful run on the branch.
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -55,13 +63,25 @@ jobs:
         id: diff
         env:
           EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
           BASE: ${{ github.event.pull_request.base.sha }}
           SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           case "$EVENT" in
             pull_request) from="$BASE"; range="$BASE...$SHA" ;;
-            push) from="$BEFORE"; range="$BEFORE..$SHA" ;;
+            push)
+              # The newest ci run on this branch that passed: everything up
+              # to its commit was tested. Its own skips are safe, since it
+              # was diffed the same way.
+              from=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BRANCH&status=success&per_page=1" \
+                --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || true)
+              echo "Last passing commit: ${from:-none}"
+              range="$from..$SHA"
+              # The commit must be an ancestor; after a force push it may not be.
+              if [ -n "$from" ] && ! git merge-base --is-ancestor "$from" "$SHA" 2>/dev/null; then from=""; fi
+              ;;
             *) from="" ;;
           esac
           all=false
@@ -117,13 +137,15 @@ jobs:
 
       # -race needs cgo and a C toolchain, which Windows runners are not set
       # up for; the server itself builds with CGO_ENABLED=0 everywhere.
+      # internal/api takes about 5 minutes with -race and longer on hosted
+      # macOS, past go test's default 10 minute timeout.
       - name: Test the server and CLI
         working-directory: server
         run: |
           if [ "$RUNNER_OS" = Windows ]; then
-            go test ./...
+            go test -timeout 30m ./...
           else
-            go test -race ./...
+            go test -race -timeout 30m ./...
           fi
 
       - name: Cross compile for Windows arm64
