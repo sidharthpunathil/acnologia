@@ -631,7 +631,8 @@ export function LandingPage() {
               <div className="lp-then__text">
                 <h3>Then open the dashboard</h3>
                 <p>
-                  Open <code>http://localhost:8080</code>. The first visit creates the superadmin.
+                  Open the address the server prints when it starts (the installer prints it too). The first visit creates the
+                  superadmin.
                 </p>
                 <p>
                   Release builds for Linux, macOS and Windows (amd64 and arm64) are on the{" "}
