@@ -189,6 +189,27 @@ func (s *Store) ServiceLogo(ctx context.Context, id int64) ([]byte, string, erro
 	return data, mime, err
 }
 
+// UntrustProviderServices clears target_trusted on every service of a
+// provider and returns the slugs of those that were trusted. A provider spec
+// edit can move where health checks send keys, so hidden keys pause until a
+// superadmin confirms each service again.
+func (s *Store) UntrustProviderServices(ctx context.Context, provider string) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `UPDATE services SET target_trusted=0 WHERE provider=? AND target_trusted=1 RETURNING slug`, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	slugs := []string{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		slugs = append(slugs, slug)
+	}
+	return slugs, rows.Err()
+}
+
 // SetServiceTrusted records that a superadmin vouched for the service's
 // upstream target, so hidden keys may be sent to it.
 func (s *Store) SetServiceTrusted(ctx context.Context, id int64) error {

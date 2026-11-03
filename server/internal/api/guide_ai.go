@@ -94,7 +94,7 @@ func (s *Server) writeProviderGuide(ctx context.Context, r *http.Request, u *sto
 		}
 		in := catalog.Input{Slug: cur.Slug, Name: cur.Name, Category: cur.Category, Description: cur.Description, Website: cur.Website,
 			DocsURL: cur.DocsURL, Color: cur.Color, Status: cur.Status, Spec: raw}
-		np, _, err := s.Catalog.PublishVersion(ctx, in, "ai", u.Email, "usage guide written by AI")
+		np, _, err := s.Catalog.PublishVersion(ctx, in, "ai", catalog.Publisher{Name: u.Email, User: u}, "usage guide written by AI")
 		if err != nil {
 			return nil, err
 		}

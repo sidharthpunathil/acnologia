@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"regexp"
 	"strings"
@@ -105,16 +106,28 @@ func httpURL(s string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
+// Publisher is who publishes a provider version.
+type Publisher struct {
+	// Name labels the version in its history: an email, "peer <name>".
+	Name string
+	// User is the person for the audit log; nil for the system.
+	User *store.User
+	// Super vouches for where the spec sends keys: a superadmin acting in
+	// person, or a peer owner's own spec synced over a link a superadmin
+	// confirmed. An admin, the Assistant or an AI run never does.
+	Super bool
+}
+
 // Publish validates, tests, saves a new version and swaps the live spec.
 // Requests already in flight keep the spec they started with.
-func (c *Catalog) Publish(ctx context.Context, in Input, source, by, note string) (*store.Provider, providers.TestReport, error) {
+func (c *Catalog) Publish(ctx context.Context, in Input, source string, by Publisher, note string) (*store.Provider, providers.TestReport, error) {
 	return c.publish(ctx, in, source, "", by, note)
 }
 
 // PublishVersion publishes like Publish but keeps the provider's source
 // (builtin, ai, peer:...) and labels only the new version with
 // versionSource. The offers refresh publishes this way.
-func (c *Catalog) PublishVersion(ctx context.Context, in Input, versionSource, by, note string) (*store.Provider, providers.TestReport, error) {
+func (c *Catalog) PublishVersion(ctx context.Context, in Input, versionSource string, by Publisher, note string) (*store.Provider, providers.TestReport, error) {
 	cur, err := c.Store.GetProvider(ctx, strings.TrimSpace(strings.ToLower(in.Slug)))
 	if err != nil {
 		return nil, providers.TestReport{}, err
@@ -122,34 +135,91 @@ func (c *Catalog) PublishVersion(ctx context.Context, in Input, versionSource, b
 	return c.publish(ctx, in, cur.Source, versionSource, by, note)
 }
 
-func (c *Catalog) publish(ctx context.Context, in Input, source, versionSource, by, note string) (*store.Provider, providers.TestReport, error) {
+func (c *Catalog) publish(ctx context.Context, in Input, source, versionSource string, by Publisher, note string) (*store.Provider, providers.TestReport, error) {
 	spec, errs, rep := Check(&in)
 	if len(errs) > 0 || rep.Failed > 0 {
 		return nil, rep, &ValidationError{Errors: errs, Report: rep}
 	}
 	existing, err := c.Store.GetProvider(ctx, in.Slug)
-	builtin := false
+	builtin, found := false, err == nil
 	if err == nil {
 		builtin = existing.Builtin
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, rep, err
+	}
+	// The spec's auth and health check decide where a health check sends
+	// each key. Only a superadmin may move that for hidden keys, so anyone
+	// else changing it revokes trust in every service of the provider before
+	// the new spec goes live.
+	var untrusted []string
+	if found && !by.Super {
+		if changed := keyTargetChanges(existing.Spec, spec); len(changed) > 0 {
+			untrusted, err = c.Store.UntrustProviderServices(ctx, in.Slug)
+			if err != nil {
+				return nil, rep, err
+			}
+			for _, slug := range untrusted {
+				c.Store.AddAudit(ctx, by.User, "service.untrust", slug, fmt.Sprintf("provider %s spec changed %s; hidden keys paused until a superadmin confirms the service",
+					in.Slug, strings.Join(changed, ", ")))
+			}
+		}
 	}
 	p := &store.Provider{
 		Slug: in.Slug, Name: in.Name, Category: in.Category, Description: in.Description, Website: in.Website,
 		DocsURL: in.DocsURL, Color: in.Color, Status: in.Status, Builtin: builtin, Source: source, Spec: in.Spec,
 		VersionSource: versionSource,
 	}
-	saved, err := c.Store.SaveProvider(ctx, p, by, note)
+	saved, err := c.Store.SaveProvider(ctx, p, by.Name, note)
 	if err != nil {
 		return nil, rep, err
 	}
 	providers.Set(saved.Slug, spec)
-	slog.Info("provider published", "slug", saved.Slug, "version", saved.Version, "source", source)
+	slog.Info("provider published", "slug", saved.Slug, "version", saved.Version, "source", source, "untrusted_services", len(untrusted))
 	return saved, rep, nil
 }
 
+// keyTargetChanges lists the parts of a spec that decide where a health
+// check sends a key (auth, health.method, health.path, health.query,
+// health.from_origin) and differ between the stored spec and the new one.
+func keyTargetChanges(oldRaw json.RawMessage, next *providers.Spec) []string {
+	old, err := providers.DecodeSpec(oldRaw)
+	if err != nil {
+		return []string{"auth", "health"}
+	}
+	var out []string
+	if old.Auth != next.Auth {
+		out = append(out, "auth")
+	}
+	oh, nh := old.Health, next.Health
+	if (oh == nil) != (nh == nil) {
+		return append(out, "health")
+	}
+	if oh == nil {
+		return out
+	}
+	method := func(h *providers.Health) string {
+		if m := strings.ToUpper(strings.TrimSpace(h.Method)); m != "" {
+			return m
+		}
+		return "GET"
+	}
+	if method(oh) != method(nh) {
+		out = append(out, "health.method")
+	}
+	if oh.Path != nh.Path {
+		out = append(out, "health.path")
+	}
+	if !maps.Equal(oh.Query, nh.Query) {
+		out = append(out, "health.query")
+	}
+	if oh.FromOrigin != nh.FromOrigin {
+		out = append(out, "health.from_origin")
+	}
+	return out
+}
+
 // Rollback republishes an older version as a new version.
-func (c *Catalog) Rollback(ctx context.Context, slug string, version int, by string) (*store.Provider, error) {
+func (c *Catalog) Rollback(ctx context.Context, slug string, version int, by Publisher) (*store.Provider, error) {
 	old, err := c.Store.ProviderVersionSnapshot(ctx, slug, version)
 	if err != nil {
 		return nil, err

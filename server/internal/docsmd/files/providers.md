@@ -434,6 +434,13 @@ Then create a service from the catalog and add keys.
 - `slug`: lowercase letters, digits and hyphens.
 - `base_url`: http(s) with a host. `website` and `docs_url`: empty or http(s).
 - `health.path` and example paths start with `/`, so they cannot change host.
+  `health.path` may not hold `.` or `..` segments (raw or percent encoded),
+  and `health.from_origin` needs a `base_url` without a path, so a health
+  check stays under the service's base URL.
+- A spec edit that changes `auth` or the health check's method, path, query
+  or `from_origin`, made by anyone but a superadmin, pauses hidden keys on
+  every service of the provider until a superadmin confirms each one
+  ([security](security.md)).
 - Offers: names are required and unique, a `match` needs a method, a path or
   examples, paths start with `/`, example names must exist, price units come
   from the list above, limits need a count of at least 1 and a known window,
