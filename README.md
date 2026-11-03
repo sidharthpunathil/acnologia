@@ -111,8 +111,10 @@ TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 - **Protects secrets.** Hidden keys only superadmins see, an audit log of
   every change and reveal, and a redactor that keeps keys out of logs,
   events, webhooks and everything sent to Claude.
-- **Providers are data.** Thirteen built in specs, a form or JSON editor, and
-  an AI builder that writes, tests and publishes a new provider from its docs.
+- **Providers are data.** Twenty seven built in specs (search APIs such
+  as SerpAPI and Tavily, LLM APIs such as OpenAI, Anthropic, Groq and
+  Together AI), a form or JSON editor, and an AI builder that writes, tests
+  and publishes a new provider from its docs.
 - **An [Assistant](docs/flows.md#assistant-chat)** that manages the pool in
   chat with your own permissions. Pasted keys go to an encrypted vault and the
   model only sees placeholders.

@@ -181,6 +181,16 @@ Content-Type: application/json
 | ElevenLabs | `detected_unusual_activity`, `account_suspended` | `banned` |
 | ElevenLabs | 401 `quota_exceeded` | `quota_exhausted` |
 | ElevenLabs | 401 `invalid_api_key` | `invalid` |
+| OpenAI | 429 `insufficient_quota`, `credit_balance_exhausted` or a spend limit code | `quota_exhausted` |
+| OpenAI, Anthropic, Groq, Mistral, Together, Fireworks, OpenRouter, Perplexity, xAI, Cohere | other 429 (honors `Retry-After`) | `rate_limited` |
+| Anthropic | 429 `enforced_spend_limit_reached`, 402 `billing_error`, 400 "credit balance is too low" | `quota_exhausted` |
+| Anthropic | 529 `overloaded_error` | `error` |
+| xAI | 400 "Incorrect API key provided" | `invalid` |
+| DeepSeek | 402 Insufficient Balance / 429 (account concurrency) / 503 | `quota_exhausted` / `busy` (retry 2s) / `error` |
+| Groq | 429 naming a daily limit (RPD, TPD) / 400 `blocked_api_access` | `quota_exhausted` |
+| Cohere | 429 trial key monthly cap / 498 deny listed key | `quota_exhausted` / `banned` |
+| OpenRouter | 402 in flight credit hold / 402 / 403 key or budget limit / 403 moderation | `busy` / `quota_exhausted` / `quota_exhausted` / `ok` |
+| Perplexity | 429 with `error.type` `overloaded` | `error` |
 | generic | 429 (honors `Retry-After`) / 402 / 401 or 403 | `rate_limited` / `quota_exhausted` / `invalid` |
 
 The proxy applies this mapping itself.
@@ -227,6 +237,27 @@ curl -s -X POST "http://localhost:8080/proxy/elevenlabs/v1/text-to-speech/21m00T
 ```
 
 Equivalent to calling `https://api.elevenlabs.io/v1/text-to-speech/{voice_id}` with `xi-api-key: SECRET`.
+
+### LLM providers
+
+OpenAI, Together AI, Groq, Mistral, Fireworks AI, DeepSeek, xAI, Cerebras, OpenRouter and Perplexity take a bearer key, so an OpenAI compatible client works with the proxy as its base URL (`http://localhost:8080/proxy/groq/v1` for Groq, `.../proxy/openai/v1` for OpenAI) and the Acnologia token as its API key:
+
+```bash
+curl -s -X POST "http://localhost:8080/proxy/groq/v1/chat/completions" \
+  -H "Authorization: Bearer acn_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "openai/gpt-oss-20b", "messages": [{"role": "user", "content": "Say hello"}]}'
+```
+
+Anthropic takes the key in `x-api-key`. Send `anthropic-version` yourself (the Anthropic SDKs do); the proxy forwards it:
+
+```bash
+curl -s -X POST "http://localhost:8080/proxy/anthropic/v1/messages" \
+  -H "Authorization: Bearer acn_xxx" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-haiku-5-5", "max_tokens": 64, "messages": [{"role": "user", "content": "Say hello"}]}'
+```
 
 ## Concurrency limits
 

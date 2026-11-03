@@ -131,5 +131,5 @@ func Builtins() []Builtin {
 				},
 			},
 		},
-	}, append(append(append(searchBuiltins(), tinyfishBuiltins()...), llmBuiltins()...), peerBuiltin())...)
+	}, append(append(append(append(append(searchBuiltins(), tinyfishBuiltins()...), llmBuiltins()...), labBuiltins()...), hostBuiltins()...), peerBuiltin())...)
 }
