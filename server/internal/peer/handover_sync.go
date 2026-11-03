@@ -270,6 +270,9 @@ func (y *Syncer) handoverService(ctx context.Context, link *store.PeerLink, hs H
 	if hs.Provider == providers.PeerSlug || hs.Provider == "" {
 		return 0, errors.New("cannot take keys of this provider")
 	}
+	if !catalog.ValidSlug(hs.Slug) {
+		return 0, errors.New("the owner sent an invalid service slug")
+	}
 	switch hs.AuthType {
 	case "query", "header", "bearer":
 	default:

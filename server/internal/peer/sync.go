@@ -365,6 +365,9 @@ func (y *Syncer) keysDisabled(ctx context.Context, serviceID int64) bool {
 }
 
 func (y *Syncer) createService(ctx context.Context, link *store.PeerLink, ms ManifestService, token string) (int64, error) {
+	if !catalog.ValidSlug(ms.Slug) {
+		return 0, errors.New("the owner sent an invalid service slug")
+	}
 	prov, err := y.Store.GetProvider(ctx, providers.PeerSlug)
 	if err != nil {
 		return 0, err

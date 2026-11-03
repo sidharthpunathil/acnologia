@@ -331,11 +331,15 @@ func ServiceDefaults(p *store.Provider) (*store.Service, error) {
 	}, nil
 }
 
-// UniqueServiceSlug returns base, or base-2, base-3... if taken.
+// ValidSlug reports whether s can be a provider or service slug.
+func ValidSlug(s string) bool { return slugRe.MatchString(s) }
+
+// UniqueServiceSlug returns base, or base-2, base-3... if taken. A slug is
+// taken by a service or a group: both answer at /proxy/{slug}.
 func UniqueServiceSlug(ctx context.Context, st *store.Store, base string) string {
 	slug := base
 	for i := 2; i < 100; i++ {
-		if _, err := st.GetServiceBySlug(ctx, slug); errors.Is(err, store.ErrNotFound) {
+		if taken, err := st.SlugTaken(ctx, slug); err == nil && !taken {
 			return slug
 		}
 		slug = fmt.Sprintf("%s-%d", base, i)

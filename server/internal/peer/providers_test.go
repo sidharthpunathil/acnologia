@@ -146,6 +146,37 @@ func TestApplyMissingProviderSpecReported(t *testing.T) {
 	}
 }
 
+// A manifest service never takes the slug of a local group (both answer at
+// /proxy/{slug}), and a slug that is not a valid slug is refused.
+func TestApplyServiceSlugAvoidsGroups(t *testing.T) {
+	owner := httptest.NewServer(http.NotFoundHandler())
+	defer owner.Close()
+	y, link := newSyncer(t, owner)
+	ctx := context.Background()
+	if _, err := y.Store.CreateGroup(ctx, &store.ServiceGroup{Slug: "own-pool", Name: "Pool", Members: []string{"x"}}); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manifest{Status: LinkActive, Services: []ManifestService{
+		{Slug: "pool", Name: "Pool", Provider: "ghost"},
+		{Slug: "Bad/Slug", Name: "Bad", Provider: "ghost"},
+	}}
+	if err := y.apply(ctx, link, "acn_token", m); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := y.Store.GetPeerLink(ctx, link.ID)
+	sv, err := y.Store.GetService(ctx, l.Services["pool"])
+	if err != nil || sv.Slug != "own-pool-2" {
+		t.Fatalf("service %+v %v", sv, err)
+	}
+	if _, ok := l.Services["Bad/Slug"]; ok || !strings.Contains(l.LastError, "invalid service slug") {
+		t.Fatalf("services %v error %q", l.Services, l.LastError)
+	}
+	// The handover path checks the same.
+	if _, err := y.handoverService(ctx, l, HandoverService{Slug: "Bad/Slug", Provider: "serpapi", AuthType: "query", AuthName: "api_key", BaseURL: "https://serpapi.com"}); err == nil {
+		t.Fatal("handover service with an invalid slug accepted")
+	}
+}
+
 // The owner's logo is checked: wrong type or mismatched bytes are refused.
 func TestFetchProviderLogoValidates(t *testing.T) {
 	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89")
