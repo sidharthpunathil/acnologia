@@ -282,26 +282,34 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := strings.TrimSpace(strings.ToLower(c.Email))
-	ip := clientIP(r)
+	ip := clientKey(r)
+	tooMany := func() {
+		writeErr(w, 429, "too_many_attempts", "too many sign in attempts, wait a few minutes")
+	}
 	// Limit per address and per account: rotating addresses must not give
 	// unlimited guesses against one account.
 	if !s.limiter.allow(ip) || !s.limiter.allow("email:"+email) {
-		writeErr(w, 429, "too_many_attempts", "too many sign in attempts, wait a few minutes")
+		tooMany()
 		return
 	}
 	u, err := s.Store.GetUserByEmail(r.Context(), email)
 	hash := dummyHash
+	keys := []string{ip}
 	if err == nil {
 		hash = []byte(u.PasswordHash)
+		// Only real accounts get a per-account counter, which keeps its
+		// size bounded by the user count.
+		keys = append(keys, "email:"+email)
+	}
+	// Count the attempt before the password check, in the same step as the
+	// limit check, so a parallel burst cannot all pass the check while every
+	// bcrypt compare is still running. A success clears it again below.
+	if !s.limiter.reserve(keys...) {
+		tooMany()
+		return
 	}
 	pwOK := bcrypt.CompareHashAndPassword(hash, []byte(c.Password)) == nil
 	if err != nil || u.Disabled || !pwOK {
-		s.limiter.fail(ip)
-		if err == nil {
-			// Only real accounts get a per-account counter, which keeps its
-			// size bounded by the user count.
-			s.limiter.fail("email:" + email)
-		}
 		writeErr(w, 401, "bad_credentials", "That email and password do not match. Check both and try again.")
 		return
 	}
@@ -391,30 +399,49 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, nu)
 }
 
-// loginLimiter is a tiny failure counter keyed by client IP or account.
+// loginLimiter is a tiny attempt counter keyed by client address or account
+// ("email:" plus the address). An attempt is counted when it starts
+// (reserve) and cleared on success (reset).
+//
+// Account counters live apart from address ones and are never capped: they
+// exist only for real accounts, so the user count bounds them, and a flood
+// of addresses must never stop an account's lockout from counting. Address
+// counters are capped; when the cap is full of live entries the address seen
+// longest ago is forgotten, which only frees that address.
 type loginLimiter struct {
 	mu        sync.Mutex
-	hits      map[string][]time.Time
+	hits      map[string][]time.Time // client addresses
+	accounts  map[string][]time.Time // "email:" keys
 	lastSweep time.Time
+	now       func() time.Time
 }
 
 const (
 	loginWindow   = 10 * time.Minute
 	loginMaxFails = 10
-	// limiterCap bounds memory if failures arrive from very many keys.
+	// limiterCap bounds memory if attempts arrive from very many addresses.
 	limiterCap = 100_000
 )
 
-func newLoginLimiter() *loginLimiter { return &loginLimiter{hits: map[string][]time.Time{}} }
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{hits: map[string][]time.Time{}, accounts: map[string][]time.Time{}, now: time.Now}
+}
 
-// recent drops expired failures for key. Keys with none left are removed so
+func (l *loginLimiter) table(key string) map[string][]time.Time {
+	if strings.HasPrefix(key, "email:") {
+		return l.accounts
+	}
+	return l.hits
+}
+
+// recent drops expired attempts for key. Keys with none left are removed so
 // lookups for unknown keys never grow the map.
-func (l *loginLimiter) recent(key string) []time.Time {
-	ts, ok := l.hits[key]
+func (l *loginLimiter) recent(m map[string][]time.Time, key string, now time.Time) []time.Time {
+	ts, ok := m[key]
 	if !ok {
 		return nil
 	}
-	cut := time.Now().Add(-loginWindow)
+	cut := now.Add(-loginWindow)
 	out := ts[:0]
 	for _, t := range ts {
 		if t.After(cut) {
@@ -422,37 +449,77 @@ func (l *loginLimiter) recent(key string) []time.Time {
 		}
 	}
 	if len(out) == 0 {
-		delete(l.hits, key)
+		delete(m, key)
 		return nil
 	}
-	l.hits[key] = out
+	m[key] = out
 	return out
 }
 
+// allow reports whether key may try again, without counting. It is a cheap
+// early refusal; reserve is the check that holds.
 func (l *loginLimiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.recent(key)) < loginMaxFails
+	return len(l.recent(l.table(key), key, l.now())) < loginMaxFails
 }
 
-func (l *loginLimiter) fail(key string) {
+// reserve counts one attempt against every key if each is still under the
+// limit, in one step, and reports whether it did. Nothing is counted when
+// any key is limited.
+func (l *loginLimiter) reserve(keys ...string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := time.Now()
-	if now.Sub(l.lastSweep) > time.Minute || len(l.hits) >= limiterCap {
-		for k := range l.hits {
-			l.recent(k)
+	now := l.now()
+	if now.Sub(l.lastSweep) > time.Minute {
+		l.sweep(now)
+	}
+	for _, k := range keys {
+		if len(l.recent(l.table(k), k, now)) >= loginMaxFails {
+			return false
 		}
-		l.lastSweep = now
 	}
-	if len(l.hits) >= limiterCap {
-		return // still full of live entries: refuse to grow further
+	for _, k := range keys {
+		m := l.table(k)
+		if _, ok := m[k]; !ok && len(m) >= limiterCap && !strings.HasPrefix(k, "email:") {
+			l.makeRoom(now)
+		}
+		m[k] = append(m[k], now)
 	}
-	l.hits[key] = append(l.recent(key), now)
+	return true
 }
 
-func (l *loginLimiter) reset(ip string) {
+// sweep drops expired entries from both tables. Caller holds mu.
+func (l *loginLimiter) sweep(now time.Time) {
+	for _, m := range []map[string][]time.Time{l.hits, l.accounts} {
+		for k := range m {
+			l.recent(m, k, now)
+		}
+	}
+	l.lastSweep = now
+}
+
+// makeRoom frees one address slot: expired entries go first, and when every
+// entry is live, the address whose last attempt is oldest. Caller holds mu.
+func (l *loginLimiter) makeRoom(now time.Time) {
+	var oldest string
+	var oldestAt time.Time
+	for k := range l.hits {
+		ts := l.recent(l.hits, k, now)
+		if len(ts) == 0 {
+			continue
+		}
+		if last := ts[len(ts)-1]; oldest == "" || last.Before(oldestAt) {
+			oldest, oldestAt = k, last
+		}
+	}
+	if len(l.hits) >= limiterCap && oldest != "" {
+		delete(l.hits, oldest)
+	}
+}
+
+func (l *loginLimiter) reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.hits, ip)
+	delete(l.table(key), key)
 }

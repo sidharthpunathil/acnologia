@@ -278,7 +278,7 @@ any client you would not hand a key to.
 
 | Limit | Value |
 |---|---|
-| Failed logins | 10 per 10 minutes per client IP and per existing account |
+| Sign in attempts | 10 per 10 minutes per client address (an IPv6 /64 counts as one) and per existing account, counted before the password check so a parallel burst gets no more; a success clears them. Account counters are never dropped to make room |
 | Dashboard JSON body | 4 MB |
 | Proxy request body | `ACNOLOGIA_MAX_BODY_MB` (default 50) |
 | Proxy methods | GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS |
