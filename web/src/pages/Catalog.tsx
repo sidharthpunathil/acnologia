@@ -6,6 +6,7 @@ import { AcnAiBuilder, AcnKeyPool, categoryIcon } from "@/components/foundations
 import { useTitle } from "../hooks/useTitle";
 import { useServices } from "../stores/services";
 import { useProviders } from "../stores/providers";
+import { docProviderSlug } from "../lib/peerProviders";
 import { useAuth } from "../stores/auth";
 import { can } from "../lib/perms";
 import { STRATEGY_LABEL, compact, num, plural } from "../lib/format";
@@ -37,7 +38,7 @@ function metaParts(s: Service): MetaPart[] {
   if (c.busy) parts.push({ text: `${c.busy} busy`, tone: "violet" });
   if (s.peer_link_id) {
     // A shared service has one key, the share token; the owner holds the real ones.
-    parts.push({ text: `from ${s.peer_name || "another server"}` });
+    parts.push({ text: `via ${s.peer_name || "another server"}` });
     if (c.disabled) parts.push({ text: "paused or removed", tone: "amber" });
   } else if (c.total > 0) parts.push({ text: `${Math.max(0, c.available - (c.busy ?? 0))} of ${plural(c.total, "key")} available` });
   else parts.push({ text: "No keys yet" });
@@ -76,7 +77,8 @@ function FreeTierLine({ provider }: { provider: string }) {
 }
 
 function ServiceCard({ s }: { s: Service }) {
-  const spec = useProviders((st) => st.providers.find((p) => p.slug === s.provider)?.spec);
+  const slug = docProviderSlug(s);
+  const spec = useProviders((st) => st.providers.find((p) => p.slug === slug)?.spec);
   const dot = healthDot(s);
   const parts = metaParts(s);
   // No keys yet: keep the card quiet until it is hovered or focused.
@@ -120,7 +122,7 @@ function ServiceCard({ s }: { s: Service }) {
             </span>
           ))}
         </div>
-        <FreeTierLine provider={s.provider} />
+        <FreeTierLine provider={slug} />
       </div>
     </Link>
   );
@@ -167,7 +169,7 @@ export function CatalogPage() {
     const needle = q.trim().toLowerCase();
     if (!needle) return services;
     return services.filter((s) =>
-      [s.name, s.slug, s.category, s.description, s.provider].some((f) => f?.toLowerCase().includes(needle)),
+      [s.name, s.slug, s.category, s.description, s.provider, s.peer_provider].some((f) => f?.toLowerCase().includes(needle)),
     );
   }, [services, q]);
 

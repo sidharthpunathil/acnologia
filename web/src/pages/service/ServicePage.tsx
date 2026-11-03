@@ -45,6 +45,8 @@ import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
 import { OffersBlock } from "../../components/OfferBits";
+import { docProviderSlug } from "../../lib/peerProviders";
+import { PeerProviderNote } from "./PeerProviderNote";
 import { KeyRingArt, LostPathArt, PulseArt } from "@/components/foundations/illustrations";
 
 type Tab = "keys" | "activity" | "integrate" | "settings";
@@ -66,6 +68,10 @@ export function ServicePage() {
   useTitle(service?.name ?? "Service");
   const ensureProviders = useProviders((s) => s.ensure);
   const provider = useProviders((s) => (service ? s.providers.find((p) => p.slug === service.provider) : undefined));
+  // A service another server shares classifies with acnologia-peer but is
+  // described by the owner's provider: its name, link and offers.
+  const docSlug = service ? docProviderSlug(service) : "";
+  const shown = useProviders((s) => (docSlug ? s.providers.find((p) => p.slug === docSlug) : undefined)) ?? provider;
 
   const [tab, setTab] = useState<Tab>("keys");
   const [notFound, setNotFound] = useState(false);
@@ -209,10 +215,10 @@ export function ServicePage() {
             <span>{service.slug}</span>
             <span aria-hidden="true">·</span>
             <RouterLink
-              to={`/providers/${service.provider}`}
+              to={`/providers/${shown?.slug ?? service.provider}`}
               className="rounded-sm underline-offset-2 outline-none hover:text-text-primary hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
             >
-              {provider?.name ?? service.provider}
+              {shown?.name ?? docSlug}
             </RouterLink>
             {service.peer_link_id && (
               <>
@@ -221,7 +227,7 @@ export function ServicePage() {
                   to="/sharing"
                   className="rounded-sm underline-offset-2 outline-none hover:text-text-primary hover:underline focus-visible:ring-2 focus-visible:ring-border-focus-ring"
                 >
-                  from {service.peer_name || "another server"}
+                  via {service.peer_name || "another server"}
                 </RouterLink>
               </>
             )}
@@ -310,7 +316,8 @@ export function ServicePage() {
         <StatTile label="Requests, 24h" value={compact(service.requests_24h)} />
       </div>
 
-      <OffersBlock spec={provider?.spec} className="mt-4" />
+      {service.peer_link_id && perms.manage && <PeerProviderNote service={service} canPull={perms.hidden} className="mt-4" />}
+      <OffersBlock spec={shown?.spec} className="mt-4" />
 
       <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="mt-10 gap-6">
         <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">

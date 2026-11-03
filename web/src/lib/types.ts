@@ -66,6 +66,8 @@ export interface Service {
   peer_link_id?: number | null;
   /** The name of the server that shares it. */
   peer_name?: string;
+  /** The owner's provider for a shared service: its name, logo, docs and examples describe it. */
+  peer_provider?: string;
 }
 
 export type ServiceInput = Pick<
