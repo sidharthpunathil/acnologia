@@ -1,3 +1,4 @@
+import type { ProviderRefreshState } from "./refresh";
 // Mirrors the JSON shapes in docs/superpowers/specs/2026-11-01-acnologia-key-pool-design.md
 
 export type Role = "superadmin" | "admin" | "member";
@@ -516,6 +517,8 @@ export interface Provider {
   default_cooldown_sec: number;
   default_max_concurrency: number;
   default_queue_timeout_sec: number;
+  /** When the offers refresh last checked and changed it; absent when never. */
+  refresh?: ProviderRefreshState;
 }
 
 export type ProviderInput = Omit<

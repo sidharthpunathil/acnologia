@@ -45,6 +45,7 @@ import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
 import { OffersBlock } from "../../components/OfferBits";
+import { OfferCheckButton, OfferCheckedLine } from "../../components/OfferCheck";
 import { docProviderSlug } from "../../lib/peerProviders";
 import { PeerProviderNote } from "./PeerProviderNote";
 import { KeyRingArt, LostPathArt, PulseArt } from "@/components/foundations/illustrations";
@@ -83,7 +84,8 @@ export function ServicePage() {
   const [checking, setChecking] = useState(false);
   const checkService = useInsights((s) => s.checkService);
 
-  const perms = { manage: can.manage(role), hidden: can.hidden(role), reveal: can.reveal(role) };
+  const perms = { manage: can.manage(role), hidden: can.hidden(role), reveal: can.reveal(role), super: can.users(role) };
+  const fetchProviders = useProviders((s) => s.fetch);
 
   const refresh = useCallback(
     async (quiet = false) => {
@@ -247,7 +249,7 @@ export function ServicePage() {
         }
         actions={
           <>
-            <ActionIcon icon={RiRefreshLine} label="Refresh" size="medium" busy={refreshing} disabled={refreshing} onClick={() => void refresh()} />
+            <ActionIcon icon={RiRefreshLine} label="Reload" size="medium" busy={refreshing} disabled={refreshing} onClick={() => void refresh()} />
             <LlmBriefButton service={service} />
             {perms.manage && keys.length > 0 && provider?.spec?.health && (
               <Button
@@ -317,7 +319,17 @@ export function ServicePage() {
       </div>
 
       {service.peer_link_id && perms.manage && <PeerProviderNote service={service} canPull={perms.hidden} className="mt-4" />}
-      <OffersBlock spec={shown?.spec} className="mt-4" />
+      <OffersBlock
+        spec={shown?.spec}
+        className="mt-4"
+        showEmpty={perms.super && !!shown && !service.peer_link_id}
+        checked={shown ? <OfferCheckedLine provider={shown} /> : undefined}
+        action={
+          perms.super && shown && !service.peer_link_id ? (
+            <OfferCheckButton provider={shown} onDone={() => void fetchProviders().catch(() => undefined)} />
+          ) : undefined
+        }
+      />
 
       <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="mt-10 gap-6">
         <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">

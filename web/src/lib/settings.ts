@@ -45,6 +45,29 @@ export interface ModelInfo {
   pricing_known: boolean;
   /** In Acnologia's own table. */
   builtin: boolean;
+  /** Cache prices, USD per million tokens. */
+  cache_write_price?: number;
+  cache_read_price?: number;
+  /** builtin, manual (edited in Settings) or refresh (the price refresh). */
+  price_source?: "builtin" | "manual" | "refresh";
+  price_url?: string;
+  /** YYYY-MM-DD the price was read or edited. */
+  price_checked?: string;
+  override?: PriceOverride;
+}
+
+/** A model's saved price, replacing the built in one. USD per million tokens. */
+export interface PriceOverride {
+  input: number;
+  output: number;
+  cache_write: number;
+  cache_read: number;
+  context_window?: number;
+  source_url?: string;
+  checked_at?: string;
+  source?: string;
+  updated_at?: string;
+  updated_by?: string;
 }
 
 /** The saved choice. Empty means "use the default". */
@@ -89,4 +112,6 @@ export type ModelsInput = Record<"default" | ModelFeature, string>;
 export const modelsApi = {
   list: () => request<ModelsCatalog>("GET", "/api/admin/ai/models"),
   save: (input: ModelsInput) => request<ModelsState & { warnings: string[] | null }>("PUT", "/api/admin/ai/models", input),
+  setPrice: (model: string, p: PriceOverride) => request<ModelsCatalog>("PUT", `/api/admin/ai/prices/${encodeURIComponent(model)}`, p),
+  resetPrice: (model: string) => request<ModelsCatalog>("DELETE", `/api/admin/ai/prices/${encodeURIComponent(model)}`),
 };

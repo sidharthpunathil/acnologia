@@ -16,6 +16,7 @@ import { Select, SelectItem } from "@/components/base/select/select";
 import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { Callout } from "@/components/acn/callout";
 import { SAVE_SHORTCUT, useLoad, useSaveShortcut } from "./hooks";
+import { PricesCard } from "./PricesCard";
 import { ReadOnlyNote, RowsSkeleton, SaveBar, SectionError, SettingRow, SettingsCard } from "./parts";
 
 /** The Select key for "use the default" (an empty setting). */
@@ -57,10 +58,11 @@ function usd(n: number) {
   return `$${n < 1 ? n.toFixed(2) : Number.isInteger(n) ? String(n) : n.toFixed(2)}`;
 }
 
-/** "1M context · $4 / $20 per M tokens", or "price unknown". */
+/** "1M context · $4 / $20 per M in/out · prices checked 2026-11-03", or "price unknown". */
 function modelFacts(m: ModelInfo) {
   const price = m.pricing_known ? `${usd(m.input_price)} / ${usd(m.output_price)} per M in/out` : "Price unknown";
-  return `${compact(m.context_window)} context · ${price}`;
+  const checked = m.pricing_known && m.price_checked ? ` · ${m.price_source === "manual" ? "price edited" : "prices checked"} ${m.price_checked}` : "";
+  return `${compact(m.context_window)} context · ${price}${checked}`;
 }
 
 /** Name over id, with the window and price under them. */
@@ -247,98 +249,110 @@ export function ModelsCard({ onDirty, onSaved }: { onDirty: (dirty: boolean) => 
     "No model saved yet"
   );
 
+  const prices = (
+    <SettingsCard>
+      <PricesCard data={data} canEdit={canEdit} onChange={(c) => load.set(c)} />
+    </SettingsCard>
+  );
+
   if (!canEdit) {
     return (
-      <SettingsCard>
-        <SettingRow label="Default model" description="The Claude model every AI feature uses unless it has its own.">
-          <ReadOnlyModel choice={data.effective.default} models={models} />
-        </SettingRow>
-        {MODEL_FEATURES.map((f) => (
-          <SettingRow key={f} label={FEATURES[f].label} description={FEATURES[f].hint}>
-            <ReadOnlyModel choice={data.effective[f]} models={models} />
+      <>
+        <SettingsCard>
+          <SettingRow label="Default model" description="The Claude model every AI feature uses unless it has its own.">
+            <ReadOnlyModel choice={data.effective.default} models={models} />
           </SettingRow>
-        ))}
-        <div className="px-4 py-3 sm:px-5">
-          <ReadOnlyNote>Only a superadmin can switch models.</ReadOnlyNote>
-        </div>
-      </SettingsCard>
+          {MODEL_FEATURES.map((f) => (
+            <SettingRow key={f} label={FEATURES[f].label} description={FEATURES[f].hint}>
+              <ReadOnlyModel choice={data.effective[f]} models={models} />
+            </SettingRow>
+          ))}
+          <div className="px-4 py-3 sm:px-5">
+            <ReadOnlyNote>Only a superadmin can switch models.</ReadOnlyNote>
+          </div>
+        </SettingsCard>
+        {prices}
+      </>
     );
   }
 
   return (
-    <form ref={form} onSubmit={(e) => void save(e)} aria-label="AI models">
-      <SettingsCard>
-        <SettingRow
-          labelId="ai-model-default"
-          label="Model"
-          description={
-            <>
-              <span id="ai-model-default-hint">The Claude model behind the Assistant, the builder and Fill with AI. Takes effect on the next AI call.</span>
-              {listNote && <span className="mt-1 block text-caption-1-regular text-text-tertiary">{listNote}</span>}
-            </>
-          }
-        >
-          <ModelSelect
-            value={draft.default}
-            onChange={(v) => setDraft((d) => ({ ...d, default: v }))}
-            models={models}
-            defaultLabel="Use default"
-            defaultId={fallbackId}
-            defaultFacts={fallbackModel ? `${fallbackFrom} · ${modelFacts(fallbackModel)}` : fallbackFrom}
-            labelledBy="ai-model-default"
-            describedBy="ai-model-default-hint"
-          />
-        </SettingRow>
-        {keyNote && <div className="px-4 py-4 sm:px-5">{keyNote}</div>}
-        <div className="px-4 sm:px-5">
-          <Accordion defaultExpandedKeys={overrides > 0 ? ["features"] : []}>
-            <AccordionItem
-              id="features"
-              title={<span className="text-body-medium">Use a different model for...</span>}
-              description={
-                <span className="text-body-2-regular">
-                  {overrides > 0 ? `${plural(overrides, "feature")} with its own model` : "Every feature uses the default model"}
-                </span>
-              }
-            >
-              <div className="-mx-4 divide-y divide-separator-border border-t border-separator-border sm:-mx-5">
-                {MODEL_FEATURES.map((f) => (
-                  <SettingRow key={f} labelId={`ai-model-${f}`} label={FEATURES[f].label} description={<span id={`ai-model-${f}-hint`}>{FEATURES[f].hint}</span>}>
-                    <ModelSelect
-                      value={draft[f]}
-                      onChange={(v) => setDraft((d) => ({ ...d, [f]: v }))}
-                      models={models}
-                      defaultLabel="Same as default"
-                      defaultId={draftDefaultId}
-                      defaultFacts={draftDefault ? modelFacts(draftDefault) : undefined}
-                      labelledBy={`ai-model-${f}`}
-                      describedBy={`ai-model-${f}-hint`}
-                    />
-                  </SettingRow>
-                ))}
-              </div>
-            </AccordionItem>
-          </Accordion>
-        </div>
-        {error && (
-          <div className="px-4 py-3 sm:px-5">
-            <Callout tone="error" title="Models not saved">
-              <span className="wrap-anywhere">{error}</span>
-            </Callout>
+    <>
+      <form ref={form} onSubmit={(e) => void save(e)} aria-label="AI models">
+        <SettingsCard>
+          <SettingRow
+            labelId="ai-model-default"
+            label="Model"
+            description={
+              <>
+                <span id="ai-model-default-hint">The Claude model behind the Assistant, the builder and Fill with AI. Takes effect on the next AI call.</span>
+                {listNote && <span className="mt-1 block text-caption-1-regular text-text-tertiary">{listNote}</span>}
+              </>
+            }
+          >
+            <ModelSelect
+              value={draft.default}
+              onChange={(v) => setDraft((d) => ({ ...d, default: v }))}
+              models={models}
+              defaultLabel="Use default"
+              defaultId={fallbackId}
+              defaultFacts={fallbackModel ? `${fallbackFrom} · ${modelFacts(fallbackModel)}` : fallbackFrom}
+              labelledBy="ai-model-default"
+              describedBy="ai-model-default-hint"
+            />
+          </SettingRow>
+          {keyNote && <div className="px-4 py-4 sm:px-5">{keyNote}</div>}
+          <div className="px-4 sm:px-5">
+            <Accordion defaultExpandedKeys={overrides > 0 ? ["features"] : []}>
+              <AccordionItem
+                id="features"
+                title={<span className="text-body-medium">Use a different model for...</span>}
+                description={
+                  <span className="text-body-2-regular">
+                    {overrides > 0 ? `${plural(overrides, "feature")} with its own model` : "Every feature uses the default model"}
+                  </span>
+                }
+              >
+                <div className="-mx-4 divide-y divide-separator-border border-t border-separator-border sm:-mx-5">
+                  {MODEL_FEATURES.map((f) => (
+                    <SettingRow key={f} labelId={`ai-model-${f}`} label={FEATURES[f].label} description={<span id={`ai-model-${f}-hint`}>{FEATURES[f].hint}</span>}>
+                      <ModelSelect
+                        value={draft[f]}
+                        onChange={(v) => setDraft((d) => ({ ...d, [f]: v }))}
+                        models={models}
+                        defaultLabel="Same as default"
+                        defaultId={draftDefaultId}
+                        defaultFacts={draftDefault ? modelFacts(draftDefault) : undefined}
+                        labelledBy={`ai-model-${f}`}
+                        describedBy={`ai-model-${f}-hint`}
+                      />
+                    </SettingRow>
+                  ))}
+                </div>
+              </AccordionItem>
+            </Accordion>
           </div>
-        )}
-        <SaveBar
-          dirty={dirty}
-          saving={saving}
-          onDiscard={() => {
-            setDraft(saved);
-            setError(null);
-          }}
-          saveLabel="Save models"
-          status={updated}
-          shortcut={SAVE_SHORTCUT}
-        />
-      </SettingsCard>
-    </form>
+          {error && (
+            <div className="px-4 py-3 sm:px-5">
+              <Callout tone="error" title="Models not saved">
+                <span className="wrap-anywhere">{error}</span>
+              </Callout>
+            </div>
+          )}
+          <SaveBar
+            dirty={dirty}
+            saving={saving}
+            onDiscard={() => {
+              setDraft(saved);
+              setError(null);
+            }}
+            saveLabel="Save models"
+            status={updated}
+            shortcut={SAVE_SHORTCUT}
+          />
+        </SettingsCard>
+      </form>
+      {prices}
+    </>
   );
 }

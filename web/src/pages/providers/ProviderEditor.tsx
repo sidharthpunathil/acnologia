@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { useTitle } from "../../hooks/useTitle";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   RiAddLine,
   RiAlertLine,
@@ -42,6 +42,7 @@ import { PageHeader } from "@/components/acn/page-header";
 import { PageSkeleton } from "@/components/acn/page-skeleton";
 import { Section } from "@/components/acn/section";
 import { cx } from "@/utils/cx";
+import { OfferCheckButton, OfferCheckedLine } from "../../components/OfferCheck";
 import { ConnectionTab, ExamplesTab, HealthTab, JsonTab, OffersTab, OutcomeBadge, RulesTab, TestsTab } from "./SpecTabs";
 import { RouteButton, SourceBadge } from "./ProvidersPage";
 import { AddServiceModal } from "../AddServiceModal";
@@ -589,7 +590,10 @@ export function ProviderEditorPage() {
 
   const [draft, setDraftState] = useState<ProviderInput | null>(isNew ? blankProviderInput() : null);
   const [baseline, setBaseline] = useState<string>(isNew ? JSON.stringify(blankProviderInput()) : "");
-  const [tab, setTab] = useState<TabId>("overview");
+  const [search] = useSearchParams();
+  const tabParam = search.get("tab") as TabId | null;
+  const [tab, setTab] = useState<TabId>(tabParam ?? "overview");
+  const isSuper = can.users(role);
   const [notFound, setNotFound] = useState(false);
   const [validation, setValidation] = useState<Validation>({ state: "idle" });
   const [note, setNote] = useState("");
@@ -619,7 +623,7 @@ export function ProviderEditorPage() {
 
   useEffect(() => {
     setNotFound(false);
-    setTab("overview");
+    setTab(tabParam ?? "overview");
     setValidation({ state: "idle" });
     if (isNew) {
       const b = blankProviderInput();
@@ -629,6 +633,8 @@ export function ProviderEditorPage() {
       setDraftState(null);
       void load();
     }
+    // The tab from the link applies when a provider opens, not on every change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, slugParam, load]);
 
   const dirty = !!draft && JSON.stringify(draft) !== baseline;
@@ -833,6 +839,19 @@ export function ProviderEditorPage() {
               <ConnectionTab {...specTab} />
             </TabPanel>
             <TabPanel id="offers">
+              {isSuper && detail && !isNew && !detail.source.startsWith("peer:") && (
+                <div className="mb-4 rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5">
+                  <div className="text-body-medium text-text-primary">Keep these offers current</div>
+                  <p className="mt-0.5 text-caption-1-regular text-text-secondary">
+                    <OfferCheckedLine provider={detail} />
+                  </p>
+                  {dirty ? (
+                    <p className="mt-3 text-caption-1-regular text-text-tertiary">Save or discard your edits to check this provider's pricing pages.</p>
+                  ) : (
+                    <OfferCheckButton provider={detail} onDone={() => void load()} className="mt-3" />
+                  )}
+                </div>
+              )}
               <OffersTab {...specTab} />
             </TabPanel>
             <TabPanel id="rules">

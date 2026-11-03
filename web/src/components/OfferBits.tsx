@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { RiExternalLinkLine } from "@remixicon/react";
 import { Chip } from "@/components/base/badges/chip";
 import { cx } from "@/utils/cx";
@@ -22,9 +23,24 @@ export function FreeOfferChip({ spec, className }: { spec: ProviderSpec | null |
 }
 
 /** "Offers and limits" on the service page: what is free, prices and the limits Acnologia paces keys under. */
-export function OffersBlock({ spec, className }: { spec: ProviderSpec | null | undefined; className?: string }) {
+export function OffersBlock({
+  spec,
+  className,
+  checked: checkedLine,
+  action,
+  showEmpty = false,
+}: {
+  spec: ProviderSpec | null | undefined;
+  className?: string;
+  /** How and when the offers were last read; replaces the plain date. */
+  checked?: ReactNode;
+  /** A control on the card, such as Check now, with its result. */
+  action?: ReactNode;
+  /** Draw the card with no offers yet, so the action has a home. */
+  showEmpty?: boolean;
+}) {
   const offers = offersOf(spec);
-  if (offers.length === 0) return null;
+  if (offers.length === 0 && !showEmpty) return null;
   const sources = [...new Set(offers.map((o) => o.source_url).filter((u): u is string => !!u && !!safeHref(u)))];
   const checked = offers.map((o) => o.checked_at ?? "").sort().pop() || undefined;
   return (
@@ -34,52 +50,55 @@ export function OffersBlock({ spec, className }: { spec: ProviderSpec | null | u
           Offers and limits
         </h2>
         <p className="text-caption-1-regular text-text-tertiary">
-          Acnologia keeps each key under these limits.
-          {checked && <> Checked {checked}.</>}
+          {offers.length > 0 ? "Acnologia keeps each key under these limits." : "No offers recorded yet."}
+          {checkedLine ? <> {checkedLine}</> : checked && <> Checked {checked}.</>}
         </p>
       </div>
-      <ul className="mt-3 divide-y divide-separator-border">
-        {offers.map((o) => {
-          const price = priceText(o);
-          return (
-            <li key={o.name} className="flex flex-col gap-1.5 py-2.5 first:pt-1 last:pb-0 sm:flex-row sm:items-center sm:gap-4">
-              <div className="flex min-w-0 items-center gap-2 sm:w-64 sm:shrink-0">
-                <span className="truncate text-body-2-medium text-text-primary">{o.name}</span>
-                {o.free && (
-                  <Chip variant="caption" color="lime" className="font-mono">
-                    Free
-                  </Chip>
-                )}
-              </div>
-              <span className="min-w-0 truncate font-mono text-caption-1-regular text-text-secondary sm:w-48 sm:shrink-0" title={matchText(o)}>
-                {matchText(o)}
-              </span>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                {price && !o.free && (
-                  <Chip variant="caption" color="gray" className="font-mono">
-                    {price}
-                  </Chip>
-                )}
-                {(o.limits ?? []).map((l) => (
-                  <Chip key={`${l.count}/${l.per}/${l.unit}`} variant="caption" color="blue" className="font-mono">
-                    {limitText(l)}
-                  </Chip>
-                ))}
-                {o.concurrency ? (
-                  <Chip variant="caption" color="purple" className="font-mono">
-                    {o.concurrency} at a time
-                  </Chip>
-                ) : null}
-                {o.notes && (
-                  <span className="min-w-0 basis-full text-caption-1-regular text-text-tertiary sm:line-clamp-2" title={o.notes}>
-                    {o.notes}
-                  </span>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      {offers.length > 0 && (
+        <ul className="mt-3 divide-y divide-separator-border">
+          {offers.map((o) => {
+            const price = priceText(o);
+            return (
+              <li key={o.name} className="flex flex-col gap-1.5 py-2.5 first:pt-1 last:pb-0 sm:flex-row sm:items-center sm:gap-4">
+                <div className="flex min-w-0 items-center gap-2 sm:w-64 sm:shrink-0">
+                  <span className="truncate text-body-2-medium text-text-primary">{o.name}</span>
+                  {o.free && (
+                    <Chip variant="caption" color="lime" className="font-mono">
+                      Free
+                    </Chip>
+                  )}
+                </div>
+                <span className="min-w-0 truncate font-mono text-caption-1-regular text-text-secondary sm:w-48 sm:shrink-0" title={matchText(o)}>
+                  {matchText(o)}
+                </span>
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                  {price && !o.free && (
+                    <Chip variant="caption" color="gray" className="font-mono">
+                      {price}
+                    </Chip>
+                  )}
+                  {(o.limits ?? []).map((l) => (
+                    <Chip key={`${l.count}/${l.per}/${l.unit}`} variant="caption" color="blue" className="font-mono">
+                      {limitText(l)}
+                    </Chip>
+                  ))}
+                  {o.concurrency ? (
+                    <Chip variant="caption" color="purple" className="font-mono">
+                      {o.concurrency} at a time
+                    </Chip>
+                  ) : null}
+                  {o.notes && (
+                    <span className="min-w-0 basis-full text-caption-1-regular text-text-tertiary sm:line-clamp-2" title={o.notes}>
+                      {o.notes}
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {action && <div className="mt-3 border-t border-separator-border pt-3">{action}</div>}
       {sources.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
           {sources.map((u) => (

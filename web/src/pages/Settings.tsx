@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
-import { RiEqualizerLine, RiPaletteLine, RiPlugLine, RiServerLine, RiShieldKeyholeLine, RiSparklingLine } from "@remixicon/react";
+import { RiCalendarScheduleLine, RiEqualizerLine, RiPaletteLine, RiPlugLine, RiServerLine, RiShieldKeyholeLine, RiSparklingLine } from "@remixicon/react";
 import { can } from "@/lib/perms";
 import { settingsApi } from "@/lib/settings";
 import { useAuth } from "@/stores/auth";
 import { useTitle } from "@/hooks/useTitle";
 import { PageHeader } from "@/components/acn/page-header";
 import { AiSection } from "./settings/AiSection";
+import { RefreshSection } from "./settings/RefreshSection";
 import { useLoad, useUnsavedWarning } from "./settings/hooks";
 import { AdvancedSection, AppearanceSection, IntegrationsSection } from "./settings/MoreSections";
 import { SettingsNav, useActiveSection, useHashLanding, type SettingsNavItem } from "./settings/nav";
@@ -35,18 +36,21 @@ export function SettingsPage() {
   const [modelsDirty, setModelsDirty] = useState(false);
   const onRulesDirty = useCallback((d: boolean) => setRulesDirty(d), []);
   const onModelsDirty = useCallback((d: boolean) => setModelsDirty(d), []);
-  useUnsavedWarning(serverDirty || rulesDirty || modelsDirty);
+  const [refreshDirty, setRefreshDirty] = useState(false);
+  const onRefreshDirty = useCallback((d: boolean) => setRefreshDirty(d), []);
+  useUnsavedWarning(serverDirty || rulesDirty || modelsDirty || refreshDirty);
 
   const items: SettingsNavItem[] = useMemo(
     () => [
       { id: "general", label: "General", icon: RiServerLine, dirty: serverDirty },
       { id: "appearance", label: "Appearance", icon: RiPaletteLine },
       { id: "ai", label: "AI", icon: RiSparklingLine, dirty: rulesDirty || modelsDirty },
+      { id: "provider-refresh", label: "Provider refresh", icon: RiCalendarScheduleLine, dirty: refreshDirty },
       { id: "security", label: "Security and access", icon: RiShieldKeyholeLine },
       { id: "integrations", label: "Integrations", icon: RiPlugLine },
       { id: "advanced", label: "Advanced", icon: RiEqualizerLine },
     ],
-    [serverDirty, rulesDirty, modelsDirty],
+    [serverDirty, rulesDirty, modelsDirty, refreshDirty],
   );
   const ids = items.map((i) => i.id);
   const active = useActiveSection(ids);
@@ -61,6 +65,7 @@ export function SettingsPage() {
           <ServerSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} onDirty={onServerDirty} />
           <AppearanceSection />
           <AiSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} onDirty={onRulesDirty} onModelsDirty={onModelsDirty} />
+          <RefreshSection isAdmin={isAdmin} onDirty={onRefreshDirty} />
           <SecuritySection isAdmin={isAdmin} isSuper={isSuper} summary={summary} />
           <IntegrationsSection isAdmin={isAdmin} />
           <AdvancedSection isAdmin={isAdmin} summary={summary} />
