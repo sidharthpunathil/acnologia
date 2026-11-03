@@ -256,7 +256,8 @@ acn keys check serpapi
 
 A valid admin token passes the site lock by itself, so CI needs no site
 password. (`ACNOLOGIA_ACCESS_PASSWORD` in the environment is still sent as
-`X-Acnologia-Access` if set, for older servers.)
+`X-Acnologia-Access` if set, for older servers, but only to the server in
+`ACNOLOGIA_ACCESS_URL`, or else `ACNOLOGIA_URL`.)
 
 ## How the sign in works
 
@@ -281,5 +282,8 @@ The flow follows the OAuth device authorization grant
   `slow_down` and a longer interval.
 - Approve and deny need a dashboard session past the site lock. An API
   token cannot approve a sign in, so one token cannot mint another.
+- The CLI opens `verification_uri_complete` only when it is http or https
+  on the host you typed. Any other link is not opened; the CLI prints
+  `<server>/cli/authorize?code=...` for you to open instead.
 - `acn logout` calls `DELETE /api/admin/tokens/{id}` with the token itself;
   a token may revoke itself and no other token.

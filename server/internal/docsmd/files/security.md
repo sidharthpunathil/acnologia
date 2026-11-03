@@ -223,10 +223,20 @@ any client you would not hand a key to.
   request passes the redactor above.
 - **A refresh can only change offers.** Never auth, the base URL, rules,
   health checks or tests, so a misread or hostile page cannot redirect keys.
-  A change applies on its own only when every added or changed offer cites an
-  http(s) source and it does not remove every offer; otherwise it waits for a
-  superadmin. Claude price changes follow the same rule. Each applied change
-  is a provider version you can roll back, with a webhook and an audit entry.
+  The pages it reads are untrusted, so the bounds are in code: a change
+  applies on its own only when it moves existing offers' prices within 4x or
+  loosens their limits, and every changed offer cites a page on the
+  provider's own website, docs or API domain. New or removed offers, a
+  changed match, notes or free flag, and any tighter limit or concurrency
+  wait for a superadmin, so a hostile page cannot throttle every key or zero
+  a price unseen. A no change check only moves `checked_at` and never
+  reorders the stored offers. Names and notes are stripped of control and
+  invisible characters, a `source_url` with user info is dropped, and later
+  checks start only from cited pages on the provider's own domains. Claude
+  price changes apply on their own only from an https page on anthropic.com
+  or claude.com (the only sites that refresh may read) and within 4x of the
+  current price. Each applied change is a provider version you can roll
+  back, with a webhook and an audit entry.
 - **Spend is capped**: per run (default $2) and per month (default $5) for
   the refresh feature, checked before each provider. Only one run goes at a
   time.
@@ -334,6 +344,22 @@ Creating, polling and wrong user codes are rate limited globally (30, 600 and
 10 a minute), and an API token cannot approve a sign in. See
 [Command line](cli.md#how-the-sign-in-works).
 
+The CLI treats the server it talks to as untrusted input:
+
+- `acn login` opens the sign in link only when it is http or https on the
+  host that was typed (never a downgrade from https, never with user info).
+  Any other link (another host, `file://`, a local or UNC path, a custom
+  scheme) is not handed to the OS launcher; the CLI prints
+  `<server>/cli/authorize?code=...` instead.
+- `ACNOLOGIA_ACCESS_PASSWORD` is sent only to the server named by
+  `ACNOLOGIA_ACCESS_URL`, or else `ACNOLOGIA_URL`, never to a server being
+  signed in to or another saved one, and it is dropped from a redirect to
+  another origin.
+- Text from the server (labels, last errors, event details, error messages)
+  is printed with control characters, bidi overrides and invalid UTF-8
+  escaped, so a lease report or a peer's key label cannot drive the terminal.
+  `--json` output escapes them inside strings.
+
 `SafeClient` checks the resolved address at dial time, which also defeats DNS
 rebinding, and refuses loopback, private, link local (including cloud metadata
 at 169.254.169.254), CGNAT, benchmark, documentation and reserved ranges, plus
@@ -346,6 +372,25 @@ output is checked rather than trusted: the harness re-validates and re-tests
 every submitted spec, a create run cannot overwrite an existing provider,
 update runs wait for review by default, and the test key only goes to the
 provider's own domain.
+
+How the test key stays on that domain:
+
+- **Pinned to what the operator vouched for.** The key goes only to the
+  registrable domain of a URL the operator gave, or of the provider being
+  updated. A host on a shared hosting platform (`vercel.app`, `github.io`,
+  `supabase.co`, `workers.dev`, `amazonaws.com` and similar) pins only that
+  tenant's own host, and an IP address only itself.
+- **Nothing to pin to, no key sent.** A create run with no docs URL (or only
+  a GitHub link) never sends the test key. The draft is accepted without a
+  live check and waits for review even with auto publish on, because
+  publishing creates a service at `base_url` holding the test keys; the
+  review step names the host to confirm.
+- **Only a valid spec runs live.** `live_check` refuses a draft with schema
+  problems, so every health and example path starts with `/` and the health
+  method is GET or POST. The live check client also refuses any request whose
+  host, scheme or user info differs from `base_url`'s, and the engine's health
+  check does the same, so a path such as `@attacker.example/x` cannot move
+  the key to another host.
 
 ## Sharing between servers
 
