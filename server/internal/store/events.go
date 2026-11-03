@@ -153,13 +153,15 @@ type DayStat struct {
 	RateLimited int
 }
 
-// KeyDailyStats counts a key's events per UTC day.
-func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT date(ts,'unixepoch') d,
+const keyDailyStatsSQL = `SELECT date(ts,'unixepoch') d,
 		SUM(CASE WHEN kind='lease' OR (kind='proxy' AND status_code<400) THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind IN ('error','invalid','banned') THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind IN ('rate_limited','busy','quota_exhausted') THEN 1 ELSE 0 END)
-		FROM events WHERE key_id=? AND ts>=? GROUP BY d ORDER BY d`, keyID, time.Now().AddDate(0, 0, -days).Unix())
+		FROM events WHERE key_id=? AND ts>=? GROUP BY d ORDER BY d`
+
+// KeyDailyStats counts a key's events per UTC day.
+func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
+	rows, err := s.r.QueryContext(ctx, keyDailyStatsSQL, keyID, time.Now().AddDate(0, 0, -days).Unix())
 	if err != nil {
 		return nil, err
 	}

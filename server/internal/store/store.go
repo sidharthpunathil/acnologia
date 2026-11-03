@@ -276,6 +276,7 @@ func Open(dataDir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	optimize(context.Background(), db)
 	rd, err := sql.Open("sqlite", readerDSN(path))
 	if err != nil {
 		db.Close()
@@ -370,7 +371,54 @@ func migrate(db *sql.DB) error {
 	if err := migrateRuns(db); err != nil {
 		return err
 	}
-	return migrateHiddenKeyEvents(db)
+	if err := migrateHiddenKeyEvents(db); err != nil {
+		return err
+	}
+	return migrateIndexes(db)
+}
+
+// lateIndexes were added after the first release. events_key serves a key's
+// insights, the hidden key trigger and CreateKeys' MAX(key_id); events_app
+// serves a share's per service counts; leases_created serves the prune.
+var lateIndexes = []struct{ name, table, cols string }{
+	{"events_key", "events", "key_id, ts"},
+	{"events_app", "events", "app_id, ts"},
+	{"leases_created", "leases", "created_at"},
+}
+
+// migrateIndexes creates the late indexes and analyzes each table that got
+// one. The planner needs the statistics: without them it picks events_key or
+// events_app for range scans they make slower.
+func migrateIndexes(db *sql.DB) error {
+	analyze := map[string]bool{}
+	for _, ix := range lateIndexes {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, ix.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`CREATE INDEX ` + ix.name + ` ON ` + ix.table + `(` + ix.cols + `)`); err != nil {
+			return err
+		}
+		analyze[ix.table] = true
+	}
+	for table := range analyze {
+		if _, err := db.Exec(`ANALYZE ` + table); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// optimize refreshes planner statistics for tables that never had them or
+// whose size changed a lot, within the writer's analysis_limit. Open runs it
+// and so does the housekeeping prune.
+func optimize(ctx context.Context, db *sql.DB) {
+	if _, err := db.ExecContext(ctx, `PRAGMA optimize=0x10002`); err != nil {
+		slog.Warn("sqlite optimize failed", "err", err)
+	}
 }
 
 // migrateHiddenKeyEvents deletes a hidden key's events with the key, however

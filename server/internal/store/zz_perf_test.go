@@ -359,8 +359,8 @@ func sortedKeys(m map[string]string) []string {
 	return out
 }
 
-func explain(tb testing.TB, db *sql.DB, q string) string {
-	rows, err := db.Query(`EXPLAIN QUERY PLAN ` + q)
+func explain(tb testing.TB, db *sql.DB, q string, args ...any) string {
+	rows, err := db.Query(`EXPLAIN QUERY PLAN `+q, args...)
 	if err != nil {
 		tb.Fatalf("explain %s: %v", q, err)
 	}

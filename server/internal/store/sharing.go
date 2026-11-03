@@ -563,11 +563,13 @@ func (s *Store) MarkShareLeft(ctx context.Context, id string) (*Share, error) {
 	return s.GetShare(ctx, sh.ID)
 }
 
+const shareServiceCountsSQL = `SELECT COALESCE(sv.slug,''), COUNT(*) FROM events e LEFT JOIN services sv ON sv.id=e.service_id
+		WHERE e.app_id=? AND e.ts>=? AND e.kind IN ('proxy','cache_hit') GROUP BY sv.slug`
+
 // ShareServiceCounts counts proxied requests per service made with a share's
 // app since the given time, by service slug.
 func (s *Store) ShareServiceCounts(ctx context.Context, appID int64, since time.Time) (map[string]int64, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT COALESCE(sv.slug,''), COUNT(*) FROM events e LEFT JOIN services sv ON sv.id=e.service_id
-		WHERE e.app_id=? AND e.ts>=? AND e.kind IN ('proxy','cache_hit') GROUP BY sv.slug`, appID, since.Unix())
+	rows, err := s.r.QueryContext(ctx, shareServiceCountsSQL, appID, since.Unix())
 	if err != nil {
 		return nil, err
 	}
