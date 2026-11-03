@@ -179,6 +179,11 @@ func TestHandoverEndToEndRevokePush(t *testing.T) {
 	b.do(b.super, "PATCH", "/api/admin/keys/"+itoa(int(keys[0].ID)), map[string]any{"secret": "other"}, 403, nil)
 	b.do(b.super, "PATCH", "/api/admin/keys/"+itoa(int(keys[0].ID)), map[string]any{"hidden": false}, 403, nil)
 	b.do(b.super, "PATCH", "/api/admin/services/"+itoa(int(lv.LocalServices[0].ID)), map[string]any{"base_url": "https://evil.example"}, 409, nil)
+	// Switching the provider in the same PATCH does not lift the lock.
+	b.do(b.super, "PATCH", "/api/admin/services/"+itoa(int(lv.LocalServices[0].ID)), map[string]any{"provider": "acnologia-peer", "base_url": "https://evil.example", "auth_type": "header", "auth_name": "X-Key"}, 409, nil)
+	if sv, _ := b.st.GetServiceBySlug(context.Background(), "a-serpapi"); sv.Provider != "serpapi" || sv.BaseURL != a.upURL {
+		t.Fatalf("service after provider switch %+v", sv)
+	}
 	b.do(b.super, "POST", "/api/admin/shares", map[string]any{"name": "onward", "services": []string{"a-serpapi"}}, 400, nil)
 	b.do(b.super, "POST", "/api/admin/shares", map[string]any{"name": "onward", "services": []string{"a-serpapi"}, "mode": "handover"}, 400, nil)
 
