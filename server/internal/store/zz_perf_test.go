@@ -222,18 +222,17 @@ func BenchmarkGroupCommit(b *testing.B) {
 	ctx := context.Background()
 	for _, par := range []int{1, 16, 64} {
 		b.Run(fmt.Sprintf("AddEvent_par%d", par), func(b *testing.B) {
-			b.SetParallelism(max(par/8, 1))
-			if par == 1 {
-				for i := 0; i < b.N; i++ {
-					s.AddEvent(ctx, NewEvent{Kind: "proxy", ServiceID: 3, KeyID: 25, AppID: 4, StatusCode: 200, LatencyMS: 100, Detail: "POST /v1/chat/completions"})
-				}
-				return
+			var wg sync.WaitGroup
+			for w := 0; w < par; w++ {
+				wg.Add(1)
+				go func(w int) {
+					defer wg.Done()
+					for i := w; i < b.N; i += par {
+						s.AddEvent(ctx, NewEvent{Kind: "proxy", ServiceID: 3, KeyID: 25, AppID: 4, StatusCode: 200, LatencyMS: 100, Detail: "POST /v1/chat/completions"})
+					}
+				}(w)
 			}
-			b.RunParallel(func(pb *testing.PB) {
-				for pb.Next() {
-					s.AddEvent(ctx, NewEvent{Kind: "proxy", ServiceID: 3, KeyID: 25, AppID: 4, StatusCode: 200, LatencyMS: 100, Detail: "POST /v1/chat/completions"})
-				}
-			})
+			wg.Wait()
 		})
 	}
 }

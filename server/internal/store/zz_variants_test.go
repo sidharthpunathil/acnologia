@@ -79,3 +79,44 @@ func timeDashboard(t *testing.T, s *Store) {
 	_ = s.DB.QueryRow(`SELECT page_count*page_size FROM pragma_page_count(), pragma_page_size()`).Scan(&sz)
 	fmt.Printf("   db size %d MB\n", sz>>20)
 }
+
+// TestZZIndexCost times one event insert, alone and inside a shared
+// transaction, with and without the late event indexes.
+func TestZZIndexCost(t *testing.T) {
+	needLoad(t)
+	ctx := context.Background()
+	for _, drop := range []bool{true, false} {
+		s := openAt(t, freshDir(t))
+		if drop {
+			for _, ix := range lateIndexes {
+				if _, err := s.DB.Exec(`DROP INDEX ` + ix.name); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		st, err := s.DB.Prepare(`INSERT INTO events(ts,kind,service_id,key_id,app_id,token_id,status_code,latency_ms,detail,cost) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kinds := []string{"proxy", "lease", "error", "cache_hit"}
+		ins := func(ex func(args ...any)) time.Duration {
+			t0 := time.Now()
+			for i := 0; i < 10000; i++ {
+				ex(now(), kinds[i%4], i%20+1, i%200+1, i%20+1, nil, 200, 100, "POST /v1/chat/completions", 0.0)
+			}
+			return time.Since(t0) / 10000
+		}
+		single := ins(func(a ...any) { _, _ = st.ExecContext(ctx, a...) })
+		tx, err := s.DB.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ts := tx.Stmt(st)
+		batched := ins(func(a ...any) { _, _ = ts.ExecContext(ctx, a...) })
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
+		fmt.Printf("late indexes=%-5v insert autocommit=%v in one transaction=%v\n", !drop, single.Round(100*time.Nanosecond), batched.Round(100*time.Nanosecond))
+	}
+}
