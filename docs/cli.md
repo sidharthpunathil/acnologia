@@ -46,6 +46,11 @@ from `powershell -ExecutionPolicy Bypass`. You can also download
 From a checkout, `make cli` builds `bin/acn`; on Windows without make,
 `.\scripts\build.ps1 cli` builds `bin\acn.exe`.
 
+Each `cli-v*` release carries builds for macOS, Linux and Windows on amd64
+and arm64, with a `SHA256SUMS` file. CI tests the client on all three
+operating systems on every push, and checks that `install.ps1` parses in
+Windows PowerShell 5.1 and PowerShell 7.
+
 ## Sign in
 
 ```sh

@@ -24,12 +24,12 @@ failure up to 10 times).
    | `ACNOLOGIA_ACCESS_PASSWORD` | A long random password, 12 characters at least. `openssl rand -base64 24` makes one. |
    | `ACNOLOGIA_REQUIRE_ACCESS_PASSWORD` | `true`: the site can never come up unlocked. If `ACNOLOGIA_ACCESS_PASSWORD` is missing, the server generates a random one into `/data/access-password` and uses it (see below). |
    | `ACNOLOGIA_ACCESS_SIGNS_IN` | Leave unset (`true`): the access password is the only login. `false` keeps email accounts behind the lock. |
-| `ACNOLOGIA_PUBLIC_URL` | `https://key.sidharth.co` (your domain, no trailing slash). |
+   | `ACNOLOGIA_PUBLIC_URL` | `https://key.sidharth.co` (your domain, no trailing slash). Written into `/llms.txt` and into every share invite, so another server reaches this one at the right address instead of the `*.up.railway.app` one. |
    | `ACNOLOGIA_SECURE_COOKIES` | `true`: Railway serves HTTPS, so every cookie is `Secure`. |
    | `ACNOLOGIA_TRUST_PROXY_HEADERS` | `true`: Railway's proxy sets `X-Forwarded-For`, which the sign in limiter uses. |
    | `ACNOLOGIA_DATA_DIR` | `/data` (the image sets it already; keep it matching the volume). |
    | `ACNOLOGIA_MASTER_KEY` | Recommended, set before the first deploy: the output of `acnologia gen-master-key` (or `docker run --rm acnologia gen-master-key`). Kept in Railway's variables and your password manager, it survives losing the volume. |
-   | `ANTHROPIC_API_KEY` | Optional: turns on the provider builder, "Fill with AI" and the Assistant. |
+   | `ANTHROPIC_API_KEY` | Optional: turns on the provider builder, Fill with AI, the Assistant and the provider refresh. See [AI on the deploy](#ai-on-the-deploy). |
    | `RAILWAY_RUN_UID` | `0`. The image runs as a non-root user, and Railway mounts a new volume owned by root, so without this the server stops with `mkdir /data: permission denied`. |
 
    Leave `ACNOLOGIA_ADDR` and `PORT` alone: with `ACNOLOGIA_ADDR` unset the
@@ -43,6 +43,23 @@ failure up to 10 times).
 6. **Open the site.** The lock screen asks for the access password, and that
    is the whole login: you land in the dashboard as the owner. The browser
    stays unlocked for 30 days; "Sign out" in the account menu locks it early.
+
+## AI on the deploy
+
+With `ANTHROPIC_API_KEY` set, open Settings, AI and pick the models (see
+[Choosing the AI model](flows.md#choosing-the-ai-model)). Every feature runs
+on `claude-opus-5-5` until you do, or on `ACNOLOGIA_AI_MODEL` if you set it.
+A switch applies on the next call, with no redeploy. A smaller model such as
+Haiku is enough for Fill with AI, chat summaries and offer refresh.
+
+The provider refresh is on by default: monthly, on the 1st at 03:00 UTC,
+over providers behind a service with a usable key, at most 10 a run, and
+skipping any checked in the last 25 days. A new deploy with no keys checks
+nothing. Its spend is capped at $2 a run and $5 a month, so the worst case is
+$5 a month, and Recent runs in Settings shows what each run cost. Change the
+schedule, the scope and the caps under Settings, Provider refresh, or set the
+schedule to Off. See
+[Keeping provider offers fresh](flows.md#keeping-provider-offers-fresh).
 
 ## If you did not set the access password
 
@@ -95,9 +112,12 @@ after stopping the service.
 
 - **Apps, the proxy and MCP** (`/proxy/*`, `/api/v1/*`, `/mcp`) are not behind
   the access password: they need an app token, as before.
-- **Dashboard API scripts** (admin tokens, `acnologia ctl`) also send
-  `X-Acnologia-Access: <password>`. `acnologia ctl` does this when
-  `ACNOLOGIA_ACCESS_PASSWORD` is set in its environment.
+- **Dashboard API scripts** (admin tokens, `acn`, `acnologia ctl`): a valid
+  admin token passes the lock on its own. Sign in with `acn login` (see
+  [Command line](cli.md)).
+- **Other Acnologia servers** you share with reach `/.well-known/acnologia`
+  and `/api/peer/v1/*` without the password: those need an invite or a share
+  token. See [sharing](flows.md#sharing-between-servers).
 
 ## Keep it at one replica
 

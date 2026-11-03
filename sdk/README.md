@@ -21,6 +21,8 @@ Acnologia has client libraries for twelve languages. They all speak the same con
 
 Each SDK builds a client from a base URL and an app token, or from the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables. **Proxy mode** sends a request to `/proxy/{service}/{path}`; Acnologia injects a key, rotates on rate limits and hands back the provider's raw response, so the secret never reaches your process. **Lease mode** borrows a key (`lease`, with optional excluded keys, a TTL, a `wait` of up to 60 seconds for a free slot, and `exclusive` to keep the key from every other caller), and the lease puts the secret where the provider expects it (query parameter, header or bearer). You then `report` the outcome, optionally with `rotate` to get the next key in the same call, and `renew` a lease that a long job still needs. The `withKey` helper (`with_key` in Python, Ruby, Rust and C++) runs that loop for you: it leases, calls your function, reports every lease it takes, and rotates when your function signals a rate limit, used up quota or invalid key. Errors are typed: no key available, all keys busy (a kind of no key available), service unavailable when the provider's circuit breaker is open (each with the server's retry after), unauthenticated, forbidden, and a generic API error carrying the status and error code such as `lease_not_found`. Secrets and tokens are never printed: string forms, debug output and report messages redact them.
 
+A service that another Acnologia server shares with yours is proxy only: a lease on it fails with a forbidden error, code `lease_not_allowed`, so call it in proxy mode.
+
 ## Install today
 
 **Go**
@@ -134,3 +136,16 @@ Every suite runs offline against a stub or fake server. Run each from its folder
 | C++ | `sdk/cpp` | `cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure` |
 
 Without a local toolchain, the Java, Kotlin, C#, Dart and PHP READMEs show how to run the same suite in Docker (`maven:3-eclipse-temurin-17`, `gradle:8-jdk17`, `mcr.microsoft.com/dotnet/sdk:8.0`, `dart:stable`, `php:8.1-cli`). The Swift suite also runs with `swift test` at the repository root, through the root `Package.swift`.
+
+### Windows
+
+The SDKs read no files and keep no config of their own: the base URL and the token come from the constructor or the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables, so they behave the same on Windows. CI runs the Go, Python and TypeScript suites on `windows-latest` as well as Linux and macOS. Set the variables for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only). The Python venv lives in `.venv\Scripts` on Windows, so the Python line becomes:
+
+```powershell
+cd sdk\python
+python -m venv .venv
+.venv\Scripts\pip install -e ".[test]"
+.venv\Scripts\pytest
+```
+
+The other commands in the table run as they are in PowerShell, except that `&&` needs PowerShell 7; in Windows PowerShell 5.1 run the steps one by one or join them with `;`.
