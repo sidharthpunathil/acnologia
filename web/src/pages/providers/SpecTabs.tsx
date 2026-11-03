@@ -14,7 +14,7 @@ import {
 } from "@remixicon/react";
 import { Focusable } from "react-aria-components";
 import type { ComponentType } from "react";
-import type { AuthType, OfferLimit, OfferPer, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecOffer, SpecRule, Strategy, TestReport } from "../../lib/types";
+import type { AuthType, Guide, OfferLimit, OfferPer, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecOffer, SpecRule, Strategy, TestReport } from "../../lib/types";
 import { LIMIT_PERS, PRICE_UNITS, matchText } from "../../lib/offers";
 import { OUTCOMES } from "../../lib/types";
 import { STRATEGY_HELP } from "../../lib/format";
@@ -1326,6 +1326,58 @@ export function JsonTab({ spec, onChange, readOnly }: SpecTabProps) {
   return (
     <Section title="Raw spec" description="The whole spec as JSON. Edits apply as soon as the JSON is valid, and the other tabs pick them up.">
       <JsonTextarea label="Spec JSON" rows={28} value={spec} disabled={readOnly} onChange={(v) => v && typeof v === "object" && onChange(v as ProviderSpec)} />
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------- Guide
+
+const GUIDE_STARTER: Guide = {
+  summary: "What this API is for and when to pick it, in one to three sentences.",
+  endpoints: [
+    {
+      name: "Search",
+      method: "GET",
+      path: "/v1/search",
+      description: "What the call does.",
+      params: [{ name: "q", in: "query", type: "string", required: true, description: "The search text." }],
+      response: "What comes back and the fields that matter.",
+    },
+  ],
+  notes: ["Facts an agent gets wrong without: pagination, model names, size limits, cost traps."],
+};
+
+/**
+ * The guide as JSON: summary, endpoints with params, notes and free
+ * Markdown. Auth is never part of it: Acnologia adds the key.
+ */
+export function GuideTab({ spec, onChange, readOnly }: SpecTabProps) {
+  const setGuide = (g: unknown) => {
+    const next = { ...spec };
+    if (g && typeof g === "object") next.guide = g as Guide;
+    else delete next.guide;
+    onChange(next);
+  };
+  return (
+    <Section
+      title="Guide fields"
+      description="Teaches an app or AI agent how to call this provider: a summary, the endpoints worth knowing with their parameters, and notes. Paths are relative to the base URL. Leave auth out: Acnologia adds the key."
+      actions={
+        !spec.guide && !readOnly ? (
+          <Button size="small" variant="secondary" leadingIcon={RiAddLine} onClick={() => setGuide(GUIDE_STARTER)}>
+            Start a guide
+          </Button>
+        ) : undefined
+      }
+    >
+      <JsonTextarea
+        label="Guide JSON"
+        hint="Empty means no written guide. Acnologia then generates one from the examples, offers and docs link."
+        rows={18}
+        value={spec.guide ?? null}
+        disabled={readOnly}
+        onChange={setGuide}
+      />
     </Section>
   );
 }

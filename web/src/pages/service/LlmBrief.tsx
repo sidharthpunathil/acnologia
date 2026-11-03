@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RiDownload2Line, RiFileCopyLine, RiRobot2Line } from "@remixicon/react";
-import type { Service } from "../../lib/types";
+import type { GuideDoc, Service } from "../../lib/types";
 import { api, errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { useAuth } from "../../stores/auth";
@@ -46,10 +46,24 @@ function LlmBriefModal({ service, onClose }: { service: Service; onClose: () => 
   const [choice, setChoice] = useState<TokenChoice>("placeholder");
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The provider's written guide adds endpoints, params and notes. The brief works without it.
+  const [guide, setGuide] = useState<GuideDoc | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .serviceGuide(service.id)
+      .then((g) => {
+        if (live) setGuide(g.guide);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [service.id]);
 
   const md = useMemo(
-    () => buildBrief({ service, provider, host: window.location.origin, token: choice === "create" ? token : null }),
-    [service, provider, choice, token],
+    () => buildBrief({ service, provider, host: window.location.origin, token: choice === "create" ? token : null, guide }),
+    [service, provider, choice, token, guide],
   );
   const ready = choice === "placeholder" || token !== null;
 

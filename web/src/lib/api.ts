@@ -39,6 +39,8 @@ import type {
   ProviderInput,
   ProviderSaveResult,
   ValidateResult,
+  GuideResponse,
+  GenerateGuideResult,
 } from "./types";
 import type { MCPSettingsInput, MCPView } from "./types";
 
@@ -189,6 +191,14 @@ export const api = {
   updateProvider: (slug: string, body: ProviderInput & { note?: string }) =>
     request<ProviderSaveResult>("PUT", `/api/admin/providers/${encodeURIComponent(slug)}`, body),
   deleteProvider: (slug: string) => request<unknown>("DELETE", `/api/admin/providers/${encodeURIComponent(slug)}`),
+  providerGuide: (slug: string, service?: string) =>
+    request<GuideResponse>(
+      "GET",
+      `/api/admin/providers/${encodeURIComponent(slug)}/guide${service ? `?service=${encodeURIComponent(service)}` : ""}`,
+    ),
+  serviceGuide: (id: number) => request<GuideResponse>("GET", `/api/admin/services/${id}/guide`),
+  generateGuide: (slug: string) =>
+    request<GenerateGuideResult>("POST", `/api/admin/providers/${encodeURIComponent(slug)}/guide/generate`, {}),
   validateProvider: (body: ProviderInput) => request<ValidateResult>("POST", "/api/admin/providers/validate", body),
   liveCheck: (slug: string, secret: string) =>
     request<LiveReport>("POST", `/api/admin/providers/${encodeURIComponent(slug)}/live-check`, { secret }),

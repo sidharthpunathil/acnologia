@@ -488,6 +488,72 @@ export interface SpecOffer {
   checked_at?: string;
 }
 
+/** One parameter of a guide endpoint. */
+export interface GuideParam {
+  name: string;
+  in: "query" | "path" | "body" | "header";
+  type?: string;
+  required?: boolean;
+  description: string;
+}
+
+/** A call worth knowing, with its parameters and an example body. */
+export interface GuideEndpoint {
+  name: string;
+  method: string;
+  path: string;
+  description: string;
+  params?: GuideParam[];
+  body?: unknown;
+  response?: string;
+}
+
+/** A provider's usage guide, written for AI agents and developers. Part of the spec. */
+export interface Guide {
+  summary: string;
+  endpoints?: GuideEndpoint[];
+  notes?: string[];
+  markdown?: string;
+}
+
+/** The rendered guide for a provider or one service, as structured data. */
+export interface GuideDoc {
+  provider: string;
+  name: string;
+  service?: string;
+  summary: string;
+  generated: boolean;
+  proxy_base: string;
+  docs_url?: string;
+  website?: string;
+  endpoints: GuideEndpoint[];
+  examples: { name: string; method: string; path: string; query?: Record<string, string>; body?: unknown; curl: string }[];
+  limits: string[];
+  errors: string[];
+  notes: string[];
+  markdown?: string;
+}
+
+/** GET /api/admin/providers/{slug}/guide and /api/admin/services/{id}/guide. */
+export interface GuideResponse {
+  markdown: string;
+  guide: GuideDoc;
+  /** True when the provider has no written guide and this one comes from its examples and offers. */
+  generated: boolean;
+}
+
+/**
+ * POST /api/admin/providers/{slug}/guide/generate. Either an AI run to
+ * follow (as `run`, or the run itself with `id` and `status`), or the
+ * provider already updated. Every field is optional until the shape settles.
+ */
+export interface GenerateGuideResult {
+  run?: { id: number; status: string };
+  id?: number;
+  status?: string;
+  provider?: { slug: string; version: number };
+}
+
 export interface ProviderSpec {
   base_url: string;
   auth: { type: AuthType; name: string; prefix: string };
@@ -515,6 +581,8 @@ export interface ProviderSpec {
   health: SpecHealth | null;
   examples: SpecExample[];
   tests: SpecFixture[];
+  /** Usage guide for apps and AI agents; optional. */
+  guide?: Guide;
 }
 
 export type ProviderStatus = "active" | "disabled";
