@@ -569,7 +569,7 @@ export function LandingPage() {
               <Mark size={24} />
               <span className="font-mono text-body-medium text-text-primary">{BRAND_NAME}</span>
             </span>
-            <p className="font-mono text-caption-1-regular text-text-tertiary">Self-hosted. Source on GitHub.</p>
+            <p className="font-mono text-caption-1-regular text-text-tertiary">Self-hosted. Open source under the MIT license.</p>
           </div>
           <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <a
