@@ -11,7 +11,7 @@ None is on a package registry yet. The package column below is the name each one
 | [Go](../sdk/go/README.md) | [`sdk/go`](../sdk/go) | `github.com/sidharthpunathil/acnologia/sdk/go` | Go 1.22 | `WithKey` |
 | [Python](../sdk/python/README.md) | [`sdk/python`](../sdk/python) | `acnologia` (PyPI) | Python 3.9 | `with_key` |
 | [TypeScript and JavaScript](../sdk/typescript/README.md) | [`sdk/typescript`](../sdk/typescript) | `@acnologia/keys` (npm) | Node 18, Bun, Deno, browsers | `withKey` |
-| [Ruby](../sdk/ruby/README.md) | [`sdk/ruby`](../sdk/ruby) | `acnologia` (gem) | Ruby 2.6 | `with_key` |
+| [Ruby](../sdk/ruby/README.md) | [`sdk/ruby`](../sdk/ruby) | `acnologia` (gem) | Ruby 3.1 | `with_key` |
 | [PHP](../sdk/php/README.md) | [`sdk/php`](../sdk/php) | `acnologia/keys` (Composer) | PHP 8.1 with curl | `withKey` |
 | [Rust](../sdk/rust/README.md) | [`sdk/rust`](../sdk/rust) | `acnologia` (crate) | Rust 1.75 | `with_key` |
 | [Java](../sdk/java/README.md) | [`sdk/java`](../sdk/java) | `dev.acnologia:acnologia` | Java 17 | `withKey` |
@@ -38,7 +38,8 @@ A service that another Acnologia server shares with yours is proxy only. A lease
 ## Where they differ
 
 - **Environment variables.** Most clients can be built from `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` (for example `Client.new` in Ruby, `Acnologia.fromEnvironment()` in Dart, `Client::from_env()` in C++). The Go, TypeScript and PHP clients do not read them: pass the values to the constructor yourself.
-- **Auth errors.** Rust, Java, Kotlin, C#, Swift, Dart and C++ have their own types for 401 (unauthenticated) and 403 (forbidden). Go, Python, TypeScript, Ruby and PHP raise their generic API error, so check its status and code.
+- **Auth errors.** Rust, Java, Kotlin, C#, Swift, Dart, C++ and Ruby have their own types for 401 (unauthenticated) and 403 (forbidden). Go, Python, TypeScript and PHP raise their generic API error, so check its status and code.
+- **Ruby goes further.** It has `me` for `GET /api/v1/me`, typed errors for `app_limit_reached` (with `limit`, `reset_at` and `retry_after`), `share_revoked`, `share_paused`, `share_expired`, `lease_not_allowed`, `upstream_blocked` and `loop_detected`, an `Idempotency-Key` on proxied POSTs (`idempotency_key: true` makes one), opt in retries that sleep the server's `Retry-After`, separate open and read timeouts, and the `X-Acnologia-Access` header from `ACNOLOGIA_ACCESS_PASSWORD` for a deploy behind the access password. The other SDKs report those errors as their generic API error.
 
 ## Install today
 
@@ -154,7 +155,7 @@ Without a local toolchain, the Java, Kotlin, C#, Dart and PHP READMEs show how t
 
 ### On Windows
 
-The SDKs read no files and keep no config of their own, so they behave the same on Windows. CI runs the Go, Python and TypeScript suites on `windows-latest` as well as Linux and macOS.
+The SDKs read no files and keep no config of their own, so they behave the same on Windows. CI runs the Go, Python, Ruby and TypeScript suites on `windows-latest` as well as Linux and macOS.
 
 For the SDKs that read the environment, set the token for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only).
 

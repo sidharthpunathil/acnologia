@@ -9,7 +9,7 @@ None is on a package registry yet. The package column is the name each one will 
 | [Go](go/README.md) | [`sdk/go`](go) | `github.com/sidharthpunathil/acnologia/sdk/go` | Go 1.22 | `go get` (module path in the repo) |
 | [Python](python/README.md) | [`sdk/python`](python) | `acnologia` (PyPI name) | Python 3.9 | pip from git |
 | [TypeScript and JavaScript](typescript/README.md) | [`sdk/typescript`](typescript) | `@acnologia/keys` (npm name) | Node 18, Bun, Deno, browsers | build from a checkout |
-| [Ruby](ruby/README.md) | [`sdk/ruby`](ruby) | `acnologia` (gem name) | Ruby 2.6 | Bundler from git |
+| [Ruby](ruby/README.md) | [`sdk/ruby`](ruby) | `acnologia` (gem name) | Ruby 3.1 | Bundler from git |
 | [PHP](php/README.md) | [`sdk/php`](php) | `acnologia/keys` (Composer name) | PHP 8.1 with curl | Composer path repository |
 | [Rust](rust/README.md) | [`sdk/rust`](rust) | `acnologia` (crate name) | Rust 1.75 | Cargo git dependency |
 | [Java](java/README.md) | [`sdk/java`](java) | `dev.acnologia:acnologia` | Java 17 | `mvn install` to the local repository |
@@ -29,7 +29,9 @@ None is on a package registry yet. The package column is the name each one will 
 
 **A retry loop.** `withKey` (`with_key` in Python, Ruby, Rust and C++) leases a key, calls your function, reports every lease it takes, and rotates when your function signals a rate limit, used up quota or invalid key.
 
-**Typed errors.** Every SDK has distinct errors for no key available, all keys busy (a kind of no key available) and service unavailable when the provider's circuit breaker is open, each carrying the server's retry after. Anything else is a generic API error with the HTTP status and the error code, such as `lease_not_found`. The C++, C#, Dart, Java, Kotlin, Rust and Swift SDKs also have their own unauthenticated (401) and forbidden (403) errors; the others report those as the generic API error.
+**Typed errors.** Every SDK has distinct errors for no key available, all keys busy (a kind of no key available) and service unavailable when the provider's circuit breaker is open, each carrying the server's retry after. Anything else is a generic API error with the HTTP status and the error code, such as `lease_not_found`. The C++, C#, Dart, Java, Kotlin, Ruby, Rust and Swift SDKs also have their own unauthenticated (401) and forbidden (403) errors; the others report those as the generic API error. Ruby also has typed errors for `app_limit_reached`, the share errors (`share_revoked`, `share_paused`, `share_expired`), `lease_not_allowed`, `upstream_blocked` and `loop_detected`.
+
+**More in Ruby.** The Ruby SDK also reads `GET /api/v1/me` (`acn.me`), sends an `Idempotency-Key` on proxied POSTs when asked, can retry after the server's `Retry-After`, takes separate open and read timeouts, and sends `X-Acnologia-Access` for a deploy behind the access password when you set one. See its [README](ruby/README.md).
 
 **Redacted secrets.** String forms, debug output and report messages never print the key or the app token.
 
@@ -151,7 +153,7 @@ Without a local toolchain, the Java, Kotlin, C#, Dart and PHP READMEs show how t
 
 ### Windows
 
-The SDKs read no files and keep no config of their own: the base URL and the token come from the constructor or the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables, so they behave the same on Windows. CI runs the Go, Python and TypeScript suites on `windows-latest` as well as Linux and macOS. Set the variables for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only). The Python venv lives in `.venv\Scripts` on Windows, so the Python line becomes:
+The SDKs read no files and keep no config of their own: the base URL and the token come from the constructor or the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables, so they behave the same on Windows. CI runs the Go, Python, Ruby and TypeScript suites on `windows-latest` as well as Linux and macOS. Set the variables for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only). The Python venv lives in `.venv\Scripts` on Windows, so the Python line becomes:
 
 ```powershell
 cd sdk\python
