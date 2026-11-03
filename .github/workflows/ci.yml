@@ -185,9 +185,11 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # The server's toolchain, as before this job was split out: Go 1.22.0
+      # (the SDK's minimum) builds test binaries current macOS refuses to run.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: sdk/go/go.mod
+          go-version-file: server/go.mod
           cache: false
 
       - name: Test
