@@ -188,6 +188,7 @@ func (c *Catalog) Boot(ctx context.Context) error {
 	for _, b := range providers.Builtins() {
 		if cur, err := c.Store.GetProvider(ctx, b.Slug); err == nil {
 			c.backfillOffers(ctx, cur, b)
+			c.backfillGuide(ctx, b)
 			// Already seeded: only fill in a logo that is still missing, so
 			// existing installs get logos added in newer releases.
 			_, cur, lerr := c.Store.ProviderLogo(ctx, b.Slug)
@@ -249,6 +250,54 @@ func (c *Catalog) backfillOffers(ctx context.Context, cur *store.Provider, b pro
 	next.Spec = spec
 	if _, err := c.Store.SaveProvider(ctx, &next, "system", "built-in offers added"); err != nil {
 		slog.Warn("could not add offers to built-in provider", "slug", cur.Slug, "err", err)
+	}
+}
+
+// guideAddedNote labels the version that gave a built-in provider its guide.
+const guideAddedNote = "built-in guide added"
+
+// backfillGuide gives a built-in provider seeded by an older release the
+// usage guide this release ships. A guide is documentation only and never
+// changes how requests are handled, so it is added even after the spec was
+// edited, as long as the stored spec has none. It is added once: an
+// operator who removes it later keeps it removed.
+func (c *Catalog) backfillGuide(ctx context.Context, b providers.Builtin) {
+	if b.Spec.Guide == nil {
+		return
+	}
+	cur, err := c.Store.GetProvider(ctx, b.Slug)
+	if err != nil || !cur.Builtin {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(cur.Spec, &raw) != nil {
+		return
+	}
+	if g, ok := raw["guide"]; ok && string(g) != "null" {
+		return
+	}
+	vs, err := c.Store.ProviderVersions(ctx, b.Slug)
+	if err != nil {
+		return
+	}
+	for _, v := range vs {
+		if v.Note == guideAddedNote {
+			return
+		}
+	}
+	guide, err := json.Marshal(b.Spec.Guide)
+	if err != nil {
+		return
+	}
+	raw["guide"] = guide
+	spec, err := json.Marshal(raw)
+	if err != nil {
+		return
+	}
+	next := *cur
+	next.Spec = spec
+	if _, err := c.Store.SaveProvider(ctx, &next, "system", guideAddedNote); err != nil {
+		slog.Warn("could not add a guide to built-in provider", "slug", cur.Slug, "err", err)
 	}
 }
 

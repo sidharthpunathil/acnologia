@@ -43,6 +43,7 @@ func spec(t *testing.T, withTests bool) json.RawMessage {
 		"examples": []any{map[string]any{"name": "List", "method": "GET", "path": "/items"}}}
 	if withTests {
 		s["tests"] = []any{map[string]any{"name": "ok", "status": 200, "body": "{}", "expect": "ok"}}
+		s["guide"] = map[string]any{"summary": "Widgets as JSON.", "endpoints": []any{map[string]any{"name": "List", "method": "GET", "path": "/items", "description": "All items."}}}
 	}
 	b, _ := json.Marshal(s)
 	return b
@@ -102,6 +103,10 @@ func TestApplyImportFailureStillCreatesService(t *testing.T) {
 	p, err := y.Store.GetProvider(ctx, "widget")
 	if err != nil || p.Source != "peer:acn_srv_owner" || p.Version != 1 {
 		t.Fatalf("imported %+v %v", p, err)
+	}
+	// The owner's usage guide comes along with the spec.
+	if ps, _ := providers.DecodeSpec(p.Spec); ps == nil || ps.Guide == nil || ps.Guide.Summary != "Widgets as JSON." || len(ps.Guide.Endpoints) != 1 {
+		t.Fatalf("guide not imported: %s", p.Spec)
 	}
 	row, err := y.Store.GetPeerProvider(ctx, link.ID, "widget")
 	if err != nil || row.Kind != store.PeerProviderDependency || row.ImportedVersion != 3 || strings.Join(row.ForServices, ",") != "widgets" {
