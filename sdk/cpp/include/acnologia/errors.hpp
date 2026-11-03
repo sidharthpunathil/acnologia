@@ -23,21 +23,28 @@ public:
 
 /// A non 2xx answer from the consumer API that has no more specific type.
 /// The server sends {"error": {"code", "message"}} with a matching status.
+/// The token and the access password are scrubbed from the message.
 class ApiError : public Error {
 public:
     ApiError(int status, std::string code, std::string message);
+    ApiError(int status, std::string code, std::string message, std::chrono::milliseconds retry_after);
 
     int status() const noexcept { return status_; }
     const std::string& code() const noexcept { return code_; }
     const std::string& message() const noexcept { return message_; }
+    /// How long to wait before trying again: retry_after_sec from the body,
+    /// else the Retry-After header. Zero when the server did not say.
+    std::chrono::milliseconds retry_after() const noexcept { return retry_after_; }
 
 protected:
-    ApiError(int status, std::string code, std::string message, const std::string& what);
+    ApiError(int status, std::string code, std::string message, const std::string& what,
+             std::chrono::milliseconds retry_after = {});
 
 private:
     int status_;
     std::string code_;
     std::string message_;
+    std::chrono::milliseconds retry_after_;
 };
 
 /// No key can be leased right now (HTTP 503 no_key_available): every key is
@@ -48,12 +55,8 @@ public:
     NoKeyAvailable(std::string message, std::chrono::milliseconds retry_after,
                    std::string code = "no_key_available", int status = 503);
 
-    std::chrono::milliseconds retry_after() const noexcept { return retry_after_; }
     /// True for all_keys_busy (the AllKeysBusy subclass).
     bool busy() const noexcept { return code() == "all_keys_busy"; }
-
-private:
-    std::chrono::milliseconds retry_after_;
 };
 
 /// Usable keys exist but every one is at its concurrency limit, or at a rate
@@ -71,10 +74,23 @@ public:
 class ServiceUnavailable : public ApiError {
 public:
     ServiceUnavailable(std::string message, std::chrono::milliseconds retry_after, int status = 503);
-    std::chrono::milliseconds retry_after() const noexcept { return retry_after_; }
+};
+
+/// The app used up a daily or monthly request or budget limit (HTTP 429
+/// app_limit_reached). limit() says which, reset_at() (RFC 3339) until when,
+/// and retry_after() how long that is from now.
+class AppLimitReached : public ApiError {
+public:
+    AppLimitReached(std::string message, std::string limit, std::string reset_at,
+                    std::chrono::milliseconds retry_after, int status = 429);
+
+    /// daily_requests, monthly_requests, daily_budget or monthly_budget.
+    const std::string& limit() const noexcept { return limit_; }
+    const std::string& reset_at() const noexcept { return reset_at_; }
 
 private:
-    std::chrono::milliseconds retry_after_;
+    std::string limit_;
+    std::string reset_at_;
 };
 
 /// HTTP 401: the app token is missing or wrong.
@@ -84,10 +100,75 @@ public:
 };
 
 /// HTTP 403: the app is disabled, or not allowed this service or mode
-/// (service_not_allowed, lease_not_allowed, proxy_not_allowed).
+/// (service_not_allowed, lease_not_allowed, proxy_not_allowed). The more
+/// specific 403s below derive from it.
 class Forbidden : public ApiError {
 public:
     Forbidden(std::string code, std::string message, int status = 403);
+};
+
+/// HTTP 403 lease_not_allowed: leasing is not open to this token. The app's
+/// mode is proxy, or the service is proxy only (a service another server
+/// shares, one holding handed over keys, or any service for a person's
+/// token). Call it through Client::proxy instead.
+class LeaseNotAllowed : public Forbidden {
+public:
+    explicit LeaseNotAllowed(std::string message, int status = 403);
+};
+
+/// HTTP 403 lease_revoked from renew: the app may no longer hold the key, so
+/// the lease has ended. Lease a new key.
+class LeaseRevoked : public Forbidden {
+public:
+    explicit LeaseRevoked(std::string message, int status = 403);
+};
+
+/// HTTP 403 for a share's token whose share has ended or stopped:
+/// share_revoked, share_paused or share_expired. Nothing on this side can fix
+/// it; the owner has to resume or renew the share.
+class ShareUnavailable : public Forbidden {
+public:
+    ShareUnavailable(std::string code, std::string message, int status = 403);
+    /// revoked, paused or expired.
+    std::string share_status() const;
+};
+
+/// HTTP 403 share_revoked: the owner revoked the share.
+class ShareRevoked : public ShareUnavailable {
+public:
+    explicit ShareRevoked(std::string message, int status = 403);
+};
+
+/// HTTP 403 share_paused: the owner paused the share. It may resume.
+class SharePaused : public ShareUnavailable {
+public:
+    explicit SharePaused(std::string message, int status = 403);
+};
+
+/// HTTP 403 share_expired: the share's timer ran out.
+class ShareExpired : public ShareUnavailable {
+public:
+    explicit ShareExpired(std::string message, int status = 403);
+};
+
+/// HTTP 502 upstream_unreachable: the proxy could not reach the provider.
+class UpstreamUnreachable : public ApiError {
+public:
+    explicit UpstreamUnreachable(std::string message, int status = 502);
+};
+
+/// HTTP 502 upstream_blocked: the service's address points at a private or
+/// metadata address the server refuses to call.
+class UpstreamBlocked : public ApiError {
+public:
+    explicit UpstreamBlocked(std::string message, int status = 502);
+};
+
+/// HTTP 508 loop_detected: the request already passed through more than 3
+/// Acnologia servers.
+class LoopDetected : public ApiError {
+public:
+    explicit LoopDetected(std::string message, int status = 508);
 };
 
 /// Base of the exceptions you throw from a with_key callback to report the
