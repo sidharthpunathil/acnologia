@@ -10,7 +10,7 @@ Mermaid and render on GitHub.
 - [Classifying an upstream response](#classifying-an-upstream-response)
 - [Health checks](#health-checks)
 - [Dashboard sign in](#dashboard-sign-in)
-- [MCP](#mcp)
+- [MCP](#mcp) and the [control MCP](#control-mcp)
 - [Choosing the AI model](#choosing-the-ai-model)
 - [AI provider builder](#ai-provider-builder)
 - [Keeping provider offers fresh](#keeping-provider-offers-fresh)
@@ -289,6 +289,43 @@ sequenceDiagram
     Ag->>M: tools/call proxy_request {service, method, path}
     M->>P: run the proxy handler in process<br/>(response capped at max_result_kb, default 200)
     M-->>Ag: status, headers, body
+```
+
+## Control MCP
+
+`POST /mcp/control` lets an MCP client run the server as a signed in user.
+It takes an admin API token (`acnadm_...`) and nothing else. Every tool is a
+request to an existing `/api/admin` route made in process with that same
+token, so the route checks the role, validates and writes the audit entry.
+Destructive tools first answer with what they would do, and act only when
+called again with `confirm: true`. `call_service` goes through the proxy as
+the `Control MCP` app instead, so keys never leave the server. See
+[Control MCP](api.md#control-mcp-mcpcontrol) for the tools and options.
+
+```mermaid
+sequenceDiagram
+    participant Cl as MCP client (Claude)
+    participant M as /mcp/control
+    participant R as /api/admin route
+    participant P as Proxy
+
+    Cl->>M: initialize (Authorization: Bearer acnadm_...)
+    M->>M: token owner, role capped at the token scope
+    M-->>Cl: acnologia-control, instructions
+    Cl->>M: tools/list (?groups=, read_only=, exclude=)
+    M-->>Cl: tools this role and these options allow
+    Cl->>M: tools/call delete_service {service: "serpapi"}
+    M->>R: GET /api/admin/services/{id} (same token)
+    M-->>Cl: would delete serpapi and its 12 keys, call again with confirm
+    Cl->>M: tools/call delete_service {service, confirm: true}
+    M->>R: DELETE /api/admin/services/{id} (same token, X-Requested-With)
+    R->>R: role check, audit
+    R-->>M: {"ok": true}
+    M-->>Cl: result (structuredContent, capped at 512 KB)
+    Cl->>M: tools/call call_service {service, path, query}
+    M->>P: run the proxy as the Control MCP app
+    P-->>M: provider answer (key injected, rotated on 429)
+    M-->>Cl: status, headers, body
 ```
 
 ## Choosing the AI model

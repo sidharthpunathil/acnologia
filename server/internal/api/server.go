@@ -80,6 +80,8 @@ type Server struct {
 	claimLimit *peerLimiter
 	// Refresh keeps providers' offers current (refresh.go).
 	Refresh *refresh.Refresher
+	// ctlAppMu makes the control MCP create its app once (mcp_control.go).
+	ctlAppMu sync.Mutex
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -241,6 +243,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/ai/rules", s.aiGetRules)
 		r.Get("/ai/runs", s.aiListRuns)
 		r.Get("/ai/runs/{id}", s.aiGetRun)
+		// The control MCP's endpoint and tools, for the Connect Claude card.
+		r.Get("/mcp/control", s.mcpControlInfo)
 		// Assistant chat: every user has their own threads. Tools inside run
 		// with the user's own role.
 		r.Get("/chat/threads", s.chatList)
@@ -375,6 +379,9 @@ func (s *Server) Router() http.Handler {
 	r.With(s.requireApp).HandleFunc("/proxy/{service}/*", s.proxy)
 	r.With(s.requireApp).HandleFunc("/proxy/{service}", s.proxy)
 	r.HandleFunc("/mcp", s.mcp)
+	// The control MCP (mcp_control.go): the dashboard's features for an
+	// admin API token. Behind the access gate like /api/admin.
+	r.HandleFunc("/mcp/control", s.mcpControl)
 
 	r.NotFound(s.serveWeb)
 	return r

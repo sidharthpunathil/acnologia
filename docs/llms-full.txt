@@ -341,6 +341,19 @@ Example call:
 
 Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
 
+### Control MCP
+
+`POST /mcp/control` is a separate MCP server for operating Acnologia itself (adding services and keys, making apps and tokens, reading usage, building providers, sharing). It takes an admin API token, never an app token: `Authorization: Bearer acnadm_...`, and acts as that token's owner with the lower of their role and the token scope. Tools the role cannot use are not listed.
+
+```sh
+claude mcp add --transport http acnologia-control http://localhost:8080/mcp/control \
+  --header "Authorization: Bearer acnadm_xxx"
+```
+
+Each tool calls the matching `/api/admin` route as you, so roles, validation and the audit log apply. Services are named by id, slug or name. Destructive tools (deletes, revokes, rotate, disconnect) do nothing at first and say what would happen; call again with `confirm: true` to do it (add `?confirm=off` to the URL when your client asks the user itself). `call_service` `{service, method, path, query, body}` calls a provider through the proxy as an app named `Control MCP` (made on first use, admin role needed), so keys rotate and never reach you; `list_service_examples` gives ready arguments.
+
+Groups: `overview`, `services`, `keys`, `apps`, `providers`, `call`, `ai`, `routing`, `sharing`, `refresh` (on by default), and `admin`, `secrets`, `raw` (off). Pick with `?groups=services,keys` or `all`, drop tools with `exclude=`, and list only reads with `read_only=1`. The same choices work as headers `X-Acnologia-MCP-Groups`, `X-Acnologia-MCP-Exclude`, `X-Acnologia-MCP-Read-Only` and `X-Acnologia-MCP-Confirm`. Results are capped at 512 KB. Resources: `acnologia://overview`, `acnologia://services`, `acnologia://docs/{slug}`, `acnologia://llms-full.txt`.
+
 ## SDKs
 
 There are SDKs for Python, TypeScript, Go, PHP, Ruby, Rust, Java, Kotlin, C#, Swift, Dart and C++. None is on a package registry yet; [the SDK index](/docs/sdks.md) shows how to install each one today and how to run its tests.

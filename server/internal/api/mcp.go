@@ -312,6 +312,42 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 
 // mcpProxy runs the regular proxy handler in-process and captures the result.
 func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, method, path string, query map[string]string, body json.RawMessage) (map[string]any, error) {
+	limit := 200 << 10
+	if kb, ok := ctx.Value(mcpLimitKey).(int); ok && kb > 0 {
+		limit = min(kb, 2048) << 10
+	}
+	rec, err := s.proxyCapture(ctx, orig, service, method, path, query, body, nil, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type"), "key_id": rec.Header().Get("X-Acnologia-Key-Id")}
+	b := rec.Body.Bytes()
+	ct := rec.Header().Get("Content-Type")
+	switch {
+	case strings.Contains(ct, "json"):
+		var v any
+		if json.Unmarshal(b, &v) == nil && len(b) <= limit {
+			out["body"] = v
+		} else {
+			out["body"] = string(truncate(b, limit))
+		}
+	case utf8.Valid(b) && !strings.HasPrefix(ct, "audio/") && !strings.HasPrefix(ct, "image/"):
+		out["body"] = string(truncate(b, limit))
+	default:
+		out["bytes"] = len(b)
+		if len(b) <= limit {
+			out["body_base64"] = base64.StdEncoding.EncodeToString(b)
+		} else {
+			out["note"] = "binary response too large for MCP, use the HTTP proxy directly"
+		}
+	}
+	return out, nil
+}
+
+// proxyCapture runs the proxy handler in process for the app in ctx and
+// keeps at most limit+1 bytes of the response: the HTTP proxy streams, but
+// MCP buffers.
+func (s *Server) proxyCapture(ctx context.Context, orig *http.Request, service, method, path string, query map[string]string, body json.RawMessage, hdr map[string]string, limit int) (*cappedRecorder, error) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	switch method {
 	case "":
@@ -339,6 +375,9 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	if orig != nil {
 		req.RemoteAddr = orig.RemoteAddr
 	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -346,36 +385,9 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	rctx.URLParams.Add("service", service)
 	rctx.URLParams.Add("*", strings.TrimPrefix(path, "/"))
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
-	limit := 200 << 10
-	if kb, ok := ctx.Value(mcpLimitKey).(int); ok && kb > 0 {
-		limit = min(kb, 2048) << 10
-	}
-	// Keep at most limit+1 bytes: the HTTP proxy streams, but MCP buffers.
 	rec := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), max: limit + 1}
 	s.proxy(rec, req)
-
-	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type"), "key_id": rec.Header().Get("X-Acnologia-Key-Id")}
-	b := rec.Body.Bytes()
-	ct := rec.Header().Get("Content-Type")
-	switch {
-	case strings.Contains(ct, "json"):
-		var v any
-		if json.Unmarshal(b, &v) == nil && len(b) <= limit {
-			out["body"] = v
-		} else {
-			out["body"] = string(truncate(b, limit))
-		}
-	case utf8.Valid(b) && !strings.HasPrefix(ct, "audio/") && !strings.HasPrefix(ct, "image/"):
-		out["body"] = string(truncate(b, limit))
-	default:
-		out["bytes"] = len(b)
-		if len(b) <= limit {
-			out["body_base64"] = base64.StdEncoding.EncodeToString(b)
-		} else {
-			out["note"] = "binary response too large for MCP, use the HTTP proxy directly"
-		}
-	}
-	return out, nil
+	return rec, nil
 }
 
 // cappedRecorder records a response but stops accepting body bytes past max,

@@ -49,6 +49,7 @@ Groups and the tools in them (names are the contract):
 | `keys` | `list_keys`, `key_details`, `add_keys`, `update_key`, `delete_key`, `check_key`, `check_all_keys`, `reset_key` |
 | `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp` |
 | `providers` | `list_providers`, `get_provider`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `check_provider_offers` |
+| `call` | `call_service`, `list_service_examples` |
 | `ai` | `ai_status`, `ai_models`, `ai_assist`, `start_provider_build`, `list_ai_runs`, `get_ai_run`, `cancel_ai_run`, `publish_ai_run`, `delete_ai_run` |
 | `routing` | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `test_webhook`, `list_egress`, `create_egress`, `update_egress`, `delete_egress`, `test_egress`, `list_groups`, `create_group`, `update_group`, `delete_group` |
 | `sharing` | `get_identity`, `update_identity`, `list_shares`, `get_share`, `create_share`, `update_share`, `pause_share`, `resume_share`, `revoke_share`, `extend_share`, `share_invite`, `share_claim_link`, `list_peers`, `preview_peer`, `connect_peer`, `sync_peer`, `disconnect_peer`, `list_peer_providers`, `pull_peer_provider` |
@@ -56,6 +57,20 @@ Groups and the tools in them (names are the contract):
 | `admin` | `list_users`, `create_user`, `update_user`, `delete_user`, `list_audit` |
 | `secrets` | `reveal_key` |
 | `raw` | `api_request` `{method, path, query?, body?}` for any `/api/admin/...` path not covered above. Path must start with `/api/admin/`; `/api/admin/tokens` and `PATCH /api/admin/me` are refused (session only anyway). |
+
+The `call` group (on by default) calls the provider APIs themselves.
+`call_service` `{service, method, path, query, body, headers}` runs the
+request through the proxy handler in process as one app per server named
+"Control MCP", made on first use through `POST /api/admin/apps` (mode
+proxy, all services) and found again by its id in the `meta` table
+(`control_mcp_app_id`). Key rotation, retries, the breaker, the cache,
+usage and that app's limits apply, and an admin can limit or turn it off
+on the Apps page. It needs the admin role (it spends quota), kind `write`,
+`openWorldHint: true`. The result is the status, selected headers
+(`Content-Type`, rate limit and `X-Acnologia-*` headers) and the body: JSON
+parsed, text as text, binary as base64 under the cap or a size note.
+`list_service_examples {service}` returns the provider spec's examples as
+ready `call_service` arguments.
 
 Kind drives MCP annotations: `read` tools set `readOnlyHint: true`;
 `destructive` tools set `destructiveHint: true`; others
