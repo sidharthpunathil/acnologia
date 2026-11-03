@@ -160,10 +160,20 @@ func TestHandoverEndToEndRevokePush(t *testing.T) {
 	}
 
 	// A local app on B calls the provider directly: A's proxy sees nothing.
+	// The upstream echoes the key, and B masks it in the body.
 	_, btok := b.app(map[string]any{"name": "b-app"})
+	a.up.mu.Lock()
+	hitsBefore := a.up.hits["ownerkey1-handover"]
+	a.up.mu.Unlock()
 	code, body, _ := peerCall(t, "GET", b.srv.URL+"/proxy/a-serpapi/search.json?q=coffee", btok)
-	if code != 200 || !strings.Contains(body, `"key":"ownerkey1-handover"`) {
+	if code != 200 || !strings.Contains(body, `"key":"[key]"`) || strings.Contains(body, "ownerkey1") {
 		t.Fatalf("direct call from B: %d %s", code, body)
+	}
+	a.up.mu.Lock()
+	hitsAfter := a.up.hits["ownerkey1-handover"]
+	a.up.mu.Unlock()
+	if hitsAfter != hitsBefore+1 {
+		t.Fatalf("upstream got %d calls with the key", hitsAfter-hitsBefore)
 	}
 	if v := a.shareView(sh.Share.ID); v.Handover == nil || len(v.Handover.Keys) != 1 || !v.Handover.Keys[0].Live {
 		t.Fatalf("owner view %+v", v.Handover)

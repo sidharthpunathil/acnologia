@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -429,7 +430,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			func() {
 				defer picked.Release()
 				defer cancel()
-				s.deliver(w, resp, k, attempt, cancel, picked.Secret, cap)
+				s.deliver(w, resp, k, attempt, cancel, picked.Secret, isHandoverService(sv), cap)
 			}()
 			out.served, out.cost = true, cost
 			return out
@@ -439,6 +440,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		cancel()
 		picked.Release()
 		res := prov.Classify(resp.StatusCode, resp.Header, rb)
+		if isHandoverService(sv) {
+			rb = scrubBody(rb, picked.Secret)
+		}
 		if sv.Provider == providers.PeerSlug && sv.PeerLinkID != nil && resp.StatusCode == 403 {
 			// The owner says the share is revoked, paused or expired: mark
 			// the link and disable its services now, not at the next sync.
@@ -475,20 +479,24 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 
 // deliver sends a successful upstream response to the client. When the
 // response may be cached it is buffered (up to maxCachedBody) and stored;
-// larger bodies stream through untouched.
-func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Key, attempt int, cancel context.CancelFunc, secret string, cap capture) {
+// larger bodies stream through untouched. With inBody the secret is also
+// masked in the body (see scrubBody).
+func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Key, attempt int, cancel context.CancelFunc, secret string, inBody bool, cap capture) {
 	if !cap.any() || !s.Cache.Enabled() {
-		relayStream(w, resp, k.ID, attempt, cancel, secret)
+		relayStream(w, resp, k.ID, attempt, cancel, secret, inBody)
 		return
 	}
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxCachedBody+1))
 	if err != nil || len(buf) > maxCachedBody {
 		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
 		setHeader(w.Header(), "Cache", "bypass")
-		relayStream(w, resp, k.ID, attempt, cancel, secret)
+		relayStream(w, resp, k.ID, attempt, cancel, secret, inBody)
 		return
 	}
 	resp.Body.Close()
+	if inBody {
+		buf = scrubBody(buf, secret)
+	}
 	scrubHeaders(resp.Header, secret)
 	entry := &respcache.Entry{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: buf, KeyID: k.ID}
 	if cap.cacheKey != "" && cacheable(resp, buf, k, secret) {
@@ -550,8 +558,9 @@ func relay(w http.ResponseWriter, resp *http.Response, keyID int64, attempts int
 }
 
 // relayStream streams the upstream body to the client. If no bytes arrive for
-// proxyIdleTimeout it calls cancel, which aborts the upstream read.
-func relayStream(w http.ResponseWriter, resp *http.Response, keyID int64, attempts int, cancel context.CancelFunc, secret string) {
+// proxyIdleTimeout it calls cancel, which aborts the upstream read. With
+// inBody the secret is also masked in the body (see scrubBody).
+func relayStream(w http.ResponseWriter, resp *http.Response, keyID int64, attempts int, cancel context.CancelFunc, secret string, inBody bool) {
 	defer resp.Body.Close()
 	scrubHeaders(resp.Header, secret)
 	copyResponseHeaders(w, resp, keyID, attempts)
@@ -559,12 +568,18 @@ func relayStream(w http.ResponseWriter, resp *http.Response, keyID int64, attemp
 	rc := http.NewResponseController(w)
 	idle := time.AfterFunc(proxyIdleTimeout, cancel)
 	defer idle.Stop()
+	var out io.Writer = w
+	if inBody {
+		sc := newEchoScrubber(w, secret)
+		defer sc.Flush()
+		out = sc
+	}
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			idle.Reset(proxyIdleTimeout)
-			if _, werr := w.Write(buf[:n]); werr != nil {
+			if _, werr := out.Write(buf[:n]); werr != nil {
 				return
 			}
 			_ = rc.Flush()
@@ -572,6 +587,95 @@ func relayStream(w http.ResponseWriter, resp *http.Response, keyID int64, attemp
 		if err != nil {
 			return
 		}
+	}
+}
+
+// Keys another server handed over must stay inside the proxy, yet any local
+// app may proxy them, so an upstream that echoes the key in a body would hand
+// it to that app. Their responses have the secret masked in the body too, in
+// each form it is likely to take there. The proxy never asks the upstream
+// for a compressed body (Accept-Encoding is a hop header), so the body is
+// plain text by the time it is scanned.
+
+// echoForms are the forms of a secret masked in a body: as is, query and
+// path escaped, and JSON escaped.
+func echoForms(secret string) [][]byte {
+	if secret == "" {
+		return nil
+	}
+	cands := []string{secret, url.QueryEscape(secret), url.PathEscape(secret)}
+	if b, err := json.Marshal(secret); err == nil && len(b) >= 2 {
+		js := string(b[1 : len(b)-1])
+		cands = append(cands, js, strings.ReplaceAll(js, "/", `\/`))
+	}
+	seen := map[string]bool{}
+	var out [][]byte
+	for _, c := range cands {
+		if c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, []byte(c))
+		}
+	}
+	return out
+}
+
+// bodyMask replaces a secret in a body.
+var bodyMask = []byte("[key]")
+
+// scrubBody masks every form of the secret in a buffered body.
+func scrubBody(body []byte, secret string) []byte {
+	for _, f := range echoForms(secret) {
+		body = bytes.ReplaceAll(body, f, bodyMask)
+	}
+	return body
+}
+
+// echoScrubber masks a secret in a stream. It holds back a tail that could
+// be the start of a form split across two writes.
+type echoScrubber struct {
+	w       io.Writer
+	forms   [][]byte
+	pending []byte
+}
+
+func newEchoScrubber(w io.Writer, secret string) *echoScrubber {
+	return &echoScrubber{w: w, forms: echoForms(secret)}
+}
+
+func (e *echoScrubber) Write(p []byte) (int, error) {
+	e.pending = append(e.pending, p...)
+	out := make([]byte, 0, len(e.pending))
+	i := 0
+scan:
+	for i < len(e.pending) {
+		rest := e.pending[i:]
+		for _, f := range e.forms {
+			if bytes.HasPrefix(rest, f) {
+				out = append(out, bodyMask...)
+				i += len(f)
+				continue scan
+			}
+		}
+		for _, f := range e.forms {
+			if len(rest) < len(f) && bytes.HasPrefix(f, rest) {
+				break scan // may be the start of a form: wait for more
+			}
+		}
+		out = append(out, e.pending[i])
+		i++
+	}
+	e.pending = append(e.pending[:0], e.pending[i:]...)
+	if _, err := e.w.Write(out); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// Flush writes the held back tail once the stream ends.
+func (e *echoScrubber) Flush() {
+	if len(e.pending) > 0 {
+		_, _ = e.w.Write(e.pending)
+		e.pending = nil
 	}
 }
 
