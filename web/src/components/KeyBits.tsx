@@ -192,7 +192,7 @@ export function QuotaMeter({
     <div className={cx("min-w-0", className)}>
       <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-caption-1-regular tabular-nums text-text-primary" title={compact && q.short !== q.text ? q.text : undefined}>
         <span className="wrap-anywhere">{compact ? q.short : q.text}</span>
-        {q.low && <span className="text-text-error-primary">low</span>}
+        {q.low && <span className="text-status-rose-text">low</span>}
       </div>
       {pct !== null && (
         <Meter
@@ -280,7 +280,7 @@ export function ActivityChart({ daily }: { daily: DayActivity[] }) {
                     ) : (
                       <span className="animate-bar-rise flex h-full w-full flex-col-reverse" style={{ animationDelay: `${i * 18}ms` }}>
                         <span className="block w-full bg-chart-1" style={{ height: h(d.requests) }} />
-                        <span className="block w-full bg-chart-8-active" style={{ height: h(d.rate_limited) }} />
+                        <span className="block w-full bg-status-yellow-text" style={{ height: h(d.rate_limited) }} />
                         <span className="block w-full bg-notification-error-foreground" style={{ height: h(d.errors) }} />
                       </span>
                     )}
@@ -301,7 +301,7 @@ export function ActivityChart({ daily }: { daily: DayActivity[] }) {
               <span className="size-2.5 rounded-xs bg-chart-1" aria-hidden="true" /> Requests
             </li>
             <li className="inline-flex items-center gap-1.5">
-              <span className="size-2.5 rounded-xs bg-chart-8-active" aria-hidden="true" /> Rate limited
+              <span className="size-2.5 rounded-xs bg-status-yellow-text" aria-hidden="true" /> Rate limited
             </li>
             <li className="inline-flex items-center gap-1.5">
               <span className="size-2.5 rounded-xs bg-notification-error-foreground" aria-hidden="true" /> Errors

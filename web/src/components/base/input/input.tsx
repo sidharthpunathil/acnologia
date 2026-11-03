@@ -140,6 +140,9 @@ const inputStyles = sortCx({
     "bg-background-tertiary-default text-foreground-icon-tertiary",
     // Acnologia: a hairline at rest so wells read on the warm page (token in acnologia.css).
     "ring-1 ring-inset ring-input-idle-ring",
+    // Acnologia: a read only value (set by the environment, say) sits on the
+    // soft fill, so it reads as fixed but stays full contrast to read and copy.
+    "has-[input:read-only]:bg-background-secondary-default",
     "transition-[background-color,box-shadow,color] duration-[var(--input-transition-ms)] ease",
   ].join(" "),
 

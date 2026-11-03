@@ -102,7 +102,7 @@ function ServiceCard({ s }: { s: Service }) {
         className={cx(
           "shrink-0",
           idle &&
-            "opacity-50 grayscale transition-[filter,opacity] duration-200 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-data-[focus-visible]:opacity-100 group-data-[focus-visible]:grayscale-0",
+            "opacity-70 grayscale transition-[filter,opacity] duration-200 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-data-[focus-visible]:opacity-100 group-data-[focus-visible]:grayscale-0",
         )}
       >
         <ServiceLogo service={s} />

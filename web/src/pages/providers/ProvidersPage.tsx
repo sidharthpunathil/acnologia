@@ -84,7 +84,7 @@ function ProviderCard({ p }: { p: Provider }) {
           className={cx(
             "shrink-0",
             idle &&
-              "opacity-50 grayscale transition-[filter,opacity] duration-200 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 group-focus-visible:grayscale-0",
+              "opacity-70 grayscale transition-[filter,opacity] duration-200 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 group-focus-visible:grayscale-0",
           )}
         >
           <ProviderLogo provider={p} />

@@ -175,7 +175,8 @@ function ThisServer({ identity, isSuper, onSaved }: { identity: ServerIdentity; 
             type="url"
             value={identity.url_source === "env" ? identity.url : url}
             onChange={setUrl}
-            isDisabled={identity.url_source === "env"}
+            // Read only, not disabled: the value is information to read and copy.
+            isReadOnly={identity.url_source === "env"}
             placeholder={identity.url}
             hint={urlHint}
             fieldClassName="font-mono"
@@ -217,7 +218,7 @@ function UsageBars({ share }: { share: Share }) {
         <span
           key={d.day}
           title={`${d.day}: ${plural(d.requests, "request")}`}
-          className={cx("w-1.5 rounded-xs", d.requests ? "bg-chart-2" : "bg-background-tertiary-default")}
+          className={cx("w-1.5 rounded-xs", d.requests ? "bg-chart-2" : "bg-foreground-icon-quaternary")}
           style={{ height: `${Math.max(12, (d.requests / top) * 100)}%` }}
         />
       ))}

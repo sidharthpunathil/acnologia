@@ -306,9 +306,11 @@ function ToolRow({ tool, opts, role }: { tool: ControlTool; opts: ControlOptions
   const reason = on ? null : offReason(tool, opts, role);
   return (
     <li className="flex items-start gap-3 py-2.5">
-      <div className={cx("min-w-0 flex-1", !on && "opacity-60")}>
+      {/* An off tool steps its title down a tone rather than fading the whole
+          row, so the reason it is off stays full contrast in the light theme. */}
+      <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="text-body-2-medium text-text-primary">{tool.title || tool.name}</span>
+          <span className={cx("text-body-2-medium", on ? "text-text-primary" : "text-text-secondary")}>{tool.title || tool.name}</span>
           <code dir="ltr" className="font-mono text-caption-1-regular break-all text-text-tertiary">
             {tool.name}
           </code>

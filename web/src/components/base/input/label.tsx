@@ -61,7 +61,7 @@ export function Label({
       )}
       {tooltip && (
         <RiInformationFill
-          className="size-4 shrink-0 text-foreground-icon-quaternary"
+          className="size-4 shrink-0 text-foreground-icon-tertiary"
           aria-hidden
         />
       )}

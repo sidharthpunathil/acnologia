@@ -44,7 +44,10 @@ function themeVariables(theme: Theme) {
   const well = token("--color-background-tertiary-default");
   const ink = token("--color-text-primary");
   const muted = token("--color-text-secondary");
-  const line = token("--color-border-button-hover");
+  // Node and actor edges carry the diagram's shape. The light hairline sits
+  // near 1.4:1 on the node fill, so light uses the faint icon grey (3.3:1);
+  // dark keeps its hairline, which already reads.
+  const line = token(theme === "dark" ? "--color-border-button-hover" : "--color-foreground-icon-tertiary");
   const brandSoft = token("--color-status-purple-background");
   return {
     darkMode: theme === "dark",

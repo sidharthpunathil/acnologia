@@ -457,7 +457,7 @@ export function GroupsPage() {
                       const missing = servicesLoaded && !known.has(m);
                       return (
                         <li key={m} className="inline-flex items-center gap-1">
-                          {i > 0 && <RiArrowRightSLine className="size-3.5 text-foreground-icon-quaternary" aria-label="then" />}
+                          {i > 0 && <RiArrowRightSLine className="size-3.5 text-foreground-icon-secondary" aria-label="then" />}
                           <span
                             className={cx(
                               "rounded-md px-1.5 py-0.5",

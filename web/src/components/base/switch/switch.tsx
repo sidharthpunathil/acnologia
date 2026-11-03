@@ -102,7 +102,9 @@ export function SwitchTrack({
         s.trackRadius[shape],
         state.isSelected
           ? cx("bg-linear-to-b from-accent-500 to-accent-600", s.onShadow)
-          : "bg-switch-off-track",
+          : // Acnologia: the off track is 1.5:1 on white, so the checkbox
+            // edge (3.5:1 in light) outlines it, like an unchecked box.
+            "bg-switch-off-track inset-ring inset-ring-border-checkbox-default",
         state.isDisabled && "opacity-50",
         state.isFocusVisible && "ring-2 ring-border-focus-ring ring-offset-2",
       )}

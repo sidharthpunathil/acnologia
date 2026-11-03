@@ -26,7 +26,9 @@ export type MeterTone = "accent" | "success" | "warning" | "error";
 const tones = sortCx({
   accent: "text-accent-500",
   success: "text-notification-success-foreground",
-  warning: "text-chart-8-active",
+  // Acnologia: chart-8-active (yellow-500) was 1.9:1 on white; the status
+  // yellow text is yellow-800 in light and yellow-500 in dark.
+  warning: "text-status-yellow-text",
   error: "text-notification-error-foreground",
 });
 

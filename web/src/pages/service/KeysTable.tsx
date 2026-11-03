@@ -228,7 +228,7 @@ function RowMenu({
           {canTouch && (
             <>
               {(perms.reveal || needsReset || !extrasOnly) && <DropdownDivider />}
-              <DropdownItem className={cx(row, "text-text-error-primary")} onSelect={pick(() => setConfirming(true))}>
+              <DropdownItem className={cx(row, "text-text-destructive")} onSelect={pick(() => setConfirming(true))}>
                 <RiDeleteBinLine className="size-4" aria-hidden /> Delete key
               </DropdownItem>
             </>

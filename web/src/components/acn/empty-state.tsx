@@ -26,7 +26,8 @@ export function EmptyState({ icon, art: Art, title, body, action, dashed = true,
     <div
       className={cx(
         "flex flex-col items-center text-center",
-        dashed ? "border border-dashed border-border-button-hover" : "border border-border-button-default bg-background-primary-default",
+        // The faint icon grey: 3:1 on the light canvas (line-strong was 1.2:1), 2.5:1 on the dark one.
+        dashed ? "border border-dashed border-foreground-icon-tertiary" : "border border-border-button-default bg-background-primary-default",
         compact ? "rounded-2xl px-3 py-5" : "rounded-3xl px-6 py-12",
         className,
       )}

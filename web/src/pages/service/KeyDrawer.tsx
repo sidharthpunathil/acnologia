@@ -277,7 +277,7 @@ export function KeyDrawer({ keyId, seed, onClose }: { keyId: number | null; seed
                   {/* For an invalid key the line above already quotes this error. */}
                   {k.last_error && k.validity !== "invalid" && (
                     <Fact label="Last error" wide>
-                      <span className="wrap-anywhere text-text-error-primary">{k.last_error}</span>
+                      <span className="wrap-anywhere text-status-rose-text">{k.last_error}</span>
                     </Fact>
                   )}
                 </dl>

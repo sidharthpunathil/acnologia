@@ -174,7 +174,8 @@ function SettingsForm({ state, onSaved, onDirty }: { state: RefreshState; onSave
               onChange={(v) => set("every_days", Number.isFinite(v) ? v : 1)}
               minValue={1}
               maxValue={365}
-              isDisabled={ro}
+              isReadOnly={ro}
+              hideSteppers={ro}
               className="w-28"
             />
           )}
@@ -239,13 +240,13 @@ function SettingsForm({ state, onSaved, onDirty }: { state: RefreshState; onSave
         label="Providers copied from another server"
         description="Off by default: the server that shared them keeps their offers current, and your copy follows theirs."
       >
-        <Switch isSelected={draft.include_peer} onChange={(v) => set("include_peer", v)} isDisabled={ro} aria-label="Check providers copied from another server" />
+        <Switch isSelected={draft.include_peer} onChange={(v) => set("include_peer", v)} isReadOnly={ro} aria-label="Check providers copied from another server" />
       </SettingRow>
       <SettingRow
         label="Claude model prices"
         description="Also re-read Anthropic's pricing page, so the cost of Acnologia's own AI features stays right. Same apply rule and budget."
       >
-        <Switch isSelected={draft.claude_prices} onChange={(v) => set("claude_prices", v)} isDisabled={ro} aria-label="Re-read Claude model prices" />
+        <Switch isSelected={draft.claude_prices} onChange={(v) => set("claude_prices", v)} isReadOnly={ro} aria-label="Re-read Claude model prices" />
       </SettingRow>
       <SettingRow labelId="rf-apply" label="When something changed" description={APPLY.find((a) => a.id === draft.apply)?.hint}>
         <Select
@@ -272,7 +273,8 @@ function SettingsForm({ state, onSaved, onDirty }: { state: RefreshState; onSave
             maxValue={100}
             step={0.01}
             formatOptions={{ style: "currency", currency: "USD" }}
-            isDisabled={ro}
+            isReadOnly={ro}
+            hideSteppers={ro}
             className="w-32"
           />
           <NumberField
@@ -283,7 +285,8 @@ function SettingsForm({ state, onSaved, onDirty }: { state: RefreshState; onSave
             maxValue={1000}
             step={0.01}
             formatOptions={{ style: "currency", currency: "USD" }}
-            isDisabled={ro}
+            isReadOnly={ro}
+            hideSteppers={ro}
             className="w-32"
           />
         </div>
@@ -296,7 +299,8 @@ function SettingsForm({ state, onSaved, onDirty }: { state: RefreshState; onSave
             onChange={(v) => set("max_providers", Number.isFinite(v) ? v : 1)}
             minValue={1}
             maxValue={100}
-            isDisabled={ro}
+            isReadOnly={ro}
+            hideSteppers={ro}
             className="w-36"
           />
           <NumberField
@@ -305,7 +309,8 @@ function SettingsForm({ state, onSaved, onDirty }: { state: RefreshState; onSave
             onChange={(v) => set("stale_days", Number.isFinite(v) ? v : 0)}
             minValue={0}
             maxValue={365}
-            isDisabled={ro}
+            isReadOnly={ro}
+            hideSteppers={ro}
             className="w-52"
           />
         </div>

@@ -103,7 +103,10 @@ export function MultiSelect<T extends string | number>({
                 className={cx(
                   "inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 py-1 text-caption-1-medium outline-none",
                   "transition-colors duration-150 ease-out focus-visible:ring-2 focus-visible:ring-border-focus-ring",
-                  "disabled:cursor-not-allowed disabled:opacity-60",
+                  // Disabled, the selection is still the information: chosen chips
+                  // stay at full strength and only the others fade.
+                  "disabled:cursor-not-allowed",
+                  !on && "disabled:opacity-60",
                   on
                     ? "border-accent-line bg-accent-subtle text-accent-fg"
                     : "border-border-button-default bg-background-primary-default text-text-primary hover:border-border-button-hover",

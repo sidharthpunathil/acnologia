@@ -99,12 +99,36 @@
 
   /* Text */
   --color-text-primary: #18181a; /* ink */
-  --color-text-secondary: #6b6b66; /* muted */
+  /* muted. #646460 keeps 4.5:1 on the well fill soft chips use (#ecebe5). */
+  --color-text-secondary: #646460;
   /* faint. Darker than BoardUI's tertiary so small print keeps 4.5:1 on the canvas. */
   --color-text-tertiary: #686862;
   --color-foreground-icon-primary: var(--color-text-primary);
   --color-foreground-icon-hover: #000000; /* ink-strong */
   --color-foreground-icon-secondary: var(--color-text-secondary);
+  /* BoardUI's light placeholder, disabled and faint icon greys sit near 2:1
+   * on white and the soft fill; these keep them readable (placeholders and
+   * faint icons 3.5:1, a disabled field's value 4.3:1) and still lighter
+   * than real text, so they read as hints and as off. */
+  --color-text-placeholder: #8a8983;
+  --color-text-disabled: #9a9992;
+  --color-input-disabled-text: #6f6e68;
+  --color-input-disabled-foreground: #6f6e68;
+  --color-foreground-disabled: #9a9992;
+  --color-foreground-icon-tertiary: #8a8983;
+  --color-foreground-icon-quaternary: #aeada6;
+  --color-foreground-icon-disabled: #aeada6;
+  --color-icon-button-disabled-foreground: #aeada6;
+  /* Error text: BoardUI's red-500 is 3.8:1 on white; red-700 is about 6:1. */
+  --color-text-error-primary: var(--color-red-700);
+  /* An unchecked checkbox or radio must show its edge at 3:1 on white. */
+  --color-border-checkbox-default: #8a8983;
+  --color-border-checkbox-hover: #6b6b66;
+  --color-border-checkbox-active: #6b6b66;
+  /* Small print on fills: kbd hints 5.2:1, a disabled primary button's label
+   * readable as off rather than gone. */
+  --color-kbd-foreground: var(--color-neutral-600);
+  --color-button-primary-disabled-foreground: var(--color-neutral-500);
 
   /* Hairlines */
   --color-border-button-default: #e6e5df; /* line */
@@ -178,6 +202,23 @@
   --color-text-primary: #ecebe6;
   --color-text-secondary: #aaa89f;
   --color-text-tertiary: #96948c;
+  /* The light overrides in :root above, set back to BoardUI's dark values:
+   * this file loads after theme.css with the same specificity, so a token
+   * set only in :root would win in dark too. */
+  --color-text-placeholder: var(--color-neutral-400);
+  --color-text-disabled: var(--color-neutral-800);
+  --color-input-disabled-text: color-mix(in srgb, var(--color-neutral-500) 40%, transparent);
+  --color-input-disabled-foreground: var(--color-neutral-600);
+  --color-foreground-disabled: var(--color-neutral-700);
+  --color-foreground-icon-tertiary: var(--color-neutral-600);
+  --color-foreground-icon-quaternary: var(--color-neutral-700);
+  --color-foreground-icon-disabled: var(--color-neutral-800);
+  --color-icon-button-disabled-foreground: var(--color-neutral-500);
+  --color-border-checkbox-default: var(--color-neutral-700);
+  --color-border-checkbox-hover: var(--color-neutral-500);
+  --color-border-checkbox-active: var(--color-neutral-500);
+  --color-kbd-foreground: var(--color-neutral-400);
+  --color-button-primary-disabled-foreground: var(--color-neutral-500);
   --color-foreground-icon-primary: var(--color-text-primary);
   --color-foreground-icon-hover: #ffffff;
   --color-foreground-icon-secondary: var(--color-text-secondary);

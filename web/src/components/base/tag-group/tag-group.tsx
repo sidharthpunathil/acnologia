@@ -108,7 +108,8 @@ export function Tag({ color = "neutral", icon: Icon, className, children, ...pro
           "transition-[background-color,color,box-shadow,filter] duration-150 ease-out",
           size === "small" ? "h-6 px-1.5 text-caption-1-medium" : "h-7 px-2 text-body-medium",
           allowsRemoving && (size === "small" ? "pe-0.5" : "pe-1"),
-          isSelected ? "bg-accent-500 text-white" : CHIP_COLORS[color],
+          // Acnologia: accent fill with on-ink text (6.2:1), white on accent-500 sat at 4.5:1.
+          isSelected ? "bg-accent-fill text-on-ink" : CHIP_COLORS[color],
           allowsSelection ? "cursor-pointer" : "cursor-default",
           allowsSelection && !isSelected && isHovered && (color === "neutral" ? "bg-background-tertiary-hover" : "brightness-95"),
           isFocusVisible && "ring-2 ring-border-focus-ring",
