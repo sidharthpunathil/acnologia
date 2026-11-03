@@ -150,7 +150,7 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 	}
 	rq := `SELECT e.service_id, COUNT(*) FROM events e WHERE e.ts>? AND e.kind IN ('lease','proxy')`
 	if !includeHidden {
-		rq += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+		rq += notHidden
 	}
 	rows2, err := s.r.QueryContext(ctx, rq+` GROUP BY e.service_id`, time.Now().Add(-24*time.Hour).Unix())
 	if err != nil {

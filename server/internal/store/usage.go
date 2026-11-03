@@ -148,7 +148,7 @@ func CheckLimits(l AppLimits, u AppUsage, at time.Time) *LimitHit {
 func (s *Store) SpendSince(ctx context.Context, since time.Time, includeHidden bool) (float64, error) {
 	q := `SELECT COALESCE(SUM(e.cost),0) FROM events e WHERE e.ts>=?`
 	if !includeHidden {
-		q += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+		q += notHidden
 	}
 	var v float64
 	err := s.r.QueryRowContext(ctx, q, since.Unix()).Scan(&v)

@@ -157,8 +157,11 @@ func dayStart(at time.Time, n int) time.Time {
 	return time.Date(y, m, d-(n-1), 0, 0, 0, 0, time.UTC)
 }
 
-// notHidden leaves out events of hidden keys, as SpendSince and CountEvents do.
-const notHidden = ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+// notHidden leaves out events of hidden keys, for every count and sum shown
+// to someone who may not see them. An event with no key, or whose key is
+// gone, stays in. keys.id is never NULL, so NOT IN cannot turn NULL. The
+// hidden ids are read once per query instead of once per event.
+const notHidden = ` AND (e.key_id IS NULL OR e.key_id NOT IN (SELECT id FROM keys WHERE hidden=1))`
 
 // providerSums are the per row expressions over events: upstream requests
 // (proxied calls and leases, as on the overview), spend, and cache hits.

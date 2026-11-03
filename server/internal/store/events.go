@@ -101,7 +101,7 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error)
 func (s *Store) CountEvents(ctx context.Context, since time.Time, includeHidden bool, kinds ...string) (int, error) {
 	q := `SELECT COUNT(*) FROM events e WHERE e.ts>=?`
 	if !includeHidden {
-		q += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+		q += notHidden
 	}
 	args := []any{since.Unix()}
 	if len(kinds) > 0 {

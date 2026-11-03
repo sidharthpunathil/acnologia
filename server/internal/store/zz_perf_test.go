@@ -348,6 +348,8 @@ var planQueries = map[string]string{
 	"CreateKeys.maxEvents": `SELECT MAX(key_id) FROM events`,
 	"CreateKeys.maxLeases": `SELECT MAX(key_id) FROM leases`,
 	"trigger.hiddenDelete": `DELETE FROM events WHERE key_id=1`,
+	"SpendSince":           `SELECT COALESCE(SUM(e.cost),0) FROM events e WHERE e.ts>=0` + notHidden,
+	"UsageReport.byDay":    `SELECT strftime('%Y-%m-%d', e.ts, 'unixepoch'), ` + providerSums + ` FROM events e WHERE e.ts>=0` + notHidden + ` GROUP BY 1`,
 }
 
 func sortedKeys(m map[string]string) []string {
