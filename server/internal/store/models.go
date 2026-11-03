@@ -172,6 +172,10 @@ type Key struct {
 	// Handovers lists the other servers this key was handed over to, on the
 	// owner. Filled by the key list handlers.
 	Handovers []KeyHandover `json:"handed_over,omitempty"`
+	// RevealedTo lists the people this key was shown to by a reveal share,
+	// on the owner. Filled by the key list handlers. Revoke cannot take a
+	// revealed key back.
+	RevealedTo []KeyReveal `json:"revealed_to,omitempty"`
 
 	SecretEnc []byte `json:"-"`
 }
