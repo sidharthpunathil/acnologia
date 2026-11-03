@@ -1,93 +1,98 @@
 package main
 
 // `acnologia mcp` bridges a stdio MCP client (for example Claude Desktop) to an
-// Acnologia server's streamable HTTP MCP endpoint. Each JSON-RPC message read
-// from stdin is POSTed to /mcp with the app token; responses go to stdout.
+// Acnologia server's streamable HTTP MCP endpoint. With an app token it talks
+// to /mcp; with --control (or an admin token) it talks to /mcp/control, the
+// MCP that runs the server itself.
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/config"
-	"github.com/sidharthpunathil/acnologia/server/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/mcpbridge"
 )
 
+const mcpUsage = `usage: acnologia mcp [--url <base>] [--token acn_...]
+       acnologia mcp --control [--url <base>] [--token acnadm_...]
+                     [--groups g1,g2] [--exclude tool1,tool2] [--read-only] [--confirm on|off]
+
+Bridges a stdio MCP client to Acnologia. An app token (acn_...) talks to /mcp;
+--control, or an admin token (acnadm_...), talks to /mcp/control and runs the
+whole server as the token's owner. ACNOLOGIA_URL and ACNOLOGIA_TOKEN set the
+defaults.
+
+Flags:
+`
+
 func runMCPBridge(args []string) int {
+	return mcpMain(args, os.Stdin, os.Stdout, os.Stderr)
+}
+
+func mcpMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		fmt.Fprint(stderr, mcpUsage)
+		fs.PrintDefaults()
+	}
 	url := fs.String("url", envOr("ACNOLOGIA_URL", "http://localhost:8080"), "Acnologia base URL (or ACNOLOGIA_URL)")
-	token := fs.String("token", config.Getenv("ACNOLOGIA_TOKEN"), "app token acn_... (or ACNOLOGIA_TOKEN)")
+	token := fs.String("token", config.Getenv("ACNOLOGIA_TOKEN"), "app token acn_..., or admin token acnadm_... with --control (or ACNOLOGIA_TOKEN)")
+	control := fs.Bool("control", false, "bridge to /mcp/control (implied by an acnadm_ token)")
+	var f mcpbridge.Filters
+	f.Register(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if !store.IsAppToken(*token) {
-		fmt.Fprintln(os.Stderr, "acnologia mcp: set an app token with --token acn_... or ACNOLOGIA_TOKEN")
+	o, err := mcpOptions(*url, *token, *control, f)
+	if err != nil {
+		fmt.Fprintln(stderr, "acnologia mcp:", err)
 		return 2
 	}
-	endpoint := strings.TrimRight(*url, "/") + "/mcp"
-	client := &http.Client{Timeout: 10 * time.Minute}
-	var outMu sync.Mutex
-	write := func(b []byte) {
-		outMu.Lock()
-		defer outMu.Unlock()
-		os.Stdout.Write(bytes.TrimSpace(b))
-		os.Stdout.Write([]byte("\n"))
+	if err := mcpbridge.Run(o, stdin, stdout, stderr); err != nil {
+		fmt.Fprintln(stderr, "acnologia mcp:", err)
+		return 1
 	}
-	fail := func(id json.RawMessage, msg string) {
-		if len(id) == 0 {
-			return
-		}
-		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32603, "message": msg}})
-		write(b)
-	}
-	var wg sync.WaitGroup
-	sc := bufio.NewScanner(os.Stdin)
-	sc.Buffer(make([]byte, 1<<20), 8<<20)
-	for sc.Scan() {
-		line := bytes.TrimSpace(sc.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		msg := append([]byte(nil), line...)
-		var head struct {
-			ID json.RawMessage `json:"id"`
-		}
-		_ = json.Unmarshal(msg, &head)
-		wg.Add(1)
-		// Requests run concurrently so a slow tool call does not block pings.
-		go func() {
-			defer wg.Done()
-			req, _ := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(msg))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Accept", "application/json")
-			req.Header.Set("Authorization", "Bearer "+*token)
-			resp, err := client.Do(req)
-			if err != nil {
-				fail(head.ID, "cannot reach Acnologia at "+endpoint+": "+err.Error())
-				return
-			}
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-			switch {
-			case resp.StatusCode == http.StatusAccepted || len(bytes.TrimSpace(body)) == 0:
-				// notification acknowledged, nothing to send back
-			case resp.StatusCode == http.StatusOK:
-				write(body)
-			default:
-				fail(head.ID, fmt.Sprintf("Acnologia returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
-			}
-		}()
-	}
-	wg.Wait()
 	return 0
+}
+
+// mcpOptions picks the endpoint from the token and flags.
+func mcpOptions(base, token string, control bool, f mcpbridge.Filters) (mcpbridge.Options, error) {
+	base = strings.TrimRight(base, "/")
+	if mcpbridge.IsAdminToken(token) {
+		control = true
+	}
+	if !control {
+		if !mcpbridge.IsAppToken(token) {
+			return mcpbridge.Options{}, fmt.Errorf("set an app token with --token acn_... or ACNOLOGIA_TOKEN")
+		}
+		if f.Set() {
+			return mcpbridge.Options{}, fmt.Errorf("--groups, --exclude, --read-only and --confirm apply to the control MCP; add --control and use an admin token (acnadm_...)")
+		}
+		return mcpbridge.Options{
+			Endpoint:     base + "/mcp",
+			Token:        token,
+			Unauthorized: "pass a valid app token with --token acn_... or ACNOLOGIA_TOKEN",
+		}, nil
+	}
+	if mcpbridge.IsAppToken(token) {
+		return mcpbridge.Options{}, fmt.Errorf("--control needs an admin token (acnadm_...), not an app token; app tokens use /mcp (drop --control)")
+	}
+	if !mcpbridge.IsAdminToken(token) {
+		return mcpbridge.Options{}, fmt.Errorf("set an admin token with --token acnadm_... or ACNOLOGIA_TOKEN (create one under Account, API tokens, or run acn login)")
+	}
+	if err := f.Normalize(); err != nil {
+		return mcpbridge.Options{}, err
+	}
+	return mcpbridge.Options{
+		Endpoint:     base + "/mcp/control",
+		Token:        token,
+		Header:       f.Header(),
+		Unauthorized: "pass a valid admin token with --token acnadm_... or ACNOLOGIA_TOKEN (it may have expired or been revoked)",
+	}, nil
 }
 
 func envOr(k, d string) string {
