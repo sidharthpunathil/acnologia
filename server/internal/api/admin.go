@@ -334,6 +334,8 @@ func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	// SQLite may hand the id to the next service: its cached answers go now.
+	s.Cache.PurgePrefix(servicePrefix(sv.ID))
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.delete", sv.Slug, "")
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -991,6 +993,8 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	// The id may be reused, so the app's idempotent replays go with it.
+	s.Cache.PurgePrefix(idempotencyPrefix(id))
 	s.Store.AddAudit(r.Context(), userFrom(r), "app.delete", a.Name, "")
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

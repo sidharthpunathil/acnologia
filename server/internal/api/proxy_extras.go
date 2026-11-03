@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -114,8 +117,12 @@ func idempotencyKey(r *http.Request, appID int64, slug, path string) string {
 	if k == "" || len(k) > 200 {
 		return ""
 	}
-	return fmt.Sprintf("idem|%d|%s|%s|%s?%s|%s", appID, slug, r.Method, path, cacheQuery(r), k)
+	return fmt.Sprintf("%s%s|%s|%s?%s|%s", idempotencyPrefix(appID), slug, r.Method, path, cacheQuery(r), k)
 }
+
+// idempotencyPrefix starts every idempotency entry of one app. The closing
+// bar keeps app 1's prefix from matching app 12.
+func idempotencyPrefix(appID int64) string { return "idem|" + strconv.FormatInt(appID, 10) + "|" }
 
 // noCache reports whether the client asked to skip the response cache.
 func noCache(r *http.Request) bool {
@@ -129,9 +136,66 @@ func cacheQuery(r *http.Request) string {
 	return q.Encode() // sorted by key, so parameter order does not matter
 }
 
-// responseCacheKey is per service so changing a service can purge its entries.
-func responseCacheKey(serviceID int64, r *http.Request, path string) string {
-	return fmt.Sprintf("%s%s|%s?%s|%s", servicePrefix(serviceID), r.Method, path, cacheQuery(r), r.Header.Get("Accept"))
+// responseCacheKey is per service so changing a service can purge its
+// entries; the slug is in it too, so a reused service id cannot match an
+// entry written for another service. A share (with a server or a person)
+// gets entries of its own: its key scope may pick other keys, and what one
+// side stored is never served to the other. The request variant covers the
+// headers and body that reach the upstream, so a caller cannot store an
+// answer shaped by them for callers that did not send them.
+func responseCacheKey(sv *store.Service, a *store.App, r *http.Request, path string, body []byte) string {
+	who := "all"
+	if a.ShareID != nil {
+		who = "app" + strconv.FormatInt(a.ID, 10)
+	}
+	return fmt.Sprintf("%s%s|%s|%s|%s?%s|%s|%s", servicePrefix(sv.ID), sv.Slug, who, r.Method, path, cacheQuery(r), r.Header.Get("Accept"), requestVariant(r, sv, body))
+}
+
+// variantIgnored are request headers that do not reach the upstream or do
+// not change its answer, so they do not split the cache.
+var variantIgnored = map[string]bool{
+	"Accept": true, "Cache-Control": true, "Pragma": true, "Idempotency-Key": true, "User-Agent": true,
+	"X-Requested-With": true, "X-Request-Id": true, "X-Correlation-Id": true, "Traceparent": true, "Tracestate": true, "Baggage": true,
+}
+
+// requestVariant hashes the forwarded request headers and body, or is empty
+// when there are none that matter.
+func requestVariant(r *http.Request, sv *store.Service, body []byte) string {
+	skip := map[string]bool{}
+	for _, h := range hopHeaders {
+		skip[http.CanonicalHeaderKey(h)] = true
+	}
+	if sv.AuthType == "header" || sv.AuthType == "bearer" {
+		name := sv.AuthName
+		if name == "" {
+			name = "Authorization"
+		}
+		skip[http.CanonicalHeaderKey(name)] = true // replaced by the key
+	}
+	if isBearerAppToken(r.Header.Get("Authorization")) {
+		skip["Authorization"] = true
+	}
+	if len(body) == 0 {
+		skip["Content-Type"] = true
+	}
+	var names []string
+	for k := range r.Header {
+		ck := http.CanonicalHeaderKey(k)
+		if !skip[ck] && !variantIgnored[ck] {
+			names = append(names, ck)
+		}
+	}
+	if len(names) == 0 && len(body) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, k := range names {
+		fmt.Fprintf(h, "%s\x00%q\x00", k, r.Header.Values(k))
+	}
+	fmt.Fprintf(h, "\x01%d\x01", len(body))
+	h.Write(body)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func servicePrefix(serviceID int64) string { return "svc|" + strconv.FormatInt(serviceID, 10) + "|" }
@@ -163,7 +227,8 @@ func breakerSettings(prov *providers.Spec) breaker.Settings {
 // apps. Responses made with hidden or restricted keys, responses that echo
 // the key, and responses the upstream marks private are never shared.
 func cacheable(resp *http.Response, body []byte, k *store.Key, secret string) bool {
-	if resp.StatusCode < 200 || resp.StatusCode > 299 || k.Hidden || k.Restricted {
+	// A partial answer (206) depends on the caller's Range; never shared.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 || resp.StatusCode == http.StatusPartialContent || k.Hidden || k.Restricted {
 		return false
 	}
 	cc := strings.ToLower(resp.Header.Get("Cache-Control"))

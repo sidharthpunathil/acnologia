@@ -234,7 +234,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		prov := providers.Get(sv.Provider)
 		cacheKey, ttl := "", cacheTTL(sv, prov)
 		if ttl > 0 && r.Method == http.MethodGet && !noCache(r) {
-			cacheKey = responseCacheKey(sv.ID, r, path)
+			cacheKey = responseCacheKey(sv, a, r, path, body)
 			if e, ok := s.Cache.Get(cacheKey); ok {
 				setHeader(w.Header(), "Service", sv.Slug)
 				writeCached(w, e, "hit", hidesKey(a))
