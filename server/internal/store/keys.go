@@ -430,7 +430,10 @@ func (s *Store) ApplyEffect(ctx context.Context, id int64, e KeyEffect) error {
 	args := []any{}
 	add := func(q string, a ...any) { sets = append(sets, q); args = append(args, a...) }
 	if e.Status != nil {
-		add(`status=?`, *e.Status)
+		// Disabled and banned are operator states: a request or check that
+		// started before the change must not overwrite them, or recovery
+		// would later put the key back into rotation.
+		add(`status=CASE WHEN status IN ('disabled','banned') THEN status ELSE ? END`, *e.Status)
 	}
 	if e.ClearCooldown {
 		add(`cooldown_until=NULL`)
