@@ -13,6 +13,10 @@ Share your API keys without giving them away.
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-6b46c1">
 </p>
 
+<p align="center">
+  <a href="https://github.com/sidharthpunathil/acnologia/raw/main/video/acnologia-web.mp4"><img src="docs/brand/video-tour.jpg" alt="Watch the 48 second tour of Acnologia" width="720"></a>
+</p>
+
 API keys get passed around in `.env` files, chat messages and CI settings.
 Once a key is out, you cannot take it back, you cannot see who is using it,
 and the only way to stop them is to rotate it for everyone.

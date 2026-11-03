@@ -9,7 +9,7 @@ description = "Client for Acnologia, a self-hosted API key pool with automatic r
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-keywords = ["api-keys", "rate-limit", "key-rotation", "serpapi", "elevenlabs", "acnologia"]
+keywords = ["api-keys", "rate-limit", "key-rotation", "acnologia"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Typing :: Typed",

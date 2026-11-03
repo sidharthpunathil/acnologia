@@ -1,11 +1,21 @@
 # acnologia-go
 
-Go client for [Acnologia](../../docs/llms.txt), a self-hosted API key pool. Standard library only.
+Go client for [Acnologia](../../README.md), the self-hosted server that holds your API keys. Your code calls with its own `acn_` app token, and Acnologia attaches a real key, rotates to the next one on rate limits and quota errors, and enforces the limits you set. Standard library only.
 
-Two ways to use your pooled keys:
+```go
+import acnologia "github.com/sidharthpunathil/acnologia/sdk/go"
 
-- **Proxy mode**: send requests to Acnologia instead of the provider. Acnologia injects a key, retries with the next key on rate limits, and never exposes the secret.
-- **Lease mode**: lease a key, call the provider yourself, report the outcome. `WithKey` runs that loop and rotates keys for you.
+c := acnologia.New("http://localhost:8080", os.Getenv("ACNOLOGIA_TOKEN")) // app token, acn_...
+
+resp, err := c.Proxy("weather").Get(ctx, "/v1/forecast", url.Values{"city": {"Lisbon"}})
+if err != nil {
+	return err
+}
+defer resp.Body.Close()
+fmt.Println(resp.Status, resp.Header.Get("X-Acnologia-Key-Id"))
+```
+
+That request goes to `/proxy/weather/v1/forecast?city=Lisbon`. Acnologia adds the key and sends it on, and the key never reaches your process.
 
 ## Install
 
@@ -13,64 +23,82 @@ Two ways to use your pooled keys:
 go get github.com/sidharthpunathil/acnologia/sdk/go
 ```
 
-Requires Go 1.22+.
+Requires Go 1.22 or later. The module is fetched straight from the repository; it is not on any other registry.
 
-```go
-import acnologia "github.com/sidharthpunathil/acnologia/sdk/go"
+## Authenticate
 
-c := acnologia.New("http://localhost:8080", os.Getenv("ACNOLOGIA_TOKEN")) // app token, acn_...
-```
+Create an app in the dashboard and copy its token (`acn_...`, shown once). `New(baseURL, token, opts...)` takes both directly. The Go client does not read `ACNOLOGIA_URL` or `ACNOLOGIA_TOKEN` itself, so pass them in with `os.Getenv` as above.
 
-Options: `acnologia.WithHTTPClient(*http.Client)`, `acnologia.WithUserAgent(string)`.
+The app must be allowed the mode you use (`proxy`, `lease` or `both`). A lease from a proxy only app, or on a service another Acnologia server shares with yours, fails with an `*acnologia.APIError` (403, `Code: "lease_not_allowed"`). Call those services in proxy mode.
+
+## Choose a mode
+
+| Mode | You call | The secret reaches your process | Rotation |
+|---|---|---|---|
+| Proxy | Acnologia at `/proxy/{service}/...` | never | automatic, on the server |
+| Lease | the provider directly | yes | you report the outcome; `WithKey` does it for you |
+
+Use proxy mode unless the provider's own SDK needs the raw key.
 
 ## Proxy mode
 
-`c.Proxy(service)` returns a helper whose requests go to `/proxy/{service}/{path}`.
-Upstream responses come back unchanged (non-2xx is not an error). Each response
-carries `X-Acnologia-Key-Id` and `X-Acnologia-Attempts`.
-
-### SerpAPI search
+`c.Proxy(service)` returns a `*acnologia.Proxy` whose requests go to `/proxy/{service}/{path}`.
 
 ```go
-resp, err := c.Proxy("serpapi").Get(ctx, "/search.json", url.Values{
-	"engine": {"google"},
-	"q":      {"coffee"},
-})
-if err != nil {
-	return err
-}
-defer resp.Body.Close()
-var results map[string]any
-err = json.NewDecoder(resp.Body).Decode(&results)
+p := c.Proxy("weather")
+
+resp, err := p.Get(ctx, "/v1/forecast", url.Values{"city": {"Lisbon"}})
+resp, err = p.PostJSON(ctx, "/v1/alerts", map[string]string{"city": "Lisbon"})
+resp, err = p.Post(ctx, "/v1/upload", "text/csv", body)
+resp, err = p.Request(ctx, http.MethodDelete, "/v1/alerts/42", nil)
 ```
 
-### ElevenLabs text to speech
+`Do(req)` sends a request you built yourself. Its URL may be relative, and only the path and query are used:
 
 ```go
-resp, err := c.Proxy("elevenlabs").PostJSON(ctx, "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
-	map[string]string{"text": "Hello from Acnologia", "model_id": "eleven_multilingual_v2"})
-if err != nil {
-	return err
-}
-defer resp.Body.Close()
-f, _ := os.Create("hello.mp3")
-defer f.Close()
-io.Copy(f, resp.Body)
+req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/forecast?city=Lisbon", nil)
+resp, err := c.Proxy("weather").Do(req)
 ```
 
-Other helpers: `Post(ctx, path, contentType, body)`, `Request(ctx, method, path, body)`,
-and `Do(req)`, which accepts a request with a relative URL such as `/search.json?q=x`:
+`p.URL(path, query)` returns the full proxy URL without sending anything.
+
+What to expect from a proxied response:
+
+- It comes back unchanged. A non-2xx status from the provider is a normal response, not an error.
+- It carries `X-Acnologia-Key-Id` (which key served it) and `X-Acnologia-Attempts`.
+- Redirects are never followed, so your app token is not replayed to another host.
+- The client's default timeout does not apply, because bodies may stream. Bound a proxy call with `ctx`.
+
+## Lease mode with WithKey
+
+`WithKey` leases a key, calls your function, reports the outcome and rotates to the next key when you return a rotation error. Use `l.URL` to build the provider URL and `l.Apply` to put the secret where the provider expects it.
 
 ```go
-req, _ := http.NewRequestWithContext(ctx, "GET", "/v1/voices", nil)
-resp, err := c.Proxy("elevenlabs").Do(req)
+var forecast map[string]any
+err := c.WithKey(ctx, "weather", func(l *acnologia.Lease) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		l.URL("/v1/forecast", url.Values{"city": {"Lisbon"}}), nil)
+	l.Apply(req) // query parameter, header or bearer, per the service
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == 429:
+		return &acnologia.ErrRateLimited{StatusCode: 429, RetryAfter: time.Minute}
+	case resp.StatusCode == 402:
+		return &acnologia.ErrQuotaExhausted{StatusCode: 402}
+	case resp.StatusCode == 401:
+		return &acnologia.ErrInvalidKey{StatusCode: 401}
+	case resp.StatusCode >= 400:
+		return fmt.Errorf("weather: http %d", resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(&forecast)
+}, acnologia.WithMaxAttempts(3))
 ```
 
-## Lease mode
-
-### WithKey (recommended)
-
-Return one of the typed errors from your callback to rotate to the next key:
+Which status means what depends on the provider. Map its responses to these returns:
 
 | Return | Reported outcome | Rotates |
 |---|---|---|
@@ -78,168 +106,108 @@ Return one of the typed errors from your callback to rotate to the next key:
 | `*acnologia.ErrRateLimited{RetryAfter}` | `rate_limited` | yes |
 | `*acnologia.ErrQuotaExhausted{}` | `quota_exhausted` | yes |
 | `*acnologia.ErrInvalidKey{}` | `invalid` | yes |
-| any other error | `error` | no, the error is returned as is |
+| any other error | `error` | no; the error is returned as is |
 
-Wrapped errors (`fmt.Errorf("...: %w", err)`) are recognized. After
-`WithMaxAttempts(n)` (default 5) keys, the last rotation error is returned; the
-final attempt is reported without asking for a next key.
+Wrapped errors (`fmt.Errorf("...: %w", err)`) are recognized, and each rotation error has an optional `Err` field returned by `Unwrap` for the underlying cause. After `WithMaxAttempts(n)` keys (default 5), `WithKey` returns the last rotation error; the final attempt is reported without asking for a next key. If the pool runs out first, it returns `*acnologia.ErrNoKeyAvailable`.
 
-Options: `WithMaxAttempts(n)`, `WithWait(d)` (see [Concurrency limits](#concurrency-limits))
-and `WithLeaseOptions(acnologia.LeaseOptions{...})`.
+`WithKey` reports every lease it takes: on success, on any error, when your callback panics (the panic is re-raised after the report) or calls `runtime.Goexit`, and when `ctx` is cancelled while it runs (the report goes out on a detached context). Messages sent with a report have the secret scrubbed out and are capped at 500 bytes.
 
-#### SerpAPI search
+Options:
 
-```go
-var results map[string]any
-err := c.WithKey(ctx, "serpapi", func(l *acnologia.Lease) error {
-	req, _ := http.NewRequestWithContext(ctx, "GET",
-		l.URL("/search.json", url.Values{"engine": {"google"}, "q": {"coffee"}}), nil)
-	l.Apply(req) // adds ?api_key=<secret>
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	switch {
-	case resp.StatusCode == 429 && strings.Contains(string(body), "run out of searches"):
-		return &acnologia.ErrQuotaExhausted{StatusCode: 429}
-	case resp.StatusCode == 429:
-		return &acnologia.ErrRateLimited{StatusCode: 429, RetryAfter: time.Hour}
-	case resp.StatusCode == 401:
-		return &acnologia.ErrInvalidKey{StatusCode: 401}
-	case resp.StatusCode >= 400:
-		return fmt.Errorf("serpapi: http %d", resp.StatusCode)
-	}
-	return json.Unmarshal(body, &results)
-}, acnologia.WithMaxAttempts(3))
-```
+- `WithMaxAttempts(n)`: how many keys to try. Default 5.
+- `WithWait(d)`: how long the server may wait for a free slot. See [Concurrency limits](#concurrency-limits).
+- `WithLeaseOptions(acnologia.LeaseOptions{...})`: options for the first lease. `TTL`, `Wait` and `Exclusive` also apply to every later lease `WithKey` takes.
 
-#### ElevenLabs text to speech
+## Lease and report by hand
 
 ```go
-var audio []byte
-err := c.WithKey(ctx, "elevenlabs", func(l *acnologia.Lease) error {
-	payload := strings.NewReader(`{"text":"Hello from Acnologia","model_id":"eleven_multilingual_v2"}`)
-	req, _ := http.NewRequestWithContext(ctx, "POST",
-		l.URL("/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM", nil), payload)
-	req.Header.Set("Content-Type", "application/json")
-	l.Apply(req) // sets xi-api-key: <secret>
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	switch {
-	case resp.StatusCode == 429 && strings.Contains(string(body), "system_busy"):
-		return fmt.Errorf("elevenlabs busy") // provider side, key not penalized
-	case resp.StatusCode == 429:
-		return &acnologia.ErrRateLimited{StatusCode: 429, RetryAfter: 5 * time.Second}
-	case resp.StatusCode == 401 && strings.Contains(string(body), "quota_exceeded"):
-		return &acnologia.ErrQuotaExhausted{StatusCode: 401}
-	case resp.StatusCode == 401:
-		return &acnologia.ErrInvalidKey{StatusCode: 401}
-	case resp.StatusCode >= 400:
-		return fmt.Errorf("elevenlabs: http %d", resp.StatusCode)
-	}
-	audio = body
-	return nil
-})
-```
-
-### Lease and Report by hand
-
-```go
-lease, err := c.Lease(ctx, "serpapi", &acnologia.LeaseOptions{TTL: 5 * time.Minute, Wait: 10 * time.Second})
+lease, err := c.Lease(ctx, "weather", &acnologia.LeaseOptions{TTL: 5 * time.Minute, Wait: 10 * time.Second})
 if err != nil {
 	return err
 }
 // Report on every path: an unreported lease holds a concurrency slot until its TTL.
-req, _ := http.NewRequestWithContext(ctx, "GET",
-	lease.URL("/search.json", url.Values{"q": {"coffee"}}), nil)
+req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+	lease.URL("/v1/forecast", url.Values{"city": {"Lisbon"}}), nil)
 lease.Apply(req)
 resp, err := http.DefaultClient.Do(req)
 // ...
 next, err := lease.Report(ctx, acnologia.Report{
 	Outcome:    acnologia.OutcomeRateLimited,
 	StatusCode: 429,
-	RetryAfter: time.Hour,
+	RetryAfter: time.Minute,
 	Rotate:     true, // ask for the next key in the same call
 })
 if next != nil {
-	// retry with next
+	// retry with next, and report it too
 }
 ```
 
-`Lease` fields: `LeaseID`, `KeyID`, `Service`, `Secret`, `Auth{Type, Name, Prefix}`, `BaseURL`, `ExpiresAt`.
-`Apply(req)` places the secret according to `Auth.Type`: `query` sets the query
-parameter `Auth.Name`, `header` sets header `Auth.Name`, `bearer` sets
-`Auth.Name` (default `Authorization`) to `Bearer <secret>`. When `Auth.Prefix`
-is non empty it goes in front of the secret for every type, and for `bearer` it
-replaces `Bearer ` (for example `Prefix: "Token "` gives `Authorization: Token <secret>`).
+`LeaseOptions`:
 
-Outcomes: `OutcomeOK`, `OutcomeRateLimited`, `OutcomeQuotaExhausted`, `OutcomeInvalid`, `OutcomeError`.
+| Field | Meaning |
+|---|---|
+| `ExcludeKeyIDs []int64` | keys the server must not return |
+| `TTL time.Duration` | lease lifetime. Zero uses the server default: 120 seconds on services with a concurrency limit, 300 otherwise |
+| `Wait time.Duration` | how long the server may wait for a free slot, up to `acnologia.MaxWait` (60s). Sent as whole seconds, rounded up |
+| `Exclusive bool` | reserve the key for this lease only |
+
+`Report` has `Outcome`, `StatusCode`, `RetryAfter`, `Message` and `Rotate`. An empty `Outcome` is sent as `ok`. `lease.Report` returns the next `*Lease` when `Rotate` is true and another key is free, otherwise `nil`.
+
+Outcomes: `OutcomeOK`, `OutcomeRateLimited`, `OutcomeQuotaExhausted`, `OutcomeInvalid`, `OutcomeError`, plus `OutcomeBusy` (the account is at its concurrency cap, so the key steps aside briefly) and `OutcomeBanned` (the provider suspended the account, so the key leaves rotation).
+
+### Where the secret goes
+
+`Lease` fields: `LeaseID`, `KeyID`, `Service`, `Secret`, `Auth{Type, Name, Prefix}`, `BaseURL`, `ExpiresAt`, `Exclusive`.
+
+`lease.URL(path, query)` joins `BaseURL` with the path and query. It does not add the secret. `lease.Apply(req)` does, according to `Auth.Type`:
+
+| `Auth.Type` | Effect |
+|---|---|
+| `query` | sets query parameter `Auth.Name` |
+| `header` | sets header `Auth.Name` (default `Authorization`) |
+| `bearer` | sets header `Auth.Name` (default `Authorization`) to `Bearer <secret>` |
+
+A non-empty `Auth.Prefix` goes in front of the secret for every type. For `bearer` it replaces `Bearer `, so `Prefix: "Token "` gives `Authorization: Token <secret>`.
 
 ## Concurrency limits
 
-Some providers cap how many requests one key may run at once (ElevenLabs
-allows 2 per key by default). Acnologia enforces this per key, so a lease is
-exclusive: on a service with a limit, each lease holds one of the key's slots
-until you report it or its `TTL` runs out (default 120 seconds on limited
-services, 300 otherwise).
+Some providers cap how many requests one key may run at once, and Acnologia enforces that cap per key. On a service with a limit, each lease holds one of the key's slots until you report it or its TTL runs out.
 
-- **Always report.** `WithKey` reports every lease: on success, on any error,
-  when your callback panics (the panic is re-raised after the report), and
-  when `ctx` is cancelled while it runs (the report goes out on a detached
-  context). With a manual `Lease`, report on every return path.
-- **Wait instead of failing.** Set `LeaseOptions.Wait` (or `WithWait(d)` for
-  `WithKey`), up to `acnologia.MaxWait` (60s), and the server waits that long for
-  a slot when every usable key is busy. If your `http.Client` has a `Timeout`,
-  keep it longer than the wait.
+- **Always report.** `WithKey` does. With a manual `Lease`, report on every return path.
+- **Wait instead of failing.** Set `LeaseOptions.Wait`, or `WithWait(d)` for `WithKey`, and the server waits up to that long for a slot when every usable key is busy. If you pass your own `http.Client` with a `Timeout`, keep it longer than the wait.
 
 ```go
-err := c.WithKey(ctx, "elevenlabs", speak, acnologia.WithWait(20*time.Second))
+err := c.WithKey(ctx, "weather", fetchForecast, acnologia.WithWait(20*time.Second))
 
 if errors.Is(err, acnologia.AllKeysBusy) {
 	// every usable key is at its limit; retry soon
 }
 ```
 
-A busy pool returns `*acnologia.ErrNoKeyAvailable` with `Busy: true` and
-`Code: "all_keys_busy"` (HTTP 503, `RetryAfter` usually 1s). It still matches
-`acnologia.NoKeyAvailable`, so existing checks keep working; it clears as soon as
-another caller reports.
+A busy pool returns `*acnologia.ErrNoKeyAvailable` with `Busy: true` and `Code: "all_keys_busy"` (HTTP 503, `RetryAfter` usually 1s). It still matches `acnologia.NoKeyAvailable`, and it clears as soon as another caller reports.
 
-Proxy mode needs none of this: Acnologia queues proxied requests for up to the
-service's `queue_timeout_sec` (30 seconds for ElevenLabs) and never sends more
-than the limit in parallel on one key.
+Proxy mode handles this on the server: Acnologia queues proxied requests for up to the service's `queue_timeout_sec` and never sends more than the limit in parallel on one key.
 
 ## Long jobs: renew and exclusive leases
 
-`lease.Renew(ctx, ttl)` extends an open lease so a long job keeps its key, and
-updates `lease.ExpiresAt` (`c.Renew(ctx, lease, ttl)` does the same). A zero
-`ttl` uses the server default (120 seconds); the server caps it at 24 hours.
-When the lease is no longer open it returns an `*acnologia.APIError` with
-`Code: "lease_not_found"` (HTTP 404).
+`lease.Renew(ctx, ttl)` extends an open lease so a long job keeps its key. It returns the new expiry and updates `lease.ExpiresAt`; `c.Renew(ctx, lease, ttl)` does the same. A zero `ttl` uses the server default (120 seconds), and the server caps it at 24 hours. If the lease is no longer open you get an `*acnologia.APIError` with `Code: "lease_not_found"` (HTTP 404).
 
-`LeaseOptions{Exclusive: true}` reserves the key for your lease only: no other
-lease or proxy call gets it until you report or the lease expires.
-`lease.Exclusive` says whether you got it. With `WithKey`, pass it through
-`WithLeaseOptions`; it applies to every lease `WithKey` takes itself.
+`LeaseOptions{Exclusive: true}` reserves the key for your lease only: no other lease or proxy call gets it until you report or the lease expires. `lease.Exclusive` tells you whether you got it. With `WithKey`, pass it through `WithLeaseOptions`.
 
 ```go
-lease, err := c.Lease(ctx, "serpapi", &acnologia.LeaseOptions{TTL: 10 * time.Minute, Exclusive: true})
+lease, err := c.Lease(ctx, "weather", &acnologia.LeaseOptions{TTL: 10 * time.Minute, Exclusive: true})
 if err != nil {
 	return err
 }
-// ... halfway through a long job:
+// halfway through a long job:
 if _, err := lease.Renew(ctx, 10*time.Minute); err != nil {
 	return err
 }
 ```
 
-## Services
+## List services
+
+`c.Services(ctx)` returns the services this app token may use, each with `Slug`, `Name`, `Provider`, `Category`, `Available`, `BaseURL` and `Auth`.
 
 ```go
 svcs, err := c.Services(ctx)
@@ -248,19 +216,19 @@ for _, s := range svcs {
 }
 ```
 
-## Errors
+## Errors and retries
 
 | Type | Sentinel | When |
 |---|---|---|
-| `*acnologia.ErrNoKeyAvailable{RetryAfter, Code, Busy}` | `acnologia.NoKeyAvailable` | 503 `no_key_available` from the pool |
-| `*acnologia.ErrNoKeyAvailable` with `Busy: true` | `acnologia.AllKeysBusy` (and `acnologia.NoKeyAvailable`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
+| `*acnologia.ErrNoKeyAvailable{RetryAfter, Code, Busy}` | `acnologia.NoKeyAvailable` | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
+| `*acnologia.ErrNoKeyAvailable` with `Busy: true` | `acnologia.AllKeysBusy` (and `NoKeyAvailable`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
+| `*acnologia.ErrServiceUnavailable{RetryAfter}` (embeds `APIError`) | `acnologia.ServiceUnavailable` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Not a `NoKeyAvailable` |
+| `*acnologia.APIError{StatusCode, Code, Message}` | | any other non-2xx from the consumer API, such as 401, 403 `lease_not_allowed` or 404 `lease_not_found` |
 | `*acnologia.ErrRateLimited{RetryAfter}` | `acnologia.RateLimited` | you return it from `WithKey` |
 | `*acnologia.ErrQuotaExhausted` | `acnologia.QuotaExhausted` | you return it from `WithKey` |
 | `*acnologia.ErrInvalidKey` | `acnologia.InvalidKey` | you return it from `WithKey` |
-| `*acnologia.ErrServiceUnavailable{RetryAfter}` (embeds `APIError`) | `acnologia.ServiceUnavailable` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Not a `NoKeyAvailable`. |
-| `*acnologia.APIError{StatusCode, Code, Message}` | | any other non-2xx from the consumer API, such as 404 `lease_not_found` from `Renew` |
 
-Each typed error matches its sentinel, so both styles work:
+Each typed error matches its sentinel, so both styles work. Use the `RetryAfter` field to decide when to try again:
 
 ```go
 if errors.Is(err, acnologia.NoKeyAvailable) { ... }
@@ -271,11 +239,26 @@ if errors.As(err, &nk) {
 }
 ```
 
-The rotation errors have an optional `Err` field that is returned by `Unwrap`,
-so you can attach the underlying cause.
+`errors.As(err, &apiErr)` with an `*acnologia.APIError` also matches an `*ErrServiceUnavailable`.
+
+## Configuration
+
+| Option | Default |
+|---|---|
+| `acnologia.WithHTTPClient(*http.Client)` | a client with `acnologia.DefaultTimeout` (75 seconds, longer than the 60 second lease wait) |
+| `acnologia.WithUserAgent(string)` | `acnologia-go/0.1.0` |
+
+The token and lease secrets are redacted when a `Client` or `Lease` is printed with `%v`, `%+v` or `%#v`.
 
 ## Tests
 
 ```sh
 go test ./...
 ```
+
+The suite runs offline against a stub server.
+
+## More
+
+- [All SDKs](../README.md): install lines for every language and how to run each suite
+- [Request flows](../../docs/flows.md), [HTTP API and error codes](../../docs/api.md), [SDK overview](../../docs/sdks.md)

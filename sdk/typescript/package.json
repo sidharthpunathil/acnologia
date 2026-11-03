@@ -33,8 +33,6 @@
     "key-pool",
     "rate-limit",
     "rotation",
-    "serpapi",
-    "elevenlabs",
     "acnologia"
   ],
   "scripts": {

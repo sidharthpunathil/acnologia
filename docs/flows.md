@@ -1,15 +1,17 @@
 # Request flows
 
-How the main paths through the server work, step by step. Diagrams use
-Mermaid and render on GitHub.
+Each section below walks through one path in the server: who starts it, what
+happens in order, and what the caller gets back. The diagrams use Mermaid and
+render on GitHub.
 
+- [Dashboard sign in](#dashboard-sign-in)
+- [Adding keys](#adding-keys)
 - [Proxy request](#proxy-request)
 - [Picking a key](#picking-a-key)
 - [Lease and report](#lease-and-report)
 - [Key states](#key-states)
 - [Classifying an upstream response](#classifying-an-upstream-response)
 - [Health checks](#health-checks)
-- [Dashboard sign in](#dashboard-sign-in)
 - [MCP](#mcp) and the [control MCP](#control-mcp)
 - [Choosing the AI model](#choosing-the-ai-model)
 - [AI provider builder](#ai-provider-builder)
@@ -17,10 +19,102 @@ Mermaid and render on GitHub.
 - [Assistant chat](#assistant-chat) and its [compaction](#compaction)
 - [Sharing between servers](#sharing-between-servers) and [with people](#sharing-with-people)
 
+The examples use a made up `weather` service. Swap in any service slug you
+have.
+
+## Dashboard sign in
+
+Who: a person in a browser. The first visit creates the superadmin; every
+later visit signs in.
+
+1. The browser asks `GET /api/auth/state` whether setup is still needed.
+2. With no users yet, `POST /api/auth/setup` creates the superadmin. The
+   server hashes the password, then counts and inserts under a lock, so two
+   setup calls cannot both win.
+3. Otherwise `POST /api/auth/login` checks the password with bcrypt. An
+   unknown email is compared against a dummy hash, so timing does not reveal
+   which accounts exist. After 10 failures in 10 minutes, per client IP and
+   per account, the limiter refuses further tries.
+4. The server stores a session (the SHA-256 of a 32 byte token, valid 14
+   days) and sets the `acnologia_session` cookie.
+5. Every later change sends `Content-Type: application/json` and
+   `X-Requested-With`. The server runs `jsonOnly` (the CSRF check), then
+   `requireUser`, then `requireRole`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant S as Server
+    participant DB as SQLite
+
+    B->>S: GET /api/auth/state
+    S-->>B: {setup_required, user}
+    alt no users yet
+        B->>S: POST /api/auth/setup {email, password}
+        S->>S: hash password, then count and insert under a lock
+        S->>DB: create superadmin
+    else
+        B->>S: POST /api/auth/login {email, password}
+        S->>S: limiter: 10 failures / 10 min per client IP and per account
+        S->>DB: load user, bcrypt compare<br/>(dummy hash when the user does not exist)
+    end
+    S->>DB: insert session (SHA-256 of a 32 byte token, 14 day TTL)
+    S-->>B: Set-Cookie acnologia_session (HttpOnly, SameSite=Lax, Secure on TLS)
+    B->>S: later: POST /api/admin/... with Content-Type: application/json<br/>and X-Requested-With
+    S->>S: jsonOnly (CSRF) then requireUser then requireRole
+```
+
+A session ends on logout, after 14 days, or when the user is disabled.
+Changing your own password ends your other sessions; a superadmin resetting
+it ends all of them.
+
+## Adding keys
+
+Who: an admin, on a service page, through the Assistant, or with
+`POST /api/admin/services/{id}/keys`.
+
+1. The admin sends up to 5000 keys, either as a list (`keys`, each with its
+   own label, tier, limits and account fields) or as pasted `text`, which the
+   server parses into keys and labels.
+2. The server validates every key before it stores any. Only a superadmin
+   may mark a key `hidden`.
+3. Each secret is encrypted and fingerprinted. A key already in the service
+   is skipped and reported in `skipped` by line, so pasting the same list
+   twice adds nothing.
+4. The server writes the audit entry `key.create` and answers 201 with the
+   new keys.
+5. In the background it health checks the new keys, so their validity and
+   quota show up without a manual click.
+
+If the service's base URL was set by someone other than a superadmin, new
+hidden keys stay unused until a superadmin saves the service's settings, and
+the answer carries a `warning` saying so.
+
 ## Proxy request
 
-`ANY /proxy/{service}/{path}`. The app never sees the key. Acnologia retries with
-the next key when a response says the key itself is the problem.
+Who: an app, script or agent holding an `acn_` token. It calls
+`ANY /proxy/{service}/{path}`, and Acnologia attaches a key and forwards the
+request. The app never sees the key. When a response says the key itself is
+the problem, Acnologia retries on the next key.
+
+1. The proxy looks up the app by its token hash and checks that it is
+   active, that its mode allows proxying, and that the service and method
+   are allowed.
+2. It reads the body (up to `ACNOLOGIA_MAX_BODY_MB`) and validates the path.
+3. It asks the pool for a key, excluding keys already tried. When every
+   usable key is at its concurrency cap, it waits up to `queue_timeout_sec`
+   for a slot. With no key at all, the app gets 503 `no_key_available` or
+   `all_keys_busy` with `retry_after_sec`.
+4. It builds the upstream URL, strips the `acn_` token, cookies and hop
+   headers, injects the key (as a query parameter, a header or a bearer
+   token) and forwards the request without following redirects.
+5. A status below 400 streams back to the app with the key scrubbed from the
+   headers, a sandbox CSP, `X-Acnologia-Key-Id` and `X-Acnologia-Attempts`.
+6. A 4xx or 5xx is classified with the provider spec. Outcomes that blame the
+   key (`rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned`) move
+   on to the next key, up to `max_attempts`. Any other answer is relayed as
+   it is.
 
 ```mermaid
 sequenceDiagram
@@ -31,7 +125,7 @@ sequenceDiagram
     participant U as Provider API
     participant DB as SQLite
 
-    A->>P: GET /proxy/serpapi/search.json?q=x<br/>Authorization: Bearer acn_...
+    A->>P: GET /proxy/weather/v1/forecast?city=Lisbon<br/>Authorization: Bearer acn_...
     P->>DB: look up app by token hash, check active
     P->>P: mode allows proxy? service allowed? method allowed?
     P->>P: read body (max ACNOLOGIA_MAX_BODY_MB), validate path
@@ -72,17 +166,31 @@ Details worth knowing:
   `#` in the path stays in the path. Literal dot segments (`.`, `..`) are
   refused with 400 `bad_path`.
 - `TRACE` and `CONNECT` are refused with 405.
-- Redirects are passed back to the app, never followed with the key, and any
-  copy of the key in a response header (for example a `Location` that kept the
-  query string) is replaced with `[key]`.
+- Redirects go back to the app and are never followed with the key. Any copy
+  of the key in a response header (a `Location` that kept the query string,
+  for example) is replaced with `[key]`.
 - A 5xx is not retried on another key, so a non-idempotent request is never
   sent twice after the provider may have acted on it.
-- If the network fails on a later attempt, the earlier provider answer is
-  relayed instead of a bare 502.
+- If the network fails on a later attempt, the app gets the earlier
+  provider answer instead of a bare 502.
 
 ## Picking a key
 
+Who: the pool, inside the proxy, a lease or an MCP call. The code is
 `internal/pool/pool.go` `Pick`, run under a per service lock.
+
+1. Load the service's keys with status `active`.
+2. Skip a key that is excluded, restricted to other apps, or hidden when the
+   app lacks `lease_hidden` or the service target is untrusted.
+3. Skip a key that is cooling down or has zero quota left, remembering the
+   earliest cooldown end for `retry_after_sec`.
+4. Skip a key whose in-flight count is at its concurrency limit, and note
+   that the pool is busy.
+5. Sort the rest into primary and backup keys. Backup keys are used only
+   when no primary key is left.
+6. Choose by the service's strategy, decrypt the secret, mark the key used
+   and take a slot. With nothing left, return `NoKeyError` with `Busy` and
+   `RetryAfter`.
 
 ```mermaid
 flowchart TD
@@ -111,8 +219,23 @@ flowchart TD
 
 ## Lease and report
 
-`POST /api/v1/lease` hands the plaintext key to the app; the app calls the
-provider itself and reports what happened.
+Who: an app in mode `lease` or `both` that needs the plaintext key, for
+example for a client library that must hold it.
+
+1. The app calls `POST /api/v1/lease` with the service, how long to wait for
+   a key and how long to hold it.
+2. The pool picks a key (hidden keys only if the app has `lease_hidden`) and
+   the slot it holds now belongs to the lease.
+3. The app gets the lease id, the secret, how to attach it (`auth`), the base
+   URL and `expires_at`, and calls the provider itself.
+4. The app reports the outcome on `POST /api/v1/leases/{id}/report`. The
+   server checks the lease is the app's, is no more than 10 minutes past
+   expiry, and that the app is still allowed on the service.
+5. The server claims the lease (only an empty outcome can be set), releases
+   the slot, scrubs the secret from the message, caps `retry_after_sec` at 24
+   hours and applies the outcome to the key.
+6. With `rotate` and an outcome other than `ok`, the answer carries a new
+   lease on another key in `next`.
 
 ```mermaid
 sequenceDiagram
@@ -143,12 +266,13 @@ sequenceDiagram
     C-->>A: {ok: true, next: lease or null}
 ```
 
-Unreported leases keep their slot until `expires_at`, when the worker frees it.
-A report later than 10 minutes after expiry gets 410; a second report gets 409.
+A lease that is never reported keeps its slot until `expires_at`, when the
+worker frees it. A report more than 10 minutes after expiry gets 410; a
+second report gets 409.
 
 ## Key states
 
-`status` is stored; `cooling` is derived from `cooldown_until`.
+`status` is stored. `cooling` is derived from `cooldown_until`.
 
 ```mermaid
 stateDiagram-v2
@@ -167,8 +291,8 @@ stateDiagram-v2
     invalid --> disabled: admin disables
 ```
 
-Each provider's rules sort an error response into an outcome, and each outcome
-has its own recovery:
+The provider's rules sort each error response into an outcome, and each
+outcome has its own recovery:
 
 | Outcome | Typical cause | What happens to the key |
 |---|---|---|
@@ -179,14 +303,22 @@ has its own recovery:
 | `banned` | the provider suspended the account | Out until an admin resets it. Health checks skip it. |
 | `error` | 5xx, timeouts, refused connections | Not penalized. Errors count toward the service's circuit breaker: 10 in 60 seconds open it, requests then get 503 `service_unavailable` at once, and one probe goes through every 30 seconds until the provider recovers. |
 
-An `error` outcome (5xx, network) records the error but does not change state.
-Separately, each key reports **validity**: `invalid`, `valid` (it worked at
-`last_ok_at`) or `unknown`.
+An `error` outcome records the error and leaves the key's state alone.
+Separately, each key reports its **validity**: `invalid`, `valid` (it worked
+at `last_ok_at`) or `unknown`.
 
 ## Classifying an upstream response
 
-`internal/providers/engine.go` `Classify`. Provider rules come from the spec;
-see [provider specs](providers.md).
+Who: the engine, for every upstream answer of 400 or more that the proxy
+gets. The code is `internal/providers/engine.go` `Classify`; the rules come
+from the [provider spec](providers.md).
+
+1. The provider's own rules run in order and the first match wins. A rule
+   can set `retry_after` from a header, a fixed value, the next hour or a
+   JSON body field, capped at 24 hours.
+2. With no match and `use_standard_rules` on: 429 is `rate_limited` (honoring
+   `Retry-After`), 402 is `quota_exhausted`, 401 and 403 are `invalid`.
+3. Anything still unmatched is `error` at 500 or above, else `ok`.
 
 ```mermaid
 flowchart TD
@@ -204,8 +336,18 @@ flowchart TD
 
 ## Health checks
 
-Run by the worker on an interval, after adding keys, or on demand from the
-dashboard (one key, one service, or all keys).
+Who: the worker on an interval, the server right after keys are added, or an
+admin from the dashboard (one key, one service, or all keys).
+
+1. The pool skips the check when the provider has none, or when the key is
+   hidden and the service target is untrusted.
+2. The engine sends the spec's health request (for example
+   `GET /account.json`) without following redirects.
+3. On a network error, the key's `last_error` is set to the error with the
+   key scrubbed out.
+4. On a response, the engine reads validity, the quota limit, remaining and
+   reset, and any window cooldown. The pool saves the quota, revives the key
+   or marks it invalid or exhausted, and sets `last_ok_at`.
 
 ```mermaid
 sequenceDiagram
@@ -230,58 +372,46 @@ sequenceDiagram
     end
 ```
 
-## Dashboard sign in
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant B as Browser
-    participant S as Server
-    participant DB as SQLite
-
-    B->>S: GET /api/auth/state
-    S-->>B: {setup_required, user}
-    alt no users yet
-        B->>S: POST /api/auth/setup {email, password}
-        S->>S: hash password, then count and insert under a lock
-        S->>DB: create superadmin
-    else
-        B->>S: POST /api/auth/login {email, password}
-        S->>S: limiter: 10 failures / 10 min per client IP and per account
-        S->>DB: load user, bcrypt compare<br/>(dummy hash when the user does not exist)
-    end
-    S->>DB: insert session (SHA-256 of a 32 byte token, 14 day TTL)
-    S-->>B: Set-Cookie acnologia_session (HttpOnly, SameSite=Lax, Secure on TLS)
-    B->>S: later: POST /api/admin/... with Content-Type: application/json<br/>and X-Requested-With
-    S->>S: jsonOnly (CSRF) then requireUser then requireRole
-```
-
-Sessions end on logout, after 14 days, when the user is disabled, when their
-password is changed (other sessions) or reset by a superadmin (all sessions).
-
 ## MCP
 
-`POST /mcp` speaks JSON-RPC over the MCP streamable HTTP transport with JSON
-responses. Tools map onto the consumer API and the proxy, with the same app
-token rules. Each app picks its tool sets in the dashboard (`GET`/`PUT
-/api/admin/apps/{id}/mcp`): **core** (`list_services`, `pool_status`,
-`service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`), **service tools**
-generated from each provider's examples, read only **insights**
-(`list_keys`, `key_details`, `service_stats`) and **manage** (`check_keys`,
-`set_key_status`, `add_keys`). Core, service tools, resources and prompts are
-on by default. A service tool is named `<slug>_<example>`. When two services
-would get the same name, this server's own services keep it (oldest first)
-and the later one gets a short suffix, so a service another server shares can
-never take a local tool's name or a built in one. `check_keys` needs a
-service and checks only that service's keys. Clients that only speak stdio can use `acnologia mcp --url ...
---token acn_...` as a bridge.
+Who: an AI agent or MCP client holding an app token. `POST /mcp` speaks
+JSON-RPC over the MCP streamable HTTP transport with JSON responses. Its
+tools map onto the consumer API and the proxy, with the same token rules.
 
-The initialize instructions tell the agent to read `service_guide` before
-calling a service it has not used. The same guide is the resource
-`acnologia://services/{slug}/guide` (one per allowed service, `text/markdown`),
-and over HTTP `GET /api/v1/services/{slug}/guide`. All three apply the same
-allow check as the proxy, so an app (or a share's token) reads guides only for
-services it may call.
+An admin picks each app's tool sets in the dashboard (`GET`/`PUT
+/api/admin/apps/{id}/mcp`):
+
+- **core**: `list_services`, `pool_status`, `service_guide`, `get_key`,
+  `renew_key`, `report_key`, `proxy_request`.
+- **service tools**: generated from each provider's examples and named
+  `<slug>_<example>`.
+- **insights** (read only): `list_keys`, `key_details`, `service_stats`.
+- **manage**: `check_keys`, `set_key_status`, `add_keys`. `check_keys` needs a
+  service and checks only that service's keys.
+
+Core, service tools, resources and prompts are on by default. When two
+services would produce the same tool name, this server's own services keep it
+(oldest first) and the later one gets a short suffix. A service shared by
+another server therefore never takes a local tool's name or a built in one.
+Clients that only speak stdio can bridge with `acnologia mcp --url ...
+--token acn_...`.
+
+A typical session:
+
+1. The client initializes with `Authorization: Bearer acn_...`. The
+   instructions tell the agent to read `service_guide` before calling a
+   service it has not used.
+2. `tools/list` returns the tools this app's settings allow.
+3. `service_guide` returns the usage guide as Markdown: endpoints, params,
+   limits and errors.
+4. `proxy_request` runs the proxy handler in process, with the response
+   capped at `max_result_kb` (default 200). `get_key` issues a lease with the
+   same checks as `/api/v1/lease`.
+
+The guide is also the resource `acnologia://services/{slug}/guide` (one per
+allowed service, `text/markdown`) and, over HTTP,
+`GET /api/v1/services/{slug}/guide`. All three apply the proxy's allow check,
+so an app, or a share's token, reads guides only for services it may call.
 
 ```mermaid
 sequenceDiagram
@@ -306,14 +436,23 @@ sequenceDiagram
 
 ## Control MCP
 
-`POST /mcp/control` lets an MCP client run the server as a signed in user.
-It takes an admin API token (`acnadm_...`) and nothing else. Every tool is a
-request to an existing `/api/admin` route made in process with that same
-token, so the route checks the role, validates and writes the audit entry.
-Destructive tools first answer with what they would do, and act only when
-called again with `confirm: true`. `call_service` goes through the proxy as
-the `Control MCP` app instead, so keys never leave the server. See
-[Control MCP](api.md#control-mcp-mcpcontrol) for the tools and options.
+Who: a signed in user's MCP client, operating the server. `POST /mcp/control`
+takes an admin API token (`acnadm_...`) and nothing else.
+
+1. On initialize, the server finds the token's owner and caps their role at
+   the token's scope.
+2. `tools/list` returns the tools that role and the endpoint options
+   (`groups`, `read_only`, `exclude`) allow.
+3. Each tool call becomes an in process request to an existing `/api/admin`
+   route with the same token, so the route checks the role, validates the
+   input and writes the audit entry.
+4. A destructive tool first answers with what it would do (for example the
+   service and how many keys it holds) and acts only when called again with
+   `confirm: true`.
+5. `call_service` goes through the proxy as the `Control MCP` app instead,
+   so the key never leaves the server.
+
+See [Control MCP](api.md#control-mcp-mcpcontrol) for the tools and options.
 
 ```mermaid
 sequenceDiagram
@@ -327,9 +466,9 @@ sequenceDiagram
     M-->>Cl: acnologia-control, instructions
     Cl->>M: tools/list (?groups=, read_only=, exclude=)
     M-->>Cl: tools this role and these options allow
-    Cl->>M: tools/call delete_service {service: "serpapi"}
+    Cl->>M: tools/call delete_service {service: "weather"}
     M->>R: GET /api/admin/services/{id} (same token)
-    M-->>Cl: would delete serpapi and its 12 keys, call again with confirm
+    M-->>Cl: would delete weather and its 12 keys, call again with confirm
     Cl->>M: tools/call delete_service {service, confirm: true}
     M->>R: DELETE /api/admin/services/{id} (same token, X-Requested-With)
     R->>R: role check, audit
@@ -343,11 +482,10 @@ sequenceDiagram
 
 ## Choosing the AI model
 
-Every AI feature runs on a model picked at call time, so a switch in
-Settings, AI takes effect on the next call with no restart. The features are
-the Assistant, the provider builder, Fill with AI, chat summaries (used by
-[compaction](#compaction)) and offer refresh. Each resolves its model in this
-order, first set wins:
+The AI features are the Assistant, the provider builder, Fill with AI, chat
+summaries (used by [compaction](#compaction)) and offer refresh. Each picks
+its model at call time, so a change in Settings, AI applies to the next call
+without a restart. The first of these that is set wins:
 
 1. the feature's own model, saved under Settings, AI, "Use a different model
    for...",
@@ -357,14 +495,18 @@ order, first set wins:
 
 The card shows each feature's effective model and where it came from. Only a
 superadmin saves models (`PUT /api/admin/ai/models`, audited as `ai.models`);
-admins can see them. The picker lists Anthropic's Models API (cached for an
-hour) merged with Acnologia's built in table, with each model's price per
-million tokens and context window. A model id is accepted when it is in
-either list or already in use. A model with no known price is accepted with a
-warning, and its cost is estimated at `claude-opus-5-5` prices. Smaller
-models such as Haiku suit Fill with AI, chat summaries and offer refresh; the
-builder writes better specs on a larger one. The Assistant's model also sets
-when a chat compacts, since the threshold is a share of its context window.
+admins can see them.
+
+The picker merges Anthropic's Models API (cached for an hour) with
+Acnologia's built in table and shows each model's price per million tokens
+and its context window. A model id is accepted when it is in either list or
+already in use. A model with no known price is accepted with a warning, and
+its cost is estimated at `claude-opus-5-5` prices.
+
+Smaller models such as Haiku suit Fill with AI, chat summaries and offer
+refresh. The builder writes better specs on a larger one. The Assistant's
+model also decides when a chat compacts, since the threshold is a share of
+its context window.
 
 **Model prices.** The Usage page prices every Claude call from a built in
 table. Under Settings, AI, Model prices, a superadmin can override a model's
@@ -372,14 +514,28 @@ input, output and cache prices and its context window
 (`PUT /api/admin/ai/prices/{model}`), or reset it to the built in values
 (`DELETE`). Each change is audited as `ai.prices`. The
 [provider refresh](#keeping-provider-offers-fresh) can propose new prices
-too. An override changes how cost is counted from then on, not past usage,
-and a context window override moves the compaction threshold.
+too. An override changes how cost is counted from then on and leaves past
+usage as it was. A context window override moves the compaction threshold.
 
 ## AI provider builder
 
-An admin starts a run with context, URLs and optionally a test key. The run
-uses Claude with tools and ends in a published spec, a draft for review, or a
-failure. Requires `ANTHROPIC_API_KEY`.
+Who: an admin. Needs `ANTHROPIC_API_KEY`.
+
+1. The admin starts a run with `POST /api/admin/ai/runs`: the kind, context,
+   URLs, an optional test key, and whether to publish on success.
+2. The run is queued. Two runs go at a time.
+3. For up to 40 turns, Claude reads the docs (web search and web fetch run
+   on Anthropic's side) and calls the builder's tools: `github_read`,
+   `validate_spec`, `run_tests` and `live_check`. `live_check` runs GET
+   examples only, 5 per run, and sends the test key only to the provider's
+   own domain. Every step is recorded for the live view.
+4. The agent may call `submit_provider` up to 3 times. The harness itself
+   re-validates the spec, re-runs the fixture tests and requires a usage
+   guide with endpoints.
+5. An accepted spec with auto publish is published as a new version (a
+   create run refuses an existing slug), optionally with a new service and
+   its logo. Without auto publish the run waits as `needs_review` until an
+   admin publishes it from the dashboard.
 
 ```mermaid
 sequenceDiagram
@@ -431,32 +587,33 @@ stateDiagram-v2
     running --> failed: error, 40 turns, or 30 min timeout
 ```
 
-Auto publish defaults to on for new providers and off for updates of existing
-ones. The test key is encrypted while the run is active and wiped when it ends.
-Every request to Claude passes the redactor first, so the model sees the test
-key only as a placeholder such as `[key ...c21e]` (see
+Auto publish defaults to on for new providers and off for updates of
+existing ones. The test key is encrypted while the run is active and wiped
+when it ends. Every request to Claude passes the redactor first, so the model
+sees the test key only as a placeholder such as `[key ...c21e]` (see
 [security](security.md#what-the-model-can-and-cannot-see)).
 
 Every submit must carry a `guide` (summary, endpoints with params, notes)
 written from the docs the agent read; see
-[usage guides](providers.md#usage-guides). A missing or endpoint-less guide is
-sent back like a failing test, except on the last allowed submit, where the run
-is accepted with a note instead of failing a provider that otherwise works.
+[usage guides](providers.md#usage-guides). A missing guide, or one without
+endpoints, goes back to the agent like a failing test. On the last allowed
+submit the run is accepted with a note instead, so a provider that otherwise
+works does not fail over its guide.
 
 **Writing just the guide.** `POST /api/admin/providers/{slug}/guide/generate`
-(admin, also the Assistant's `write_provider_guide`) runs a short synchronous
+(admin; also the Assistant's `write_provider_guide`) runs a short synchronous
 loop on the builder's model: up to 12 turns, 4 web searches and 10 fetches,
-capped at 5 minutes. It sends the provider's public metadata, examples, offers
+within 5 minutes. It sends the provider's public metadata, examples, offers
 and current guide through the redactor, asks for a guide, validates it, and
-saves only the `guide` key of the spec as a new provider version (source `ai`,
-audit `provider.guide.generate`). The answer is `{provider, updated,
-verified, summary, guide, markdown, model, cost_usd}`; `updated: false` means
-the model could not read the docs and nothing changed.
+saves only the `guide` key of the spec as a new provider version (source
+`ai`, audit `provider.guide.generate`). The answer is `{provider, updated,
+verified, summary, guide, markdown, model, cost_usd}`; `updated: false`
+means the model could not read the docs and nothing changed.
 
-Finished runs can be deleted by an admin: `DELETE /api/admin/ai/runs/{id}`
-for one run (409 `run_busy` while it is queued, running, testing or
-publishing), or `DELETE /api/admin/ai/runs` to clear every failed, cancelled
-and published run. Runs waiting for review are kept by the bulk clear.
+An admin can delete finished runs: `DELETE /api/admin/ai/runs/{id}` for one
+(409 `run_busy` while it is queued, running, testing or publishing), or
+`DELETE /api/admin/ai/runs` for every failed, cancelled and published run.
+The bulk clear keeps runs waiting for review.
 
 ## Keeping provider offers fresh
 
@@ -466,104 +623,129 @@ superadmin can have Acnologia re-read them. Settings, Provider refresh holds
 the controls, the history and the changes waiting for review. It needs
 `ANTHROPIC_API_KEY`; with AI off nothing runs.
 
-**When.** A run starts in one of three ways:
+Who: the worker on a schedule, or a superadmin by hand.
+
+**1. A run starts** in one of three ways:
 
 - On the schedule: off, weekly, every 2 weeks, monthly (on the 1st, the
-  default) or every N days (1–365), at a chosen UTC hour (03:00 by
-  default). The worker asks once a minute whether a run is due. The first run is the first time the clock reaches the hour
-  after the schedule was saved; weekly and every N days count from the day of
-  the last scheduled run; monthly runs on the 1st of the next month. A run
-  missed while the server was off starts as soon as it is back.
+  default) or every N days (1–365), at a chosen UTC hour (03:00 by default).
+  The worker asks once a minute whether a run is due. The first run comes the
+  first time the clock reaches the hour after the schedule was saved. Weekly
+  and every N days count from the day of the last scheduled run; monthly runs
+  on the 1st of the next month. A run missed while the server was off starts
+  as soon as it is back.
 - Run refresh now in Settings (superadmin): the whole scope, same rules.
 - Check now on the service page's Offers and limits card or the provider's
-  Offers tab (superadmin): one provider, whatever the scope and staleness say.
+  Offers tab (superadmin): one provider, whatever the scope and staleness
+  say.
 
-**Which providers.** The scope is providers behind at least one service with
-a usable key (active, cooling or out of quota; the default), providers behind
-any service, or every provider. Always check adds providers whatever the
-scope; Never check removes them and wins. Providers copied from another
-server (source `peer:...`) are skipped unless you turn them on: their owner
-keeps them current and your copy follows theirs. Disabled providers are
-skipped unless listed under Always check. A provider whose offers were read
-within the last N days (default 25, from its last refresh check or the
-newest `checked_at` on its offers) is skipped. The rest go oldest checked
-first, at most N per run (default 10).
+**2. The run picks providers.** The scope is one of: providers behind at
+least one service with a usable key (active, cooling or out of quota; the
+default), providers behind any service, or every provider. Always check adds
+providers whatever the scope; Never check removes them and wins over Always
+check. Then:
 
-**How one provider is checked.** The offer refresh model (see
+- Providers copied from another server (source `peer:...`) are skipped unless
+  you turn them on. Their owner keeps them current and your copy follows
+  theirs.
+- Disabled providers are skipped unless listed under Always check.
+- A provider whose offers were read within the last N days (default 25,
+  counted from its last refresh check or the newest `checked_at` on its
+  offers) is skipped.
+- The rest go oldest checked first, at most N per run (default 10).
+
+**3. The model checks each provider.** The offer refresh model (see
 [Choosing the AI model](#choosing-the-ai-model); until you set one it is the
-default model, so pick a small one such as Haiku) gets the provider's
-name, base URL, website, docs URL, the `source_url` of each offer, its
-example names and its current offers. Keys never leave the server, and every
-request passes the same redaction as the rest of the AI features. It may run
-3 web searches and 5 page fetches within 8 turns, then must call
-`submit_offers` with the full list and `verified`. The offers are validated
-like any spec edit (a failure goes back to the model once). Each call is
-recorded in the AI usage ledger under the `refresh` feature with the run as
-its ref.
+default model, so pick a small one such as Haiku) gets the provider's name,
+base URL, website, docs URL, each offer's `source_url`, its example names and
+its current offers. Keys never leave the server, and every request passes the
+same redaction as the other AI features. The model may run 3 web searches and
+5 page fetches within 8 turns, then must call `submit_offers` with the full
+list and `verified`. The offers are validated like any spec edit, and a
+failure goes back to the model once. Each call is recorded in the AI usage
+ledger under the `refresh` feature, with the run as its ref.
 
-**What happens next.** The proposed offers are compared with the current
-ones by name, ignoring `checked_at`:
+**4. The result is compared** with the current offers by name, ignoring
+`checked_at`:
 
-- No change: `checked_at` moves to today on the current version, in place,
-  with no new version (so a built in provider stays unedited and keeps
-  getting the offers new releases ship). Only `checked_at` moves: the stored
-  order and names stay, since order decides which offer prices a request.
-- A change, with apply set to Apply sourced changes (the default): if it only
-  moves existing offers' prices within 4x either way (same unit and
-  `per_request`) or loosens their limits and concurrency, and every changed
-  offer cites an http(s) `source_url` on the provider's own website, docs or
-  API domain, a new provider version is published with source
-  `refresh` and a note listing what changed. Only `offers` changes: never
-  auth, the base URL, rules, health checks or tests. A webhook
-  `provider.offers_changed` fires and the audit log records it. A built in
-  provider changed this way becomes an edited version, like any edit, so
-  later releases no longer backfill its offers. Roll back from the provider's
-  Versions tab.
-- Otherwise (no source or one on another site, an added or removed offer, a
-  changed match, notes or free flag, a tighter limit, a bigger price move,
-  apply set to Always review, or the publish failed) the change waits in Settings under Waiting for review
-  with a readable diff. Apply publishes it as above; Dismiss drops it. A
-  proposal made against a version that has since changed cannot be applied:
-  dismiss it and check again. A newer proposal for the same provider replaces
-  an older pending one.
-- The model could not read the pages, the call failed, or the offers did not
-  validate: the item fails, nothing changes, and the provider is not counted
-  as checked, so the next run tries again. One provider failing never stops
-  the others.
+- **No change.** `checked_at` moves to today on the current version, in place,
+  with no new version, so a built in provider stays unedited and keeps
+  getting the offers new releases ship. The stored order and names stay as
+  they are, since order decides which offer prices a request.
+- **A small, sourced change** with apply set to Apply sourced changes (the
+  default) publishes on its own. That means every change only moves existing
+  offers' prices within 4x either way (same unit and `per_request`) or
+  loosens their limits and concurrency, and every changed offer cites an
+  http(s) `source_url` on the provider's own website, docs or API domain. A
+  new provider version is published with source `refresh` and a note listing
+  what changed. Only `offers` change: auth, the base URL, rules, health
+  checks and tests are never touched. The webhook `provider.offers_changed`
+  fires and the audit log records it. A built in provider changed this way
+  becomes an edited version, like any edit, so later releases no longer
+  backfill its offers. Roll back from the provider's Versions tab.
+- **Anything else waits for review** in Settings, under Waiting for review,
+  with a readable diff. That covers a missing source or one on another site,
+  an added or removed offer, a changed match, notes or free flag, a tighter
+  limit, a bigger price move, apply set to Always review, and a failed
+  publish. Apply publishes it as above; Dismiss drops it. A proposal made
+  against a version that has since changed cannot be applied: dismiss it and
+  check again. A newer proposal for the same provider replaces an older
+  pending one.
+- **A failure** (the model could not read the pages, the call failed, or the
+  offers did not validate) changes nothing. The provider is not counted as
+  checked, so the next run tries again. One provider failing never stops the
+  others.
 
 **Claude's own prices.** With Claude model prices on (the default), every run
 also re-reads Anthropic's pricing page for the models Acnologia prices and
 proposes new input, output and cache prices. Its web search and fetch may
 only read anthropic.com and claude.com. A change saves as price overrides on
 its own only when every changed price cites an https page on those sites and
-each price moves within 4x either way, else it waits for review. The model picker shows each price's source
-and the date it was checked. Superadmins can also edit a model's price and
-context window by hand under Settings, AI, Model prices, and reset it to the
-built in table (see [Model prices](#choosing-the-ai-model)).
+moves within 4x either way; otherwise it waits for review. The model picker
+shows each price's source and the date it was checked. Superadmins can also
+edit a model's price and context window by hand under Settings, AI, Model
+prices, and reset it to the built in table (see
+[Model prices](#choosing-the-ai-model)).
 
 **Budget and safety.** Before each provider, a run stops if it has spent its
 per run cap (default $2) or the refresh feature has spent its monthly cap
-(default $5) since the 1st, UTC; a check that crosses the cap mid way stops
-there. Providers it did not reach are marked Not reached. Only one run goes
+(default $5) since the 1st, UTC. A check that crosses the cap partway through
+stops there. Providers it did not reach are marked Not reached. One run goes
 at a time: Run now and Check now answer 409 while one is running. A run's
-state lives in the database, so a restart resumes it on the next tick, with
-the provider that was being checked starting over.
+state lives in the database, so after a restart it resumes on the next tick,
+and the provider that was being checked starts over.
 
 **Where to see it.** The service page's Offers and limits card says when the
 offers were checked and by what (scheduled refresh, a refresh by hand, Check
 now, or when the provider was written), when a refresh last changed them
-with a link to that version, and whether a change waits for review. Settings,
-Provider refresh shows the model, the last and next run, the month's spend
-against its cap, recent runs with each provider's outcome and cost, and the
-reviews. Settings changes, runs started by hand, applies and dismissals are
-audited (`provider.refresh.*`, `ai.prices`).
+(with a link to that version), and whether a change waits for review.
+Settings, Provider refresh shows the model, the last and next run, the
+month's spend against its cap, recent runs with each provider's outcome and
+cost, and the reviews. Settings changes, runs started by hand, applies and
+dismissals are audited (`provider.refresh.*`, `ai.prices`).
 
 ## Assistant chat
 
-The Assistant page is a chat where Claude manages Acnologia for you. Every action
-is a tool call that the server turns into a request to its own dashboard API,
-**made as you** (your session), so it gets exactly your role, the same
-validation, and the same audit log entries as clicking in the UI.
+Who: any signed in user, on the Assistant page. Claude manages Acnologia for
+you there. Every action is a tool call that the server turns into a request
+to its own dashboard API, **made as you** (with your session). It gets exactly
+your role, the same validation and the same audit entries as a click in the
+UI.
+
+1. You send a message with `POST /threads/{id}/messages`. The server loads
+   the thread (yours only) and decrypts it.
+2. Before anything reaches Claude, the server finds pasted keys (the paste
+   parser first, then patterns), encrypts them into the thread's vault and
+   puts placeholders such as `[key k1 ...c21e]` in the text.
+3. For up to 24 turns, Claude answers with text and tool calls, limited to
+   the tools your role allows. A read or change tool calls the dashboard API
+   with your session; the result is trimmed and redacted for the model, and
+   app tokens are kept for you only. A delete or rotate tool records a
+   pending action and shows a Confirm card instead of acting.
+4. The thread is saved encrypted. Your message is stored as prose plus
+   `key_list` (each key's label and last four characters).
+5. You get the new transcript items, and a new app token once, if one was
+   made.
 
 ```mermaid
 sequenceDiagram
@@ -574,7 +756,7 @@ sequenceDiagram
     participant D as Dashboard API (in process)
     participant DB as SQLite
 
-    U->>C: POST /threads/{id}/messages<br/>"add these serpapi keys: sk_1 (alice@x.io), sk_2"
+    U->>C: POST /threads/{id}/messages<br/>"add these weather keys: sk_1 (alice@x.io), sk_2"
     C->>DB: load thread (yours only), decrypt
     C->>C: find the keys (paste parser, then patterns),<br/>encrypt them into the thread vault,<br/>put [key k1 ...c21e] placeholders in the text
     loop until Claude answers (max 24 turns)
@@ -593,7 +775,7 @@ sequenceDiagram
     C-->>U: new transcript items (and a new app token once, if any)
 ```
 
-Typical "add keys" path the assistant follows:
+The path the Assistant usually takes to add keys:
 
 ```mermaid
 flowchart TD
@@ -630,11 +812,12 @@ Tools by role:
 `ask_user` shows a small form in the chat (name the pasted keys, or pick one
 of 2 to 8 choices); the answer goes to `POST /threads/{id}/answer`.
 
-There is no tool to reveal a stored key, manage users or read the audit log.
-New app tokens and webhook signing secrets are shown to you once and never
-sent to Claude; egress proxy URLs are redacted from the stored chat like keys.
+The Assistant has no tool to reveal a stored key, manage users or read the
+audit log. New app tokens and webhook signing secrets are shown to you once
+and never sent to Claude. Egress proxy URLs are redacted from the stored chat
+like keys.
 
-In the dashboard, a message with pasted keys shows its prose first and a
+In the dashboard, a message with pasted keys shows its prose first, then a
 "keys secured" strip of chips (label and last four characters, never a
 secret). The chat state lives in the page's store: the last open chat comes
 back when you return from another tab, unsent drafts are kept per chat while
@@ -642,14 +825,27 @@ the page is open, and a turn still running is picked up again.
 
 ### Compaction
 
-A long chat would eventually overflow the model's context window and gets
-slower and dearer on every turn. Before each model call the server estimates
-the prompt: the input tokens Claude reported for the last call plus about one
-token per four characters added since, or a character estimate of the whole
-prompt, whichever is larger. Past 60% of the context window of the
-Assistant's model (or `ACNOLOGIA_CHAT_COMPACT_TOKENS`), it compacts. The
-summary runs on the chat summaries model from Settings, AI, which can be a
-smaller, cheaper one than the Assistant's:
+A long chat would eventually overflow the model's context window, and it
+gets slower and more expensive on every turn. Before each model call the
+server estimates the prompt: the input tokens Claude reported for the last
+call plus about one token per four characters added since, or a character
+estimate of the whole prompt, whichever is larger. Past 60% of the context
+window of the Assistant's model (or `ACNOLOGIA_CHAT_COMPACT_TOKENS`), it
+compacts:
+
+1. Keep the last 6 messages verbatim, moving the cut back so a `tool_use` is
+   never split from its `tool_result`.
+2. One Claude call summarizes the older part (and any earlier summary) from
+   the stored, already redacted history. It runs on the chat summaries model
+   from Settings, AI, which can be smaller and cheaper than the Assistant's.
+3. The summary is redacted and stored on the thread (text, messages covered,
+   time, tokens saved), and the transcript gets an "Earlier messages
+   summarized" item.
+4. Claude is sent the summary plus the kept messages.
+
+If the summary fails and the prompt is within 90% of the window, the history
+is sent as it is. Past 90%, only the latest messages are sent, with a note
+that older ones were left out.
 
 ```mermaid
 flowchart TD
@@ -664,18 +860,20 @@ flowchart TD
     Fall -->|yes| Trim["send only the latest messages,<br/>with a note that older ones were left out"]
 ```
 
-- Nothing is deleted. The stored messages and the transcript stay whole, so you
-  still see every message above the divider; only what Claude is sent changes.
+- Nothing is deleted. The stored messages and the transcript stay whole, so
+  you still see every message above the divider. Only what Claude is sent
+  changes.
 - Repeated compaction folds the previous summary into the new one.
-- The summary keeps goals, decisions, the names and ids of services, keys, apps
-  and providers touched, pending tasks and open questions. Key placeholders stay
-  as they are; the summary passes the same redactor as tool results, so it never
-  holds a secret.
+- The summary keeps goals, decisions, the names and ids of services, keys,
+  apps and providers touched, pending tasks and open questions. Key
+  placeholders stay as they are, and the summary passes the same redactor as
+  tool results, so it never holds a secret.
 - The summary call is billed as Assistant usage on the Usage page.
-- A failed summary is logged and not retried in that turn; the chat carries on.
-- The thread's menu (the dots at the top right of the chat) has **Compact now**,
-  which calls `POST /chat/threads/{id}/compact` whatever the chat's size. Open
-  the divider to read the summary.
+- A failed summary is logged and not retried in that turn; the chat carries
+  on.
+- The thread's menu (the dots at the top right of the chat) has **Compact
+  now**, which calls `POST /chat/threads/{id}/compact` whatever the chat's
+  size. Open the divider to read the summary.
 
 ## Sharing between servers
 
@@ -686,27 +884,47 @@ the owner picks and injects its own key. A share can instead hand the keys
 over (see [Share modes](#share-modes-proxy-or-key-handover)). Pairing is by
 invite only.
 
-Every server has an identity: an Ed25519 keypair made on first start (the
-private key encrypted with the master key, in `meta`), an id `acn_srv_` plus
-20 characters derived from the public key, a name (the hostname until a
+**Server identity.** Every server has an Ed25519 keypair made on first start
+(the private key encrypted with the master key, in `meta`), an id `acn_srv_`
+plus 20 characters derived from the public key, a name (the hostname until a
 superadmin renames it) and a public URL (`ACNOLOGIA_PUBLIC_URL`, else the one
 saved on the Sharing page, else the request origin). It is published at
 `/.well-known/acnologia`. Set `ACNOLOGIA_PUBLIC_URL` on any server that
 shares, so invites never carry an internal address.
 
-Both sides work from the Sharing page, and only a superadmin changes
-anything there; admins can look.
+Both sides work from the Sharing page. Only a superadmin changes anything
+there; admins can look.
 
-- **Owner:** New share picks the services, any provider specs to give away,
-  a key scope per service, limits, an optional expiry, whether hidden keys
-  may serve it, and how long the invite lasts (1 hour, 24 hours by default,
-  or 7 days). The invite is shown once. While nobody has redeemed it, New
-  invite replaces it with a fresh one (409 `not_pending` after a redeem).
-  Editing a redeemed share reaches the receiver at its next sync.
-- **Receiver:** Connect takes the invite, previews the owner's id, name, key
-  fingerprint and what is shared, then asks for a slug prefix and whether the
-  owner is on a private network (which lets the calls reach a private
-  address). Each shared service then appears as a local service.
+**Pairing, step by step:**
+
+1. **Owner superadmin:** New share. Pick the services, any provider specs to
+   give away, a key scope per service, limits, an optional expiry, whether
+   hidden keys may serve it, and how long the invite lasts (1 hour, 24 hours
+   by default, or 7 days).
+2. **Owner server:** stores the share as pending, with a backing app in proxy
+   mode, and keeps only the SHA-256 of the invite secret. The invite
+   (`acninv_...`) is shown once. Until someone redeems it, New invite replaces
+   it with a fresh one (409 `not_pending` after a redeem).
+3. **Owner superadmin:** sends the invite to the other side privately.
+4. **Receiver superadmin:** pastes the invite into Connect. The receiver
+   fetches `/.well-known/acnologia` and `POST /api/peer/v1/preview`, and shows
+   the owner's id, name, key fingerprint and what is shared.
+5. **Receiver superadmin:** picks a slug prefix and says whether the owner is
+   on a private network (which lets the calls reach a private address), then
+   connects.
+6. **Receiver server:** sends `POST /api/peer/v1/redeem` with its identity, a
+   nonce and an Ed25519 signature.
+7. **Owner server:** checks that the id matches the key, the signature is
+   valid, and the invite is pending, unexpired and matches the stored hash.
+   It binds the share to the receiver, burns the invite and mints a share
+   token (stored as a hash), then returns the token, its identity and the
+   manifest.
+8. **Receiver server:** stores the token encrypted, imports the shared
+   provider specs and the providers of shared services it lacks, and creates
+   one local service per shared service (`prefix-slug`, pointing at the
+   owner's `/proxy/slug`) with the token as a hidden key.
+
+Editing a redeemed share reaches the receiver at its next sync.
 
 ```mermaid
 sequenceDiagram
@@ -732,54 +950,67 @@ sequenceDiagram
     B->>B: store token encrypted, import shared provider specs<br/>and the providers of shared services B lacks,<br/>then create services prefix-slug -> A/proxy/slug<br/>with the token as a hidden key
 ```
 
-**Using a shared service.** A local app on B calls `/proxy/a-serpapi/...` like
-any other service. B injects the share token as a bearer token and adds
-`X-Acnologia-Hop: n+1`; A authenticates the token, checks the share is active
-and unexpired, applies its limits and proxies with its own keys. The service's
-provider is `acnologia-peer`, whose rules count only A's own refusals against
-the token: 403 `share_revoked`, `share_paused` or `share_expired` and 401
-mark it invalid, 429 `app_limit_reached` makes it exhausted until the reset,
-503 `no_key_available`, `all_keys_busy` or `service_unavailable` cool it for
-`retry_after_sec`, and anything A relays from the upstream is passed on
-untouched (A already rotated). Shared services are proxy only: a lease would
-hand out the token, so `/api/v1/lease` answers 403 `lease_not_allowed` and
-MCP `get_key` is refused the same way.
+**Using a shared service.** A local app on B calls `/proxy/a-weather/...` like
+any other service.
+
+1. B injects the share token as a bearer token and adds
+   `X-Acnologia-Hop: n+1`.
+2. A authenticates the token, checks that the share is active and unexpired,
+   applies its limits and proxies with its own keys.
+3. B classifies A's answer with the `acnologia-peer` provider, whose rules
+   count only A's own refusals against the token:
+   - 403 `share_revoked`, `share_paused` or `share_expired`, and 401, mark it
+     invalid.
+   - 429 `app_limit_reached` makes it exhausted until the reset.
+   - 503 `no_key_available`, `all_keys_busy` or `service_unavailable` cool it
+     for `retry_after_sec`.
+   - Anything A relays from the upstream passes through untouched, since A
+     already rotated.
+
+Shared services are proxy only. A lease would hand out the token, so
+`/api/v1/lease` answers 403 `lease_not_allowed` and MCP `get_key` is refused
+the same way.
 
 **Which keys.** Each shared service can be limited to all its keys, up to N
-keys, or a picked list (`key_scopes`, see [the API](api.md#sharing-between-servers)).
-A's pool applies the scope on every pick for the share's backing app, using a
-per app cache that any share change clears, so ordinary apps pay nothing. Up
-to N takes the first N keys still in rotation by priority; when one turns
-invalid, banned or disabled the next one takes its place, while a key that is
-only cooling down or out of quota keeps its slot. The Sharing page shows each
-service as `serpapi · 3 of 10 keys` and each set limit as a meter of what was
-used today or this month against its cap.
+keys, or a picked list (`key_scopes`, see
+[the API](api.md#sharing-between-servers)). A's pool applies the scope on
+every pick for the share's backing app, using a per app cache that any share
+change clears, so ordinary apps pay nothing for it. Up to N takes the first N
+keys still in rotation by priority. When one turns invalid, banned or
+disabled, the next one takes its place; a key that is only cooling down or
+out of quota keeps its slot. The Sharing page shows each service as
+`weather · 3 of 10 keys` and each set limit as a meter of today's or this
+month's use against its cap.
 
-**Limits.** A share's limits are those of its backing app: requests a day,
-requests a month, USD a day and USD a month, counted from the cost of A's
-own requests. Past one, A answers 429 `app_limit_reached` until the window
+**Limits.** A share's limits are its backing app's: requests a day, requests
+a month, USD a day and USD a month, counted from the cost of A's own
+requests. Past one, A answers 429 `app_limit_reached` until the window
 resets, and B treats the token as out of quota until then. Once an expiry
-date passes, A answers 403 `share_expired` and B's services stop. The manifest tells B the
-limits, the expiry and how many keys can take a request now (counted within
-the key scope), never the keys themselves.
+date passes, A answers 403 `share_expired` and B's services stop. The
+manifest tells B the limits, the expiry and how many keys can take a request
+now (counted within the key scope). It never carries the keys.
 
-**Sync.** B reads each link's manifest every 10 minutes and on Sync now. New
-services are created; services no longer shared keep their row (events and app
-settings survive) but their key is disabled; a status change applies at once.
-Providers are synced before services, so a new service already has its
-provider when it is made.
+**Sync.** B reads each link's manifest every 10 minutes and on Sync now.
+
+- New services are created.
+- A service no longer shared keeps its row (events and app settings survive)
+  but its key is disabled.
+- A status change applies at once.
+- Providers sync before services, so a new service already has its provider
+  when it is made.
 
 **Providers of shared services.** The manifest carries the spec of every
 provider a shared service uses (`shared: false`) next to the ones shared on
 purpose (`shared: true`). When B has no provider with that slug, sync imports
-it too, as a dependency of the services that need it, so the service keeps
-the provider's name, logo, color, category, docs and website links, Integrate
+it as a dependency of the services that need it. The service then keeps the
+provider's name, logo, color, category, docs and website links, Integrate
 examples, offers and MCP tools. The local service keeps provider
-`acnologia-peer`, which classifies the share token's answers and carries the
-token, and records the owner's provider slug in `peer_provider`, which the
-dashboard, the Integrate tab, Copy for LLM, the catalog and MCP use to
-describe it (with a "via <server>" marker). When B already has a provider
-with that slug, B's own spec describes the service and is never touched.
+`acnologia-peer`, which carries the token and classifies its answers, and
+records the owner's provider slug in `peer_provider`. The dashboard, the
+Integrate tab, Copy for LLM, the catalog and MCP use `peer_provider` to
+describe the service, with a "via <server>" marker. When B already has a
+provider with that slug, B's own spec describes the service and is never
+touched.
 
 ```mermaid
 flowchart TD
@@ -798,74 +1029,77 @@ flowchart TD
     S([create or update services,<br/>peer_provider = A's provider slug])
 ```
 
-Each import is done once with source `peer:<owner id>`. Later edits on the
-owner are never applied on their own, so an owner cannot redirect keys B adds
-to an imported provider. When A's version is newer than the one imported, the
-service page says so, and a superadmin can pull it (`POST
-/api/admin/peers/{id}/providers/{slug}/pull`); when the new spec moves the base
-URL, the pull needs an explicit yes. A provider edited on B since the import
-is not offered updates. If the import fails (an invalid spec, for example),
-the service is still created and works through the proxy, and the reason is
-in the link's `last_error`; the next sync tries again. Re-syncing an
-unchanged manifest changes nothing.
+Each import happens once, with source `peer:<owner id>`. Later edits on the
+owner are never applied on their own, so an owner cannot redirect keys that B
+adds to an imported provider. When A's version is newer than the one
+imported, the service page says so and a superadmin can pull it (`POST
+/api/admin/peers/{id}/providers/{slug}/pull`). A pull that moves the base URL
+needs an explicit yes, and a provider edited on B since the import is not
+offered updates. If an import fails (an invalid spec, for example), the
+service is still created and works through the proxy, the reason goes in the
+link's `last_error`, and the next sync tries again. Re-syncing an unchanged
+manifest changes nothing.
 
 **Logos.** After importing a provider that has no logo, B asks A for it
 (`GET /api/peer/v1/providers/{slug}/logo` with the share token, sent only to
 A's URL). A serves logos only for providers in that share's manifest. B
 accepts an allowed image type no larger than 512 KB whose bytes match the
-declared type, stores it like any provider logo and retries at each sync
+declared type, stores it like any provider logo, and retries at each sync
 while the provider has none. When A has no logo, B tries the catalog's logo
 discovery on the provider's website once (public addresses only, no token).
 
 **Offers.** A peer service shows the owner provider's offers for reference,
-but they do not pace the share token or price its requests: B's one key is
+but they do not pace the share token or price its requests. B's one key is
 the token, which stands for all of A's keys, and A already paces its own keys
 under those limits and enforces the share's request and budget caps.
 
-**Revoke, pause, expire.** Revoking deactivates the backing app and revokes
-its token in the same transaction, so the very next request through A gets
-403 `share_revoked` with `X-Acnologia-Share: revoked`. B marks the link
-revoked as soon as it sees that answer (from the proxy or the manifest),
-deletes the token and the services' key, and the services stop. Revoking is
-final: a revoked share cannot be edited or resumed, so share again with a
-new invite. Pause answers `share_paused` and expiry `share_expired`, checked
-on every request; B disables the services' key but keeps the token, and a
-resume turns the services back on at the next sync.
+**Revoke, pause, expire.**
 
-**Disconnect.** B tells A (`POST /api/peer/v1/leave`, best effort), deletes the
-token and the keys holding it and leaves the services in place without a key.
-A shows the share as left by the peer. Providers imported from A stay on B
-after a disconnect or revoke, whether or not B added keys to them: they are
+- **Revoke** deactivates the backing app and revokes its token in the same
+  transaction, so the very next request through A gets 403 `share_revoked`
+  with `X-Acnologia-Share: revoked`. B marks the link revoked as soon as it
+  sees that answer (from the proxy or the manifest), deletes the token and
+  the services' key, and the services stop. Revoking is final: a revoked
+  share cannot be edited or resumed, so share again with a new invite.
+- **Pause** answers `share_paused` and **expiry** `share_expired`, checked on
+  every request. B disables the services' key but keeps the token, and a
+  resume turns the services back on at the next sync.
+
+**Disconnect.** B tells A (`POST /api/peer/v1/leave`, best effort), deletes
+the token and the keys holding it, and leaves the services in place without a
+key. A shows the share as left by the peer. Providers imported from A stay on
+B after a disconnect or revoke, whether or not B added keys to them: they are
 plain specs with no secret, B's own services may use them, and a superadmin
 can delete one B does not use from the Providers page.
 
 **Loops.** A service whose provider is `acnologia-peer` can never be shared
-onward, and a request that already passed through more than 3 servers gets 508
-`loop_detected`.
+onward, and a request that already passed through more than 3 servers gets
+508 `loop_detected`.
 
 ### Share modes: proxy or key handover
 
-A share has a `mode`, chosen when it is created and fixed once redeemed
-(create a new share to change it):
+A share's `mode` is chosen at creation and fixed once redeemed (create a new
+share to change it):
 
 - **Proxy** (the default) is everything above: the other server never sees
   your keys, and revoke is instant.
-- **Handover** gives the keys themselves to the other server, so it calls the
-  provider directly: lower latency, and it keeps working while the owner is
-  down.
+- **Handover** gives the keys themselves to the other server, which calls the
+  provider directly. Latency is lower, and the other server keeps working
+  while the owner is down.
 
 **The honest constraint.** A handed over key cannot be taken back. Once the
 other server holds it, it can copy it, and revoke can only make a server that
-cooperates delete it. Everything below narrows that window; none of it closes
+cooperates delete it. Everything below narrows that window without closing
 it. After revoking a handover share, rotate every key on its rotate checklist
 at the provider.
 
 **What is handed over.** The share's key scopes decide (all, up to N, or a
-picked list), as for proxy; hidden keys only with `include_hidden`; keys of a
-service whose provider is `acnologia-peer`, or keys another server handed
-over to this one, never. Request and budget limits cannot apply: the other
-server makes the requests, so this server cannot count them, and a handover
-share refuses limits with 400. Timers and the lease still apply.
+picked list), as in proxy mode. Hidden keys go only with `include_hidden`.
+Keys of a service whose provider is `acnologia-peer`, and keys another server
+handed over to this one, never go. Request and budget limits cannot apply,
+because the other server makes the requests and this server cannot count
+them, so a handover share refuses limits with 400. Timers and the lease still
+apply.
 
 **Sealing.** Every server has an X25519 key pair next to its Ed25519 identity
 (the private part encrypted with the master key, made on first use) and
@@ -876,7 +1110,21 @@ HKDF-SHA256), HKDF-SHA256 and AES-256-GCM, with the info string
 `acnologia-handover-v1\n<share id>\n<key id>\n<receiver id>`, so a sealed
 secret opens only on that server, for that key and that share. The envelope
 is `acnseal1_` + base64url(enc and ciphertext); the prefix names the format
-version and the redactor knows it.
+version, and the redactor knows it.
+
+**Handover, step by step:**
+
+1. B reads the manifest with the share token: status active, mode handover,
+   and the lease length.
+2. B calls `GET /api/peer/v1/keys`. A resolves the key scope, seals each key
+   to B's box key, sets `valid_until = now + lease` and records the exposure.
+3. A returns the services (base URL and auth) and the sealed keys.
+4. B opens each key and stores it encrypted as a hidden key of a local
+   service on A's provider, valid until `valid_until`.
+5. B reports back on `POST /api/peer/v1/report`: the keys it holds, requests
+   made with each, and each key's status.
+6. A local app on B calls `/proxy/a-weather/...`, and B calls the provider
+   with the handed over key. A is not involved.
 
 ```mermaid
 sequenceDiagram
@@ -892,7 +1140,7 @@ sequenceDiagram
     A-->>B: services (base URL, auth) and sealed keys
     B->>B: open each key, store it encrypted as a hidden key<br/>of a local service on A's provider, lease = valid_until
     B->>A: POST /api/peer/v1/report (keys held, requests, status)
-    Note over B,P: a local app on B calls /proxy/a-serpapi/...
+    Note over B,P: a local app on B calls /proxy/a-weather/...
     B->>P: request with the handed over key (A is not involved)
 ```
 
@@ -908,29 +1156,36 @@ it through B's proxy like any key. B never reveals it, leases it (403
 points its service anywhere else (409 `handover_service`).
 
 **The lease.** Every handed over key is valid until `now + lease` (1h, 6h,
-24h by default, 72h or 7d). B renews on each sync (every 10 minutes). The
-owner stops renewing when the share is paused, expired or revoked, or the key
-leaves the scope. B's worker checks every minute and deletes, row and
-ciphertext (zeroed first), every key whose lease ended, with no network
-needed: a receiver cut off from the owner lets go of the keys on its own.
+24h by default, 72h or 7d). B renews on each sync, every 10 minutes. The
+owner stops renewing when the share is paused, expired or revoked, or when
+the key leaves the scope. B's worker checks every minute and deletes every
+key whose lease ended, row and ciphertext (zeroed first), with no network
+needed. A receiver cut off from the owner lets go of the keys on its own.
 
-**Wipes.** B deletes handed over keys when the lease ends, when the manifest
-or a refusal says paused, expired or revoked, when a key is no longer sent,
-when B disconnects (before telling the owner) and when a signed revoke
-arrives. Pause wipes too; resume hands the keys over again at the next sync.
-B audits and announces arrivals and wipes (`peer.handover_received`,
-`peer.handover_wiped` with the reason), never every renewal.
+**Wipes.** B deletes handed over keys when:
+
+- the lease ends,
+- the manifest or a refusal says paused, expired or revoked,
+- a key is no longer sent,
+- B disconnects (before telling the owner),
+- a signed revoke arrives.
+
+Pause wipes too; resume hands the keys over again at the next sync. B audits
+and announces arrivals and wipes (`peer.handover_received`,
+`peer.handover_wiped` with the reason), never each renewal.
 
 **Revoke now.** Revoking a handover share (by hand, or by a timer whose end
 action is revoke) also pushes `POST <receiver url>/api/peer/v1/revoke`,
 signed with the owner's identity key over the share id, the receiver id, a
-timestamp and a nonce. B checks the signature against the owner key it
-pinned at connect, refuses timestamps more than 5 minutes off and nonces it
-has seen, deletes every key of that link and marks it revoked. The push is
-best effort and uses the public only client unless the share is marked
-`private_network`. The outcome is recorded on the share: "wiped 1 key(s) at
-...", or "not reached (...); the keys are deleted by <time> when their lease
-ends".
+timestamp and a nonce.
+
+1. B checks the signature against the owner key it pinned at connect,
+   refuses timestamps more than 5 minutes off and nonces it has seen, deletes
+   every key of that link and marks it revoked.
+2. The push is best effort, and it uses the public only client unless the
+   share is marked `private_network`.
+3. The owner records the outcome on the share: "wiped 1 key(s) at ...", or
+   "not reached (...); the keys are deleted by <time> when their lease ends".
 
 ```mermaid
 flowchart TD
@@ -946,55 +1201,60 @@ flowchart TD
     W3 --> C
 ```
 
-**What the owner sees.** Each handover share lists its keys with when each
-was first handed over, last renewed, valid until, deleted (and why), and the
-request count and status the receiver reported (cooperative, shown as
+**What the owner sees.** Each handover share lists its keys: when each was
+first handed over, last renewed, valid until, and deleted (with why), plus
+the request count and status the receiver reported (cooperative, shown as
 reported by the other server). The key list marks each key as handed over
-while live and as was handed over after (`handed_over` on the key). A revoked
-handover share carries `rotate_checklist`, every key the receiver ever held.
-Deliveries are audited once (`share.handover`), not on every renewal; wipes
-the owner learns of (push confirmed, lease lapsed, reported deleted, peer
-left) as `share.handover_wiped`; each push as `share.revoke_push`.
+while live, and as was handed over afterwards (`handed_over` on the key). A
+revoked handover share carries `rotate_checklist`, every key the receiver
+ever held. Audit entries: `share.handover` once per delivery (not per
+renewal), `share.handover_wiped` for each wipe the owner learns of (push
+confirmed, lease lapsed, reported deleted, peer left), and
+`share.revoke_push` for each push.
 
 ### Share timers
 
 Both modes have a timer: `ends_at` (RFC 3339, or none; `expires_at` is the
-same field under its old name) and `end_action`:
+same field under its old name) and an `end_action`:
 
 - `expire` (default): the share stops working (403 `share_expired`) and can
   be extended back to active.
-- `revoke`: the share is revoked for good: invite and token dead, handed over
-  keys wiped by the push or, failing that, by the lease.
+- `revoke`: the share is revoked for good. The invite and token die, and
+  handed over keys are wiped by the push or, failing that, by the lease.
 
-The worker checks every minute, and every request checks too, so a timer
-never runs late by more than the next request. Ends are audited as
+The worker checks every minute and every request checks too, so a timer is
+never late by more than the next request. Ends are audited as
 `share.expired` or `share.revoked` (detail "timer ended") and sent to
 webhooks with `reason: timer`. `POST /api/admin/shares/{id}/extend` moves
-`ends_at` later on an active or expired share; an expired one turns active,
+`ends_at` later on an active or expired share. An expired one turns active,
 and handover keys are handed over again at the receiver's next sync. Invite
-expiry is unchanged.
+expiry is separate and does not change.
 
 ## Sharing with people
 
-Most people the owner wants to give access to (a contractor, a friend, a
+Most people an owner wants to give access to (a contractor, a friend, a
 teammate with a script or an AI agent) do not run Acnologia. A share whose
 recipient is a person gives them access with nothing but a link. Key scopes,
 timers, pause, resume, extend, revoke, audit, webhooks and usage work as for
-a share with a server; request and budget limits too, in proxy mode.
+a share with a server, and so do request and budget limits in proxy mode.
 
-**Create.** A superadmin creates a share with `recipient: person`, a `label`
-(who it is for) and an optional `email`, which is only a label: Acnologia
-never sends mail. The mode is `proxy` (default) or `reveal`. The answer
-carries `claim_url`, `<public url>/claim/acnclaim_...`, shown once and valid
-1h, 24h (default) or 7d; only its hash is stored. While unclaimed,
-`POST /api/admin/shares/{id}/claim-link` issues a new link and kills the old
-one.
+**Step by step:**
 
-**Claim.** The person opens the link. The page calls
-`POST /api/claim/v1/preview` (what is shared, by which server, for whom,
-until when, with which limits; no secret) and, when they press "Get my
-access", `POST /api/claim/v1/redeem`. Redeem burns the link in one
-transaction, so it works once (a second redeem gets 409 `already_claimed`).
+1. **Owner (superadmin):** creates a share with `recipient: person`, a
+   `label` (who it is for) and an optional `email`, which is only a label:
+   Acnologia never sends mail. The mode is `proxy` (default) or `reveal`.
+2. **Server:** answers with `claim_url`, `<public url>/claim/acnclaim_...`,
+   shown once and valid 1h, 24h (default) or 7d. Only its hash is stored.
+   While the link is unclaimed, `POST /api/admin/shares/{id}/claim-link`
+   issues a new one and kills the old one.
+3. **Owner:** sends the link however they like (chat, mail, in person).
+4. **Person:** opens the link. The page calls `POST /api/claim/v1/preview`,
+   which shows what is shared, by which server, for whom, until when and with
+   which limits. It carries no secret.
+5. **Person:** presses "Get my access", and the page calls
+   `POST /api/claim/v1/redeem`. Redeem burns the link in one transaction, so
+   it works once; a second redeem gets 409 `already_claimed`.
+6. **Server:** answers once with a token (proxy) or the keys (reveal).
 
 ```mermaid
 sequenceDiagram
@@ -1013,37 +1273,39 @@ sequenceDiagram
 ```
 
 **Proxy mode.** Redeem mints an app token on the share's backing app: proxy
-only, allowed services are the shared services, key scopes and limits apply.
-The answer has the token, the base URL, per service the proxy URL, upstream
-auth and the provider's examples (for curl, Python and TypeScript snippets),
-the MCP URL, the limits and `ends_at`. The person calls
-`/proxy/<service>/...`, `/api/v1/services`, `/api/v1/me` and `/mcp` with
-`Authorization: Bearer acn_...`. Keys never leave the server; pause, revoke
-and an ended timer refuse the very next call with 403 `share_paused`,
+only, limited to the shared services, with the key scopes and limits
+applied. The answer has the token, the base URL, and per service the proxy
+URL, upstream auth and the provider's examples (for curl, Python and
+TypeScript snippets), plus the MCP URL, the limits and `ends_at`. The person
+calls `/proxy/<service>/...`, `/api/v1/services`, `/api/v1/me` and `/mcp`
+with `Authorization: Bearer acn_...`. Keys never leave the server. Pause,
+revoke and an ended timer refuse the very next call with 403 `share_paused`,
 `share_revoked` or `share_expired`. At `/mcp` the token sees the core tools
 that do not hand out keys (`list_services`, `pool_status`, `proxy_request`)
-and the tools generated for the shared services; never `get_key`, key
-insights or key management.
+and the tools generated for the shared services. It never sees `get_key`,
+key insights or key management.
 
-**Reveal mode.** Redeem returns the keys the scopes resolve to, each with its
-service, label, secret, provider, base URL and auth, exactly once. Hidden,
+**Reveal mode.** Redeem returns the keys the scopes resolve to, exactly once,
+each with its service, label, secret, provider, base URL and auth. Hidden,
 restricted, disabled, invalid, banned and handed over keys are never shown,
-even with `include_hidden`; a share whose scopes resolve to no showable key
-is refused at creation. Each key is recorded as revealed (`share.revealed`,
-one audit entry and webhook per key, ids only) and marked "Revealed to
-<label>" on the owner's key list and key page (`revealed_to`). Revoke cannot
-take a revealed key back: when a claimed reveal share ends, by revoke or by
-its timer, its response carries `rotate_checklist`, the audit gets
-`share.rotate_keys`, and the owner should rotate each key at its provider.
+even with `include_hidden`, and a share whose scopes resolve to no showable
+key is refused at creation. Each key is recorded as revealed
+(`share.revealed`, one audit entry and webhook per key, ids only) and marked
+"Revealed to <label>" on the owner's key list and key page (`revealed_to`).
+Revoke cannot take a revealed key back. When a claimed reveal share ends, by
+revoke or by its timer, its response carries `rotate_checklist`, the audit
+gets `share.rotate_keys`, and the owner should rotate each key at its
+provider.
 
 **My access.** `/me` is a page where the person pastes their token. It calls
-`GET /api/v1/me`: the share's name, the owner server's name, its status
-(active, paused, expired, revoked), mode and end, the services with how many
-keys are free, and the limits with today's and this month's use. The token is
-kept in the browser only when they tick "remember on this device".
-`/api/v1/me` works for any app token; ordinary apps get no share fields.
+`GET /api/v1/me` and shows the share's name, the owner server's name, the
+share's status (active, paused, expired, revoked), mode and end, the services
+with how many keys are free, and the limits with today's and this month's
+use. The token stays in the browser only if they tick "remember on this
+device". `/api/v1/me` works for any app token; ordinary apps get no share
+fields.
 
 **Locked deploys.** On a deploy behind the access password, `/claim/<code>`
-and `/me` load the dashboard shell like any page, the shell skips the lock
-screen on those two pages, and `/api/claim/v1/*` plus the token's own calls
+and `/me` load the dashboard shell like any page, and the shell skips the
+lock screen on those two pages. `/api/claim/v1/*` and the token's own calls
 (`/proxy`, `/api/v1`, `/mcp`) pass the gate. Every other route stays locked.
