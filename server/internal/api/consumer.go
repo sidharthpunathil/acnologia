@@ -101,6 +101,10 @@ func writeNoKey(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+// errPeerLease refuses a lease on a service shared by another server: a
+// lease would hand out the share token. Those services are proxy only.
+var errPeerLease = errors.New("this service is shared by another Acnologia server and is proxy only, use /proxy/{service}/...")
+
 // issueLease picks a key and creates a lease. On keys with a concurrency
 // limit the lease holds a slot until it is reported or expires, so set a
 // ttl close to how long you need the key.
@@ -111,6 +115,9 @@ func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service
 // issueLeaseOpts can also reserve the key exclusively: Acnologia then hands it
 // to no one else, through leases or the proxy, until the lease ends.
 func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration, exclusive bool) (*leaseDTO, error) {
+	if sv.Provider == providers.PeerSlug {
+		return nil, errPeerLease
+	}
 	ex := map[int64]bool{}
 	for _, id := range exclude {
 		ex[id] = true
@@ -210,6 +217,10 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 	}
 	wait := time.Duration(min(max(body.WaitSec, 0), 60)) * time.Second
 	l, err := s.issueLeaseOpts(r.Context(), a, sv, body.ExcludeKeyIDs, time.Duration(body.TTLSec)*time.Second, wait, body.Exclusive)
+	if errors.Is(err, errPeerLease) {
+		writeErr(w, 403, "lease_not_allowed", err.Error())
+		return
+	}
 	if err != nil {
 		if !writeNoKey(w, err) {
 			writeStoreErr(w, err)

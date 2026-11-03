@@ -40,6 +40,13 @@ const (
 	ServiceUp    = "service.up"
 	AppLimit     = "app.limit"
 	Test         = "test"
+	// Sharing between servers. These are never dropped as repeats.
+	ShareCreated  = "share.created"
+	ShareRedeemed = "share.redeemed"
+	SharePaused   = "share.paused"
+	ShareResumed  = "share.resumed"
+	ShareRevoked  = "share.revoked"
+	ShareUpdated  = "share.updated"
 )
 
 // Types lists every event a webhook can subscribe to, with a description.
@@ -56,6 +63,12 @@ var Types = []struct {
 	{ServiceDown, "A provider keeps failing and Acnologia stopped sending it traffic"},
 	{ServiceUp, "A provider that was down answers again"},
 	{AppLimit, "An app reached its request or budget limit"},
+	{ShareCreated, "A share to another server was created"},
+	{ShareRedeemed, "Another server redeemed a share invite"},
+	{SharePaused, "A share to another server was paused"},
+	{ShareResumed, "A paused share was resumed"},
+	{ShareRevoked, "A share was revoked, or the other server left it"},
+	{ShareUpdated, "A share's services, providers, limits or expiry changed"},
 }
 
 func ValidType(t string) bool {
@@ -126,7 +139,7 @@ func (n *Notifier) Emit(e Event) {
 		delete(n.seen, t+"|"+e.subject())
 	}
 	k := e.Type + "|" + e.subject()
-	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet {
+	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet && !strings.HasPrefix(e.Type, "share.") {
 		n.mu.Unlock()
 		return
 	}

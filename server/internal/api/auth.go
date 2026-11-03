@@ -108,33 +108,65 @@ func isBearerAppToken(v string) bool {
 	return ok && store.IsAppToken(tok)
 }
 
+// authFail says why an app token was refused. Share is set when the token
+// belongs to a share that is no longer usable (revoked, paused, expired).
+type authFail struct {
+	Status        int
+	Code, Message string
+	Share         string
+}
+
+func (f *authFail) write(w http.ResponseWriter) {
+	if f.Share != "" {
+		w.Header().Set("X-Acnologia-Share", f.Share)
+	}
+	writeErr(w, f.Status, f.Code, f.Message)
+}
+
 func (s *Server) authApp(r *http.Request) (*store.App, int, string) {
+	a, f := s.authAppFull(r)
+	if f != nil {
+		return nil, f.Status, f.Message
+	}
+	return a, 0, ""
+}
+
+func (s *Server) authAppFull(r *http.Request) (*store.App, *authFail) {
+	unauth := func(msg string) *authFail { return &authFail{Status: 401, Code: "unauthenticated", Message: msg} }
 	tok := appToken(r)
 	if tok == "" {
-		return nil, 401, "missing app token: send Authorization: Bearer acn_..."
+		return nil, unauth("missing app token: send Authorization: Bearer acn_...")
 	}
 	a, t, err := s.Store.AppByToken(r.Context(), crypto.SHA256(tok))
 	if err != nil {
-		return nil, 401, "invalid app token"
+		return nil, unauth("invalid app token")
+	}
+	// A share token says why it stopped working, so the other server can
+	// mark its link; this runs before the token checks because revoking a
+	// share also revokes its tokens.
+	if a.ShareID != nil {
+		if f := s.shareGate(r.Context(), *a.ShareID); f != nil {
+			return nil, f
+		}
 	}
 	if t.RevokedAt != nil {
-		return nil, 401, "app token revoked"
+		return nil, unauth("app token revoked")
 	}
 	if !t.Usable(time.Now()) {
-		return nil, 401, "app token expired"
+		return nil, unauth("app token expired")
 	}
 	if !a.Active {
-		return nil, 403, "app is disabled"
+		return nil, &authFail{Status: 403, Code: "unauthenticated", Message: "app is disabled"}
 	}
 	s.Store.TouchAppToken(r.Context(), a.ID, t.ID)
-	return a, 0, ""
+	return a, nil
 }
 
 func (s *Server) requireApp(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a, code, msg := s.authApp(r)
-		if a == nil {
-			writeErr(w, code, "unauthenticated", msg)
+		a, f := s.authAppFull(r)
+		if f != nil {
+			f.write(w)
 			return
 		}
 		ctx := store.WithAppToken(context.WithValue(r.Context(), appKey, a), a.TokenID)

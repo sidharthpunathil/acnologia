@@ -29,6 +29,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/egress"
 	"github.com/sidharthpunathil/acnologia/server/internal/llmstxt"
 	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/peer"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/redact"
 	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
@@ -68,6 +69,10 @@ type Server struct {
 	chatWaitFor time.Duration
 	// buildPoll overrides how often wait_for_build polls a run (tests).
 	buildPoll time.Duration
+	// peers is the receiver side of sharing between servers (peer.Syncer).
+	peers *peer.Syncer
+	// peerLimit bounds invite preview and redeem calls (peer_public.go).
+	peerLimit *peerLimiter
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -79,6 +84,8 @@ func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog,
 		limiter:  newLoginLimiter(),
 		devices:  newDeviceStore(),
 	}
+	s.peerLimit = newPeerLimiter()
+	s.peers = &peer.Syncer{Store: st, Box: p.Box, Catalog: cat}
 	s.Breakers.OnChange = func(id int64, down bool, reason string) { go s.onBreakerChange(id, down, reason) }
 	// main wires these up with their workers; tests and embedders get working defaults.
 	if p.Egress == nil {
@@ -132,6 +139,16 @@ func (s *Server) Router() http.Handler {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": s.Cfg.Version})
 	})
 	r.Get("/llms.txt", s.serveLLMs)
+	// Sharing between servers (peer_public.go): who this server is, and the
+	// server to server routes. Open in the access gate; preview and redeem
+	// need an invite, manifest and leave a share token.
+	r.Get("/.well-known/acnologia", s.wellKnown)
+	r.Route("/api/peer/v1", func(r chi.Router) {
+		r.Post("/preview", s.peerPreview)
+		r.Post("/redeem", s.peerRedeem)
+		r.With(s.requireApp).Get("/manifest", s.peerManifest)
+		r.With(s.requireApp).Post("/leave", s.peerLeave)
+	})
 	r.Get("/llms-full.txt", s.serveLLMsFull)
 	s.mountDocs(r)
 
@@ -224,13 +241,19 @@ func (s *Server) Router() http.Handler {
 			r.Post("/keys/check-all", s.checkAllKeys)
 			r.Post("/services/{id}/check", s.checkServiceKeys)
 			r.Post("/apps", s.createApp)
-			r.Patch("/apps/{id}", s.updateApp)
-			r.Delete("/apps/{id}", s.deleteApp)
-			r.Post("/apps/{id}/rotate-token", s.rotateAppToken)
-			r.Post("/apps/{id}/tokens", s.createAppToken)
-			r.Patch("/apps/{id}/tokens/{tokenId}", s.renameAppToken)
-			r.Delete("/apps/{id}/tokens/{tokenId}", s.revokeAppToken)
-			r.Put("/apps/{id}/mcp", s.putAppMCP)
+			// Apps backing a share are managed on the Sharing page.
+			r.With(s.notShareApp).Patch("/apps/{id}", s.updateApp)
+			r.With(s.notShareApp).Delete("/apps/{id}", s.deleteApp)
+			r.With(s.notShareApp).Post("/apps/{id}/rotate-token", s.rotateAppToken)
+			r.With(s.notShareApp).Post("/apps/{id}/tokens", s.createAppToken)
+			r.With(s.notShareApp).Patch("/apps/{id}/tokens/{tokenId}", s.renameAppToken)
+			r.With(s.notShareApp).Delete("/apps/{id}/tokens/{tokenId}", s.revokeAppToken)
+			r.With(s.notShareApp).Put("/apps/{id}/mcp", s.putAppMCP)
+			// Sharing: admins may look.
+			r.Get("/identity", s.getIdentity)
+			r.Get("/shares", s.listShares)
+			r.Get("/shares/{id}", s.getShare)
+			r.Get("/peers", s.listPeers)
 			r.Put("/services/{id}/logo", s.putServiceLogo)
 			r.Delete("/services/{id}/logo", s.deleteServiceLogo)
 			r.Post("/providers", s.createProvider)
@@ -270,6 +293,18 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/users/{id}", s.deleteUser)
 			r.Get("/audit", s.listAudit)
 			r.Put("/ai/rules", s.aiSetRules)
+			// Sharing: only a superadmin changes anything.
+			r.Patch("/identity", s.patchIdentity)
+			r.Post("/shares", s.createShare)
+			r.Patch("/shares/{id}", s.updateShare)
+			r.Post("/shares/{id}/pause", s.shareStatusHandler(store.SharePaused, notify.SharePaused, "paused"))
+			r.Post("/shares/{id}/resume", s.shareStatusHandler(store.ShareActive, notify.ShareResumed, "resumed"))
+			r.Post("/shares/{id}/revoke", s.shareStatusHandler(store.ShareRevoked, notify.ShareRevoked, "revoked"))
+			r.Post("/shares/{id}/invite", s.newShareInvite)
+			r.Post("/peers/preview", s.previewPeer)
+			r.Post("/peers", s.connectPeer)
+			r.Post("/peers/{id}/sync", s.syncPeer)
+			r.Delete("/peers/{id}", s.disconnectPeer)
 		})
 	})
 

@@ -200,13 +200,16 @@ func (g *accessGate) tryUnlock(secret string) (ok, limited bool, wait time.Durat
 
 // gateOpenPrefixes pass the gate untouched. The consumer routes check their
 // own app token.
-var gateOpenPrefixes = []string{"/proxy/", "/api/v1/", "/api/gate/"}
+// /api/peer/v1/ is the server to server side of sharing (peer_public.go).
+var gateOpenPrefixes = []string{"/proxy/", "/api/v1/", "/api/gate/", "/api/peer/v1/"}
 
 var gateOpenExact = map[string]bool{
 	"/healthz": true, "/robots.txt": true, "/mcp": true, "/api/gate": true, "/api/v1": true,
 	// The CLI sign in: a code is useless until a signed in person, past
 	// the gate, approves it (clidevice.go).
 	"/api/cli/device": true, "/api/cli/device/token": true,
+	// A server's public identity, for pairing with another server.
+	"/.well-known/acnologia": true,
 }
 
 // gateOpen reports whether a path is reachable while locked. Both the decoded

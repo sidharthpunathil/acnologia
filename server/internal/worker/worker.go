@@ -18,6 +18,10 @@ type Worker struct {
 	Pool           *pool.Pool
 	HealthInterval time.Duration
 	Retention      time.Duration
+	// Peers refreshes the shares other servers gave this one, every
+	// PeerInterval. Nil turns it off.
+	Peers        interface{ SyncAll(context.Context) }
+	PeerInterval time.Duration
 
 	lastPrune time.Time
 }
@@ -29,6 +33,9 @@ func (w *Worker) Run(ctx context.Context) {
 	if w.HealthInterval > 0 {
 		go w.runHealth(ctx)
 	}
+	if w.Peers != nil && w.PeerInterval > 0 {
+		go w.runPeers(ctx)
+	}
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	w.tick(ctx)
@@ -38,6 +45,22 @@ func (w *Worker) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			w.tick(ctx)
+		}
+	}
+}
+
+// runPeers syncs every peer link's manifest on its own loop: each sync is a
+// call to another server and must not hold up housekeeping.
+func (w *Worker) runPeers(ctx context.Context) {
+	t := time.NewTicker(w.PeerInterval)
+	defer t.Stop()
+	w.Peers.SyncAll(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			w.Peers.SyncAll(ctx)
 		}
 	}
 }

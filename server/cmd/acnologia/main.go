@@ -27,6 +27,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/egress"
 	"github.com/sidharthpunathil/acnologia/server/internal/llmstxt"
 	"github.com/sidharthpunathil/acnologia/server/internal/notify"
+	"github.com/sidharthpunathil/acnologia/server/internal/peer"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/redact"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
@@ -164,7 +165,8 @@ func run() error {
 		logHandler.Use(st.Redactor())
 	}
 	w := &worker.Worker{Store: st, Pool: p, HealthInterval: cfg.HealthInterval,
-		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour}
+		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour,
+		Peers:     srv.PeerSyncer(), PeerInterval: peer.SyncInterval}
 	go w.Run(ctx)
 
 	hs := &http.Server{Addr: cfg.Addr, Handler: srv.Router(), ReadHeaderTimeout: 15 * time.Second}

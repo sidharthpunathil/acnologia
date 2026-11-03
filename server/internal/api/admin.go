@@ -756,6 +756,10 @@ func (s *Server) revealKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if sv.Provider == providers.PeerSlug {
+		writeErr(w, 403, "share_token", "this key is a share token from another server and is never revealed")
+		return
+	}
 	secret, err := s.Pool.Box.Decrypt(k.SecretEnc)
 	if err != nil {
 		writeErr(w, 500, "decrypt_failed", "cannot decrypt, check ACNOLOGIA_MASTER_KEY")
