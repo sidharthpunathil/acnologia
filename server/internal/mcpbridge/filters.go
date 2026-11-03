@@ -10,7 +10,7 @@ import (
 
 // Groups are the control MCP tool groups, in the order the server lists
 // them. "all" also selects admin, secrets and raw, which are off by default.
-var Groups = []string{"overview", "call", "services", "keys", "apps", "providers", "ai", "routing", "sharing", "refresh", "admin", "secrets", "raw"}
+var Groups = []string{"overview", "power", "call", "services", "keys", "apps", "providers", "ai", "routing", "sharing", "refresh", "admin", "secrets", "raw"}
 
 // Filters choose which control MCP tools a client sees. The zero value is
 // the server's default set.
