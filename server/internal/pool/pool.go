@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
@@ -70,6 +71,10 @@ type Pool struct {
 	pacer *pacer
 	// picked holds the last pick time per key in nanoseconds (key id -> int64).
 	picked sync.Map
+	// lastPick is the newest pick time handed out. Pick times only move
+	// forward, so two picks never tie even where the clock is coarse
+	// (Windows), and round robin keeps spreading a burst.
+	lastPick atomic.Int64
 }
 
 func New(s *store.Store, box *crypto.Box) *Pool {
@@ -209,7 +214,7 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		}
 	}
 	k := choose(svc.Strategy, set)
-	p.picked.Store(k.ID, time.Now().UnixNano())
+	p.picked.Store(k.ID, p.nextPick(time.Now().UnixNano()))
 	secret, err := p.Box.Decrypt(k.SecretEnc)
 	if err != nil {
 		return nil, errors.New("cannot decrypt key, is ACNOLOGIA_MASTER_KEY correct?")
@@ -256,6 +261,21 @@ func (p *Pool) scopedKeys(ctx context.Context, svc *store.Service, appID int64, 
 func StoreKeyScope(st *store.Store) func(context.Context, int64, *store.Service) (*store.KeyScope, error) {
 	return func(ctx context.Context, appID int64, svc *store.Service) (*store.KeyScope, error) {
 		return st.AppKeyScope(ctx, appID, svc.Slug)
+	}
+}
+
+// nextPick returns now, or one nanosecond after the last pick when the clock
+// has not moved past it.
+func (p *Pool) nextPick(now int64) int64 {
+	for {
+		last := p.lastPick.Load()
+		n := now
+		if n <= last {
+			n = last + 1
+		}
+		if p.lastPick.CompareAndSwap(last, n) {
+			return n
+		}
 	}
 }
 

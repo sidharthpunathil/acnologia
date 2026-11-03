@@ -108,3 +108,13 @@ func TestPacerPrunesEmptyWindows(t *testing.T) {
 		t.Fatalf("windows after prune = %d", len(p.wins))
 	}
 }
+
+func TestNextPickNeverTies(t *testing.T) {
+	var p Pool
+	a := p.nextPick(100)
+	b := p.nextPick(100) // a coarse clock that did not move
+	c := p.nextPick(50)  // a clock that stepped back
+	if !(a < b && b < c) {
+		t.Fatalf("pick times must strictly increase, got %d %d %d", a, b, c)
+	}
+}
