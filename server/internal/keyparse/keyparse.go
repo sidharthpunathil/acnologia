@@ -71,6 +71,9 @@ type Result struct {
 // Parse extracts keys from text. It never fails: anything it cannot use goes
 // to Ignored.
 func Parse(text string) Result {
+	// A file saved by Notepad or PowerShell can start with a byte order mark,
+	// which strings.TrimSpace keeps (JavaScript's trim drops it).
+	text = strings.TrimPrefix(text, "\ufeff")
 	c := &collector{seen: map[string]int{}}
 	if !c.parseJSON(text) {
 		c.parseText(text)

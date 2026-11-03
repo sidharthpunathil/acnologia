@@ -79,7 +79,7 @@ func listenAddr() string {
 func Load(version string) Config {
 	return Config{
 		Addr:                  listenAddr(),
-		DataDir:               env("ACNOLOGIA_DATA_DIR", "./data"),
+		DataDir:               env("ACNOLOGIA_DATA_DIR", DefaultDataDir()),
 		MasterKey:             Getenv("ACNOLOGIA_MASTER_KEY"),
 		PublicURL:             strings.TrimRight(Getenv("ACNOLOGIA_PUBLIC_URL"), "/"),
 		SecureCookies:         envBool("ACNOLOGIA_SECURE_COOKIES", false),
@@ -110,7 +110,9 @@ func LoadDotEnv(path string) {
 	if err != nil {
 		return
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	// Lines are trimmed, so CRLF files from Windows read the same; a leading
+	// byte order mark (Notepad, PowerShell 5) is dropped.
+	for _, line := range strings.Split(strings.TrimPrefix(string(b), "\ufeff"), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

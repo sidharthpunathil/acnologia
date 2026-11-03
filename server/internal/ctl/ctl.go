@@ -119,7 +119,8 @@ func (c *cli) configPath() string {
 	if p := config.Getenv("ACNOLOGIA_CTL_CONFIG"); p != "" {
 		return p
 	}
-	dir, err := os.UserConfigDir()
+	// %AppData%\acnologia\ctl.json on Windows, see configDirFor.
+	dir, err := configDirFor(runtime.GOOS, os.Getenv)
 	if err != nil {
 		dir = "."
 	}
@@ -162,7 +163,7 @@ func (c *cli) save(cf configFile) error {
 		return err
 	}
 	b, _ := json.MarshalIndent(cf, "", "  ")
-	return os.WriteFile(p, b, 0o600) // holds tokens
+	return writeFileAtomic(p, b, 0o600) // holds tokens
 }
 
 func (c *cli) current() (context, error) {
@@ -605,18 +606,11 @@ func (c *cli) pollDevice(anon context, st deviceStart) (deviceGrant, error) {
 // openBrowser opens link in the default browser, and fails quietly where
 // there is none (a server over ssh).
 func openBrowser(link string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", link)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", link)
-	default:
-		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
-			return errors.New("no display")
-		}
-		cmd = exec.Command("xdg-open", link)
+	argv, err := browserCommand(runtime.GOOS, link, os.Getenv)
+	if err != nil {
+		return err
 	}
+	cmd := exec.Command(argv[0], argv[1:]...)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

@@ -301,5 +301,31 @@
       }
     ],
     "ignored": []
+  },
+  {
+    "name": "csv saved on windows: byte order mark and crlf",
+    "input": "\ufefflabel,key\r\nprod,AAAABBBBCCCCDDDD3333\r\n\"backup\",\"AAAABBBBCCCCDDDD4444\"\r\n",
+    "keys": [
+      {
+        "label": "prod",
+        "secret": "AAAABBBBCCCCDDDD3333"
+      },
+      {
+        "label": "backup",
+        "secret": "AAAABBBBCCCCDDDD4444"
+      }
+    ],
+    "ignored": []
+  },
+  {
+    "name": "json array with a byte order mark",
+    "input": "\ufeff[\"AAAABBBBCCCCDDDD5555\"]\r\n",
+    "keys": [
+      {
+        "label": "",
+        "secret": "AAAABBBBCCCCDDDD5555"
+      }
+    ],
+    "ignored": []
   }
 ]

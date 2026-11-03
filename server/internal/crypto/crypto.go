@@ -36,7 +36,7 @@ func LoadOrCreateKey(envValue, dataDir string) ([]byte, error) {
 	path := filepath.Join(dataDir, "master.key")
 	b, err := os.ReadFile(path)
 	if err == nil {
-		return decodeKey(strings.TrimSpace(string(b)))
+		return decodeKey(strings.TrimSpace(strings.TrimPrefix(string(b), "\ufeff")))
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("read master key: %w", err)
