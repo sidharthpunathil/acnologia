@@ -1,0 +1,167 @@
+# Tests on Linux, macOS and Windows: the Go server and CLI, the Go, Python and
+# TypeScript SDKs, the dashboard build and the PowerShell scripts. Every job
+# runs offline against fakes, so the whole run stays short.
+#
+# checkout and setup-go are pinned to the same commits as the release
+# workflows; the other first-party actions to a major version.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  go:
+    name: go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Vet
+        working-directory: server
+        run: go vet ./...
+
+      # -race needs cgo and a C toolchain, which Windows runners are not set
+      # up for; the server itself builds with CGO_ENABLED=0 everywhere.
+      - name: Test the server and CLI
+        working-directory: server
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            go test ./...
+          else
+            go test -race ./...
+          fi
+
+      - name: Cross compile for Windows arm64
+        if: runner.os == 'Linux'
+        working-directory: server
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./...
+          GOOS=windows GOARCH=arm64 go vet ./...
+
+      - name: Test the Go SDK
+        working-directory: sdk/go
+        run: go test ./...
+
+  python-sdk:
+    name: python sdk (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sdk/python/pyproject.toml
+
+      - name: Test
+        working-directory: sdk/python
+        run: |
+          python -m pip install -e ".[test]"
+          python -m pytest -q
+
+  typescript-sdk:
+    name: typescript sdk (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test
+        working-directory: sdk/typescript
+        run: |
+          npm install -g pnpm@10.24.0
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm typecheck
+
+  web:
+    name: dashboard build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build
+        working-directory: web
+        run: |
+          npm install -g pnpm@10.24.0
+          pnpm install --frozen-lockfile
+          pnpm build
+
+  # The Windows developer path: scripts/build.ps1 instead of make, the
+  # dashboard built by pnpm on Windows, and both binaries started once.
+  windows-build:
+    name: windows build (build.ps1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Parse install.ps1 and scripts/build.ps1 in Windows PowerShell 5.1 and
+      # PowerShell 7 without running them.
+      - name: Parse the PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @('install.ps1', 'scripts/build.ps1')
+          foreach ($exe in @('powershell', 'pwsh')) {
+            foreach ($f in $files) {
+              $path = (Resolve-Path $f).Path
+              & $exe -NoProfile -Command "`$e = `$null; [void][System.Management.Automation.Language.Parser]::ParseFile('$path', [ref]`$null, [ref]`$e); if (`$e) { `$e | ForEach-Object { Write-Error `$_.ToString() }; exit 1 }"
+              if ($LASTEXITCODE -ne 0) { throw "$f does not parse in $exe" }
+              Write-Host "$f parses in $exe"
+            }
+          }
+
+      - name: Build with build.ps1
+        shell: pwsh
+        run: |
+          npm install -g pnpm@10.24.0
+          ./scripts/build.ps1
+          ./scripts/build.ps1 cli
+          ./bin/acnologia.exe version
+          ./bin/acn.exe version
+          if ($LASTEXITCODE -ne 0) { throw "acn.exe version failed" }
