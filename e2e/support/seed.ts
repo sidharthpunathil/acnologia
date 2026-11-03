@@ -29,6 +29,10 @@ class Client {
   post(path: string, body: Json) {
     return this.call("POST", path, body);
   }
+
+  patch(path: string, body: Json) {
+    return this.call("PATCH", path, body);
+  }
 }
 
 /** Finds a numeric id in a create response, whatever the envelope looks like. */
@@ -47,10 +51,11 @@ function tokenOf(res: Json): string {
 }
 
 /**
- * Creates the demo workspace. Services point at the fake upstream (see
+ * Creates the demo workspace. peerBase is a second, empty server that
+ * redeems one of the shares. Services point at the fake upstream (see
  * upstream.ts) under a path per slug, so checks and traffic stay local.
  */
-export async function seed(base: string, upstream: string): Promise<Record<string, number>> {
+export async function seed(base: string, upstream: string, peerBase: string): Promise<Record<string, number>> {
   const c = new Client(base);
   await c.post("/api/auth/setup", ADMIN);
 
@@ -112,6 +117,7 @@ export async function seed(base: string, upstream: string): Promise<Record<strin
   });
   await c.post("/api/admin/users", { email: "ops@acnologia.dev", name: "Ops", password: "supersecret1", role: "admin" });
   await c.post("/api/admin/tokens", { name: "CI deploys", scope: "write", expires_in_days: 90 });
+  await seedSharing(c, base, peerBase);
 
   // Check every key now, synchronously, so no background check is still
   // running when the first screenshot is taken.
@@ -137,4 +143,38 @@ export async function seed(base: string, upstream: string): Promise<Record<strin
     await res.arrayBuffer();
   }
   return ids;
+}
+
+/** Pulls the invite code out of a share create response. */
+function inviteOf(res: Json): string {
+  if (typeof res.invite !== "string") throw new Error(`seed: no invite in ${JSON.stringify(res)}`);
+  return res.invite;
+}
+
+/**
+ * Fills the Sharing page. The main server gets a fixed name and two shares:
+ * one that a second, peer server redeems (so it shows as active, with the
+ * peer's name) and one still waiting for its invite. The peer only receives,
+ * so no shared service shows up on the main server's other pages.
+ */
+async function seedSharing(c: Client, base: string, peerBase: string): Promise<void> {
+  await c.patch("/api/admin/identity", { name: "Demo HQ", url: base });
+  const active = inviteOf(
+    await c.post("/api/admin/shares", {
+      name: "Partner lab",
+      note: "Search for the partner research team",
+      services: ["serpapi", "brave"],
+      limits: { daily_requests: 1000 },
+      invite_valid: "24h",
+    }),
+  );
+  await c.post("/api/admin/shares", { name: "Contractor laptop", services: ["tavily"], invite_valid: "7d" });
+
+  const p = new Client(peerBase);
+  await p.post("/api/auth/setup", { email: "lab@acnologia.dev", name: "Lab", password: "supersecret1" });
+  await p.patch("/api/admin/identity", { name: "Partner lab", url: peerBase });
+  // Trusted, because an untrusted link refuses loopback addresses.
+  const preview = await p.post("/api/admin/peers/preview", { invite: active, trusted: true });
+  const owner = preview.owner as Json;
+  await p.post("/api/admin/peers", { invite: active, prefix: "hq", trusted: true, owner_id: owner.id });
 }

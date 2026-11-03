@@ -41,16 +41,21 @@ const TIME_PATTERNS = [
 // dashboard prints those addresses (service base URLs, Integrate snippets).
 const PORT_PATTERN = "\\b(?:127\\.0\\.0\\.1|localhost):\\d{2,5}\\b";
 
+// Every run's servers get a new identity: a server id and a key fingerprint.
+// The audit log shows a peer's id redacted, as "[secret ...abcd]".
+const IDENTITY_PATTERN = "\\bacn_srv_[a-z0-9]+\\b|\\b[0-9a-f]{4}(?::[0-9a-f]{4}){7}\\b|\\[secret \\.\\.\\.[a-z0-9]+\\]";
+
 /**
- * Tags every element whose own text is time based or carries a per run port.
- * Time patterns skip code samples, where a date or "12:30" is static example
- * text.
+ * Tags every element whose own text is time based or carries a per run port
+ * or server identity. Time patterns skip code samples, where a date or
+ * "12:30" is static example text.
  */
 async function tagVolatile(page: Page): Promise<void> {
   await page.evaluate(
-    ([time, port]) => {
+    ([time, port, identity]) => {
       const timeRe = new RegExp(time.join("|"), "i");
       const portRe = new RegExp(port);
+      const identityRe = new RegExp(identity, "i");
       document.querySelectorAll("[data-e2e-mask]").forEach((el) => el.removeAttribute("data-e2e-mask"));
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -58,7 +63,7 @@ async function tagVolatile(page: Page): Promise<void> {
         const text = n.textContent ?? "";
         if (!parent || parent.closest("script, style")) continue;
         const isTime = timeRe.test(text) && !parent.closest("pre, code");
-        if (isTime || portRe.test(text)) parent.setAttribute("data-e2e-mask", "");
+        if (isTime || portRe.test(text) || identityRe.test(text)) parent.setAttribute("data-e2e-mask", "");
       }
       document.querySelectorAll("time").forEach((el) => el.setAttribute("data-e2e-mask", ""));
       // Form fields hold text in a value, not a text node.
@@ -66,7 +71,7 @@ async function tagVolatile(page: Page): Promise<void> {
         if (portRe.test(el.value)) el.setAttribute("data-e2e-mask", "");
       });
     },
-    [TIME_PATTERNS, PORT_PATTERN] as const,
+    [TIME_PATTERNS, PORT_PATTERN, IDENTITY_PATTERN] as const,
   );
 }
 

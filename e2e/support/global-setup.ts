@@ -12,8 +12,10 @@ export default async function globalSetup(): Promise<() => void> {
   const now = Date.now() + 60_000;
   const upstream = await startUpstream(now);
   const { pid, dataDir, baseURL } = await startServer();
+  let peer: Awaited<ReturnType<typeof startServer>> | undefined;
   try {
-    const serviceIds = await seed(baseURL, upstream.origin);
+    peer = await startServer();
+    const serviceIds = await seed(baseURL, upstream.origin, peer.baseURL);
 
     // Sign in once; every test reuses this cookie.
     const api = await request.newContext({ baseURL });
@@ -22,10 +24,19 @@ export default async function globalSetup(): Promise<() => void> {
     await api.storageState({ path: AUTH_FILE });
     await api.dispose();
 
-    const state: RunState = { pid, dataDir, baseURL, upstream: upstream.origin, now, serviceIds };
+    const state: RunState = {
+      pid,
+      dataDir,
+      baseURL,
+      upstream: upstream.origin,
+      now,
+      serviceIds,
+      peer: { pid: peer.pid, dataDir: peer.dataDir },
+    };
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (e) {
     stopServer(pid, dataDir);
+    if (peer) stopServer(peer.pid, peer.dataDir);
     upstream.close();
     throw e;
   }

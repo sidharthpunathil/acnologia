@@ -22,4 +22,6 @@ export interface RunState {
   /** Epoch ms the page clock is frozen at: a minute after seeding started. */
   now: number;
   serviceIds: Record<string, number>;
+  /** A second server that redeemed one of the seeded shares. */
+  peer: { pid: number; dataDir: string };
 }

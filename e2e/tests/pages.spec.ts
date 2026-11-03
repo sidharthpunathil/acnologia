@@ -13,6 +13,7 @@ const ROUTES: [name: string, path: string][] = [
   ["activity", "/activity"],
   ["usage", "/usage"],
   ["settings", "/settings"],
+  ["sharing", "/sharing"],
   ["users", "/users"],
   ["audit", "/audit"],
   ["account", "/account"],
@@ -22,10 +23,15 @@ const ROUTES: [name: string, path: string][] = [
   ["not-found", "/this-page-does-not-exist"],
 ];
 
+// Pages that print the build version, which changes with every commit.
+const SHOWS_VERSION = new Set(["settings", "sharing"]);
+
 for (const [name, path] of ROUTES) {
   test(`page ${name}`, async ({ page, snap }) => {
     await page.goto(path);
-    await snap(name);
+    if (!SHOWS_VERSION.has(name)) return snap(name);
+    const { version } = (await (await page.request.get("/api/admin/identity")).json()) as { version: string };
+    await snap(name, { mask: [page.getByText(version, { exact: true })] });
   });
 }
 
