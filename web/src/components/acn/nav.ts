@@ -2,10 +2,14 @@ import {
   RiBarChartBoxLine,
   RiBookOpenLine,
   RiChat3Line,
+  RiEqualizerLine,
+  RiLayoutGridLine,
+  RiQuestionLine,
   RiPulseLine,
   RiShareForwardLine,
   RiSettings3Line,
   RiShieldCheckLine,
+  RiShieldUserLine,
   RiTeamLine,
   RiUser3Line,
   RiWebhookLine,
@@ -20,6 +24,14 @@ import type { IconComponent } from "./types";
 
 export type NavGroup = "Workspace" | "Manage" | "Admin" | "Help";
 export const NAV_GROUPS: NavGroup[] = ["Workspace", "Manage", "Admin", "Help"];
+
+/** The icon on each group's row in the account menu and the More sheet. */
+export const NAV_GROUP_ICON: Record<NavGroup, IconComponent> = {
+  Workspace: RiLayoutGridLine,
+  Manage: RiEqualizerLine,
+  Admin: RiShieldUserLine,
+  Help: RiQuestionLine,
+};
 
 export interface NavItem {
   to: string;
@@ -78,13 +90,19 @@ export function useSignOut() {
   };
 }
 
+/** The group holding the open page, if any. */
+export function activeGroup(items: NavItem[], pathname: string): NavGroup | undefined {
+  return items.find((i) => i.group && isActivePath(pathname, i.to))?.group;
+}
+
 /**
  * Arrow key movement between the rows of a menu panel. Rows carry
- * `data-menu-row`. Home and End jump to the ends.
+ * `data-menu-row`; rows inside a collapsed panel are skipped. Home and End
+ * jump to the ends.
  */
 export function menuRowKeys(e: KeyboardEvent<HTMLElement>) {
   if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
-  const rows = [...e.currentTarget.querySelectorAll<HTMLElement>("[data-menu-row]")];
+  const rows = [...e.currentTarget.querySelectorAll<HTMLElement>("[data-menu-row]")].filter((r) => r.getClientRects().length > 0);
   if (!rows.length) return;
   e.preventDefault();
   const i = rows.indexOf(document.activeElement as HTMLElement);

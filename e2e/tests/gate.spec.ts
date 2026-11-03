@@ -72,7 +72,7 @@ test("access gate: lock screen, unlock, then sign in", async ({ page, request },
 
   // "Lock this browser" brings the lock screen back.
   await page.getByRole("button", { name: /Account menu/ }).click();
-  await page.getByRole("button", { name: "Lock this browser" }).click();
+  await page.getByRole("menuitem", { name: "Lock this browser" }).click();
   await expect(page.getByRole("heading", { name: "This instance is private" })).toBeVisible();
 
   // One wrong guess was spent above; four more use up the minute, and the
