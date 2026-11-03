@@ -29,7 +29,7 @@ import { cx } from "@/utils/cx";
 import { KeyHealth } from "./service/KeysTable";
 import { KeyDrawer } from "./service/KeyDrawer";
 import { withLiveStatus } from "./service/keyUtil";
-import { HandoverChip, useLoadHandovers } from "../components/HandoverChip";
+import { ExposureChips, useLoadHandovers } from "../components/HandoverChip";
 import { Callout, EmptyState, PageHeader, StatTile, type StatTone } from "@/components/acn";
 import { ActionIcon, CARD, Tip } from "./service/parts";
 import { KeyRingArt, SearchArt } from "@/components/foundations/illustrations";
@@ -462,7 +462,7 @@ export function KeysPage() {
                               <div className="truncate text-body-2-medium text-text-primary" title={k.label || undefined}>
                                 {k.label || "Untitled"}
                               </div>
-                              <HandoverChip k={k} className="my-0.5" />
+                              <ExposureChips k={k} className="my-0.5" />
                               <AccountLine k={k} />
                               <div className="truncate font-mono text-caption-1-regular text-text-secondary">
                                 {k.hint} · {k.service_name}
@@ -512,7 +512,7 @@ export function KeysPage() {
                         <RowLogo k={k} />
                         <div className="min-w-0 flex-1">
                           <div className="wrap-anywhere text-body-medium text-text-primary">{k.label || "Untitled"}</div>
-                          <HandoverChip k={k} className="my-0.5" />
+                          <ExposureChips k={k} className="my-0.5" />
                           <AccountLine k={k} wrap />
                           <div className="wrap-anywhere line-clamp-2 font-mono text-caption-1-regular text-text-secondary">
                             {k.hint} · {k.service_name}

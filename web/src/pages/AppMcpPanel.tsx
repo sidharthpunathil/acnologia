@@ -69,9 +69,10 @@ export function serverName(app: App): string {
   return `acnologia-${slug || app.id}`;
 }
 
-function snippets(name: string, endpoint: string) {
+/** MCP client configs for one server. `token` defaults to a placeholder; the claim page passes the real one. */
+export function mcpSnippets(name: string, endpoint: string, token = TOKEN) {
   const base = endpoint.replace(/\/mcp\/?$/, "");
-  const auth = `Bearer ${TOKEN}`;
+  const auth = `Bearer ${token}`;
   const json = (v: unknown) => JSON.stringify(v, null, 2);
   return {
     "claude-code": [
@@ -83,14 +84,14 @@ function snippets(name: string, endpoint: string) {
     "claude-desktop": [
       {
         label: "claude_desktop_config.json",
-        code: json({ mcpServers: { [name]: { command: "/path/to/acnologia", args: ["mcp", "--url", base], env: { ACNOLOGIA_TOKEN: TOKEN } } } }),
+        code: json({ mcpServers: { [name]: { command: "/path/to/acnologia", args: ["mcp", "--url", base], env: { ACNOLOGIA_TOKEN: token } } } }),
       },
     ],
     cursor: [{ label: ".cursor/mcp.json", code: json({ mcpServers: { [name]: { url: endpoint, headers: { Authorization: auth } } } }) }],
     vscode: [{ label: ".vscode/mcp.json", code: json({ servers: { [name]: { type: "http", url: endpoint, headers: { Authorization: auth } } } }) }],
     other: [
       { label: "streamable http", code: `URL     ${endpoint}\nHeader  Authorization: ${auth}` },
-      { label: "stdio bridge", code: `ACNOLOGIA_URL=${base} ACNOLOGIA_TOKEN=${TOKEN} acnologia mcp` },
+      { label: "stdio bridge", code: `ACNOLOGIA_URL=${base} ACNOLOGIA_TOKEN=${token} acnologia mcp` },
     ],
   } satisfies Record<Client, Array<{ label: string; code: string }>>;
 }
@@ -349,7 +350,7 @@ function ScrollTabs({ children }: { children: ReactNode }) {
 function ConnectTab({ app, endpoint }: { app: App; endpoint: string }) {
   const [client, setClient] = useState<Client>("claude-code");
   const name = serverName(app);
-  const all = useMemo(() => snippets(name, endpoint), [name, endpoint]);
+  const all = useMemo(() => mcpSnippets(name, endpoint), [name, endpoint]);
   return (
     <div className="flex flex-col gap-4">
       <Callout tone="info">

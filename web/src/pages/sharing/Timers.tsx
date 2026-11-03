@@ -172,7 +172,7 @@ export function resolveEnds(d: EndsDraft, from = Date.now()): { iso: string } | 
 }
 
 /** A row of single choice pills, a radio group underneath (arrow keys move, Space selects). */
-function ChoicePills<T extends string>({
+export function ChoicePills<T extends string>({
   label,
   value,
   options,
@@ -259,7 +259,18 @@ export function EndsPicker({
 
 export const END_ACTION_LABEL: Record<EndAction, string> = { expire: "expires", revoke: "revokes for good" };
 
-export function EndActionPicker({ value, onChange, handover }: { value: EndAction; onChange: (v: EndAction) => void; handover: boolean }) {
+export function EndActionPicker({
+  value,
+  onChange,
+  handover,
+  person,
+}: {
+  value: EndAction;
+  onChange: (v: EndAction) => void;
+  handover: boolean;
+  /** A person share: a claim link and a personal token instead of an invite. */
+  person?: boolean;
+}) {
   const cards: { id: EndAction; title: string; body: string }[] = [
     { id: "expire", title: "Expire", body: "The share stops working. You can extend it later to turn it back on." },
     {
@@ -267,7 +278,9 @@ export function EndActionPicker({ value, onChange, handover }: { value: EndActio
       title: "Revoke for good",
       body: handover
         ? "The invite and token die, the handed over keys are wiped and a delete signal is sent."
-        : "The invite and token die. It cannot be extended or resumed.",
+        : person
+          ? "The link and their token die. It cannot be extended or resumed."
+          : "The invite and token die. It cannot be extended or resumed.",
     },
   ];
   return (

@@ -18,8 +18,11 @@ interface LimitLine {
   format: (n: number) => string;
 }
 
-function lines(limits: AppLimits, usage: Share["usage"]): LimitLine[] {
+type Usage = Pick<NonNullable<Share["usage"]>, "today_requests" | "month_requests" | "today_cost" | "month_cost">;
+
+function lines(limits: AppLimits | null | undefined, usage: Usage | undefined): LimitLine[] {
   const out: LimitLine[] = [];
+  if (!limits) return out;
   const u = usage ?? { today_requests: 0, month_requests: 0, today_cost: 0, month_cost: 0 };
   if (limits.daily_requests != null)
     out.push({ key: "daily_requests", name: "Daily requests", used: u.today_requests, cap: limits.daily_requests, period: "today", format: num });
@@ -41,7 +44,12 @@ function toneOf(used: number, cap: number): MeterTone {
 
 /** A share's limits as compact meters: used of cap per set limit, or a quiet "No limits". */
 export function LimitMeters({ share }: { share: Share }) {
-  const items = lines(share.limits, share.usage);
+  return <UsageMeters limits={share.limits} usage={share.usage} />;
+}
+
+/** Limits and usage from anywhere (a share, or a person's own access page). */
+export function UsageMeters({ limits, usage }: { limits: AppLimits; usage: Usage | undefined }) {
+  const items = lines(limits, usage);
   if (!items.length) return <p className="text-caption-1-regular text-text-tertiary">No limits</p>;
   return (
     <ul className="grid max-w-xl grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2" aria-label="Limits">
