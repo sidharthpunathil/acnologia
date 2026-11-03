@@ -7,6 +7,75 @@ func gemini(name, model, paid string) Offer {
 		SourceURL: "https://ai.google.dev/gemini-api/docs/pricing", CheckedAt: "2026-11-02"}
 }
 
+func geminiGuide() *Guide {
+	contents := []map[string]any{{"role": "user", "parts": []map[string]any{{"text": "Say hello in five words"}}}}
+	model := llmParam("model", "path", "string", true, "Model id without the models/ prefix, for example gemini-3.6-flash or gemini-3.5-flash-lite.")
+	return &Guide{
+		Summary: "Google's Gemini models through the Gemini API: text and multimodal generation, embeddings and token counting. " +
+			"Pick it for long multimodal context (images, audio, video, PDFs) and a free tier on most models.",
+		Endpoints: []GuideEndpoint{
+			{Name: "Generate content", Method: "POST", Path: "/v1beta/models/{model}:generateContent",
+				Description: "Generates a reply. The model is in the path, not the body.",
+				Params: []GuideParam{
+					model,
+					llmParam("contents", "body", "array", true, "Turns {role: user or model, parts: [{text} or {inline_data: {mime_type, data}}]}."),
+					llmParam("systemInstruction", "body", "object", false, "{\"parts\": [{\"text\": \"...\"}]}."),
+					llmParam("generationConfig", "body", "object", false, "maxOutputTokens, temperature, responseMimeType (application/json), responseSchema, thinkingConfig."),
+					llmParam("tools", "body", "array", false, "functionDeclarations, or {\"google_search\": {}} for grounding with Google Search."),
+				},
+				Body:     map[string]any{"contents": contents, "generationConfig": map[string]any{"maxOutputTokens": 256}},
+				Response: "candidates[0].content.parts[].text, candidates[0].finishReason, usageMetadata (promptTokenCount, candidatesTokenCount, totalTokenCount), promptFeedback.blockReason when the prompt was blocked."},
+			{Name: "Stream generate content", Method: "POST", Path: "/v1beta/models/{model}:streamGenerateContent",
+				Description: "Same body as Generate content, streamed. Add alt=sse to get Server-Sent Events; without it the reply is one JSON array delivered in pieces.",
+				Params: []GuideParam{
+					model,
+					llmParam("alt", "query", "string", false, "sse for Server-Sent Events."),
+					llmParam("contents", "body", "array", true, "As in Generate content."),
+				},
+				Body:     map[string]any{"contents": contents},
+				Response: "Each data: event is a GenerateContentResponse chunk; read candidates[0].content.parts[].text. The last chunk carries usageMetadata."},
+			{Name: "Embed content", Method: "POST", Path: "/v1beta/models/{model}:embedContent",
+				Description: "One embedding. For many texts use :batchEmbedContents with a requests array.",
+				Params: []GuideParam{
+					llmParam("model", "path", "string", true, "gemini-embedding-001 (text) or gemini-embedding-2 (multimodal)."),
+					llmParam("content", "body", "object", true, "{\"parts\": [{\"text\": \"...\"}]}."),
+					llmParam("taskType", "body", "string", false, "RETRIEVAL_DOCUMENT, RETRIEVAL_QUERY, SEMANTIC_SIMILARITY, CLASSIFICATION or CLUSTERING."),
+					llmParam("outputDimensionality", "body", "integer", false, "Truncate the vector, for example 768."),
+				},
+				Body:     map[string]any{"content": map[string]any{"parts": []map[string]any{{"text": "first text"}}}, "taskType": "RETRIEVAL_DOCUMENT"},
+				Response: "embedding.values (array of floats)."},
+			{Name: "Count tokens", Method: "POST", Path: "/v1beta/models/{model}:countTokens",
+				Description: "Counts the tokens of a request without running it. Free.",
+				Params:      []GuideParam{model, llmParam("contents", "body", "array", true, "As in Generate content.")},
+				Body:        map[string]any{"contents": contents},
+				Response:    "totalTokens."},
+			{Name: "List models", Method: "GET", Path: "/v1beta/models",
+				Description: "Models and the methods each supports.",
+				Params: []GuideParam{
+					llmParam("pageSize", "query", "integer", false, "Page size."),
+					llmParam("pageToken", "query", "string", false, "nextPageToken from the previous page."),
+				},
+				Response: "models[].name (models/<id>), models[].supportedGenerationMethods, models[].inputTokenLimit, models[].outputTokenLimit, nextPageToken."},
+			{Name: "OpenAI compatible chat", Method: "POST", Path: "/v1beta/openai/chat/completions",
+				Description: "OpenAI Chat Completions format for clients that only speak it. The model goes in the body here.",
+				Params: []GuideParam{
+					llmParam("model", "body", "string", true, "For example gemini-3.6-flash."),
+					llmParam("messages", "body", "array", true, "OpenAI style messages."),
+				},
+				Body:     map[string]any{"model": "gemini-3.6-flash", "messages": llmMessages("Say hello in five words")},
+				Response: "choices[0].message.content, usage."},
+		},
+		Notes: []string{
+			llmKeyNote,
+			"The native API puts the model in the path, uses role model (not assistant) and camelCase fields. Model ids in the list carry a models/ prefix; drop it in paths.",
+			"gemini-2.5-flash is deprecated: from 2026-12-01 Google routes it to gemini-3.5-flash-lite. Use gemini-3.6-flash or gemini-3.5-flash-lite for new work.",
+			llmStreamNote + " Use :streamGenerateContent with alt=sse; generateContent never streams.",
+			"Errors look like {\"error\": {\"code\", \"message\", \"status\"}}. 429 RESOURCE_EXHAUSTED is a per minute or per day quota (free tier daily caps reset at midnight Pacific); 503 UNAVAILABLE means the model is overloaded, so retry later.",
+			"A reply with no candidates, or finishReason SAFETY, means the content was blocked; check promptFeedback and safetyRatings.",
+		},
+	}
+}
+
 // llmBuiltins are model APIs whose keys people pool across accounts.
 func llmBuiltins() []Builtin {
 	t := func(name string, status int, body string, expect Outcome) Fixture {
@@ -19,6 +88,7 @@ func llmBuiltins() []Builtin {
 			Website:     "https://ai.google.dev", DocsURL: "https://ai.google.dev/api",
 			Spec: Spec{
 				BaseURL: "https://generativelanguage.googleapis.com",
+				Guide:   geminiGuide(),
 				// Google accepts the key as ?key= or this header; the header keeps it out of URLs and logs.
 				Auth:     Auth{Type: "header", Name: "x-goog-api-key"},
 				Defaults: Defaults{Strategy: "round_robin", CooldownSec: 60, MaxAttempts: 5},
