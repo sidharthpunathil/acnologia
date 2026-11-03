@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
@@ -91,6 +92,8 @@ type Server struct {
 	Refresh *refresh.Refresher
 	// ctlAppMu makes the control MCP create its app once (mcp_control.go).
 	ctlAppMu sync.Mutex
+	// static serves WebFS (serveWeb); Router builds it.
+	static atomic.Pointer[staticSite]
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -146,6 +149,7 @@ func NewRedactor(st *store.Store, box *crypto.Box) *redact.Redactor {
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
+	s.static.Store(newStaticSite(s.WebFS))
 	// Client IP headers are attacker controlled unless a proxy sets them, and
 	// the login limiter keys on the client IP.
 	if s.Cfg.TrustProxyHeaders {
@@ -520,29 +524,236 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "not_found", "no such endpoint")
 		return
 	}
+	site := s.static.Load()
+	if site == nil {
+		site = newStaticSite(s.WebFS)
+	}
+	if site.fsys == nil {
+		http.Error(w, "UI not built", 404)
+		return
+	}
+	// index.html by name is the shell too, served below with no-cache.
 	path := strings.TrimPrefix(r.URL.Path, "/")
-	if path != "" {
-		if f, err := s.WebFS.Open(path); err == nil {
-			st, _ := f.Stat()
-			f.Close()
-			if st != nil && !st.IsDir() {
-				if strings.HasPrefix(path, "assets/") {
-					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-				}
-				http.FileServer(http.FS(s.WebFS)).ServeHTTP(w, r)
-				return
-			}
+	if path != "" && path != "index.html" {
+		if f := site.file(path); f != nil {
+			site.serveFile(w, r, path, f)
+			return
 		}
 	}
 	// SPA fallback
-	b, err := fs.ReadFile(s.WebFS, "index.html")
+	shell := site.file("index.html")
+	if shell == nil {
+		http.Error(w, "UI not built", 404)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	setCacheControl(h, "no-cache")
+	h.Set("ETag", shell.etag)
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && etagMatches(r.Header.Get("If-None-Match"), shell.etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	b, err := fs.ReadFile(site.fsys, "index.html")
 	if err != nil {
 		http.Error(w, "UI not built", 404)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(b)
+}
+
+// staticSite serves the embedded web build. Each file gets a strong ETag
+// from its content, computed on first use and kept, so a browser
+// revalidating a file it has gets a 304. Hashed files under assets/ may
+// have .br and .gz siblings written at build time (web/scripts).
+type staticSite struct {
+	fsys  fs.FS
+	files sync.Map // path -> *staticFile
+}
+
+// staticFile is what the site knows about one file.
+type staticFile struct {
+	etag   string // quoted SHA-256 prefix of the identity bytes
+	br, gz bool   // a precompressed sibling exists
+}
+
+func newStaticSite(fsys fs.FS) *staticSite {
+	return &staticSite{fsys: fsys}
+}
+
+// file returns the regular file at path, or nil when there is none. Only
+// files that exist are remembered, so the map stays the size of the build
+// whatever paths clients ask for.
+func (s *staticSite) file(path string) *staticFile {
+	if v, ok := s.files.Load(path); ok {
+		return v.(*staticFile)
+	}
+	f := s.describe(path)
+	if f != nil {
+		s.files.Store(path, f)
+	}
+	return f
+}
+
+func (s *staticSite) describe(path string) *staticFile {
+	if !fs.ValidPath(path) {
+		return nil
+	}
+	fh, err := s.fsys.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer fh.Close()
+	st, err := fh.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		return nil
+	}
+	sum := sha256.New()
+	if _, err := io.Copy(sum, fh); err != nil {
+		return nil
+	}
+	f := &staticFile{etag: `"` + base64.RawURLEncoding.EncodeToString(sum.Sum(nil)[:18]) + `"`}
+	if strings.HasPrefix(path, "assets/") && compressibleType(path) != "" {
+		f.br = s.regular(path + ".br")
+		f.gz = s.regular(path + ".gz")
+	}
+	return f
+}
+
+func (s *staticSite) regular(path string) bool {
+	st, err := fs.Stat(s.fsys, path)
+	return err == nil && st.Mode().IsRegular()
+}
+
+// serveFile answers with the file at path. Hashed assets are cached for a
+// year; other files (the mark, icons, the video) for an hour, then
+// revalidated by ETag. A no-store already set (the locked gate) wins.
+// A precompressed sibling is served when the client accepts it and asked
+// for the whole file; a Range request always gets the identity bytes.
+func (s *staticSite) serveFile(w http.ResponseWriter, r *http.Request, path string, f *staticFile) {
+	h := w.Header()
+	if strings.HasPrefix(path, "assets/") {
+		setCacheControl(h, "public, max-age=31536000, immutable")
+	} else {
+		setCacheControl(h, "public, max-age=3600")
+	}
+	name, etag := path, f.etag
+	if f.br || f.gz {
+		h.Add("Vary", "Accept-Encoding")
+		// The type comes from the uncompressed name, never from sniffing
+		// compressed bytes.
+		h.Set("Content-Type", compressibleType(path))
+		if r.Header.Get("Range") == "" {
+			ae := r.Header.Get("Accept-Encoding")
+			switch {
+			case f.br && acceptsEncoding(ae, "br"):
+				name, etag = path+".br", strings.TrimSuffix(f.etag, `"`)+`-br"`
+				h.Set("Content-Encoding", "br")
+			case f.gz && acceptsEncoding(ae, "gzip"):
+				name, etag = path+".gz", strings.TrimSuffix(f.etag, `"`)+`-gz"`
+				h.Set("Content-Encoding", "gzip")
+			}
+		}
+	}
+	h.Set("ETag", etag)
+	fh, err := s.fsys.Open(name)
+	if err != nil {
+		h.Del("Content-Encoding")
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer fh.Close()
+	if h.Get("Content-Encoding") != "" {
+		// ServeContent leaves the length out of an encoded answer; the
+		// encoded file is sent whole, so its size is the length.
+		if st, err := fh.Stat(); err == nil {
+			h.Set("Content-Length", strconv.FormatInt(st.Size(), 10))
+		}
+	}
+	rs, ok := fh.(io.ReadSeeker)
+	if !ok {
+		b, err := io.ReadAll(fh)
+		if err != nil {
+			h.Del("Content-Encoding")
+			http.Error(w, "read error", http.StatusInternalServerError)
+			return
+		}
+		rs = bytes.NewReader(b)
+	}
+	// ServeContent answers If-None-Match with a 304 and Range with a 206.
+	http.ServeContent(w, r, path, time.Time{}, rs)
+}
+
+// setCacheControl sets Cache-Control unless the response is already
+// no-store, which the access gate sets on everything it answers locked.
+func setCacheControl(h http.Header, v string) {
+	if strings.Contains(h.Get("Cache-Control"), "no-store") {
+		return
+	}
+	h.Set("Cache-Control", v)
+}
+
+// compressibleType is the Content-Type of a file the build may precompress,
+// by its uncompressed name, or "" for any other file.
+func compressibleType(path string) string {
+	switch {
+	case strings.HasSuffix(path, ".js"), strings.HasSuffix(path, ".mjs"):
+		return "text/javascript; charset=utf-8"
+	case strings.HasSuffix(path, ".css"):
+		return "text/css; charset=utf-8"
+	case strings.HasSuffix(path, ".svg"):
+		return "image/svg+xml"
+	case strings.HasSuffix(path, ".json"):
+		return "application/json"
+	case strings.HasSuffix(path, ".webmanifest"):
+		return "application/manifest+json"
+	case strings.HasSuffix(path, ".txt"):
+		return "text/plain; charset=utf-8"
+	}
+	return ""
+}
+
+// acceptsEncoding reports whether an Accept-Encoding header allows enc: it
+// is listed with a q above zero, or "*" is and enc is not listed at q=0.
+func acceptsEncoding(header, enc string) bool {
+	star := false
+	for _, part := range strings.Split(header, ",") {
+		name, params, _ := strings.Cut(part, ";")
+		name = strings.TrimSpace(name)
+		ok := qAboveZero(params)
+		switch {
+		case strings.EqualFold(name, enc):
+			return ok
+		case name == "*":
+			star = ok
+		}
+	}
+	return star
+}
+
+// qAboveZero reads the q parameter of one Accept-Encoding entry; no q
+// means 1.
+func qAboveZero(params string) bool {
+	for _, p := range strings.Split(params, ";") {
+		k, v, found := strings.Cut(strings.TrimSpace(p), "=")
+		if !found || !strings.EqualFold(strings.TrimSpace(k), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return err == nil && q > 0
+	}
+	return true
+}
+
+// etagMatches reports whether an If-None-Match header names etag.
+func etagMatches(header, etag string) bool {
+	for _, t := range strings.Split(header, ",") {
+		t = strings.TrimPrefix(strings.TrimSpace(t), "W/")
+		if t == "*" || t == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // helpers
