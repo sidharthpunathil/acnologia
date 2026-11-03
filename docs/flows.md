@@ -265,12 +265,19 @@ password is changed (other sessions) or reset by a superadmin (all sessions).
 responses. Tools map onto the consumer API and the proxy, with the same app
 token rules. Each app picks its tool sets in the dashboard (`GET`/`PUT
 /api/admin/apps/{id}/mcp`): **core** (`list_services`, `pool_status`,
-`get_key`, `renew_key`, `report_key`, `proxy_request`), **service tools**
+`service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`), **service tools**
 generated from each provider's examples, read only **insights**
 (`list_keys`, `key_details`, `service_stats`) and **manage** (`check_keys`,
 `set_key_status`, `add_keys`). Core, service tools, resources and prompts are
 on by default. Clients that only speak stdio can use `acnologia mcp --url ...
 --token acn_...` as a bridge.
+
+The initialize instructions tell the agent to read `service_guide` before
+calling a service it has not used. The same guide is the resource
+`acnologia://services/{slug}/guide` (one per allowed service, `text/markdown`),
+and over HTTP `GET /api/v1/services/{slug}/guide`. All three apply the same
+allow check as the proxy, so an app (or a share's token) reads guides only for
+services it may call.
 
 ```mermaid
 sequenceDiagram
@@ -283,6 +290,8 @@ sequenceDiagram
     M-->>Ag: server info, capabilities
     Ag->>M: tools/list
     M-->>Ag: the tools this app's settings allow
+    Ag->>M: tools/call service_guide {service}
+    M-->>Ag: the usage guide as Markdown<br/>(endpoints, params, limits, errors)
     Ag->>M: tools/call get_key {service}
     M->>C: issue lease (same checks as /api/v1/lease)
     M-->>Ag: lease JSON

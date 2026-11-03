@@ -183,6 +183,7 @@ request price and a limit that holds on every tier (50 a second).
 | `health` | A free request that proves a key works and reads its quota. Without it, validity is learned from real traffic. |
 | `examples` | Requests for the Integrate panel. Live checks only run `safe` GET or HEAD examples. |
 | `tests` | Fixture responses with the expected outcome, run on every save. |
+| `guide` | Optional. How to call the provider through Acnologia, for apps and AI agents. See [Usage guides](#usage-guides). |
 
 The full field reference is in the
 [design spec](superpowers/specs/2026-11-01-providers-as-data-and-ai-builder.md#provider-spec).
@@ -276,6 +277,77 @@ version, so later releases stop backfilling its offers; roll back from the
 Versions tab. No change just moves `checked_at` to today. The full flow is
 in [Keeping provider offers fresh](flows.md#keeping-provider-offers-fresh).
 
+## Usage guides
+
+A spec may carry a `guide`: how an app or an AI agent calls the provider
+through Acnologia. Acnologia renders it, together with what it already knows
+about the provider, into one Markdown page per service.
+
+```jsonc
+"guide": {
+  "summary": "Google and 50+ search engines as JSON. Pick it for live web results.",
+  "endpoints": [
+    { "name": "Google search", "method": "GET", "path": "/search.json",
+      "description": "One page of Google results.",
+      "params": [
+        { "name": "q", "in": "query", "type": "string", "required": true, "description": "The search query." },
+        { "name": "engine", "in": "query", "type": "string", "required": true, "description": "google, bing, youtube and more." }
+      ],
+      "response": "`organic_results[]` with `title`, `link` and `snippet`." }
+  ],
+  "notes": ["Pages are 10 results; use `start` to page.", "Cached searches are free and do not use quota."],
+  "markdown": "Optional free form Markdown, appended after the endpoints."
+}
+```
+
+| Field | What to write |
+|---|---|
+| `summary` | Required. What the API is for and when to pick it, in 1 to 3 sentences (up to 1,000 characters). |
+| `endpoints` | The calls worth knowing, most useful first (up to 40). `path` is relative to `base_url`, like in `examples`. `params[].in` is `query`, `path`, `body` or `header`. `body` is an example JSON body; `response` names the fields that matter. |
+| `notes` | Short facts an agent gets wrong without them: pagination, model names, streaming, error shapes, size limits, cost traps (up to 30). |
+| `markdown` | Anything else, up to 20,000 characters. |
+
+Never describe auth or keys in a guide: Acnologia adds the key, and callers
+only send their app token. Write for a model that has never seen the API:
+real parameter names, a realistic example body, and the response fields it
+will need next.
+
+**What the rendered guide contains.** A title and the summary; "How to call it
+through Acnologia" (the proxy URL `<public url>/proxy/<service>`, the app token
+as `Authorization: Bearer acn_...`, a note not to send a provider key, and the
+MCP alternatives `proxy_request` on `/mcp` or `call_service` on
+`/mcp/control`); the endpoints with a parameter table, example body and
+response notes; the spec's `examples` as curl commands through the proxy;
+limits and pricing from `quota` and `offers`; how Acnologia handles this
+provider's errors, built from its `rules` (rate limits, quota and rejected
+keys rotate to the next key; what the caller sees when no key can serve); the
+notes and free Markdown; and links to the provider's docs and website.
+
+**Without a guide.** A provider with no `guide` still gets a page, assembled
+from its description, examples, offers and rules, and marked as generated
+(`generated: true`). It is useful, but a written guide is better: it says
+which parameters matter and what comes back.
+
+**Where guides show up.**
+
+- Dashboard: the provider page's **Guide** tab (with Copy for LLM, and the
+  guide fields to edit) and a service's **Integrate** tab, with the real proxy
+  URL.
+- Apps: `GET /api/v1/services/{slug}/guide` (JSON, or Markdown with
+  `Accept: text/markdown` or `?format=md`), linked from each entry of
+  `GET /api/v1/services` as `guide_url`.
+- MCP: the `service_guide` core tool and the `acnologia://services/{slug}/guide`
+  resource on `/mcp`.
+- Dashboard API: `GET /api/admin/providers/{slug}/guide` and
+  `GET /api/admin/services/{id}/guide`.
+
+Guides are part of the spec, so they are validated on save, versioned, rolled
+back and copied to other servers with the rest of it. Built in providers ship
+with guides; an install seeded by an older release gets each built in guide
+once on boot (as a version noted "built-in guide added"), even when the spec
+was edited since, because a guide never changes how requests are handled. If
+you remove it afterwards, it stays removed.
+
 ## Building a provider with AI
 
 Set `ANTHROPIC_API_KEY` to turn this on. Give the builder a name and a docs
@@ -331,6 +403,10 @@ Then create a service from the catalog and add keys.
   examples, paths start with `/`, example names must exist, price units come
   from the list above, limits need a count of at least 1 and a known window,
   `checked_at` is a date and `source_url` is http(s).
+- Guide: `summary` is required (at most 1,000 characters), at most 40
+  endpoints each with a name, a path starting with `/` and a method of GET,
+  POST, PUT, PATCH or DELETE, params `in` query, path, body or header, at most
+  30 notes and 20,000 characters of Markdown.
 - Rule regexes are RE2 (no catastrophic backtracking); JSON paths are depth
   limited.
 

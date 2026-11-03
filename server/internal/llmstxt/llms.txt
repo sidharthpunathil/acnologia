@@ -27,7 +27,8 @@ Key facts for agents:
 
 ## Consumer API
 
-- [GET /api/v1/services](/llms-full.txt): services this token may use, with `available`, `base_url` and `auth` `{type, name, prefix}`.
+- [GET /api/v1/services](/llms-full.txt): services this token may use, with `available`, `base_url`, `auth` `{type, name, prefix}` and `guide_url`.
+- [GET /api/v1/services/{slug}/guide](/llms-full.txt): how to call one service: endpoints, parameters, curl examples, limits and errors. Read it before calling a service you have not used. `?format=md` returns Markdown.
 - [POST /api/v1/lease](/llms-full.txt): body `{"service": "serpapi", "exclude_key_ids": [], "ttl_sec": 300, "wait_sec": 0, "exclusive": false}`, returns `{"lease_id", "key_id", "service", "secret", "auth": {"type", "name", "prefix"}, "base_url", "expires_at"}` (put `prefix` before the secret when present), or 503 `no_key_available` / `all_keys_busy` with `retry_after_sec`.
 - [POST /api/v1/leases/{lease_id}/report](/llms-full.txt): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
 - [POST /api/v1/leases/{lease_id}/renew](/llms-full.txt): body `{"ttl_sec"}`, returns `{"ok": true, "expires_at"}`.
@@ -52,7 +53,7 @@ Key facts for agents:
 
 ## MCP
 
-- [POST /mcp](/llms-full.txt): MCP streamable HTTP endpoint (JSON responses), same app token. Core tools: `list_services`, `pool_status`, `get_key`, `renew_key`, `report_key`, `proxy_request`. Apps can also enable service tools generated from provider examples, read only insights (`list_keys`, `key_details`, `service_stats`) and key management (`check_keys`, `set_key_status`, `add_keys`). Stdio clients can run `acnologia mcp --url <base> --token acn_...`.
+- [POST /mcp](/llms-full.txt): MCP streamable HTTP endpoint (JSON responses), same app token. Core tools: `list_services`, `pool_status`, `service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`. Apps can also enable service tools generated from provider examples, read only insights (`list_keys`, `key_details`, `service_stats`) and key management (`check_keys`, `set_key_status`, `add_keys`). Stdio clients can run `acnologia mcp --url <base> --token acn_...`.
 
 ## SDKs
 
