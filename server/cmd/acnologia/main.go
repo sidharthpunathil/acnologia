@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -148,6 +150,12 @@ func run() error {
 	if err := p.RestoreLeases(ctx); err != nil {
 		return err
 	}
+	// Listen before any background loop starts, so a busy port fails fast
+	// with nothing to wind down.
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return err
+	}
 	// Webhook URLs are chosen in the dashboard, so by default they may not
 	// reach private networks (cloud metadata, internal admin panels).
 	hookClient := catalog.SafeClient(15 * time.Second)
@@ -155,7 +163,10 @@ func run() error {
 		hookClient = &http.Client{Timeout: 15 * time.Second}
 	}
 	p.Notify = notify.New(st, box, hookClient)
-	go p.Notify.Run(ctx)
+	// Background loops write to the store, so shutdown waits for them before
+	// the deferred st.Close.
+	var bg sync.WaitGroup
+	bg.Go(func() { p.Notify.Run(ctx) })
 	p.Egress = egress.New(st, box, egress.NewTransport(nil))
 	p.Egress.EchoURL = cfg.EgressEchoURL
 	srv := api.New(cfg, st, p, cat, ag, webui.FS(), llmstxt.Content)
@@ -169,20 +180,60 @@ func run() error {
 		Retention: time.Duration(cfg.EventRetentionDays) * 24 * time.Hour,
 		Peers:     srv.PeerSyncer(), PeerInterval: peer.SyncInterval, Refresh: srv.ProviderRefresher(),
 		Sharing: srv.SharingTicker()}
-	go w.Run(ctx)
-
-	hs := newHTTPServer(cfg.Addr, srv.Router())
-	go func() {
-		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_ = hs.Shutdown(sctx)
-	}()
+	bg.Go(func() { w.Run(ctx) })
 	slog.Info("acnologia listening", "addr", cfg.Addr, "data", cfg.DataDir, "version", version)
-	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	return serve(ctx, stop, newHTTPServer(cfg.Addr, srv.Router()), ln, shutdownGrace, func() {
+		bg.Wait()
+		srv.ProviderRefresher().Wait()
+	})
+}
+
+// shutdownGrace bounds how long a shutdown waits for in-flight requests and
+// background work. Docker and systemd allow 10 seconds by default before
+// they kill the process; raise their grace period to use all of it.
+const shutdownGrace = 15 * time.Second
+
+// serve runs hs on ln until ctx ends, then drains it. It returns only once
+// the in-flight requests have finished (or grace ran out and the rest were
+// closed) and background has returned within what is left of grace, so the
+// caller can close the store without cutting a request's writes. stop is the
+// signal context's stop: calling it right away means a second signal ends
+// the process at once, and calling it when Serve fails starts the same
+// shutdown.
+func serve(ctx context.Context, stop context.CancelFunc, hs *http.Server, ln net.Listener, grace time.Duration, background func()) error {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-ctx.Done()
+		stop()
+		slog.Info("shutting down: finishing requests in flight", "grace", grace)
+		sctx, cancel := context.WithTimeout(context.Background(), grace)
+		defer cancel()
+		if err := hs.Shutdown(sctx); err != nil {
+			slog.Warn("requests still open when the shutdown grace ran out; closing them", "err", err)
+			_ = hs.Close()
+		}
+		if background == nil {
+			return
+		}
+		bgDone := make(chan struct{})
+		go func() {
+			defer close(bgDone)
+			background()
+		}()
+		select {
+		case <-bgDone:
+		case <-sctx.Done():
+			slog.Warn("background work still running when the shutdown grace ran out")
+		}
+	}()
+	err := hs.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
 	}
-	return nil
+	stop()
+	<-done
+	return err
 }
 
 // newHTTPServer is the listening server. Headers must arrive within 15

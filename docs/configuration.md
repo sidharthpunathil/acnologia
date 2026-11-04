@@ -179,7 +179,8 @@ one PowerShell session with `$env:ACNOLOGIA_ADDR = "127.0.0.1:8080"`, or for
 your account with `setx ACNOLOGIA_ADDR 127.0.0.1:8080`.
 
 **Stopping.** Ctrl+C stops the server cleanly: it gives in flight requests
-up to 15 seconds and closes the database. Closing the console window,
+and background work up to 15 seconds, then closes the database. A second
+Ctrl+C stops it at once. Closing the console window,
 signing out and shutting down start the same shutdown, but Windows ends the
 process after about 5 seconds.
 

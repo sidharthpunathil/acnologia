@@ -478,6 +478,12 @@ never holds up another.
 Webhook delivery runs on its own goroutine too (`internal/notify`), started at
 boot next to the worker.
 
+On SIGINT or SIGTERM the server stops accepting connections, lets requests in
+flight finish (so their usage and events commit), waits for housekeeping,
+webhook delivery and a running provider refresh, and only then closes the
+database. All of this shares one 15 second budget; requests still open when
+it runs out are closed. A second signal ends the process at once.
+
 ## Build and packaging
 
 ```mermaid
