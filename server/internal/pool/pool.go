@@ -166,8 +166,21 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	}
 	l := p.lock(svc.ID)
 	l.Lock()
-	defer l.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			l.Unlock()
+		}
+	}()
 
+	// Usage writes run after the unlock, so least_used counts the ones still
+	// in flight. Taking the snapshot before reading the keys means a write
+	// that commits in between is counted twice (harmless), never missed:
+	// new pending writes on this service only start under this lock.
+	var pending map[int64]int64
+	if svc.Strategy == "least_used" {
+		pending = p.slots.pendingSnapshot()
+	}
 	keys, err := p.Store.CandidateKeys(ctx, svc.ID)
 	if err != nil {
 		return nil, err
@@ -234,6 +247,7 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	// The database stores last use in whole seconds, so a burst would tie
 	// and always pick the lowest id. Use the precise in-memory pick time.
 	for _, c := range set {
+		c.UsageToday += pending[c.ID]
 		if v, ok := p.picked.Load(c.ID); ok {
 			t := time.Unix(0, v.(int64))
 			if c.LastUsedAt == nil || t.After(*c.LastUsedAt) {
@@ -242,23 +256,39 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		}
 	}
 	k := choose(svc.Strategy, set)
+	// Hand the key out with its stored usage, not the ordering adjustment.
+	k.UsageToday -= pending[k.ID]
 	p.picked.Store(k.ID, p.nextPick(time.Now().UnixNano()))
 	secret, err := p.Box.Decrypt(k.SecretEnc)
 	if err != nil {
 		return nil, errors.New("cannot decrypt key, is ACNOLOGIA_MASTER_KEY correct?")
 	}
-	if err := p.Store.MarkUsed(ctx, k.ID); err != nil {
-		return nil, err
-	}
 	p.slots.acquire(k.ID)
 	freeOffer := p.pacer.take(k.ID, applied, now)
 	keyID, svcID := k.ID, svc.ID
-	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: func() {
+	release := func() {
 		if freeOffer != nil {
 			freeOffer()
 		}
 		p.slots.release(keyID, svcID)
-	}}, nil
+	}
+	// The slot and the pace are taken, so the choice is final. The usage
+	// write waits on the single writer, so it runs after the unlock: other
+	// picks on the service need not queue behind a group commit. The pick
+	// still returns only once the write has committed.
+	p.slots.addPending(keyID, 1)
+	l.Unlock()
+	locked = false
+	err = p.Store.MarkUsed(ctx, keyID)
+	p.slots.addPending(keyID, -1)
+	if err != nil {
+		// Free the slot and any endpoint concurrency. The request already
+		// counted in the pacer's rate window stays counted, so a failed
+		// write can only make the key's pacing stricter, never looser.
+		release()
+		return nil, err
+	}
+	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: release}, nil
 }
 
 // scopedKeys returns the only keys the app may use on the service, or nil

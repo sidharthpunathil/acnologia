@@ -21,6 +21,10 @@ type slots struct {
 	leases   map[string]leaseSlot    // lease id -> held slot
 	wake     map[int64]chan struct{} // service id -> closed when a slot frees up
 	excl     map[int64]string        // key id -> lease id holding it exclusively
+	// pending counts picks whose usage write has not committed yet, by key
+	// id. Pick writes usage outside the service lock, so least_used adds
+	// these to the stored usage to keep spreading a burst evenly.
+	pending map[int64]int64
 }
 
 type leaseSlot struct {
@@ -30,7 +34,7 @@ type leaseSlot struct {
 }
 
 func newSlots() *slots {
-	return &slots{inflight: map[int64]int{}, leases: map[string]leaseSlot{}, wake: map[int64]chan struct{}{}, excl: map[int64]string{}}
+	return &slots{inflight: map[int64]int{}, leases: map[string]leaseSlot{}, wake: map[int64]chan struct{}{}, excl: map[int64]string{}, pending: map[int64]int64{}}
 }
 
 func (s *slots) count(keyID int64) int {
@@ -51,6 +55,32 @@ func (s *slots) acquire(keyID int64) {
 	s.mu.Lock()
 	s.inflight[keyID]++
 	s.mu.Unlock()
+}
+
+// addPending moves the key's count of uncommitted usage writes by d.
+func (s *slots) addPending(keyID, d int64) {
+	s.mu.Lock()
+	if n := s.pending[keyID] + d; n > 0 {
+		s.pending[keyID] = n
+	} else {
+		delete(s.pending, keyID)
+	}
+	s.mu.Unlock()
+}
+
+// pendingSnapshot copies the uncommitted usage writes per key, or returns
+// nil when there are none.
+func (s *slots) pendingSnapshot() map[int64]int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) == 0 {
+		return nil
+	}
+	out := make(map[int64]int64, len(s.pending))
+	for k, v := range s.pending {
+		out[k] = v
+	}
+	return out
 }
 
 // release frees one slot on the key and wakes waiters for the service.
