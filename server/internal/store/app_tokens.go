@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"sync"
 	"time"
 )
@@ -63,26 +62,42 @@ func migrateAppTokens(db *sql.DB) error {
 			return err
 		}
 	}
-	_, err := addColumn(db, "events", "token_id", "INTEGER")
-	return err
+	if _, err := addColumn(db, "events", "token_id", "INTEGER"); err != nil {
+		return err
+	}
+	return migrateAppTokenIDs(db)
 }
 
 const appTokenCols = `t.id, t.app_id, t.name, t.prefix, t.created_at, t.created_by, COALESCE(u.email,''), t.last_used_at, t.expires_at, t.revoked_at`
 
+// tokenScan holds the Scan destinations of one app token row
+// (appTokenCols) and turns them into an AppToken. scanAppToken and
+// AppByToken share it.
+type tokenScan struct {
+	t                  AppToken
+	created            int64
+	by, last, exp, rev sql.NullInt64
+}
+
+func (s *tokenScan) dests() []any {
+	t := &s.t
+	return []any{&t.ID, &t.AppID, &t.Name, &t.Prefix, &s.created, &s.by, &t.CreatedByEmail, &s.last, &s.exp, &s.rev}
+}
+
+func (s *tokenScan) finish() *AppToken {
+	t := &s.t
+	t.CreatedAt = time.Unix(s.created, 0).UTC()
+	t.CreatedBy = toInt(s.by)
+	t.LastUsedAt, t.ExpiresAt, t.RevokedAt = toTime(s.last), toTime(s.exp), toTime(s.rev)
+	return t
+}
+
 func scanAppToken(row interface{ Scan(...any) error }) (*AppToken, error) {
-	var t AppToken
-	var created int64
-	var by, last, exp, rev sql.NullInt64
-	if err := row.Scan(&t.ID, &t.AppID, &t.Name, &t.Prefix, &created, &by, &t.CreatedByEmail, &last, &exp, &rev); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
+	var ts tokenScan
+	if err := row.Scan(ts.dests()...); err != nil {
+		return nil, notFound(err)
 	}
-	t.CreatedAt = time.Unix(created, 0).UTC()
-	t.CreatedBy = toInt(by)
-	t.LastUsedAt, t.ExpiresAt, t.RevokedAt = toTime(last), toTime(exp), toTime(rev)
-	return &t, nil
+	return ts.finish(), nil
 }
 
 // TokenPrefixHint is what the UI shows for a token: its first 8 characters.
@@ -95,12 +110,22 @@ func TokenPrefixHint(tok string) string {
 
 // CreateAppToken adds a token to an app. createdBy 0 means the system.
 func (s *Store) CreateAppToken(ctx context.Context, appID int64, name, prefix, hash string, createdBy int64, expiresAt *time.Time) (*AppToken, error) {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by,expires_at) VALUES(?,?,?,?,?,?,?)`,
-		appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt))
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
+	defer tx.Rollback()
+	id, err := nextAppTokenID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
+		id, appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.GetAppToken(ctx, appID, id)
 }
 
@@ -163,18 +188,21 @@ func (s *Store) RevokeOtherAppTokens(ctx context.Context, appID, keepID int64) (
 	return res.RowsAffected()
 }
 
+// appByTokenQ reads a token and its app in one statement, so both come
+// from one snapshot and auth costs one read instead of two.
+var appByTokenQ = `SELECT ` + appTokenCols + `, ` + appColsAs("a") + `
+FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by JOIN apps a ON a.id=t.app_id WHERE t.hash=?`
+
 // AppByToken finds the app a token hash belongs to, and the token itself.
-// It returns revoked and expired tokens too; the caller decides.
+// It returns revoked and expired tokens too, and inactive apps; the caller
+// decides. Nothing is cached: every request reads the token and app state.
 func (s *Store) AppByToken(ctx context.Context, hash string) (*App, *AppToken, error) {
-	t, err := scanAppToken(s.r.QueryRowContext(ctx, `SELECT `+appTokenCols+` FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by
-		WHERE t.hash=?`, hash))
-	if err != nil {
-		return nil, nil, err
+	var ts tokenScan
+	var as appScan
+	if err := s.r.QueryRowContext(ctx, appByTokenQ, hash).Scan(append(ts.dests(), as.dests()...)...); err != nil {
+		return nil, nil, notFound(err)
 	}
-	a, err := s.GetApp(ctx, t.AppID)
-	if err != nil {
-		return nil, nil, err
-	}
+	t, a := ts.finish(), as.finish()
 	a.TokenID = t.ID
 	return a, t, nil
 }

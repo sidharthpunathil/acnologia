@@ -11,40 +11,79 @@ import (
 	"time"
 )
 
-const appCols = `id, name, description, token_prefix, allowed_services, mode, active, created_at, last_used_at, lease_hidden, daily_requests, monthly_requests, daily_budget, monthly_budget, share_id,
-(SELECT COUNT(*) FROM app_tokens t WHERE t.app_id=apps.id AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>CAST(strftime('%s','now') AS INTEGER)))`
+// appColumns lists the columns appScan reads, in its order. The token count
+// subquery is correlated with the outer apps row.
+var appColumns = []string{"id", "name", "description", "token_prefix", "allowed_services", "mode", "active", "created_at", "last_used_at",
+	"lease_hidden", "daily_requests", "monthly_requests", "daily_budget", "monthly_budget", "share_id"}
+
+// appColsAs is the select list for appScan, with the apps table referred
+// to as alias ("apps" when it has none). GetApp and AppByToken's join both
+// build theirs here, so they cannot drift apart.
+func appColsAs(alias string) string {
+	cols := make([]string, len(appColumns))
+	for i, c := range appColumns {
+		cols[i] = alias + "." + c
+	}
+	return strings.Join(cols, ", ") + `,
+(SELECT COUNT(*) FROM app_tokens tc WHERE tc.app_id=` + alias + `.id AND tc.revoked_at IS NULL AND (tc.expires_at IS NULL OR tc.expires_at>CAST(strftime('%s','now') AS INTEGER)))`
+}
+
+var appCols = appColsAs("apps")
+
+// appScan holds the Scan destinations of one apps row (appCols) and turns
+// them into an App. scanApp and AppByToken share it, so a column added here
+// reaches every read.
+type appScan struct {
+	a                   App
+	allowed             string
+	active, leaseHidden int
+	created             int64
+	last, dr, mr        sql.NullInt64
+	db, mb              sql.NullFloat64
+	share               sql.NullString
+}
+
+func (s *appScan) dests() []any {
+	a := &s.a
+	return []any{&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &s.allowed, &a.Mode, &s.active, &s.created, &s.last, &s.leaseHidden,
+		&s.dr, &s.mr, &s.db, &s.mb, &s.share, &a.TokenCount}
+}
+
+func (s *appScan) finish() *App {
+	a := &s.a
+	a.AllowedServices = []string{}
+	_ = json.Unmarshal([]byte(s.allowed), &a.AllowedServices)
+	a.Active = s.active == 1
+	a.LeaseHidden = s.leaseHidden == 1
+	a.CreatedAt = time.Unix(s.created, 0).UTC()
+	a.LastUsedAt = toTime(s.last)
+	if s.share.Valid && s.share.String != "" {
+		a.ShareID = &s.share.String
+	}
+	a.Limits.DailyRequests, a.Limits.MonthlyRequests = toInt(s.dr), toInt(s.mr)
+	if s.db.Valid {
+		a.Limits.DailyBudget = &s.db.Float64
+	}
+	if s.mb.Valid {
+		a.Limits.MonthlyBudget = &s.mb.Float64
+	}
+	return a
+}
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
-	var a App
-	var allowed string
-	var active, leaseHidden int
-	var created int64
-	var last, dr, mr sql.NullInt64
-	var db, mb sql.NullFloat64
-	var share sql.NullString
-	if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenPrefix, &allowed, &a.Mode, &active, &created, &last, &leaseHidden, &dr, &mr, &db, &mb, &share, &a.TokenCount); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
+	var as appScan
+	if err := row.Scan(as.dests()...); err != nil {
+		return nil, notFound(err)
 	}
-	a.AllowedServices = []string{}
-	_ = json.Unmarshal([]byte(allowed), &a.AllowedServices)
-	a.Active = active == 1
-	a.LeaseHidden = leaseHidden == 1
-	a.CreatedAt = time.Unix(created, 0).UTC()
-	a.LastUsedAt = toTime(last)
-	if share.Valid && share.String != "" {
-		a.ShareID = &share.String
+	return as.finish(), nil
+}
+
+// notFound maps sql.ErrNoRows to ErrNotFound.
+func notFound(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
 	}
-	a.Limits.DailyRequests, a.Limits.MonthlyRequests = toInt(dr), toInt(mr)
-	if db.Valid {
-		a.Limits.DailyBudget = &db.Float64
-	}
-	if mb.Valid {
-		a.Limits.MonthlyBudget = &mb.Float64
-	}
-	return &a, nil
+	return err
 }
 
 // CreateApp creates an app with its first token, named "Default".
@@ -68,17 +107,18 @@ func (s *Store) CreateAppWithToken(ctx context.Context, a *App, tokenName, prefi
 	if err != nil {
 		return nil, nil, err
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO apps(id,name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		id, a.Name, a.Description, "app_tokens:"+tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), t, b2i(a.LeaseHidden))
+	if _, err := tx.ExecContext(ctx, `INSERT INTO apps(id,name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		id, a.Name, a.Description, "app_tokens:"+tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), t, b2i(a.LeaseHidden)); err != nil {
+		return nil, nil, err
+	}
+	tokID, err := nextAppTokenID(ctx, tx)
 	if err != nil {
 		return nil, nil, err
 	}
-	res, err = tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?)`,
-		id, tokenName, prefix, tokenHash, t, nz(createdBy))
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?,?)`,
+		tokID, id, tokenName, prefix, tokenHash, t, nz(createdBy)); err != nil {
 		return nil, nil, err
 	}
-	tokID, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
@@ -160,12 +200,14 @@ func (s *Store) RotateAppToken(ctx context.Context, id int64, name, prefix, toke
 	if _, err := tx.ExecContext(ctx, `UPDATE app_tokens SET revoked_at=? WHERE app_id=? AND revoked_at IS NULL`, t, id); err != nil {
 		return nil, err
 	}
-	res, err = tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?)`,
-		id, name, TokenPrefixHint(prefix), tokenHash, t, nz(createdBy))
+	tokID, err := nextAppTokenID(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	tokID, _ := res.LastInsertId()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?,?)`,
+		tokID, id, name, TokenPrefixHint(prefix), tokenHash, t, nz(createdBy)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -180,7 +222,7 @@ func (s *Store) ClearLeaseHidden(ctx context.Context, id int64) error {
 
 func (s *Store) DeleteApp(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM apps WHERE id=?`, id)
-	// App ids can be reused; forget any share scopes cached for this one.
+	// Forget any share scopes cached for this app.
 	s.invalidateScopes()
 	return err
 }

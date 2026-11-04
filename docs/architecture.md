@@ -347,10 +347,12 @@ obvious:
 - **Secrets** are stored only as `secret_enc` (AES-256-GCM, random nonce) and
   `secret_fp`, a keyed HMAC that rejects duplicates without decrypting.
   Session, app and admin tokens are stored as SHA-256 hashes.
-- **Key, app and service ids are never reused.** High water marks in
-  `meta.keys_seq`, `meta.apps_seq` and `meta.services_seq` (and the ids the
-  events still carry) keep a new key, app or service from inheriting a
-  deleted one's events, leases, counts or slots.
+- **Key, app, service and app token ids are never reused.** High water
+  marks in `meta.keys_seq`, `meta.apps_seq`, `meta.services_seq` and
+  `meta.app_tokens_seq` (and the ids the events still carry) keep a new key,
+  app, service or token from inheriting a deleted one's events, leases,
+  counts or slots. A trigger on `app_tokens` keeps its counter for every
+  insert.
 - **Key account fields** (`account_name`, `account_email`, `account_phone`,
   `account_ref`) record who each key belongs to.
 - **`app_tokens`** holds each app's named tokens. Requests, spend and limits
