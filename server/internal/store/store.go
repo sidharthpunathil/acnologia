@@ -19,8 +19,22 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// Store is the database. Writes go through DB, one connection, so SQLite
+// never answers SQLITE_BUSY between them. Reads that need no transaction go
+// through a separate pool of read-only connections (rd), so a slow
+// dashboard query no longer holds up the requests behind it. In WAL mode a
+// read sees every write committed before it starts, whichever connection
+// made it, so a revoke, pause or disable is seen by the very next read.
 type Store struct {
+	// DB is the writer: every write, every transaction and the reads that
+	// must see the writer's own state.
 	DB *sql.DB
+	// rd is the read pool, opened with query_only.
+	rd *sql.DB
+	// w and r keep prepared statements for constant SQL on each pool.
+	w, r *stmtCache
+	// gw group commits the per request writes (see writer.go).
+	gw *groupWriter
 	// red redacts secrets from text the store writes (see redact.go).
 	red atomic.Pointer[redact.Redactor]
 	// scopes caches share key scopes by app (see keyscope.go).
@@ -240,28 +254,53 @@ func DBFileIn(dataDir string) string {
 	return DBFile
 }
 
+// readPoolSize is how many read connections the store keeps. Writes stay
+// on exactly one connection.
+const readPoolSize = 4
+
 func Open(dataDir string) (*Store, error) {
 	file := DBFileIn(dataDir)
-	slog.Info("opening database", "path", filepath.Join(dataDir, file))
-	dsn := "file:" + uriPath(filepath.Join(dataDir, file)) +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
-	db, err := sql.Open("sqlite", dsn)
+	path := filepath.Join(dataDir, file)
+	slog.Info("opening database", "path", path)
+	db, err := sql.Open("sqlite", writerDSN(path))
 	if err != nil {
 		return nil, err
 	}
 	// One writer keeps SQLite simple and avoids SQLITE_BUSY under load.
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	// The database holds encrypted keys and password hashes: owner only.
+	chmodDB(dataDir, file)
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	optimize(context.Background(), db)
+	rd, err := sql.Open("sqlite", readerDSN(path))
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rd.SetMaxOpenConns(readPoolSize)
+	rd.SetMaxIdleConns(readPoolSize)
+	if err := rd.Ping(); err != nil {
+		rd.Close()
+		db.Close()
+		return nil, fmt.Errorf("open read pool: %w", err)
+	}
+	chmodDB(dataDir, file)
+	w := newStmtCache(db)
+	return &Store{DB: db, rd: rd, w: w, r: newStmtCache(rd), gw: newGroupWriter(db, w)}, nil
+}
+
+// chmodDB keeps the database and its WAL and shared memory files owner only.
+func chmodDB(dataDir, file string) {
 	for _, f := range []string{file, file + "-wal", file + "-shm"} {
 		_ = os.Chmod(filepath.Join(dataDir, f), 0o600)
 	}
-	if err := migrate(db); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	return &Store{DB: db}, nil
 }
 
 // migrate adds columns introduced after the first release to existing databases.
@@ -335,7 +374,57 @@ func migrate(db *sql.DB) error {
 	if err := migrateRuns(db); err != nil {
 		return err
 	}
-	return migrateHiddenKeyEvents(db)
+	if err := migrateHiddenKeyEvents(db); err != nil {
+		return err
+	}
+	return migrateIndexes(db)
+}
+
+// lateIndexes were added after the first release. events_key serves a key's
+// insights, the hidden key trigger and CreateKeys' MAX(key_id); events_app
+// serves a share's per service counts; leases_created serves the prune.
+var lateIndexes = []struct{ name, table, cols string }{
+	{"events_key", "events", "key_id, ts"},
+	{"events_app", "events", "app_id, ts"},
+	{"leases_created", "leases", "created_at"},
+}
+
+// migrateIndexes creates the late indexes and analyzes each table that got
+// one. The planner needs the statistics: without them it picks events_key or
+// events_app for range scans they make slower.
+func migrateIndexes(db *sql.DB) error {
+	analyze := map[string]bool{}
+	for _, ix := range lateIndexes {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, ix.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`CREATE INDEX ` + ix.name + ` ON ` + ix.table + `(` + ix.cols + `)`); err != nil {
+			return err
+		}
+		analyze[ix.table] = true
+	}
+	// A full ANALYZE, not bounded by analysis_limit: it runs once, before
+	// the server takes requests, and full statistics plan the long range
+	// sums better than sampled ones.
+	for table := range analyze {
+		if _, err := db.Exec(`PRAGMA analysis_limit=0; ANALYZE ` + table + `; PRAGMA analysis_limit=` + analysisLimit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// optimize refreshes planner statistics for tables that never had them or
+// whose size changed a lot, within the writer's analysis_limit. Open runs it
+// and so does the housekeeping prune.
+func optimize(ctx context.Context, db *sql.DB) {
+	if _, err := db.ExecContext(ctx, `PRAGMA optimize=0x10002`); err != nil {
+		slog.Warn("sqlite optimize failed", "err", err)
+	}
 }
 
 // migrateHiddenKeyEvents deletes a hidden key's events with the key, however
@@ -369,11 +458,21 @@ func addColumn(db *sql.DB, table, col, def string) (bool, error) {
 	return err == nil, err
 }
 
-func (s *Store) Close() error { return s.DB.Close() }
+// Close waits for queued writes to commit, then closes both pools.
+func (s *Store) Close() error {
+	s.gw.close()
+	s.r.close()
+	s.w.close()
+	rerr := s.rd.Close()
+	if err := s.DB.Close(); err != nil {
+		return err
+	}
+	return rerr
+}
 
 func (s *Store) GetMeta(ctx context.Context, k string) string {
 	var v string
-	_ = s.DB.QueryRowContext(ctx, `SELECT v FROM meta WHERE k=?`, k).Scan(&v)
+	_ = s.w.QueryRowContext(ctx, `SELECT v FROM meta WHERE k=?`, k).Scan(&v)
 	return v
 }
 

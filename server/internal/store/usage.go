@@ -43,7 +43,7 @@ func (s *Store) GetAppLimits(ctx context.Context, appID int64) (AppLimits, error
 	var l AppLimits
 	var dr, mr sql.NullInt64
 	var db, mb sql.NullFloat64
-	err := s.DB.QueryRowContext(ctx, `SELECT daily_requests, monthly_requests, daily_budget, monthly_budget FROM apps WHERE id=?`, appID).Scan(&dr, &mr, &db, &mb)
+	err := s.r.QueryRowContext(ctx, `SELECT daily_requests, monthly_requests, daily_budget, monthly_budget FROM apps WHERE id=?`, appID).Scan(&dr, &mr, &db, &mb)
 	if err == sql.ErrNoRows {
 		return l, ErrNotFound
 	}
@@ -73,23 +73,25 @@ func (s *Store) SetAppLimits(ctx context.Context, appID int64, l AppLimits) erro
 }
 
 // RecordAppUsage adds one upstream request and its cost to today's row.
-// Cache hits are counted separately and cost nothing.
-func (s *Store) RecordAppUsage(ctx context.Context, appID int64, cost float64, cacheHit bool) error {
+// Cache hits are counted separately and cost nothing. The write is group
+// committed and does not stop when ctx is cancelled: the request was served,
+// so a client hanging up must not keep it out of the app's limits. It has
+// committed when RecordAppUsage returns.
+func (s *Store) RecordAppUsage(_ context.Context, appID int64, cost float64, cacheHit bool) error {
 	req, hit := 1, 0
 	if cacheHit {
 		req, hit, cost = 0, 1, 0
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO app_usage(app_id, day, requests, cost, cache_hits) VALUES(?,?,?,?,?)
+	return s.gw.write(wstmt{`INSERT INTO app_usage(app_id, day, requests, cost, cache_hits) VALUES(?,?,?,?,?)
 		ON CONFLICT(app_id, day) DO UPDATE SET requests=requests+excluded.requests, cost=cost+excluded.cost, cache_hits=cache_hits+excluded.cache_hits`,
-		appID, dayOf(time.Now()), req, cost, hit)
-	return err
+		[]any{appID, dayOf(time.Now()), req, cost, hit}})
 }
 
 func (s *Store) GetAppUsage(ctx context.Context, appID int64, at time.Time) (AppUsage, error) {
 	var u AppUsage
 	today := dayOf(at)
 	month := today[:7] + "-01"
-	err := s.DB.QueryRowContext(ctx, `SELECT
+	err := s.r.QueryRowContext(ctx, `SELECT
 		COALESCE(SUM(CASE WHEN day=? THEN requests END),0), COALESCE(SUM(CASE WHEN day=? THEN cost END),0),
 		COALESCE(SUM(requests),0), COALESCE(SUM(cost),0),
 		COALESCE(SUM(CASE WHEN day=? THEN cache_hits END),0), COALESCE(SUM(cache_hits),0)
@@ -100,7 +102,7 @@ func (s *Store) GetAppUsage(ctx context.Context, appID int64, at time.Time) (App
 
 func (s *Store) AppUsageHistory(ctx context.Context, appID int64, days int) ([]UsageDay, error) {
 	since := dayOf(time.Now().AddDate(0, 0, -days+1))
-	rows, err := s.DB.QueryContext(ctx, `SELECT day, requests, cost, cache_hits FROM app_usage WHERE app_id=? AND day>=? ORDER BY day`, appID, since)
+	rows, err := s.r.QueryContext(ctx, `SELECT day, requests, cost, cache_hits FROM app_usage WHERE app_id=? AND day>=? ORDER BY day`, appID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -146,9 +148,9 @@ func CheckLimits(l AppLimits, u AppUsage, at time.Time) *LimitHit {
 func (s *Store) SpendSince(ctx context.Context, since time.Time, includeHidden bool) (float64, error) {
 	q := `SELECT COALESCE(SUM(e.cost),0) FROM events e WHERE e.ts>=?`
 	if !includeHidden {
-		q += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+		q += notHidden
 	}
 	var v float64
-	err := s.DB.QueryRowContext(ctx, q, since.Unix()).Scan(&v)
+	err := s.r.QueryRowContext(ctx, q, since.Unix()).Scan(&v)
 	return v, err
 }

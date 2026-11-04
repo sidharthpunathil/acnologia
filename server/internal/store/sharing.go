@@ -344,12 +344,12 @@ func (s *Store) CreateShare(ctx context.Context, sh *Share, inviteHash string, c
 
 // GetShare returns one share.
 func (s *Store) GetShare(ctx context.Context, id string) (*Share, error) {
-	return scanShare(s.DB.QueryRowContext(ctx, `SELECT `+shareCols+` FROM shares s LEFT JOIN apps a ON a.id=s.app_id WHERE s.id=?`, id))
+	return scanShare(s.r.QueryRowContext(ctx, `SELECT `+shareCols+` FROM shares s LEFT JOIN apps a ON a.id=s.app_id WHERE s.id=?`, id))
 }
 
 // ListShares returns every share, newest first.
 func (s *Store) ListShares(ctx context.Context) ([]*Share, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+shareCols+` FROM shares s LEFT JOIN apps a ON a.id=s.app_id ORDER BY s.created_at DESC, s.rowid DESC`)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+shareCols+` FROM shares s LEFT JOIN apps a ON a.id=s.app_id ORDER BY s.created_at DESC, s.rowid DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -563,11 +563,13 @@ func (s *Store) MarkShareLeft(ctx context.Context, id string) (*Share, error) {
 	return s.GetShare(ctx, sh.ID)
 }
 
+const shareServiceCountsSQL = `SELECT COALESCE(sv.slug,''), COUNT(*) FROM events e LEFT JOIN services sv ON sv.id=e.service_id
+		WHERE e.app_id=? AND e.ts>=? AND e.kind IN ('proxy','cache_hit') GROUP BY sv.slug`
+
 // ShareServiceCounts counts proxied requests per service made with a share's
 // app since the given time, by service slug.
 func (s *Store) ShareServiceCounts(ctx context.Context, appID int64, since time.Time) (map[string]int64, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT COALESCE(sv.slug,''), COUNT(*) FROM events e LEFT JOIN services sv ON sv.id=e.service_id
-		WHERE e.app_id=? AND e.ts>=? AND e.kind IN ('proxy','cache_hit') GROUP BY sv.slug`, appID, since.Unix())
+	rows, err := s.r.QueryContext(ctx, shareServiceCountsSQL, appID, since.Unix())
 	if err != nil {
 		return nil, err
 	}

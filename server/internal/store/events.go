@@ -33,8 +33,9 @@ func (s *Store) AddEvent(ctx context.Context, e NewEvent) {
 	if e.AppID != 0 {
 		tok = appTokenFrom(ctx)
 	}
-	_, _ = s.DB.ExecContext(ctx, `INSERT INTO events(ts,kind,service_id,key_id,app_id,token_id,status_code,latency_ms,detail,cost) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), nz(tok), e.StatusCode, e.LatencyMS, e.Detail, e.Cost)
+	// Group committed, and kept even when the client has hung up.
+	_ = s.gw.write(wstmt{`INSERT INTO events(ts,kind,service_id,key_id,app_id,token_id,status_code,latency_ms,detail,cost) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		[]any{now(), e.Kind, nz(e.ServiceID), nz(e.KeyID), nz(e.AppID), nz(tok), e.StatusCode, e.LatencyMS, e.Detail, e.Cost}})
 }
 
 type EventFilter struct {
@@ -71,7 +72,8 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error)
 	}
 	q += ` ORDER BY e.id DESC LIMIT ?`
 	args = append(args, f.Limit)
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	// The filters make this SQL vary, so it is not kept prepared.
+	rows, err := s.rd.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +101,7 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error)
 func (s *Store) CountEvents(ctx context.Context, since time.Time, includeHidden bool, kinds ...string) (int, error) {
 	q := `SELECT COUNT(*) FROM events e WHERE e.ts>=?`
 	if !includeHidden {
-		q += ` AND NOT EXISTS (SELECT 1 FROM keys k WHERE k.id=e.key_id AND k.hidden=1)`
+		q += notHidden
 	}
 	args := []any{since.Unix()}
 	if len(kinds) > 0 {
@@ -109,7 +111,7 @@ func (s *Store) CountEvents(ctx context.Context, since time.Time, includeHidden 
 		}
 	}
 	var n int
-	err := s.DB.QueryRowContext(ctx, q, args...).Scan(&n)
+	err := s.rd.QueryRowContext(ctx, q, args...).Scan(&n)
 	return n, err
 }
 
@@ -119,7 +121,7 @@ func (s *Store) AddAudit(ctx context.Context, u *User, action, target, detail st
 	if u != nil {
 		uid, email = u.ID, u.Email
 	}
-	_, _ = s.DB.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
+	_, _ = s.w.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
 		now(), uid, email, action, s.Scrub(ctx, target), s.Scrub(ctx, detail))
 }
 
@@ -127,7 +129,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]*AuditEntry, error)
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, ts, user_email, action, target, detail FROM audit ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.r.QueryContext(ctx, `SELECT id, ts, user_email, action, target, detail FROM audit ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -152,13 +154,15 @@ type DayStat struct {
 	RateLimited int
 }
 
-// KeyDailyStats counts a key's events per UTC day.
-func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT date(ts,'unixepoch') d,
+const keyDailyStatsSQL = `SELECT date(ts,'unixepoch') d,
 		SUM(CASE WHEN kind='lease' OR (kind='proxy' AND status_code<400) THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind IN ('error','invalid','banned') THEN 1 ELSE 0 END),
 		SUM(CASE WHEN kind IN ('rate_limited','busy','quota_exhausted') THEN 1 ELSE 0 END)
-		FROM events WHERE key_id=? AND ts>=? GROUP BY d ORDER BY d`, keyID, time.Now().AddDate(0, 0, -days).Unix())
+		FROM events WHERE key_id=? AND ts>=? GROUP BY d ORDER BY d`
+
+// KeyDailyStats counts a key's events per UTC day.
+func (s *Store) KeyDailyStats(ctx context.Context, keyID int64, days int) ([]DayStat, error) {
+	rows, err := s.r.QueryContext(ctx, keyDailyStatsSQL, keyID, time.Now().AddDate(0, 0, -days).Unix())
 	if err != nil {
 		return nil, err
 	}

@@ -392,8 +392,25 @@ obvious:
   Settings (`health_interval`).
 - **Foreign keys are on.** Deleting a service removes its keys and leases;
   deleting a user removes their sessions.
-- **One connection.** The pool has a single connection in WAL mode with a 5
-  second busy timeout, which keeps SQLite simple under concurrent requests.
+- **One writer, a read pool.** Every write and every transaction goes through
+  a single connection in WAL mode with a 5 second busy timeout, so writes
+  never meet `SQLITE_BUSY`. Reads that need no transaction use a separate
+  pool of four `query_only` connections, so a slow Usage or overview query
+  never holds up the requests behind it. In WAL mode a read sees every
+  commit made before it starts, so a revoked token, paused share or disabled
+  key is refused on the very next request. Hot queries keep their prepared
+  statements per pool.
+- **Group commit.** The small writes each request makes (its event, the
+  app's usage counters, the key's OK mark, the token's last use) queue for
+  the writer: those that arrive while a commit runs share the next
+  transaction, each under its own `SAVEPOINT`. Every caller waits for the
+  commit that holds its write, so nothing is buffered in memory and a crash
+  loses no counted usage. A served request is counted even when its client
+  has hung up. Rate limits, bans and other key status changes are written
+  directly.
+- **Housekeeping writes in batches.** The prune deletes old events and leases
+  1000 rows at a time, so requests get the writer between batches, then runs
+  `PRAGMA optimize` to keep planner statistics current.
 
 ## In memory state
 

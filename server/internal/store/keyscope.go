@@ -179,7 +179,7 @@ func rotationOrder(keys []*Key) []*Key {
 
 // ScopeKeys resolves a scope against a service's keys as stored now.
 func (s *Store) ScopeKeys(ctx context.Context, serviceID, appID int64, includeHidden bool, sc *KeyScope) (ScopeResult, error) {
-	keys, err := s.queryKeys(ctx, `WHERE service_id=?`, serviceID)
+	keys, err := s.queryKeysPrep(ctx, `WHERE service_id=?`, keyAppsByService, serviceID)
 	if err != nil {
 		return ScopeResult{}, err
 	}
@@ -217,7 +217,7 @@ func (s *Store) AppKeyScope(ctx context.Context, appID int64, serviceSlug string
 	c.mu.Unlock()
 	if !ok {
 		var raw string
-		err := s.DB.QueryRowContext(ctx, `SELECT key_scopes FROM shares WHERE app_id=?`, appID).Scan(&raw)
+		err := s.r.QueryRowContext(ctx, `SELECT key_scopes FROM shares WHERE app_id=?`, appID).Scan(&raw)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			scopes = nil

@@ -181,13 +181,13 @@ func (s *Store) DeleteApp(ctx context.Context, id int64) error {
 }
 
 func (s *Store) GetApp(ctx context.Context, id int64) (*App, error) {
-	return scanApp(s.DB.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=?`, id))
+	return scanApp(s.r.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=?`, id))
 }
 
 // ListApps lists the apps people manage on the Apps page. Apps backing a
 // share are managed on the Sharing page and left out.
 func (s *Store) ListApps(ctx context.Context) ([]*App, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+appCols+` FROM apps WHERE share_id IS NULL ORDER BY name`)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+appCols+` FROM apps WHERE share_id IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ func nonNil(s []string) []string {
 // Leases
 
 func (s *Store) CreateLease(ctx context.Context, l *Lease) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO leases(id,key_id,app_id,service_id,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
+	_, err := s.w.ExecContext(ctx, `INSERT INTO leases(id,key_id,app_id,service_id,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
 		l.ID, l.KeyID, l.AppID, l.ServiceID, l.CreatedAt.Unix(), l.ExpiresAt.Unix())
 	return err
 }
@@ -221,7 +221,7 @@ func (s *Store) CreateLease(ctx context.Context, l *Lease) error {
 func (s *Store) GetLease(ctx context.Context, id string) (*Lease, error) {
 	var l Lease
 	var c, e int64
-	err := s.DB.QueryRowContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at,outcome FROM leases WHERE id=?`, id).
+	err := s.r.QueryRowContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at,outcome FROM leases WHERE id=?`, id).
 		Scan(&l.ID, &l.KeyID, &l.AppID, &l.ServiceID, &c, &e, &l.Outcome)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -235,7 +235,7 @@ func (s *Store) GetLease(ctx context.Context, id string) (*Lease, error) {
 
 // OpenLeases returns unexpired leases that have not been reported yet.
 func (s *Store) OpenLeases(ctx context.Context) ([]*Lease, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at FROM leases WHERE outcome='' AND expires_at>?`, now())
+	rows, err := s.r.QueryContext(ctx, `SELECT id,key_id,app_id,service_id,created_at,expires_at FROM leases WHERE outcome='' AND expires_at>?`, now())
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ var ErrLeaseReported = errors.New("lease already reported")
 // ClaimLeaseOutcome sets the outcome only if none is set yet, so two
 // concurrent reports cannot both apply.
 func (s *Store) ClaimLeaseOutcome(ctx context.Context, id, outcome string) error {
-	res, err := s.DB.ExecContext(ctx, `UPDATE leases SET outcome=? WHERE id=? AND outcome=''`, outcome, id)
+	res, err := s.w.ExecContext(ctx, `UPDATE leases SET outcome=? WHERE id=? AND outcome=''`, outcome, id)
 	if err != nil {
 		return err
 	}
@@ -271,26 +271,46 @@ func (s *Store) ClaimLeaseOutcome(ctx context.Context, id, outcome string) error
 
 // Housekeeping
 
+// pruneBatch is how many rows one prune statement deletes. Each batch is its
+// own short write, so requests waiting on the writer get it between batches
+// instead of after one long delete.
+const pruneBatch = 1000
+
+// Prune deletes expired sessions, leases older than a week and events older
+// than eventRetention (zero or less keeps events forever), then refreshes
+// planner statistics.
 func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 	t := time.Now()
-	stmts := []struct {
-		q string
-		a any
-	}{
-		{`DELETE FROM sessions WHERE expires_at<?`, t.Unix()},
-		{`DELETE FROM leases WHERE created_at<?`, t.Add(-7 * 24 * time.Hour).Unix()},
+	if _, err := s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at<?`, t.Unix()); err != nil {
+		return err
 	}
-	// A retention of zero or less means keep events forever.
+	if err := s.pruneBatched(ctx, `DELETE FROM leases WHERE rowid IN (SELECT rowid FROM leases WHERE created_at<? LIMIT ?)`,
+		t.Add(-7*24*time.Hour).Unix()); err != nil {
+		return err
+	}
 	if eventRetention > 0 {
-		stmts = append(stmts, struct {
-			q string
-			a any
-		}{`DELETE FROM events WHERE ts<?`, t.Add(-eventRetention).Unix()})
-	}
-	for _, st := range stmts {
-		if _, err := s.DB.ExecContext(ctx, st.q, st.a); err != nil {
+		if err := s.pruneBatched(ctx, `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE ts<? LIMIT ?)`,
+			t.Add(-eventRetention).Unix()); err != nil {
 			return err
 		}
 	}
+	optimize(ctx, s.DB)
 	return nil
+}
+
+// pruneBatched runs a DELETE of at most pruneBatch rows until one deletes
+// fewer.
+func (s *Store) pruneBatched(ctx context.Context, q string, before int64) error {
+	for {
+		res, err := s.w.ExecContext(ctx, q, before, pruneBatch)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n < pruneBatch {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 }
