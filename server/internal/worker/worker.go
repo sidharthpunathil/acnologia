@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
@@ -38,18 +39,23 @@ type Worker struct {
 // Run does housekeeping every 30 seconds. Health checks run in their own
 // loop: they make one upstream call per key and can take minutes, which must
 // not delay freeing expired lease slots or reviving exhausted keys.
+//
+// Run returns once ctx has ended and every loop it started has returned, so
+// a caller can close the store after it.
 func (w *Worker) Run(ctx context.Context) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	// Always running: the interval can be turned on from the Settings page
 	// without a restart. A pass with the interval off does nothing.
-	go w.runHealth(ctx)
+	wg.Go(func() { w.runHealth(ctx) })
 	if w.Peers != nil && w.PeerInterval > 0 {
-		go w.runPeers(ctx)
+		wg.Go(func() { w.runPeers(ctx) })
 	}
 	if w.Refresh != nil {
-		go w.runRefresh(ctx)
+		wg.Go(func() { w.runRefresh(ctx) })
 	}
 	if w.Sharing != nil {
-		go w.runSharing(ctx)
+		wg.Go(func() { w.runSharing(ctx) })
 	}
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
