@@ -153,7 +153,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, &rpcErr{-32602, "invalid params"}
 		}
-		t := findTool(s.mcpTools(ctx, a, st), p.Name)
+		t := s.mcpTool(ctx, a, st, p.Name)
 		if t == nil {
 			return nil, &rpcErr{-32602, "unknown or disabled tool: " + p.Name}
 		}

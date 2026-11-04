@@ -273,6 +273,29 @@ func orDefault(v, d string) string {
 
 // mcpTools returns the tools this app may see, honoring its settings.
 func (s *Server) mcpTools(ctx context.Context, a *store.App, st store.MCPSettings) []mcpTool {
+	return s.mcpToolSet(ctx, a, st, true)
+}
+
+// isStaticTool reports whether name is a core, insight or manage tool.
+// serviceToolNames never gives a service tool one of these names.
+func isStaticTool(name string) bool {
+	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools} {
+		if findTool(set, name) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// mcpTool finds the tool a tools/call names, with the same settings and
+// mode checks as mcpTools. A static tool name never matches a service tool,
+// so the service tools (every service's examples) are built only when the
+// name is not a static one.
+func (s *Server) mcpTool(ctx context.Context, a *store.App, st store.MCPSettings, name string) *mcpTool {
+	return findTool(s.mcpToolSet(ctx, a, st, !isStaticTool(name)), name)
+}
+
+func (s *Server) mcpToolSet(ctx context.Context, a *store.App, st store.MCPSettings, withService bool) []mcpTool {
 	var all []mcpTool
 	if st.Core {
 		for _, t := range coreTools {
@@ -285,7 +308,7 @@ func (s *Server) mcpTools(ctx context.Context, a *store.App, st store.MCPSetting
 			all = append(all, t)
 		}
 	}
-	if st.ServiceTools && a.AllowsProxy() {
+	if withService && st.ServiceTools && a.AllowsProxy() {
 		all = append(all, s.serviceTools(ctx, a)...)
 	}
 	if st.Insights {
