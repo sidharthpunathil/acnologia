@@ -251,6 +251,12 @@ memory, so `railway.json` and `.railway/railway.ts` both set one replica. A serv
 a short downtime on each redeploy, because Railway never mounts one volume
 into two deployments at once.
 
+Railway stops the old deployment with SIGTERM and, by default, kills it
+right away. Set the service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`
+to `20` (or the draining time under the service's Settings) so requests in
+flight can finish and their usage is saved; the server drains for up to 15
+seconds.
+
 ## What a stranger sees
 
 `/robots.txt` disallows everything, every response carries

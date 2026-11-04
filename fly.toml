@@ -10,6 +10,9 @@
 # under [env] below and deploy again. See docs/deploy.md.
 app = "acnologia"
 primary_region = "iad"
+# The server drains requests for up to 15s on SIGTERM; Fly's default of 5s
+# would kill it first.
+kill_timeout = "20s"
 
 [build]
   dockerfile = "Dockerfile"

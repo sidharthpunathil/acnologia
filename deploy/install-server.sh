@@ -266,6 +266,8 @@ services:
   acnologia:
     image: $IMAGE
     restart: unless-stopped
+    # Room for the 15s drain on SIGTERM; Docker's default is 10s.
+    stop_grace_period: 20s
     env_file: .env
     environment:
       ACNOLOGIA_DATA_DIR: /data

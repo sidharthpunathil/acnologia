@@ -3,6 +3,9 @@ services:
     build: .
     image: acnologia:latest
     restart: unless-stopped
+    # The server drains requests for up to 15s on SIGTERM; Docker's default
+    # of 10s would kill it first.
+    stop_grace_period: 20s
     ports:
       - "8080:8080"
     env_file: .env

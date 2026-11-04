@@ -183,7 +183,7 @@ and `linux/arm64`.
 To run it anywhere Docker runs:
 
 ```
-docker run -d -p 8080:8080 -v acnologia-data:/data \
+docker run -d -p 8080:8080 -v acnologia-data:/data --stop-timeout 20 \
   -e ACNOLOGIA_DATA_DIR=/data --env-file .env \
   ghcr.io/sidharthpunathil/acnologia:latest
 ```
@@ -192,6 +192,22 @@ The image already sets `ACNOLOGIA_DATA_DIR=/data`; the `-e` keeps a
 `ACNOLOGIA_DATA_DIR=./data` line copied from `.env.example` from moving the
 data off the volume. The image is distroless and runs as a nonroot user
 (uid 65532).
+
+### Stop timeout
+
+On SIGTERM the server stops taking new connections and gives requests in
+flight up to 15 seconds to finish, so their usage and events are saved,
+then closes the database. Give it at least 20 seconds before the platform
+kills it:
+
+| Platform | Setting |
+|---|---|
+| Docker | `docker run --stop-timeout 20`; Docker's default is 10 seconds. |
+| Docker Compose | `stop_grace_period: 20s`, already in `docker-compose.yml` and in the compose file the VPS installer writes. |
+| systemd | `TimeoutStopSec=20` in the unit (the default is 90 seconds, which is enough). |
+| Fly.io | `kill_timeout = "20s"`, already in `fly.toml`; Fly's default is 5 seconds. |
+| Railway | Set the service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=20`, or the draining time under Settings; Railway's default gives no time at all. |
+| Render | Nothing to do: Render waits 30 seconds by default. |
 
 ## Settings for any public deploy
 

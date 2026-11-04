@@ -487,7 +487,9 @@ On SIGINT or SIGTERM the server stops accepting connections, lets requests in
 flight finish (so their usage and events commit), waits for the worker loops,
 webhook delivery and a running provider refresh, and only then closes the
 database. All of this shares one 15 second budget; requests still open when
-it runs out are closed. A second signal ends the process at once.
+it runs out are closed. A second signal ends the process at once. The
+platform's stop timeout must be longer than the drain, 20 seconds or more:
+see [Stop timeout](deploy.md#stop-timeout).
 
 ## Build and packaging
 
