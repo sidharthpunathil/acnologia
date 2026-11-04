@@ -170,7 +170,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if err != nil {
 			return map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
+		b, _ := json.Marshal(out)
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}, nil
 	case "resources/list":
 		if !st.Resources {
