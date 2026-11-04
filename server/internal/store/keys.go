@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -159,8 +160,28 @@ func (s *Store) GetKey(ctx context.Context, id int64) (*Key, error) {
 
 // CandidateKeys returns keys of a service that are active and not exhausted.
 // Cooldown and app restriction filtering happens in the pool.
+//
+// The pool reads app lists only through AllowsApp, which reads them only
+// for a restricted key, so they are loaded only when some candidate is
+// restricted. Restricted comes from the same keys row either way. This
+// skips a query (and 18 allocs) per pick, inside the pick lock, on the
+// common setup with no restricted keys. ListKeys and GetKey still load app
+// lists, since the admin UI shows them; TestCandidateKeysAppListsOnlyWhenRestricted
+// fails if AllowsApp starts reading them for an unrestricted key.
 func (s *Store) CandidateKeys(ctx context.Context, serviceID int64) ([]*Key, error) {
-	return s.queryKeysPrep(ctx, `WHERE service_id=? AND status='active'`, keyAppsByService, serviceID)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM keys WHERE service_id=? AND status='active'`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	out, err := scanKeys(rows)
+	if err != nil || !slices.ContainsFunc(out, func(k *Key) bool { return k.Restricted }) {
+		return out, err
+	}
+	rows, err = s.r.QueryContext(ctx, keyAppsByService, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return out, addKeyApps(rows, out)
 }
 
 type NewKey struct {
