@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -74,21 +76,32 @@ func TestAppTokenIDsAreNotReused(t *testing.T) {
 		t.Fatalf("rotated token id %d, want above %d", rot.ID, toks[0].ID)
 	}
 
-	// An insert that lets SQLite pick the id (as share and people claims
-	// do) is moved above the counter by the trigger, even after the newest
-	// row is deleted.
+	// Deleting the newest token must not hand its id to the next insert
+	// (SQLite alone would pick MAX(id)+1, which is that id again).
 	if _, err := s.DB.Exec(`DELETE FROM app_tokens WHERE id=?`, rot.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB.Exec(`INSERT INTO app_tokens(app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?)`, a3.ID, "claim", "p", "h6", now()); err != nil {
+	claim, err := s.CreateAppToken(ctx, a3.ID, "after delete", "p", "h6", 0, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var claimID int64
-	if err := s.DB.QueryRow(`SELECT id FROM app_tokens WHERE hash='h6'`).Scan(&claimID); err != nil {
-		t.Fatal(err)
-	}
+	claimID := claim.ID
 	if claimID <= rot.ID {
-		t.Fatalf("claimed token id %d, want above %d", claimID, rot.ID)
+		t.Fatalf("token id %d after deleting %d", claimID, rot.ID)
+	}
+	// No insert may let SQLite pick the id: the counter would not see it.
+	files, _ := filepath.Glob("*.go")
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "INSERT INTO app_tokens(app_id") {
+			t.Fatalf("%s inserts an app token without an explicit id", f)
+		}
 	}
 	next, err := s.CreateAppToken(ctx, a3.ID, "next", "p", "h7", 0, nil)
 	if err != nil {

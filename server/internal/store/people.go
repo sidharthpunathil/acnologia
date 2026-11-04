@@ -232,8 +232,12 @@ func (s *Store) RedeemClaim(ctx context.Context, claimHash string, in ClaimRedee
 		if _, err := tx.ExecContext(ctx, `UPDATE apps SET token_prefix=?, active=1 WHERE id=?`, in.TokenPrefix, app.Int64); err != nil {
 			return nil, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?)`,
-			app.Int64, "Person "+label, TokenPrefixHint(in.TokenPrefix), in.TokenHash, t); err != nil {
+		tokID, err := nextAppTokenID(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?,?)`,
+			tokID, app.Int64, "Person "+label, TokenPrefixHint(in.TokenPrefix), in.TokenHash, t); err != nil {
 			return nil, err
 		}
 	}
@@ -270,8 +274,12 @@ func (s *Store) redeemReusable(ctx context.Context, tx *sql.Tx, id, status, mode
 	if _, err := tx.ExecContext(ctx, `UPDATE apps SET token_prefix=?, active=1 WHERE id=?`, in.TokenPrefix, app); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?)`,
-		app, fmt.Sprintf("Link %s, claim %d", label, count+1), TokenPrefixHint(in.TokenPrefix), in.TokenHash, t); err != nil {
+	tokID, err := nextAppTokenID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?,?)`,
+		tokID, app, fmt.Sprintf("Link %s, claim %d", label, count+1), TokenPrefixHint(in.TokenPrefix), in.TokenHash, t); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

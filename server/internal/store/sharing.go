@@ -490,8 +490,12 @@ func (s *Store) RedeemShare(ctx context.Context, id, inviteHash string, p PeerBi
 	if _, err := tx.ExecContext(ctx, `UPDATE apps SET token_prefix=?, active=1 WHERE id=?`, tokenPrefix, app.Int64); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?)`,
-		app.Int64, "Peer "+p.ID, TokenPrefixHint(tokenPrefix), tokenHash, t); err != nil {
+	tokID, err := nextAppTokenID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at) VALUES(?,?,?,?,?,?)`,
+		tokID, app.Int64, "Peer "+p.ID, TokenPrefixHint(tokenPrefix), tokenHash, t); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
