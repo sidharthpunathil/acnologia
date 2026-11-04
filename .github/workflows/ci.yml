@@ -1,31 +1,34 @@
 # Tests the Go server and CLI, the SDKs, the dashboard build and the PowerShell
 # scripts. Every job runs offline against fakes, so the whole run stays short.
 #
-# A push or pull request tests on Linux only: hosted macOS minutes are billed at
-# ten times Linux and Windows at twice, and the macOS legs alone were most of
-# the bill. A manual run (workflow_dispatch) or a tag push is a full run that
-# adds the macOS and Windows legs and the windows build job. Run one before a
-# release, or after changing anything OS specific:
+# Billing comes first here:
+#   - Only a push to main runs ci. Day to day work goes to the stage branch,
+#     which runs nothing; merging stage (or a pull request) into main tests
+#     the whole batch in one run. Pull requests themselves run nothing.
+#   - A push runs on Linux only, without -race. Hosted macOS minutes bill at
+#     ten times Linux and Windows at twice, and the macOS legs were most of
+#     the bill.
+#   - A newer push to main cancels the older run. Nothing is lost: the next
+#     run diffs against the last commit a run passed on.
+#   - Every job has a timeout, so a hung test cannot burn minutes.
+# A manual run is the full check: the macOS and Windows legs, -race, and the
+# windows build job. Run one before a release or after an OS specific change:
 #   gh workflow run ci.yml --ref main
 #
-# The changes job decides which of them a commit needs, so nothing is built or
+# The changes job decides which jobs a commit needs, so nothing is built or
 # tested again unless its own files changed:
-#   go          server Go code (not the embedded docs): the three OS matrix
-#   docs        only the embedded docs changed: their tests, on Linux
-#   go-sdk      sdk/go
-#   python-sdk  sdk/python
-#   ruby-sdk    sdk/ruby
-#   ts-sdk      sdk/typescript
+#   go          server Go code (not the embedded docs)
+#   docs        only the embedded docs changed: their tests
+#   go-sdk      sdk/go          python-sdk  sdk/python
+#   ruby-sdk    sdk/ruby        ts-sdk      sdk/typescript
+#   (and the c, cpp, elixir, haskell, lua and zig SDKs under sdk/)
 #   web         web/
 #   windows     the build tooling (build.ps1, install.ps1, go.mod, the web
-#               lockfile): server code on Windows is go (windows-latest)'s job
-# A push is diffed against the last commit a ci run passed on, not the push
-# before it: a newer push cancels an older run, and a failed run's changes
-# must be tested again, so nothing is skipped because a run never finished.
-# A pull request is diffed against its base. A change to this file, a branch
-# with no passing run yet, a manual run, or anything it cannot diff runs them
-# all. A skipped job counts as passed for branch protection. A push that only
-# changes docs, Markdown, the video or images runs nothing (paths-ignore).
+#               lockfile), full runs only
+# A change to this file, a branch with no passing run yet, a manual run, or
+# anything it cannot diff runs them all. A skipped job counts as passed for
+# branch protection. A push that only changes docs, Markdown, the video or
+# images runs nothing (paths-ignore).
 #
 # checkout and setup-go are pinned to the same commits as the release
 # workflows; the other first-party actions to a major version.
@@ -33,6 +36,7 @@ name: ci
 
 on:
   push:
+    branches: [main]
     paths-ignore:
       # Documentation, the video and images only: nothing here is built or
       # tested, so such a push runs no jobs. A push that also touches code
@@ -44,16 +48,7 @@ on:
       - "server/internal/docsmd/**"
       - "server/internal/llmstxt/**"
       - ".github/ISSUE_TEMPLATE/**"
-  pull_request:
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - "video/**"
-      - "docs/**"
-      - "server/internal/docsmd/**"
-      - "server/internal/llmstxt/**"
-      - ".github/ISSUE_TEMPLATE/**"
-  # Runs every job, for a full check on demand.
+  # The full check on demand.
   workflow_dispatch:
 
 permissions:
@@ -61,13 +56,9 @@ permissions:
   # The changes job looks up the last successful run on the branch.
   actions: read
 
-# A newer push cancels an older run on a branch or pull request. On main each
-# commit gets its own group, so no run waits behind or is replaced by a newer
-# one: every commit there gets a real result and the CI badge never shows a
-# cancelled run as failing.
 concurrency:
-  group: ${{ github.ref == 'refs/heads/main' && format('ci-main-{0}', github.sha) || format('ci-{0}', github.ref) }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -77,6 +68,7 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       full: ${{ steps.diff.outputs.full }}
       go: ${{ steps.diff.outputs.go }}
@@ -102,14 +94,12 @@ jobs:
         id: diff
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
           SHA: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           case "$EVENT" in
-            pull_request) from="$BASE"; range="$BASE...$SHA" ;;
             push)
               # The newest ci run on this branch that passed: everything up
               # to its commit was tested. Its own skips are safe, since it
@@ -123,10 +113,8 @@ jobs:
               ;;
             *) from="" ;;
           esac
-          # macOS minutes cost ten times Linux and Windows twice, so a normal
-          # push or pull request tests on Linux only. A manual run or a tag
-          # also runs the macOS and Windows legs.
-          if [ "$EVENT" = workflow_dispatch ] || [ "$GITHUB_REF_TYPE" = tag ]; then full=true; else full=false; fi
+          # A push tests on Linux only; a manual run is the full check.
+          if [ "$EVENT" = workflow_dispatch ]; then full=true; else full=false; fi
           echo "full=$full" | tee -a "$GITHUB_OUTPUT"
           all=false
           if [ -z "$from" ] || [ -z "${from//0/}" ] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then
@@ -174,6 +162,8 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    # A full run's -race tests on hosted macOS take the longest.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -186,17 +176,19 @@ jobs:
         working-directory: server
         run: go vet ./...
 
-      # -race needs cgo and a C toolchain, which Windows runners are not set
-      # up for; the server itself builds with CGO_ENABLED=0 everywhere.
-      # internal/api takes about 5 minutes with -race and longer on hosted
-      # macOS, past go test's default 10 minute timeout.
+      # -race only in a full run: it is several times slower (internal/api
+      # takes about 5 minutes with it). It needs cgo and a C toolchain, which
+      # Windows runners are not set up for; the server itself builds with
+      # CGO_ENABLED=0 everywhere.
       - name: Test the server and CLI
         working-directory: server
+        env:
+          FULL: ${{ needs.changes.outputs.full }}
         run: |
-          if [ "$RUNNER_OS" = Windows ]; then
-            go test -timeout 30m ./...
+          if [ "$FULL" = true ] && [ "$RUNNER_OS" != Windows ]; then
+            go test -race -timeout 25m ./...
           else
-            go test -race -timeout 30m ./...
+            go test -timeout 15m ./...
           fi
 
       - name: Cross compile for Windows arm64
@@ -212,6 +204,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -233,6 +226,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -256,6 +250,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -281,6 +276,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -304,6 +300,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -335,6 +332,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -368,6 +366,7 @@ jobs:
         # before 9.6). Windows only in a full run.
         include: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"os":"ubuntu-latest","elixir":"1.18","otp":"25"},{"os":"ubuntu-latest","elixir":"1.20","otp":"29"},{"os":"windows-latest","elixir":"1.20","otp":"29"}]' || '[{"os":"ubuntu-latest","elixir":"1.18","otp":"25"},{"os":"ubuntu-latest","elixir":"1.20","otp":"29"}]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -393,6 +392,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: sdk/haskell
@@ -431,6 +431,7 @@ jobs:
         # Lua 5.1 covers the same language level; run LuaJIT locally.
         lua: ["5.1", "5.4"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -458,6 +459,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -478,6 +480,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -498,6 +501,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -519,6 +523,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.full == 'true' && needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
