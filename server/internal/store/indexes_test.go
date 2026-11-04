@@ -45,6 +45,9 @@ func TestEventIndexPlans(t *testing.T) {
 		{"CreateKeys high water", `SELECT MAX(key_id) FROM events`, "events_key", nil},
 		{"hidden key trigger", `DELETE FROM events WHERE key_id=?`, "events_key", []any{7}},
 		{"lease prune", `SELECT rowid FROM leases WHERE created_at<? LIMIT 2000`, "leases_created", []any{0}},
+		{"CreateKeys lease high water", keysHighWater, "leases_key", nil},
+		{"key delete cascade", `DELETE FROM keys WHERE id=?`, "leases_key", []any{7}},
+		{"app delete cascade", `DELETE FROM apps WHERE id=?`, "leases_app", []any{3}},
 	}
 	for _, c := range cases {
 		plan := explain(t, s.DB, c.q, c.args...)

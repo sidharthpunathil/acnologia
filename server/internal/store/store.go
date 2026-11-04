@@ -383,10 +383,15 @@ func migrate(db *sql.DB) error {
 // lateIndexes were added after the first release. events_key serves a key's
 // insights, the hidden key trigger and CreateKeys' MAX(key_id); events_app
 // serves a share's per service counts; leases_created serves the prune.
+// leases_key and leases_app serve the foreign key lookups a key, service or
+// app delete makes (without them each deleted key scans every lease while
+// holding the writer) and CreateKeys' MAX(key_id) over leases.
 var lateIndexes = []struct{ name, table, cols string }{
 	{"events_key", "events", "key_id, ts"},
 	{"events_app", "events", "app_id, ts"},
 	{"leases_created", "leases", "created_at"},
+	{"leases_key", "leases", "key_id"},
+	{"leases_app", "leases", "app_id"},
 }
 
 // migrateIndexes creates the late indexes and analyzes each table that got
