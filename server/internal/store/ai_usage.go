@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -186,25 +187,42 @@ func (s *Store) UsageReport(ctx context.Context, at time.Time, days int, include
 		hid = notHidden
 	}
 
+	// One pass over the events, by UTC day, gives the chart and the provider
+	// side of every window: each window starts at a UTC midnight. It covers at
+	// least 30 days so the 30d window is complete for shorter ranges. The day
+	// is grouped as ts/86400 (a Unix day is a UTC day), which is cheaper than
+	// formatting a date for every event, and formatted once per day here.
+	provDays, err := s.provRows(ctx, `SELECT e.ts/86400, 0, '', `+providerSums+
+		` FROM events e WHERE e.ts>=?`+hid+` GROUP BY 1`, dayStart(at, max(days, 30)).Unix())
+	if err != nil {
+		return nil, err
+	}
+	for i := range provDays {
+		d, _ := strconv.ParseInt(provDays[i].Key, 10, 64)
+		provDays[i].Key = dayOf(time.Unix(d*86400, 0))
+	}
 	windows := []struct {
 		name string
 		n    int
 	}{{"today", 1}, {"7d", 7}, {"30d", 30}, {"range", days}}
 	for _, w := range windows {
-		since := dayStart(at, w.n).Unix()
+		start := dayStart(at, w.n)
 		var t UsageTotals
-		if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(cost_usd),0) FROM ai_usage WHERE ts>=?`, since).
+		if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(cost_usd),0) FROM ai_usage WHERE ts>=?`, start.Unix()).
 			Scan(&t.AICalls, &t.AICostUSD); err != nil {
 			return nil, err
 		}
-		if err := s.r.QueryRowContext(ctx, `SELECT `+providerSums+` FROM events e WHERE e.ts>=?`+hid, since).
-			Scan(&t.Requests, &t.ProviderCostUSD, &t.CacheHits); err != nil {
-			return nil, err
+		first := dayOf(start)
+		for _, r := range provDays {
+			if r.Key >= first {
+				t.Requests += r.Requests
+				t.ProviderCostUSD += r.CostUSD
+				t.CacheHits += r.CacheHits
+			}
 		}
 		rep.Totals[w.name] = t
 	}
 
-	var err error
 	since := from.Unix()
 	aiQ := func(key, extra string) ([]AIUsageRow, error) {
 		return s.aiRows(ctx, `SELECT `+key+`, `+aiSums+` FROM ai_usage WHERE ts>=? GROUP BY 1`+extra, since)
@@ -229,14 +247,9 @@ func (s *Store) UsageReport(ctx context.Context, at time.Time, days int, include
 		aiDays[r.Key] = r
 	}
 
-	provDays := map[string]ProviderUsageRow{}
-	rows, err := s.provRows(ctx, `SELECT strftime('%Y-%m-%d', e.ts, 'unixepoch'), 0, '', `+providerSums+
-		` FROM events e WHERE e.ts>=?`+hid+` GROUP BY 1`, since)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range rows {
-		provDays[r.Key] = r
+	provByDay := map[string]ProviderUsageRow{}
+	for _, r := range provDays {
+		provByDay[r.Key] = r
 	}
 	// Every day of the range is present so charts need no gap filling.
 	for d := 0; d < days; d++ {
@@ -244,20 +257,13 @@ func (s *Store) UsageReport(ctx context.Context, at time.Time, days int, include
 		a := aiDays[day]
 		a.Key = day
 		rep.AI.ByDay = append(rep.AI.ByDay, a)
-		p := provDays[day]
+		p := provByDay[day]
 		p.Key = day
 		rep.Provider.ByDay = append(rep.Provider.ByDay, p)
 	}
 
 	// Only services and apps that saw traffic in the range are listed.
-	if rep.Provider.ByService, err = s.provRows(ctx, `SELECT COALESCE(s.slug, '#'||e.service_id), e.service_id, COALESCE(s.name,''), `+providerSums+
-		` FROM events e LEFT JOIN services s ON s.id=e.service_id WHERE e.ts>=? AND e.service_id IS NOT NULL
-		AND e.kind IN ('proxy','lease','cache_hit')`+hid+` GROUP BY e.service_id ORDER BY 5 DESC, 4 DESC, 1`, since); err != nil {
-		return nil, err
-	}
-	if rep.Provider.ByApp, err = s.provRows(ctx, `SELECT COALESCE(a.name, '#'||e.app_id), e.app_id, COALESCE(a.name,''), `+providerSums+
-		` FROM events e LEFT JOIN apps a ON a.id=e.app_id WHERE e.ts>=? AND e.app_id IS NOT NULL
-		AND e.kind IN ('proxy','lease','cache_hit')`+hid+` GROUP BY e.app_id ORDER BY 5 DESC, 4 DESC, 1`, since); err != nil {
+	if rep.Provider.ByService, rep.Provider.ByApp, err = s.serviceAppUsage(ctx, since, hid); err != nil {
 		return nil, err
 	}
 	return rep, nil
@@ -301,4 +307,99 @@ func (s *Store) provRows(ctx context.Context, q string, args ...any) ([]Provider
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+const serviceAppUsageSQL = `SELECT e.service_id, e.app_id, ` + providerSums + ` FROM events e INDEXED BY events_ts
+	WHERE e.ts>=? AND (e.service_id IS NOT NULL OR e.app_id IS NOT NULL) AND e.kind IN ('proxy','lease','cache_hit')`
+
+// serviceAppUsage sums provider usage per service and per app since a time,
+// in one pass over the range read through events_ts (left to itself the
+// planner skip-scans events_service or events_app and fetches rows out of
+// order, which is slower than reading the range). Rows are ordered by cost,
+// then requests, then key, as the per service and per app queries were.
+func (s *Store) serviceAppUsage(ctx context.Context, since int64, hid string) ([]ProviderUsageRow, []ProviderUsageRow, error) {
+	rows, err := s.r.QueryContext(ctx, serviceAppUsageSQL+hid+` GROUP BY 1, 2`, since)
+	if err != nil {
+		return nil, nil, err
+	}
+	svc, app := map[int64]*ProviderUsageRow{}, map[int64]*ProviderUsageRow{}
+	add := func(m map[int64]*ProviderUsageRow, id int64, r ProviderUsageRow) {
+		p := m[id]
+		if p == nil {
+			p = &ProviderUsageRow{ID: id}
+			m[id] = p
+		}
+		p.Requests += r.Requests
+		p.CostUSD += r.CostUSD
+		p.CacheHits += r.CacheHits
+	}
+	for rows.Next() {
+		var sid, aid sql.NullInt64
+		var r ProviderUsageRow
+		if err := rows.Scan(&sid, &aid, &r.Requests, &r.CostUSD, &r.CacheHits); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		if sid.Valid {
+			add(svc, sid.Int64, r)
+		}
+		if aid.Valid {
+			add(app, aid.Int64, r)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	finish := func(m map[int64]*ProviderUsageRow, q string, slugKey bool) ([]ProviderUsageRow, error) {
+		names := map[int64][2]string{}
+		rs, err := s.r.QueryContext(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		for rs.Next() {
+			var id int64
+			var a, b string
+			if err := rs.Scan(&id, &a, &b); err != nil {
+				rs.Close()
+				return nil, err
+			}
+			names[id] = [2]string{a, b}
+		}
+		rs.Close()
+		out := []ProviderUsageRow{}
+		for id, p := range m {
+			n, ok := names[id]
+			p.Key = "#" + strconv.FormatInt(id, 10)
+			if ok {
+				p.Key, p.Name = n[0], n[1]
+				if !slugKey {
+					p.Key = n[1]
+				}
+			}
+			if p.Name == "" && p.ID != 0 {
+				p.Name = "Deleted (" + strconv.FormatInt(p.ID, 10) + ")"
+			}
+			out = append(out, *p)
+		}
+		sort.Slice(out, func(i, j int) bool {
+			a, b := out[i], out[j]
+			// Partial sums added in another order differ in the last bits;
+			// costs that close are a tie, as they are in SQL's own sum.
+			if d := a.CostUSD - b.CostUSD; d > 1e-9 || d < -1e-9 {
+				return a.CostUSD > b.CostUSD
+			}
+			if a.Requests != b.Requests {
+				return a.Requests > b.Requests
+			}
+			return a.Key < b.Key
+		})
+		return out, nil
+	}
+	bySvc, err := finish(svc, `SELECT id, slug, name FROM services`, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	byApp, err := finish(app, `SELECT id, name, name FROM apps`, false)
+	return bySvc, byApp, err
 }
