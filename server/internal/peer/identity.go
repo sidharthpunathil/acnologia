@@ -79,20 +79,16 @@ func Fingerprint(pub []byte) string {
 }
 
 // Keys loads the server's keypair, creating and storing it on first use.
+// Creation only inserts when no key is stored, and the stored key is read
+// back, so callers racing on a fresh server all get the same identity. A
+// failed read is an error, never a reason to make a new key.
 func Keys(ctx context.Context, st *store.Store, box *crypto.Box) (ed25519.PrivateKey, error) {
-	if enc := st.GetMeta(ctx, metaKey); enc != "" {
-		blob, err := base64.StdEncoding.DecodeString(enc)
-		if err != nil {
-			return nil, fmt.Errorf("server identity: %w", err)
-		}
-		seed, err := box.Decrypt(blob)
-		if err != nil {
-			return nil, fmt.Errorf("server identity: %w", err)
-		}
-		if len(seed) != ed25519.SeedSize {
-			return nil, errors.New("server identity: stored key has the wrong size")
-		}
-		return ed25519.NewKeyFromSeed([]byte(seed)), nil
+	enc, found, err := st.LookupMeta(ctx, metaKey)
+	if err != nil {
+		return nil, fmt.Errorf("server identity: %w", err)
+	}
+	if found {
+		return decodeKey(enc, box)
 	}
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -102,11 +98,34 @@ func Keys(ctx context.Context, st *store.Store, box *crypto.Box) (ed25519.Privat
 	if err != nil {
 		return nil, err
 	}
-	if err := st.SetMeta(ctx, metaKey, base64.StdEncoding.EncodeToString(blob)); err != nil {
-		return nil, err
+	if err := st.InsertMetaIfAbsent(ctx, metaKey, base64.StdEncoding.EncodeToString(blob)); err != nil {
+		return nil, fmt.Errorf("server identity: %w", err)
 	}
-	// Another writer may have won the race; read back what is stored.
-	return Keys(ctx, st, box)
+	// Another caller may have stored its key first; use what is stored.
+	enc, found, err = st.LookupMeta(ctx, metaKey)
+	if err != nil {
+		return nil, fmt.Errorf("server identity: %w", err)
+	}
+	if !found {
+		return nil, errors.New("server identity: key missing after it was stored")
+	}
+	return decodeKey(enc, box)
+}
+
+// decodeKey opens a stored identity key.
+func decodeKey(enc string, box *crypto.Box) (ed25519.PrivateKey, error) {
+	blob, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		return nil, fmt.Errorf("server identity: %w", err)
+	}
+	seed, err := box.Decrypt(blob)
+	if err != nil {
+		return nil, fmt.Errorf("server identity: %w", err)
+	}
+	if len(seed) != ed25519.SeedSize {
+		return nil, errors.New("server identity: stored key has the wrong size")
+	}
+	return ed25519.NewKeyFromSeed([]byte(seed)), nil
 }
 
 // Name is the server's display name: what a superadmin saved, else the hostname.

@@ -131,6 +131,14 @@ func run() error {
 	if err := bootstrap(ctx, cfg, st); err != nil {
 		return err
 	}
+	// Make the server identity now, before any request can ask for it, so it
+	// is never created lazily under concurrent first requests.
+	if _, err := peer.Keys(ctx, st, box); err != nil {
+		return err
+	}
+	if _, err := peer.BoxKeys(ctx, st, box); err != nil {
+		return err
+	}
 
 	cat := &catalog.Catalog{Store: st}
 	if err := cat.Boot(ctx); err != nil {
