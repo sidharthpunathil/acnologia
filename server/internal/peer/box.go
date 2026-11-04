@@ -31,18 +31,17 @@ const metaBoxKey = "server_box_key"
 const SealPrefix = "acnseal1_"
 
 // BoxKeys loads the server's X25519 private key, creating and storing it on
-// first use, so servers made before key handover get one lazily.
+// first use, so servers made before key handover get one lazily. Creation
+// only inserts when no key is stored and the stored key is read back, so two
+// first users agree on one key. A failed read is an error, never a reason to
+// make a new key.
 func BoxKeys(ctx context.Context, st *store.Store, box *crypto.Box) (*ecdh.PrivateKey, error) {
-	if enc := st.GetMeta(ctx, metaBoxKey); enc != "" {
-		blob, err := base64.StdEncoding.DecodeString(enc)
-		if err != nil {
-			return nil, fmt.Errorf("server box key: %w", err)
-		}
-		raw, err := box.Decrypt(blob)
-		if err != nil {
-			return nil, fmt.Errorf("server box key: %w", err)
-		}
-		return ecdh.X25519().NewPrivateKey([]byte(raw))
+	enc, found, err := st.LookupMeta(ctx, metaBoxKey)
+	if err != nil {
+		return nil, fmt.Errorf("server box key: %w", err)
+	}
+	if found {
+		return decodeBoxKey(enc, box)
 	}
 	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
@@ -52,11 +51,31 @@ func BoxKeys(ctx context.Context, st *store.Store, box *crypto.Box) (*ecdh.Priva
 	if err != nil {
 		return nil, err
 	}
-	// Insert only if absent, so two first users agree on one key.
-	if _, err := st.DB.ExecContext(ctx, `INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO NOTHING`, metaBoxKey, base64.StdEncoding.EncodeToString(blob)); err != nil {
-		return nil, err
+	if err := st.InsertMetaIfAbsent(ctx, metaBoxKey, base64.StdEncoding.EncodeToString(blob)); err != nil {
+		return nil, fmt.Errorf("server box key: %w", err)
 	}
-	return BoxKeys(ctx, st, box)
+	// Another caller may have stored its key first; use what is stored.
+	enc, found, err = st.LookupMeta(ctx, metaBoxKey)
+	if err != nil {
+		return nil, fmt.Errorf("server box key: %w", err)
+	}
+	if !found {
+		return nil, errors.New("server box key: key missing after it was stored")
+	}
+	return decodeBoxKey(enc, box)
+}
+
+// decodeBoxKey opens a stored X25519 private key.
+func decodeBoxKey(enc string, box *crypto.Box) (*ecdh.PrivateKey, error) {
+	blob, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		return nil, fmt.Errorf("server box key: %w", err)
+	}
+	raw, err := box.Decrypt(blob)
+	if err != nil {
+		return nil, fmt.Errorf("server box key: %w", err)
+	}
+	return ecdh.X25519().NewPrivateKey([]byte(raw))
 }
 
 // BoxPublicKey is the base64 X25519 public key of a private key.

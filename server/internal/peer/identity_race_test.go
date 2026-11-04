@@ -82,3 +82,72 @@ func TestKeysReadErrorIsNotAMiss(t *testing.T) {
 		t.Fatal("the stored identity changed after a failed read")
 	}
 }
+
+// TestBoxKeysFirstUseRace is the same check for the X25519 handover key.
+func TestBoxKeysFirstUseRace(t *testing.T) {
+	const trials, callers = 10, 8
+	box, err := crypto.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for trial := 0; trial < trials; trial++ {
+		st, err := store.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := make([]string, callers)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range callers {
+			wg.Go(func() {
+				<-start
+				k, err := BoxKeys(context.Background(), st, box)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				got[i] = BoxPublicKey(k)
+			})
+		}
+		close(start)
+		wg.Wait()
+		final, err := BoxKeys(context.Background(), st, box)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, g := range got {
+			if g != BoxPublicKey(final) {
+				st.Close()
+				t.Fatalf("trial %d: caller %d got a box key that is not the stored one", trial, i)
+			}
+		}
+		st.Close()
+	}
+}
+
+// TestBoxKeysReadErrorIsNotAMiss: a failed read returns an error and the
+// stored key stays as it was.
+func TestBoxKeysReadErrorIsNotAMiss(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	box, _ := crypto.New(bytes.Repeat([]byte{7}, 32))
+	first, err := BoxKeys(context.Background(), st, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := BoxKeys(ctx, st, box); err == nil {
+		t.Fatal("BoxKeys with a failing read returned a key, want an error")
+	}
+	again, err := BoxKeys(context.Background(), st, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Equal(again) {
+		t.Fatal("the stored box key changed after a failed read")
+	}
+}
