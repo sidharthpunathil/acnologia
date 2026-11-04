@@ -1,8 +1,9 @@
 // Package notify delivers pool events to webhooks: Slack, Discord, Telegram
 // or any URL that accepts signed JSON.
 //
-// Emit never blocks the request path. Events go into a buffered queue and a
-// single worker delivers them with retries. Repeats of the same event about
+// Emit never blocks the request path. Events go into a buffered queue; each
+// webhook has its own worker and queue, so a receiver that fails or hangs
+// delays only its own alerts. Deliveries are retried. Repeats of the same event about
 // the same subject are dropped for a while, so a dead pool does not page
 // someone once per request.
 package notify
@@ -143,12 +144,16 @@ type Notifier struct {
 	hooks []*store.Webhook
 	when  time.Time
 	now   func() time.Time
-	sleep func(time.Duration)
+	// sleep waits between retries; it returns early with an error when ctx ends.
+	sleep func(context.Context, time.Duration) error
 }
+
+// hookQueue is how many events wait for one webhook before new ones are dropped.
+const hookQueue = 64
 
 func New(s *store.Store, box *crypto.Box, c *http.Client) *Notifier {
 	return &Notifier{Store: s, Box: box, Client: c, Quiet: 10 * time.Minute,
-		queue: make(chan Event, 512), seen: map[string]time.Time{}, now: time.Now, sleep: time.Sleep}
+		queue: make(chan Event, 512), seen: map[string]time.Time{}, now: time.Now, sleep: sleepCtx}
 }
 
 // Emit queues an event. It is safe on a nil Notifier and never blocks.
@@ -206,18 +211,52 @@ func (n *Notifier) loadHooks(ctx context.Context) []*store.Webhook {
 	return hooks
 }
 
-// Run delivers queued events until ctx ends.
+// job is one event for one webhook.
+type job struct {
+	h *store.Webhook
+	e Event
+}
+
+// Run delivers queued events until ctx ends. Each webhook has its own worker
+// and queue, so a receiver that fails or hangs delays only its own alerts and
+// each webhook still sees events in order. Run returns after every worker has.
 func (n *Notifier) Run(ctx context.Context) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	workers := map[int64]chan job{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case e := <-n.queue:
 			for _, h := range n.loadHooks(ctx) {
-				if h.Active && h.Wants(e.Type) {
-					n.deliverWithRetry(ctx, h, e)
+				if !h.Active || !h.Wants(e.Type) {
+					continue
+				}
+				q, ok := workers[h.ID]
+				if !ok {
+					q = make(chan job, hookQueue)
+					workers[h.ID] = q
+					wg.Go(func() { n.work(ctx, q) })
+				}
+				select {
+				case q <- job{h, e}:
+				default:
+					slog.Warn("webhook queue full, dropping event", "webhook", h.ID, "type", e.Type)
 				}
 			}
+		}
+	}
+}
+
+// work delivers one webhook's events in order until ctx ends.
+func (n *Notifier) work(ctx context.Context, q <-chan job) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case j := <-q:
+			n.deliverWithRetry(ctx, j.h, j.e)
 		}
 	}
 }
@@ -226,8 +265,8 @@ func (n *Notifier) deliverWithRetry(ctx context.Context, h *store.Webhook, e Eve
 	var status int
 	var err error
 	for attempt, wait := range []time.Duration{0, 2 * time.Second, 10 * time.Second} {
-		if attempt > 0 {
-			n.sleep(wait)
+		if attempt > 0 && n.sleep(ctx, wait) != nil {
+			break // shutting down; the last error is recorded below
 		}
 		status, err = n.Deliver(ctx, h, e)
 		if err == nil {
@@ -243,6 +282,18 @@ func (n *Notifier) deliverWithRetry(ctx context.Context, h *store.Webhook, e Eve
 		slog.Warn("webhook delivery failed", "webhook", h.ID, "type", e.Type, "err", err)
 	}
 	_ = n.Store.RecordWebhookDelivery(context.WithoutCancel(ctx), h.ID, status, msg)
+}
+
+// sleepCtx waits d, or returns ctx's error as soon as ctx ends.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // Deliver sends one event to one webhook and returns the HTTP status.

@@ -27,7 +27,7 @@ func setup(t *testing.T) (*Notifier, *store.Store, *crypto.Box) {
 		t.Fatal(err)
 	}
 	n := New(st, box, http.DefaultClient)
-	n.sleep = func(time.Duration) {}
+	n.sleep = func(context.Context, time.Duration) error { return nil }
 	return n, st, box
 }
 
