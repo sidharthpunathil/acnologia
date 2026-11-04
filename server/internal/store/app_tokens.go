@@ -62,8 +62,10 @@ func migrateAppTokens(db *sql.DB) error {
 			return err
 		}
 	}
-	_, err := addColumn(db, "events", "token_id", "INTEGER")
-	return err
+	if _, err := addColumn(db, "events", "token_id", "INTEGER"); err != nil {
+		return err
+	}
+	return migrateAppTokenIDs(db)
 }
 
 const appTokenCols = `t.id, t.app_id, t.name, t.prefix, t.created_at, t.created_by, COALESCE(u.email,''), t.last_used_at, t.expires_at, t.revoked_at`
@@ -108,12 +110,22 @@ func TokenPrefixHint(tok string) string {
 
 // CreateAppToken adds a token to an app. createdBy 0 means the system.
 func (s *Store) CreateAppToken(ctx context.Context, appID int64, name, prefix, hash string, createdBy int64, expiresAt *time.Time) (*AppToken, error) {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by,expires_at) VALUES(?,?,?,?,?,?,?)`,
-		appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt))
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
+	defer tx.Rollback()
+	id, err := nextAppTokenID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
+		id, appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.GetAppToken(ctx, appID, id)
 }
 

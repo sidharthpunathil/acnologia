@@ -107,17 +107,18 @@ func (s *Store) CreateAppWithToken(ctx context.Context, a *App, tokenName, prefi
 	if err != nil {
 		return nil, nil, err
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO apps(id,name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		id, a.Name, a.Description, "app_tokens:"+tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), t, b2i(a.LeaseHidden))
+	if _, err := tx.ExecContext(ctx, `INSERT INTO apps(id,name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		id, a.Name, a.Description, "app_tokens:"+tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), t, b2i(a.LeaseHidden)); err != nil {
+		return nil, nil, err
+	}
+	tokID, err := nextAppTokenID(ctx, tx)
 	if err != nil {
 		return nil, nil, err
 	}
-	res, err = tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?)`,
-		id, tokenName, prefix, tokenHash, t, nz(createdBy))
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?,?)`,
+		tokID, id, tokenName, prefix, tokenHash, t, nz(createdBy)); err != nil {
 		return nil, nil, err
 	}
-	tokID, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
@@ -199,12 +200,14 @@ func (s *Store) RotateAppToken(ctx context.Context, id int64, name, prefix, toke
 	if _, err := tx.ExecContext(ctx, `UPDATE app_tokens SET revoked_at=? WHERE app_id=? AND revoked_at IS NULL`, t, id); err != nil {
 		return nil, err
 	}
-	res, err = tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?)`,
-		id, name, TokenPrefixHint(prefix), tokenHash, t, nz(createdBy))
+	tokID, err := nextAppTokenID(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	tokID, _ := res.LastInsertId()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?,?)`,
+		tokID, id, name, TokenPrefixHint(prefix), tokenHash, t, nz(createdBy)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -219,7 +222,7 @@ func (s *Store) ClearLeaseHidden(ctx context.Context, id int64) error {
 
 func (s *Store) DeleteApp(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM apps WHERE id=?`, id)
-	// App ids can be reused; forget any share scopes cached for this one.
+	// Forget any share scopes cached for this app.
 	s.invalidateScopes()
 	return err
 }
