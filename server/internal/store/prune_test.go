@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
@@ -71,4 +72,17 @@ func TestPruneBatches(t *testing.T) {
 	if n != freshN+1 {
 		t.Fatalf("retention 0 deleted events: %d left", n)
 	}
+}
+
+// The WAL check on the prune tick finds the WAL next to the database.
+func TestWarnLargeWALFindsFile(t *testing.T) {
+	s := openTest(t)
+	var file string
+	if err := s.DB.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&file); err != nil || file == "" {
+		t.Fatalf("main database file %q: %v", file, err)
+	}
+	if _, err := os.Stat(file + "-wal"); err != nil {
+		t.Fatalf("no WAL at %s-wal: %v", file, err)
+	}
+	s.warnLargeWAL(context.Background())
 }

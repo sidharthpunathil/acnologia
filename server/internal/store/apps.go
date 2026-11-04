@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"os"
 	"strings"
 	"time"
 )
@@ -298,7 +300,25 @@ func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 		}
 	}
 	optimize(ctx, s.DB)
+	s.warnLargeWAL(ctx)
 	return nil
+}
+
+// walWarnBytes is the WAL size worth a warning: journal_size_limit
+// truncates the WAL back to this size after a checkpoint resets it.
+const walWarnBytes = 64 << 20
+
+// warnLargeWAL logs when the WAL has grown past journal_size_limit. It can
+// only reset once no reader is still on an older snapshot, so reads that
+// overlap without a gap (long dashboard queries) let it grow without bound.
+func (s *Store) warnLargeWAL(ctx context.Context) {
+	var file string
+	if err := s.DB.QueryRowContext(ctx, `SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&file); err != nil || file == "" {
+		return
+	}
+	if fi, err := os.Stat(file + "-wal"); err == nil && fi.Size() > walWarnBytes {
+		slog.Warn("sqlite WAL is large; long overlapping reads may be holding back checkpoints", "bytes", fi.Size())
+	}
 }
 
 // pruneBatched runs a DELETE of at most pruneBatch rows until one deletes
