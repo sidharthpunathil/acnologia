@@ -6,13 +6,49 @@ import { Route, Routes, useParams } from "react-router-dom";
 import { Toaster } from "../../components/Toaster";
 import { BRAND_NAME, Mark } from "@/components/acn/brand";
 import { ThemePicker } from "@/components/acn/theme-picker";
-import { ClaimPage } from "./ClaimPage";
-import { MePage } from "./MePage";
-import { LandingPage } from "../landing/Landing";
+import { lazyPage, preloadRoute, type PageRoute } from "@/lazyPage";
+// The same hashed file landing.css asks for: Vite names assets by content.
+import landingHeadlineFont from "@fontsource-variable/familjen-grotesk/files/familjen-grotesk-latin-wght-normal.woff2?url";
+
+/**
+ * Starts the landing headline's font with the landing chunk. Left to the
+ * stylesheet, the browser finds it only after the chunk, its CSS and the
+ * first layout, one more round trip before the largest text can paint.
+ */
+function preloadLandingFont() {
+  if (document.querySelector(`link[rel="preload"][href="${landingHeadlineFont}"]`)) return;
+  const link = document.createElement("link");
+  link.rel = "preload";
+  link.as = "font";
+  link.type = "font/woff2";
+  link.crossOrigin = "anonymous";
+  link.href = landingHeadlineFont;
+  document.head.appendChild(link);
+}
+
+// Each its own chunk: a visitor to the landing page never downloads the
+// dashboard, and a claim link never downloads the landing page.
+const ClaimPage = lazyPage(() => import("./ClaimPage").then((m) => m.ClaimPage));
+const MePage = lazyPage(() => import("./MePage").then((m) => m.MePage));
+const LandingPage = lazyPage(() => {
+  preloadLandingFont();
+  return import("../landing/Landing").then((m) => m.LandingPage);
+});
+
+const PAGES: readonly PageRoute[] = [
+  ["/claim/:code", ClaimPage],
+  ["/me", MePage],
+  ["/landing", LandingPage],
+];
 
 /** /claim/<code>, /me and the public home page, /landing. */
 export function isPublicPath(pathname: string): boolean {
   return /^\/claim\/[^/]+\/?$/.test(pathname) || /^\/me\/?$/.test(pathname) || /^\/landing\/?$/.test(pathname);
+}
+
+/** Fetches the chunk of the public page at `pathname` so the first render does not wait on it. */
+export function preloadPublicPage(pathname: string): Promise<void> {
+  return preloadRoute(PAGES, pathname);
 }
 
 export function PublicRoutes() {

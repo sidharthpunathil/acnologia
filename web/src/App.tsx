@@ -10,31 +10,72 @@ import { Button } from "@/components/base/buttons/button";
 import { Spinner } from "@/components/base/spinner/spinner";
 import { SetupPage } from "./pages/Setup";
 import { LoginPage } from "./pages/Login";
-import { CatalogPage } from "./pages/Catalog";
-import { KeysPage } from "./pages/Keys";
-import { ServicePage } from "./pages/service/ServicePage";
-import { AppsPage } from "./pages/Apps";
-import { ActivityPage } from "./pages/Activity";
-import { UsersPage } from "./pages/Users";
-import { AuditPage } from "./pages/Audit";
-import { AccountPage } from "./pages/Account";
 import { NotFoundPage } from "./pages/NotFound";
-import { ProvidersPage } from "./pages/providers/ProvidersPage";
-import { ProviderEditorPage } from "./pages/providers/ProviderEditor";
-import { AiBuilderPage } from "./pages/providers/AiBuilderPage";
-import { AiRunPage } from "./pages/providers/AiRunPage";
-import { SettingsPage } from "./pages/Settings";
-import { DocsPage } from "./pages/Docs";
-import { DocPage } from "./pages/docs/DocPage";
-import { WebhooksPage } from "./pages/Webhooks";
-import { EgressPage } from "./pages/Egress";
-import { GroupsPage } from "./pages/Groups";
-import { SharingPage } from "./pages/Sharing";
-import { UsagePage } from "./pages/Usage";
-import { AssistantPage } from "./pages/Assistant";
-import { CliAuthorizePage } from "./pages/CliAuthorize";
-import { IconGalleryPage } from "./pages/dev/IconGallery";
-import { IllustrationGallery } from "./components/foundations/illustrations/gallery";
+import { lazyPage, preloadRoute, type PageRoute } from "./lazyPage";
+
+// Each signed in page is its own chunk (lazyPage.tsx). Setup, sign in and
+// not found stay in the main bundle.
+const CatalogPage = lazyPage(() => import("./pages/Catalog").then((m) => m.CatalogPage));
+const KeysPage = lazyPage(() => import("./pages/Keys").then((m) => m.KeysPage));
+const ServicePage = lazyPage(() => import("./pages/service/ServicePage").then((m) => m.ServicePage));
+const AppsPage = lazyPage(() => import("./pages/Apps").then((m) => m.AppsPage));
+const ActivityPage = lazyPage(() => import("./pages/Activity").then((m) => m.ActivityPage));
+const UsersPage = lazyPage(() => import("./pages/Users").then((m) => m.UsersPage));
+const AuditPage = lazyPage(() => import("./pages/Audit").then((m) => m.AuditPage));
+const AccountPage = lazyPage(() => import("./pages/Account").then((m) => m.AccountPage));
+const ProvidersPage = lazyPage(() => import("./pages/providers/ProvidersPage").then((m) => m.ProvidersPage));
+const ProviderEditorPage = lazyPage(() => import("./pages/providers/ProviderEditor").then((m) => m.ProviderEditorPage));
+const AiBuilderPage = lazyPage(() => import("./pages/providers/AiBuilderPage").then((m) => m.AiBuilderPage));
+const AiRunPage = lazyPage(() => import("./pages/providers/AiRunPage").then((m) => m.AiRunPage));
+const SettingsPage = lazyPage(() => import("./pages/Settings").then((m) => m.SettingsPage));
+const DocsPage = lazyPage(() => import("./pages/Docs").then((m) => m.DocsPage));
+const DocPage = lazyPage(() => import("./pages/docs/DocPage").then((m) => m.DocPage));
+const WebhooksPage = lazyPage(() => import("./pages/Webhooks").then((m) => m.WebhooksPage));
+const EgressPage = lazyPage(() => import("./pages/Egress").then((m) => m.EgressPage));
+const GroupsPage = lazyPage(() => import("./pages/Groups").then((m) => m.GroupsPage));
+const SharingPage = lazyPage(() => import("./pages/Sharing").then((m) => m.SharingPage));
+const UsagePage = lazyPage(() => import("./pages/Usage").then((m) => m.UsagePage));
+const AssistantPage = lazyPage(() => import("./pages/Assistant").then((m) => m.AssistantPage));
+const CliAuthorizePage = lazyPage(() => import("./pages/CliAuthorize").then((m) => m.CliAuthorizePage));
+const IconGalleryPage = lazyPage(() => import("./pages/dev/IconGallery").then((m) => m.IconGalleryPage));
+const IllustrationGallery = lazyPage(() => import("./components/foundations/illustrations/gallery").then((m) => m.IllustrationGallery));
+
+// The page each address renders, for preloadAppPage. Keep it in step with the
+// routes below; a path missing here still works, it just loads after the
+// first render instead of before it.
+const PAGES: readonly PageRoute[] = [
+  ["/cli/authorize", CliAuthorizePage],
+  ["/docs", DocsPage],
+  ["/docs/:slug", DocPage],
+  ["/", CatalogPage],
+  ["/assistant", AssistantPage],
+  ["/assistant/:threadId", AssistantPage],
+  ["/keys", KeysPage],
+  ["/services/:id", ServicePage],
+  ["/providers", ProvidersPage],
+  ["/providers/ai", AiBuilderPage],
+  ["/providers/ai/:runId", AiRunPage],
+  ["/providers/new", ProviderEditorPage],
+  ["/providers/:slug", ProviderEditorPage],
+  ["/settings", SettingsPage],
+  ["/apps", AppsPage],
+  ["/groups", GroupsPage],
+  ["/sharing", SharingPage],
+  ["/usage", UsagePage],
+  ["/webhooks", WebhooksPage],
+  ["/egress", EgressPage],
+  ["/activity", ActivityPage],
+  ["/users", UsersPage],
+  ["/audit", AuditPage],
+  ["/account", AccountPage],
+  ["/dev/icons", IconGalleryPage],
+  ["/dev/illustrations", IllustrationGallery],
+];
+
+/** Fetches the chunk of the page at `pathname` so the first render does not wait on it. */
+export function preloadAppPage(pathname: string): Promise<void> {
+  return preloadRoute(PAGES, pathname);
+}
 
 function RequireRole({ ok, children }: { ok: boolean; children: ReactNode }) {
   return ok ? <>{children}</> : <Navigate to="/" replace />;

@@ -68,6 +68,7 @@ export function ServicePage() {
   const now = useNow(1000);
   useTitle(service?.name ?? "Service");
   const ensureProviders = useProviders((s) => s.ensure);
+  const providersLoaded = useProviders((s) => s.loaded);
   const provider = useProviders((s) => (service ? s.providers.find((p) => p.slug === service.provider) : undefined));
   // A service another server shares classifies with acnologia-peer but is
   // described by the owner's provider: its name, link and offers.
@@ -178,7 +179,12 @@ export function ServicePage() {
         }
       />
     );
-  if (!service || !counts) return <ServiceSkeleton />;
+  // The skeleton also waits for the provider list: the offers card and the
+  // health check note above the tabs come from it, and drawing the page
+  // without them pushed the tabs down by the card's height when it arrived
+  // (a layout shift of about 0.2 on a phone). The list is fetched once per
+  // session, so this waits only on a first visit.
+  if (!service || !counts || !providersLoaded) return <ServiceSkeleton />;
 
   const tabs = [
     { id: "keys" as Tab, label: "Keys", count: counts.total },
@@ -451,6 +457,9 @@ function ServiceSkeleton() {
           <Skeleton key={i} className={cx("h-[74px] rounded-3xl", i > 3 && "hidden sm:block")} />
         ))}
       </div>
+      {/* The tabs and the first rows, so the page below (and the footer) does not jump when they arrive. */}
+      <Skeleton className="mt-10 h-9 w-80 max-w-full rounded-xl" />
+      <Skeleton className="mt-6 h-80 rounded-3xl" />
     </div>
   );
 }

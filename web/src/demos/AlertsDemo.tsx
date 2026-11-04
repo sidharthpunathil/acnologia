@@ -12,8 +12,8 @@ import './AlertsDemo.css'
 // dashboard's own phone layout, and the channel comes up over its lower half,
 // edge on the card's edges, keeping only the latest older message.
 
-// The dragon mark, served from web/public
-const MARK = '/mark.png'
+// The dragon mark at 96px (a 30px avatar on a 3x screen), served from web/public
+const MARK = '/mark-96.webp'
 const LIMIT = 1000
 
 const OUT = 'Acnologia: SerpAPI key "acct-3" is out of quota'

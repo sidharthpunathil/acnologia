@@ -49,9 +49,10 @@ const RELEASES_URL = `${REPO_URL}/releases`;
 export const LANDING_TITLE = "Acnologia: share API keys without giving them away";
 
 // The product video, served from web/public/video (a copy of the repo's
-// video/acnologia-web.mp4 and its poster).
+// video/acnologia-web.mp4). The poster is its end card at 1280px as webp,
+// the size the player shows at most.
 const VIDEO_SRC = "/video/acnologia.mp4";
-const VIDEO_POSTER = "/video/poster.jpg";
+const VIDEO_POSTER = "/video/poster.webp";
 
 type Icon = ComponentType<{
   className?: string;

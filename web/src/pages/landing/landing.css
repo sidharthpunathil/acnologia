@@ -29,6 +29,9 @@ body:has(.hm-landing) {
   background: var(--color-paper);
   color: var(--color-ink);
   font-family: var(--font-body);
+  /* Dashboard components here (the code blocks' Copy button) use font-sans.
+     Pointing it at the body face keeps Inter, 72KB, off this page. */
+  --font-sans: var(--font-body);
   font-size: var(--text-md);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
