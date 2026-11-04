@@ -54,6 +54,7 @@ type groupWriter struct {
 	queue   []*wjob
 	leading bool
 	closed  bool
+	pending int        // jobs written and not finished yet, queued or running
 	idle    *sync.Cond // signalled when leading turns false
 }
 
@@ -72,6 +73,7 @@ func (g *groupWriter) write(stmts ...wstmt) error {
 		return errStoreClosed
 	}
 	g.queue = append(g.queue, j)
+	g.pending++
 	if g.leading {
 		g.mu.Unlock()
 		<-j.done
@@ -99,6 +101,7 @@ func (g *groupWriter) runNext() {
 	g.run(batch)
 
 	g.mu.Lock()
+	g.pending -= len(batch)
 	var next *wjob
 	if len(g.queue) > 0 {
 		next = g.queue[0]

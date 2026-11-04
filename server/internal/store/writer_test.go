@@ -24,19 +24,22 @@ func holdWriter(t *testing.T, s *Store) (release func()) {
 	return func() { _ = tx.Rollback() }
 }
 
-// waitQueued waits until n jobs wait behind the current leader.
-func waitQueued(t *testing.T, g *groupWriter, n int) {
+// waitPending waits until a leader runs and n jobs in all have been written
+// and not finished. It counts the leader's batch as well as the queue: how
+// many jobs the leader took before it blocked on the writer depends on
+// scheduling, so the queue alone is not a reliable count.
+func waitPending(t *testing.T, g *groupWriter, n int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		g.mu.Lock()
-		q, lead := len(g.queue), g.leading
+		p, lead := g.pending, g.leading
 		g.mu.Unlock()
-		if lead && q >= n {
+		if lead && p >= n {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("queue reached %d (leading %v), want %d", q, lead, n)
+			t.Fatalf("%d jobs pending (leading %v), want %d", p, lead, n)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -122,12 +125,12 @@ func TestGroupBatchIsolatesFailures(t *testing.T) {
 	}
 	wg.Add(1)
 	go job(0) // the leader, waiting for the writer
-	waitQueued(t, s.gw, 0)
+	waitPending(t, s.gw, 1)
 	for i := 1; i < len(results); i++ {
 		wg.Add(1)
 		go job(i)
 	}
-	waitQueued(t, s.gw, len(results)-1)
+	waitPending(t, s.gw, len(results))
 	release()
 	wg.Wait()
 	for i, err := range results {
@@ -210,7 +213,7 @@ func TestCloseDrainsQueuedWrites(t *testing.T) {
 			s.AddEvent(ctx, NewEvent{Kind: "proxy", Detail: "x"})
 		}()
 	}
-	waitQueued(t, s.gw, n-1)
+	waitPending(t, s.gw, n)
 	closed := make(chan error, 1)
 	go func() { closed <- s.Close() }()
 	select {
