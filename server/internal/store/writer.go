@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -160,7 +161,7 @@ func (g *groupWriter) run(batch []*wjob) {
 		}
 		return err
 	}
-	for _, j := range batch {
+	for i, j := range batch {
 		if err := exec(`SAVEPOINT acn_job`); err != nil {
 			j.err = err
 			continue
@@ -171,7 +172,16 @@ func (g *groupWriter) run(batch []*wjob) {
 			}
 		}
 		if j.err != nil {
-			_ = exec(`ROLLBACK TO acn_job`)
+			if err := exec(`ROLLBACK TO acn_job`); err != nil {
+				// Some errors (a full disk, an I/O error) make SQLite roll
+				// back the whole transaction, so there is no savepoint left.
+				// The jobs before this one were rolled back with it; the rest
+				// must not run on a connection that is out of the
+				// transaction, where a SAVEPOINT would start one and its
+				// RELEASE commit it while the job was told it failed.
+				g.abandon(ctx, tx, batch[:i], batch[i+1:], j.err)
+				return
+			}
 		}
 		if err := exec(`RELEASE acn_job`); err != nil && j.err == nil {
 			j.err = err
@@ -183,6 +193,22 @@ func (g *groupWriter) run(batch []*wjob) {
 				j.err = err
 			}
 		}
+	}
+}
+
+// abandon handles a batch whose transaction SQLite rolled back: the jobs
+// already run fail with the cause, and the jobs not run yet run on their own.
+func (g *groupWriter) abandon(ctx context.Context, tx *sql.Tx, ran, rest []*wjob, cause error) {
+	// Rollback ends the database/sql transaction and frees the one writer
+	// connection; SQLite has already rolled back, so its error is expected.
+	_ = tx.Rollback()
+	for _, j := range ran {
+		if j.err == nil {
+			j.err = fmt.Errorf("batch rolled back: %w", cause)
+		}
+	}
+	for _, j := range rest {
+		j.err = g.direct(ctx, j)
 	}
 }
 

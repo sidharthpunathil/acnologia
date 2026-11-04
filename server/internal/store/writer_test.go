@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,52 @@ func TestGroupBatchIsolatesFailures(t *testing.T) {
 		if err != nil || got != nil {
 			t.Fatalf("job %d: err %v, row %v", i, err, got)
 		}
+	}
+}
+
+// When a job's error makes SQLite roll back the whole group transaction (a
+// full disk here, through max_page_count), every caller is told what
+// happened to its own write: the jobs before it were rolled back and fail,
+// and the jobs after it run on their own and succeed.
+func TestGroupBatchWholeRollback(t *testing.T) {
+	s := openTest(t)
+	if _, err := s.DB.Exec(`CREATE TABLE t(id INTEGER PRIMARY KEY, v BLOB)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.Exec(`INSERT INTO t(id,v) VALUES(1,'a'),(3,'c')`); err != nil {
+		t.Fatal(err)
+	}
+	var pages int
+	if err := s.DB.QueryRow(`PRAGMA page_count`).Scan(&pages); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.Exec(`PRAGMA max_page_count=` + itoa(pages)); err != nil {
+		t.Fatal(err)
+	}
+	jobs := []*wjob{
+		{stmts: []wstmt{{`UPDATE t SET v='A' WHERE id=1`, nil}}},
+		{stmts: []wstmt{{`INSERT INTO t(id,v) VALUES(2,?)`, []any{strings.Repeat("x", 200000)}}}},
+		{stmts: []wstmt{{`UPDATE t SET v='C' WHERE id=3`, nil}}},
+	}
+	s.gw.run(jobs)
+	var v1, v3 string
+	_ = s.DB.QueryRow(`SELECT v FROM t WHERE id=1`).Scan(&v1)
+	_ = s.DB.QueryRow(`SELECT v FROM t WHERE id=3`).Scan(&v3)
+	if jobs[1].err == nil {
+		t.Fatal("the job that filled the disk reported no error")
+	}
+	if jobs[0].err == nil || v1 != "a" {
+		t.Fatalf("job before the failure: err %v, value %q (want an error and the old value)", jobs[0].err, v1)
+	}
+	if jobs[2].err != nil || v3 != "C" {
+		t.Fatalf("job after the failure: err %v, value %q (want success and the new value)", jobs[2].err, v3)
+	}
+	// The writer is usable afterwards.
+	if _, err := s.DB.Exec(`PRAGMA max_page_count=1073741823`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.gw.write(wstmt{`UPDATE t SET v='A' WHERE id=1`, nil}); err != nil {
+		t.Fatal(err)
 	}
 }
 
