@@ -483,9 +483,12 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			s.Breakers.Success(sv.ID)
 		}
 		verdict = true
-		_ = s.Pool.ApplyProxied(r.Context(), sv, k, a.ID, res)
+		// The upstream has answered, so its verdict must land on the key even
+		// if the client hangs up now: a lost 429 leaves the key in rotation.
+		wctx := context.WithoutCancel(r.Context())
+		_ = s.Pool.ApplyProxied(wctx, sv, k, a.ID, res)
 		if res.Outcome != providers.OK {
-			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: string(res.Outcome), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, Detail: res.Message})
+			s.Store.AddEvent(wctx, store.NewEvent{Kind: string(res.Outcome), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: resp.StatusCode, Detail: res.Message})
 		}
 		// rb was scrubbed above, right after it was classified.
 		out.resp, out.body, out.keyID, out.attempts, out.outcome, out.err = resp, rb, k.ID, len(tried), res.Outcome, nil

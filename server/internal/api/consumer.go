@@ -333,7 +333,10 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	}
 	// Reporting ends the lease and frees its concurrency slot.
 	s.Pool.ReleaseLease(l.ID)
-	k, err := s.Store.GetKey(ctx, l.KeyID)
+	// The claim has committed, so a retried report gets 409: the verdict must
+	// land even if the caller hangs up from here on.
+	wctx := context.WithoutCancel(ctx)
+	k, err := s.Store.GetKey(wctx, l.KeyID)
 	if err != nil {
 		return nil, 404, errors.New("key no longer exists")
 	}
@@ -349,12 +352,12 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	// A key an admin disabled (or a suspended one) keeps its state until a
 	// person changes it; the store also refuses to move its status.
 	if k.Status != store.StatusDisabled && k.Status != store.StatusBanned {
-		if err := s.Pool.Apply(ctx, sv, k, res); err != nil {
+		if err := s.Pool.Apply(wctx, sv, k, res); err != nil {
 			return nil, 500, err
 		}
 	}
 	if out != providers.OK {
-		s.Store.AddEvent(ctx, store.NewEvent{Kind: string(out), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: in.StatusCode, Detail: msg})
+		s.Store.AddEvent(wctx, store.NewEvent{Kind: string(out), ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: in.StatusCode, Detail: msg})
 	}
 	if !in.Rotate || out == providers.OK {
 		return nil, 200, nil
