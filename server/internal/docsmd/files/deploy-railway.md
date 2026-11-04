@@ -252,10 +252,12 @@ a short downtime on each redeploy, because Railway never mounts one volume
 into two deployments at once.
 
 Railway stops the old deployment with SIGTERM and, by default, kills it
-right away. Set the service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`
-to `20` (or the draining time under the service's Settings) so requests in
-flight can finish and their usage is saved; the server drains for up to 15
-seconds.
+right away. The server drains requests in flight for up to 15 seconds, so
+`railway.json` sets `drainingSeconds` to 20 and `.railway/railway.ts` sets the
+service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` to `20`. If you deploy
+without either file, set that variable (or the draining time under the
+service's Settings) yourself, or a redeploy can drop the usage of requests in
+flight.
 
 ## What a stranger sees
 

@@ -29,6 +29,9 @@ export default defineRailway(() => {
       // New volumes are owned by root and the image runs as a nonroot user.
       RAILWAY_RUN_UID: "0",
       ACNOLOGIA_DATA_DIR: "/data",
+      // SIGTERM to SIGKILL: Railway gives 0s by default; the server drains
+      // in flight requests for up to 15s.
+      RAILWAY_DEPLOYMENT_DRAINING_SECONDS: "20",
       ACNOLOGIA_REQUIRE_ACCESS_PASSWORD: "true",
       ACNOLOGIA_SECURE_COOKIES: "true",
       ACNOLOGIA_TRUST_PROXY_HEADERS: "true",

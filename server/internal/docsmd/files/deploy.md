@@ -206,7 +206,7 @@ kills it:
 | Docker Compose | `stop_grace_period: 20s`, already in `docker-compose.yml` and in the compose file the VPS installer writes. |
 | systemd | `TimeoutStopSec=20` in the unit (the default is 90 seconds, which is enough). |
 | Fly.io | `kill_timeout = "20s"`, already in `fly.toml`; Fly's default is 5 seconds. |
-| Railway | Set the service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=20`, or the draining time under Settings; Railway's default gives no time at all. |
+| Railway | `railway.json` and `.railway/railway.ts` set 20s. Without them, set the service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=20`; Railway's default gives no time at all. |
 | Render | Nothing to do: Render waits 30 seconds by default. |
 
 ## Settings for any public deploy

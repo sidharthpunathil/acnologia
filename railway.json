@@ -15,6 +15,7 @@
   },
   "deploy": {
     "numReplicas": 1,
+    "drainingSeconds": 20,
     "healthcheckPath": "/healthz",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
