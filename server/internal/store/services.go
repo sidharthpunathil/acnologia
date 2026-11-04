@@ -34,15 +34,26 @@ func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 }
 
 func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error) {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO services(slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec,target_trusted,egress_id,cache_ttl_sec,cost_per_request)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	id, err := nextID(ctx, tx, servicesHighWater, "services_seq")
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO services(id,slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec,target_trusted,egress_id,cache_ttl_sec,cost_per_request)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
 		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now(), sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted),
 		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest))
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.GetService(ctx, id)
 }
 

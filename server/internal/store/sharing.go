@@ -297,14 +297,16 @@ func (s *Store) CreateShare(ctx context.Context, sh *Share, inviteHash string, c
 	}
 	defer tx.Rollback()
 	t := now()
-	// apps.token_hash is unique and unused; give it a value no token hashes to.
-	res, err := tx.ExecContext(ctx, `INSERT INTO apps(name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden,share_id)
-		VALUES(?,?,?,?,?,'proxy',1,?,?,?)`,
-		"Share: "+sh.Name, "Backs the share "+sh.ID+". Managed on the Sharing page.", "share:"+sh.ID, "", shareAllowed(sh.Services), t, b2i(sh.IncludeHidden), sh.ID)
+	appID, err := nextID(ctx, tx, appsHighWater, "apps_seq")
 	if err != nil {
 		return nil, err
 	}
-	appID, _ := res.LastInsertId()
+	// apps.token_hash is unique and unused; give it a value no token hashes to.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO apps(id,name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden,share_id)
+		VALUES(?,?,?,?,?,?,'proxy',1,?,?,?)`,
+		appID, "Share: "+sh.Name, "Backs the share "+sh.ID+". Managed on the Sharing page.", "share:"+sh.ID, "", shareAllowed(sh.Services), t, b2i(sh.IncludeHidden), sh.ID); err != nil {
+		return nil, err
+	}
 	f := func(p *float64) any {
 		if p == nil {
 			return nil

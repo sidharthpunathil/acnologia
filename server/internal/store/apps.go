@@ -62,12 +62,15 @@ func (s *Store) CreateAppWithToken(ctx context.Context, a *App, tokenName, prefi
 	}
 	defer tx.Rollback()
 	t := now()
-	res, err := tx.ExecContext(ctx, `INSERT INTO apps(name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?)`,
-		a.Name, a.Description, "app_tokens:"+tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), t, b2i(a.LeaseHidden))
+	id, err := nextID(ctx, tx, appsHighWater, "apps_seq")
 	if err != nil {
 		return nil, nil, err
 	}
-	id, _ := res.LastInsertId()
+	res, err := tx.ExecContext(ctx, `INSERT INTO apps(id,name,description,token_hash,token_prefix,allowed_services,mode,active,created_at,lease_hidden) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		id, a.Name, a.Description, "app_tokens:"+tokenHash, a.TokenPrefix, string(allowed), a.Mode, b2i(a.Active), t, b2i(a.LeaseHidden))
+	if err != nil {
+		return nil, nil, err
+	}
 	res, err = tx.ExecContext(ctx, `INSERT INTO app_tokens(app_id,name,prefix,hash,created_at,created_by) VALUES(?,?,?,?,?,?)`,
 		id, tokenName, prefix, tokenHash, t, nz(createdBy))
 	if err != nil {
