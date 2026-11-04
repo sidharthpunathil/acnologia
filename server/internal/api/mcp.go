@@ -153,7 +153,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, &rpcErr{-32602, "invalid params"}
 		}
-		t := findTool(s.mcpTools(ctx, a, st), p.Name)
+		t := s.mcpTool(ctx, a, st, p.Name)
 		if t == nil {
 			return nil, &rpcErr{-32602, "unknown or disabled tool: " + p.Name}
 		}
@@ -170,7 +170,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if err != nil {
 			return map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
+		b, _ := json.Marshal(out)
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}, nil
 	case "resources/list":
 		if !st.Resources {
