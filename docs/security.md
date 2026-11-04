@@ -461,7 +461,13 @@ How the test key stays on that domain:
   lock screen or in `X-Acnologia-Access`, are limited to 5 a minute and 50 a
   day per client address, under a global ceiling of 20 a minute, so a flood
   makes the owner wait a minute at most unless it comes from the owner's own
-  address. See [configuration](configuration.md#access-password).
+  address. Everything answered to a locked browser, the shell and its
+  static files included, carries `Cache-Control: no-store`. See
+  [configuration](configuration.md#access-password).
+- **Compression**: only the built dashboard files (precompressed at build
+  time) and the provider list (`GET /api/admin/providers`, provider specs
+  with no key material) are ever sent compressed. Answers that carry a key,
+  such as reveal, lease, claim and handover, never are.
 - **No indexing**: every response carries `X-Robots-Tag: noindex, nofollow,
   noarchive, nosnippet` and `/robots.txt` disallows everything.
 - **CSRF**: every mutating dashboard call must send `Content-Type:

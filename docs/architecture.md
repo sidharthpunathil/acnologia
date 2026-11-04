@@ -480,6 +480,21 @@ Compose and hosts such as Railway mount their own at `/data`. On Windows,
 `scripts/build.ps1` does the same build without make (see
 [development](development.md#windows)).
 
+After the Vite build, `web/scripts/precompress.mjs` writes `.br` and `.gz`
+copies of the hashed scripts and styles under `assets/`, and they are
+embedded with them. The server sends the copy the browser accepts, or the
+plain file for a Range request or a browser that accepts neither, with
+`Vary: Accept-Encoding`. Caching follows the file:
+
+| File | `Cache-Control` | Revalidation |
+|---|---|---|
+| `assets/*` (content hashed names) | `public, max-age=31536000, immutable` | none needed |
+| other static files (the mark, icons, the video) | `public, max-age=3600` | strong `ETag` from the content, `304` on a match |
+| the app shell (`index.html`, every page route) | `no-cache` | strong `ETag`, `304` on a match |
+
+While the access password lock is on, a locked browser gets `no-store` on all
+of them instead.
+
 ## Deployment shape
 
 ```mermaid
