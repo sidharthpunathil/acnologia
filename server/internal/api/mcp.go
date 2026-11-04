@@ -57,6 +57,10 @@ func mcpBase(ctx context.Context, s *Server) string {
 }
 
 func obj(props map[string]any, required ...string) map[string]any {
+	// A nil slice encodes as null, which MCP clients reject: required must be an array.
+	if required == nil {
+		required = []string{}
+	}
 	return map[string]any{"type": "object", "properties": props, "required": required}
 }
 
