@@ -92,7 +92,7 @@ file in the next section.
 | `internal/keyparse` | Pulls keys out of pasted or dropped text: JSON arrays, CSV with a header row, `.env` files and free form lists. |
 | `internal/breaker` | The per service circuit breaker that pauses traffic to a provider that keeps failing. |
 | `internal/respcache` | The in-memory response cache and idempotent replays: a byte bounded LRU with per entry expiry. |
-| `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. |
+| `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. Upstream transports keep up to 256 idle connections per host and resume TLS sessions, so a burst to one provider reuses connections instead of redialing. |
 | `internal/notify` | Delivers pool and sharing events to webhooks: Slack, Discord, Telegram or signed JSON. |
 | `internal/worker` | The background loops. See [Background work](#background-work). |
 | `internal/ctl` | The admin API command line client, built as `acn` and as `acnologia ctl`. |

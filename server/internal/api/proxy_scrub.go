@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -86,15 +87,22 @@ func keyPrefixTail(b []byte, forms [][]byte) int {
 	return 0
 }
 
+// scrubReadSize is how much a scrubReader reads from upstream at a time.
+const scrubReadSize = 32 << 10
+
 // scrubReader replaces the secret in a stream. It holds back only bytes that
 // could begin the secret, so a streamed reply (server-sent events) is not
 // delayed unless a chunk ends in what looks like the start of the key.
+//
+// Both buffers are reused for the whole stream: pending never holds more
+// than a held back tail plus one read, and out is refilled only once the
+// caller has taken all of it.
 type scrubReader struct {
 	r       io.Reader
 	forms   [][]byte
-	buf     []byte
-	pending []byte // read, not yet released
+	pending []byte // read, not yet released; a held back tail sits at the front
 	out     []byte // released, not yet returned
+	off     int    // how much of out was returned
 	err     error
 }
 
@@ -103,41 +111,46 @@ func newScrubReader(r io.Reader, secret string) io.Reader {
 	if len(forms) == 0 {
 		return r
 	}
-	return &scrubReader{r: r, forms: forms, buf: make([]byte, 32<<10)}
+	return &scrubReader{r: r, forms: forms}
 }
 
 func (s *scrubReader) Read(p []byte) (int, error) {
-	for len(s.out) == 0 {
+	for s.off == len(s.out) {
 		if s.err != nil {
 			return 0, s.err
 		}
-		n, err := s.r.Read(s.buf)
-		s.pending = append(s.pending, s.buf[:n]...)
+		s.pending = slices.Grow(s.pending, scrubReadSize)
+		held := len(s.pending)
+		n, err := s.r.Read(s.pending[held : held+scrubReadSize])
+		s.pending = s.pending[:held+n]
 		if err != nil {
 			s.err = err
 		}
 		s.release(err != nil)
 	}
-	n := copy(p, s.out)
-	s.out = s.out[n:]
+	n := copy(p, s.out[s.off:])
+	s.off += n
 	return n, nil
 }
 
-// release moves scrubbed bytes from pending to out. At the end of the stream
-// everything goes; before it, a tail that may start the key stays.
+// release moves scrubbed bytes from pending to out, which the caller has
+// emptied. At the end of the stream everything goes; before it, a tail that
+// may start the key stays, moved to the front of pending.
 func (s *scrubReader) release(final bool) {
+	s.out, s.off = s.out[:0], 0
+	rest := s.pending
 	for {
-		at, n := firstForm(s.pending, s.forms)
+		at, n := firstForm(rest, s.forms)
 		if at < 0 {
 			break
 		}
-		s.out = append(append(s.out, s.pending[:at]...), scrubMark...)
-		s.pending = s.pending[at+n:]
+		s.out = append(append(s.out, rest[:at]...), scrubMark...)
+		rest = rest[at+n:]
 	}
 	keep := 0
 	if !final {
-		keep = keyPrefixTail(s.pending, s.forms)
+		keep = keyPrefixTail(rest, s.forms)
 	}
-	s.out = append(s.out, s.pending[:len(s.pending)-keep]...)
-	s.pending = append([]byte(nil), s.pending[len(s.pending)-keep:]...)
+	s.out = append(s.out, rest[:len(rest)-keep]...)
+	s.pending = s.pending[:copy(s.pending, rest[len(rest)-keep:])]
 }

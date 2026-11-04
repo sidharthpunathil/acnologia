@@ -405,8 +405,9 @@ A typical session:
 3. `service_guide` returns the usage guide as Markdown: endpoints, params,
    limits and errors.
 4. `proxy_request` runs the proxy handler in process, with the response
-   capped at `max_result_kb` (default 200). `get_key` issues a lease with the
-   same checks as `/api/v1/lease`.
+   capped at `max_result_kb` (default 200). A JSON answer within the cap is
+   embedded as sent, so large integers keep every digit. `get_key` issues a
+   lease with the same checks as `/api/v1/lease`.
 
 The guide is also the resource `acnologia://services/{slug}/guide` (one per
 allowed service, `text/markdown`) and, over HTTP,

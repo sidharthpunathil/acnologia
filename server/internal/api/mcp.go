@@ -331,10 +331,11 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		}
 		return map[string]any{"service": args.Service, "generated": d.Generated, "markdown": d.Render(false)}, nil
 	case "proxy_request":
-		if _, err := svcFor(); err != nil {
+		sv, err := svcFor()
+		if err != nil {
 			return nil, err
 		}
-		return s.mcpProxy(ctx, r, args.Service, args.Method, args.Path, args.Query, args.Body)
+		return s.mcpProxy(withResolvedService(ctx, sv), r, args.Service, args.Method, args.Path, args.Query, args.Body)
 	}
 	return nil, fmt.Errorf("unknown tool %q", name)
 }
@@ -357,6 +358,10 @@ func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, meth
 	b := rec.Body.Bytes()
 	ct := rec.Header().Get("Content-Type")
 	switch {
+	case strings.Contains(ct, "json") && len(b) <= limit && json.Valid(b) && utf8.Valid(b):
+		// Embedded as is, not decoded into maps only to be encoded again.
+		// Invalid UTF-8 takes the decoding path below, which replaces it.
+		out["body"] = json.RawMessage(b)
 	case strings.Contains(ct, "json"):
 		var v any
 		if json.Unmarshal(b, &v) == nil && len(b) <= limit {
