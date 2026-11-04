@@ -85,3 +85,48 @@ func TestLateIndexesMigrate(t *testing.T) {
 		s.Close()
 	}
 }
+
+// A service's or key's event list walks its index backwards instead of
+// sorting every event of the service or key, and lists the same events, newest
+// first, as the id order.
+func TestListEventsFilteredOrder(t *testing.T) {
+	s := openTest(t)
+	seedSmall(t, s)
+	ctx := context.Background()
+	for _, c := range []struct {
+		f   EventFilter
+		col string
+		id  int64
+	}{
+		{EventFilter{ServiceID: 2, Limit: 50}, "service_id", 2},
+		{EventFilter{KeyID: 7, Limit: 50}, "key_id", 7},
+	} {
+		plan := explain(t, s.DB, `SELECT e.id FROM events e WHERE e.`+c.col+`=? ORDER BY e.ts DESC, e.id DESC LIMIT 50`, c.id)
+		if strings.Contains(plan, "TEMP B-TREE") {
+			t.Errorf("%s: plan sorts: %s", c.col, plan)
+		}
+		evs, err := s.ListEvents(ctx, c.f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := s.DB.Query(`SELECT id FROM events WHERE `+c.col+`=? ORDER BY ts DESC, id DESC LIMIT 50`, c.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var want []int64
+		for rows.Next() {
+			var id int64
+			_ = rows.Scan(&id)
+			want = append(want, id)
+		}
+		rows.Close()
+		if len(evs) != len(want) || len(want) != 50 {
+			t.Fatalf("%s: got %d events, want %d", c.col, len(evs), len(want))
+		}
+		for i := range want {
+			if evs[i].ID != want[i] {
+				t.Fatalf("%s: event %d is %d, want %d", c.col, i, evs[i].ID, want[i])
+			}
+		}
+	}
+}

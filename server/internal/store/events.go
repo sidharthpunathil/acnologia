@@ -70,7 +70,15 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error)
 	if f.Limit <= 0 || f.Limit > 500 {
 		f.Limit = 100
 	}
-	q += ` ORDER BY e.id DESC LIMIT ?`
+	if f.ServiceID != 0 || f.KeyID != 0 {
+		// events_service and events_key end in (ts, rowid), so walked
+		// backwards they give the newest first without sorting every event
+		// of the service or key. Events are appended with the current time,
+		// so this is the id order unless the clock stepped back.
+		q += ` ORDER BY e.ts DESC, e.id DESC LIMIT ?`
+	} else {
+		q += ` ORDER BY e.id DESC LIMIT ?`
+	}
 	args = append(args, f.Limit)
 	// The filters make this SQL vary, so it is not kept prepared.
 	rows, err := s.rd.QueryContext(ctx, q, args...)
