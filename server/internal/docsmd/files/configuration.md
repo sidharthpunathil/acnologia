@@ -299,7 +299,9 @@ different key.
 
 ## Upgrading
 
-Migrations run automatically on start. Notable behavior changes:
+Migrations run automatically on start, all in one transaction: an upgrade
+that fails or is interrupted leaves the database as it was, and the next
+start runs it again. Notable behavior changes:
 
 - **Hidden keys now need a grant.** Existing apps cannot lease or proxy hidden
   keys until a superadmin turns on **Lease hidden keys** for them. Existing

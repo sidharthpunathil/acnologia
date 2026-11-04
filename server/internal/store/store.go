@@ -268,16 +268,12 @@ func Open(dataDir string) (*Store, error) {
 	}
 	// One writer keeps SQLite simple and avoids SQLITE_BUSY under load.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrateAtomically(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	// The database holds encrypted keys and password hashes: owner only.
 	chmodDB(dataDir, file)
-	if err := migrate(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
 	optimize(context.Background(), db)
 	rd, err := sql.Open("sqlite", readerDSN(path))
 	if err != nil {
@@ -301,6 +297,30 @@ func chmodDB(dataDir, file string) {
 	for _, f := range []string{file, file + "-wal", file + "-shm"} {
 		_ = os.Chmod(filepath.Join(dataDir, f), 0o600)
 	}
+}
+
+// migrateAtomically applies the schema and every migration in one
+// transaction. Several migrations add a column or table and then fill it,
+// and run the fill only when the column or table is new; if a step's DDL
+// could commit without its fill (a crash, a full disk), the next start would
+// skip the fill for good. SQLite DDL is transactional, so a failure or a
+// kill anywhere leaves the database as it was and the next start redoes it
+// all. The writer has one connection, so every db call in migrate runs
+// inside this transaction.
+func migrateAtomically(db *sql.DB) error {
+	if _, err := db.Exec(`BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(schema); err != nil {
+		_, _ = db.Exec(`ROLLBACK`)
+		return err
+	}
+	if err := migrate(db); err != nil {
+		_, _ = db.Exec(`ROLLBACK`)
+		return err
+	}
+	_, err := db.Exec(`COMMIT`)
+	return err
 }
 
 // migrate adds columns introduced after the first release to existing databases.

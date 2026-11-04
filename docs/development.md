@@ -206,7 +206,9 @@ diff images before committing them.
   `gateOpenPrefixes` or `gateOpenExact` (`internal/api/gate.go`). Everything
   else is locked by default.
 - Schema changes go in `store.migrate` with `addColumn`, so existing
-  databases upgrade on start.
+  databases upgrade on start. `migrate` runs inside one transaction on the
+  single writer connection: use `db` directly and never begin another
+  transaction there.
 - Links built from server data use `safeHref` in the dashboard.
 - Update [`llms.txt`](llms.txt) and [`llms-full.txt`](llms-full.txt) when the
   consumer API changes, then run `make llms`. That target also copies
