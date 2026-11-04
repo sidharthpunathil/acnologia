@@ -92,7 +92,7 @@ file in the next section.
 | `internal/keyparse` | Pulls keys out of pasted or dropped text: JSON arrays, CSV with a header row, `.env` files and free form lists. |
 | `internal/breaker` | The per service circuit breaker that pauses traffic to a provider that keeps failing. |
 | `internal/respcache` | The in-memory response cache and idempotent replays: a byte bounded LRU with per entry expiry. |
-| `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. |
+| `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. Upstream transports keep up to 256 idle connections per host and resume TLS sessions, so a burst to one provider reuses connections instead of redialing. |
 | `internal/notify` | Delivers pool and sharing events to webhooks: Slack, Discord, Telegram or signed JSON. |
 | `internal/worker` | The background loops. See [Background work](#background-work). |
 | `internal/ctl` | The admin API command line client, built as `acn` and as `acnologia ctl`. |
@@ -392,8 +392,25 @@ obvious:
   Settings (`health_interval`).
 - **Foreign keys are on.** Deleting a service removes its keys and leases;
   deleting a user removes their sessions.
-- **One connection.** The pool has a single connection in WAL mode with a 5
-  second busy timeout, which keeps SQLite simple under concurrent requests.
+- **One writer, a read pool.** Every write and every transaction goes through
+  a single connection in WAL mode with a 5 second busy timeout, so writes
+  never meet `SQLITE_BUSY`. Reads that need no transaction use a separate
+  pool of four `query_only` connections, so a slow Usage or overview query
+  never holds up the requests behind it. In WAL mode a read sees every
+  commit made before it starts, so a revoked token, paused share or disabled
+  key is refused on the very next request. Hot queries keep their prepared
+  statements per pool.
+- **Group commit.** The small writes each request makes (its event, the
+  app's usage counters, the key's OK mark, the token's last use) queue for
+  the writer: those that arrive while a commit runs share the next
+  transaction, each under its own `SAVEPOINT`. Every caller waits for the
+  commit that holds its write, so nothing is buffered in memory and a crash
+  loses no counted usage. A served request is counted even when its client
+  has hung up. Rate limits, bans and other key status changes are written
+  directly.
+- **Housekeeping writes in batches.** The prune deletes old events and leases
+  1000 rows at a time, so requests get the writer between batches, then runs
+  `PRAGMA optimize` to keep planner statistics current.
 
 ## In memory state
 
@@ -479,6 +496,21 @@ nonroot image with `ACNOLOGIA_DATA_DIR=/data`. The image declares no volume:
 Compose and hosts such as Railway mount their own at `/data`. On Windows,
 `scripts/build.ps1` does the same build without make (see
 [development](development.md#windows)).
+
+After the Vite build, `web/scripts/precompress.mjs` writes `.br` and `.gz`
+copies of the hashed scripts and styles under `assets/`, and they are
+embedded with them. The server sends the copy the browser accepts, or the
+plain file for a Range request or a browser that accepts neither, with
+`Vary: Accept-Encoding`. Caching follows the file:
+
+| File | `Cache-Control` | Revalidation |
+|---|---|---|
+| `assets/*` (content hashed names) | `public, max-age=31536000, immutable` | none needed |
+| other static files (the mark, icons, the video) | `public, max-age=3600` | strong `ETag` from the content, `304` on a match |
+| the app shell (`index.html`, every page route) | `no-cache` | strong `ETag`, `304` on a match |
+
+While the access password lock is on, a locked browser gets `no-store` on all
+of them instead.
 
 ## Deployment shape
 
