@@ -480,7 +480,8 @@ boot next to the worker. Each webhook gets its own delivery goroutine and a
 queue of 64 events, so a receiver that fails or hangs delays only its own
 alerts; a full queue drops new events for that webhook with a log line. A
 delivery that fails with a network error, a 5xx or a 429 is retried after 2
-and then 10 seconds.
+and then 10 seconds. When a webhook is deleted or turned off, its worker
+stops at the next event and drops what it had queued.
 
 On SIGINT or SIGTERM the server stops accepting connections, lets requests in
 flight finish (so their usage and events commit), waits for the worker loops,

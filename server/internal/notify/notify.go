@@ -192,23 +192,26 @@ func (n *Notifier) Invalidate() {
 	n.mu.Unlock()
 }
 
-func (n *Notifier) loadHooks(ctx context.Context) []*store.Webhook {
+// loadHooks returns the webhooks, cached for 30 seconds. ok is false when
+// they could not be read, so the caller does not take the empty list as
+// every webhook having been deleted.
+func (n *Notifier) loadHooks(ctx context.Context) (hooks []*store.Webhook, ok bool) {
 	n.mu.Lock()
 	if !n.when.IsZero() && n.now().Sub(n.when) < 30*time.Second {
 		h := n.hooks
 		n.mu.Unlock()
-		return h
+		return h, true
 	}
 	n.mu.Unlock()
 	hooks, err := n.Store.ListWebhooks(ctx)
 	if err != nil {
 		slog.Warn("cannot load webhooks", "err", err)
-		return nil
+		return nil, false
 	}
 	n.mu.Lock()
 	n.hooks, n.when = hooks, n.now()
 	n.mu.Unlock()
-	return hooks
+	return hooks, true
 }
 
 // job is one event for one webhook.
@@ -217,34 +220,64 @@ type job struct {
 	e Event
 }
 
+// hookWorker is one webhook's queue and the means to stop its goroutine.
+type hookWorker struct {
+	q    chan job
+	stop context.CancelFunc
+}
+
 // Run delivers queued events until ctx ends. Each webhook has its own worker
 // and queue, so a receiver that fails or hangs delays only its own alerts and
-// each webhook still sees events in order. Run returns after every worker has.
+// each webhook still sees events in order. The worker of a webhook that was
+// deleted or turned off stops, dropping what it had queued. Run returns
+// after every worker has.
 func (n *Notifier) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	workers := map[int64]chan job{}
+	workers := map[int64]*hookWorker{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case e := <-n.queue:
-			for _, h := range n.loadHooks(ctx) {
+			hooks, ok := n.loadHooks(ctx)
+			if ok {
+				stopGone(workers, hooks)
+			}
+			for _, h := range hooks {
 				if !h.Active || !h.Wants(e.Type) {
 					continue
 				}
-				q, ok := workers[h.ID]
+				w, ok := workers[h.ID]
 				if !ok {
-					q = make(chan job, hookQueue)
-					workers[h.ID] = q
-					wg.Go(func() { n.work(ctx, q) })
+					wctx, stop := context.WithCancel(ctx)
+					w = &hookWorker{q: make(chan job, hookQueue), stop: stop}
+					workers[h.ID] = w
+					wg.Go(func() { n.work(wctx, w.q) })
 				}
 				select {
-				case q <- job{h, e}:
+				case w.q <- job{h, e}:
 				default:
 					slog.Warn("webhook queue full, dropping event", "webhook", h.ID, "type", e.Type)
 				}
 			}
+		}
+	}
+}
+
+// stopGone stops the workers of webhooks that are no longer listed or no
+// longer active.
+func stopGone(workers map[int64]*hookWorker, hooks []*store.Webhook) {
+	live := make(map[int64]bool, len(hooks))
+	for _, h := range hooks {
+		if h.Active {
+			live[h.ID] = true
+		}
+	}
+	for id, w := range workers {
+		if !live[id] {
+			w.stop()
+			delete(workers, id)
 		}
 	}
 }
@@ -256,6 +289,9 @@ func (n *Notifier) work(ctx context.Context, q <-chan job) {
 		case <-ctx.Done():
 			return
 		case j := <-q:
+			if ctx.Err() != nil {
+				return
+			}
 			n.deliverWithRetry(ctx, j.h, j.e)
 		}
 	}

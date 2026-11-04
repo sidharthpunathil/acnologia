@@ -76,3 +76,57 @@ func TestSleepCtxStopsOnCancel(t *testing.T) {
 		t.Fatalf("sleepCtx: %v", err)
 	}
 }
+
+// TestDeletedHookWorkerStops: when a webhook is deleted, its worker stops on
+// the next event, even in the middle of a retry wait, and gets no more events.
+func TestDeletedHookWorkerStops(t *testing.T) {
+	n, st, box := setup(t)
+	waiting := make(chan struct{}, 10)
+	stopped := make(chan struct{}, 10)
+	n.sleep = func(ctx context.Context, _ time.Duration) error {
+		waiting <- struct{}{}
+		<-ctx.Done()
+		stopped <- struct{}{}
+		return ctx.Err()
+	}
+	bad := &sink{status: 500}
+	s1 := httptest.NewServer(http.HandlerFunc(bad.handler))
+	defer s1.Close()
+	good := make(chan struct{}, 10)
+	s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { good <- struct{}{} }))
+	defer s2.Close()
+	h1 := addHook(t, st, box, s1.URL, "json", nil)
+	addHook(t, st, box, s2.URL, "json", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { n.Run(ctx); close(done) }()
+	n.Emit(Event{Type: KeyBanned, KeyID: 1, Message: "key 1 banned"})
+	wait := func(c chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-c:
+		case <-time.After(time.Second):
+			t.Fatal(what)
+		}
+	}
+	wait(waiting, "the failing hook never reached its retry wait")
+	wait(good, "the healthy hook did not get the first event")
+
+	if err := st.DeleteWebhook(context.Background(), h1.ID); err != nil {
+		t.Fatal(err)
+	}
+	n.Invalidate()
+	n.Emit(Event{Type: KeyBanned, KeyID: 2, Message: "key 2 banned"})
+	wait(stopped, "the deleted hook's worker kept waiting to retry")
+	wait(good, "the healthy hook did not get the second event")
+	bad.mu.Lock()
+	got := len(bad.bodies)
+	bad.mu.Unlock()
+	if got != 1 {
+		t.Fatalf("deleted hook got %d deliveries, want 1", got)
+	}
+	cancel()
+	wait(done, "Run did not return after cancel")
+}
