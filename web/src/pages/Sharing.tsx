@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link } from "react-aria-components";
 import {
   RiAddLine,
+  RiBarChartBoxLine,
   RiLinkM,
   RiPauseLine,
   RiPencilLine,
@@ -12,6 +13,7 @@ import {
   RiTicketLine,
   RiUserLine,
 } from "@remixicon/react";
+import { RouterButtonLink } from "@/components/acn/button-link";
 import { useTitle } from "../hooks/useTitle";
 import { useNow } from "../hooks/useNow";
 import { useAuth } from "../stores/auth";
@@ -1238,7 +1240,16 @@ export function SharingPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <PageHeader title="Sharing" meta={`${plural(shares.length, "share")} · ${activeShares} active · ${plural(peers.length, "connection")}`} className="mb-4" />
+        <PageHeader
+          title="Sharing"
+          meta={`${plural(shares.length, "share")} · ${activeShares} active · ${plural(peers.length, "connection")}`}
+          className="mb-4"
+          actions={
+            <RouterButtonLink href="/sharing/analytics" variant="secondary" leadingIcon={RiBarChartBoxLine}>
+              Analytics
+            </RouterButtonLink>
+          }
+        />
         <p className="max-w-2xl text-body-2-regular text-text-secondary">
           Let another Acnologia use some of your services, or use services another one shares with you. {PROMISE} Handover shares give the keys to the other server, which deletes them when the share ends. A person who does not run Acnologia gets a one time link: a personal token through this server, or the keys shown once. A link anyone can claim gives a whole team tokens of their own, under shared limits. A share can be timed, paused and revoked at any time.
         </p>

@@ -307,6 +307,7 @@ func (s *Server) Router() http.Handler {
 			// Sharing: admins may look.
 			r.Get("/identity", s.getIdentity)
 			r.Get("/shares", s.listShares)
+			r.Get("/shares/analytics", s.shareAnalytics)
 			r.Get("/shares/{id}", s.getShare)
 			r.Get("/peers", s.listPeers)
 			r.Get("/peers/{id}/providers", s.listPeerProviders)

@@ -451,11 +451,20 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			setHeader(w.Header(), "Service", sv.Slug)
 			// The slot stays held until the (possibly streamed) body is fully
 			// sent, or the upstream goes quiet for proxyIdleTimeout.
+			var meter *tokenMeter
+			if meterable(sv, resp) {
+				meter = &tokenMeter{rc: resp.Body}
+				resp.Body = meter
+			}
 			func() {
 				defer picked.Release()
 				defer cancel()
 				s.deliver(w, resp, k, view(a, k.ID, attempt), cancel, picked.Secret, !mayReadKey(a, sv), cap)
 			}()
+			if meter != nil {
+				in, outTok := meter.counts()
+				_ = s.Store.RecordTokens(context.WithoutCancel(r.Context()), a.ID, sv.ID, in, outTok)
+			}
 			out.served, out.cost = true, cost
 			return out
 		}

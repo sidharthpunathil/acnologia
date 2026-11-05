@@ -394,6 +394,9 @@ func migrate(db *sql.DB) error {
 	if err := migrateRuns(db); err != nil {
 		return err
 	}
+	if err := migrateTokenUsage(db); err != nil {
+		return err
+	}
 	if err := migrateHiddenKeyEvents(db); err != nil {
 		return err
 	}

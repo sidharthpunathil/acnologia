@@ -239,7 +239,95 @@ export interface PeerPreview {
   share: { name: string; services: ManifestService[]; providers: string[]; invite_expires_at: string | null };
 }
 
+/** One UTC day of sharing use. */
+export interface AnalyticsDay {
+  day: string;
+  requests: number;
+  errors: number;
+  cost: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface AnalyticsService {
+  slug: string;
+  requests: number;
+  errors: number;
+  cost: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+/** One token of a share; on a reusable link, one claim. */
+export interface AnalyticsClaimant {
+  token_id: number;
+  name: string;
+  requests: number;
+  cost: number;
+  last_used_at: string | null;
+  revoked: boolean;
+}
+
+/**
+ * measured: calls go through this server. reported: the other server
+ * counts (handover), cost is an estimate. none: keys were revealed.
+ */
+export type AnalyticsTracking = "measured" | "reported" | "none";
+
+export interface AnalyticsShare {
+  id: string;
+  name: string;
+  recipient: "server" | "person" | "link";
+  who: string;
+  mode: ShareMode;
+  status: ShareStatus;
+  tracking: AnalyticsTracking;
+  created_at: string;
+  started_at: string | null;
+  ends_at: string | null;
+  ended_at: string | null;
+  live_seconds: number;
+  requests: number;
+  cache_hits: number;
+  errors: number;
+  cost: number;
+  cost_estimate: boolean;
+  avg_latency_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_calls: number;
+  first_used_at: string | null;
+  last_used_at: string | null;
+  active_days: number;
+  keys_revealed: number;
+  claim_count: number;
+  services: AnalyticsService[];
+  claimants: AnalyticsClaimant[];
+  days: AnalyticsDay[];
+}
+
+export interface SharingAnalytics {
+  days: number;
+  since: string;
+  retention_days: number;
+  totals: {
+    shares: number;
+    live_shares: number;
+    recipients: number;
+    requests: number;
+    errors: number;
+    cost: number;
+    input_tokens: number;
+    output_tokens: number;
+    live_seconds: number;
+  };
+  series: AnalyticsDay[];
+  shares: AnalyticsShare[];
+}
+
 export const sharing = {
+  analytics: (days: number) => request<SharingAnalytics>("GET", `/api/admin/shares/analytics?days=${days}`),
+
   identity: () => request<ServerIdentity>("GET", "/api/admin/identity"),
   updateIdentity: (body: { name?: string; url?: string }) => request<ServerIdentity>("PATCH", "/api/admin/identity", body),
 

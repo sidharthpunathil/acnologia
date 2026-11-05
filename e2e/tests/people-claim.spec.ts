@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { startServer, stopServer, type Started } from "../support/server";
 
@@ -74,6 +75,18 @@ test("sharing with a person: claim and My access work on a locked deploy", async
   await expect(page.locator('img[src^="data:image/"]').first()).toBeVisible();
   await get.click();
   await expect(page.getByText("This is shown once. Save it now.")).toBeVisible();
+
+  // The provider's usage guide comes with the access, as a Markdown file.
+  await expect(page.getByRole("heading", { name: "How to use it" })).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: /^Download .*-guide\.md$/ }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toMatch(/-guide\.md$/);
+  const guide = readFileSync((await file.path())!, "utf8");
+  expect(guide).toMatch(/^# .* usage guide/);
+  expect(guide).toContain(`${base}/proxy/`);
+  await page.getByText("Read the guide here").click();
+  await expect(page.getByRole("heading", { name: /How to call it through Acnologia/ })).toBeVisible();
 
   // The token is on the page once; read it from the page text.
   const body = await page.locator("body").innerText();

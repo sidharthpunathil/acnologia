@@ -14,6 +14,7 @@ const ROUTES: [name: string, path: string][] = [
   ["usage", "/usage"],
   ["settings", "/settings"],
   ["sharing", "/sharing"],
+  ["sharing-analytics", "/sharing/analytics"],
   ["users", "/users"],
   ["audit", "/audit"],
   ["account", "/account"],

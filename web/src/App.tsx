@@ -34,6 +34,7 @@ const WebhooksPage = lazyPage(() => import("./pages/Webhooks").then((m) => m.Web
 const EgressPage = lazyPage(() => import("./pages/Egress").then((m) => m.EgressPage));
 const GroupsPage = lazyPage(() => import("./pages/Groups").then((m) => m.GroupsPage));
 const SharingPage = lazyPage(() => import("./pages/Sharing").then((m) => m.SharingPage));
+const SharingAnalyticsPage = lazyPage(() => import("./pages/sharing/Analytics").then((m) => m.SharingAnalyticsPage));
 const UsagePage = lazyPage(() => import("./pages/Usage").then((m) => m.UsagePage));
 const AssistantPage = lazyPage(() => import("./pages/Assistant").then((m) => m.AssistantPage));
 const CliAuthorizePage = lazyPage(() => import("./pages/CliAuthorize").then((m) => m.CliAuthorizePage));
@@ -61,6 +62,7 @@ const PAGES: readonly PageRoute[] = [
   ["/apps", AppsPage],
   ["/groups", GroupsPage],
   ["/sharing", SharingPage],
+  ["/sharing/analytics", SharingAnalyticsPage],
   ["/usage", UsagePage],
   ["/webhooks", WebhooksPage],
   ["/egress", EgressPage],
@@ -157,6 +159,14 @@ export function App() {
             element={
               <RequireRole ok={can.manage(role)}>
                 <SharingPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="sharing/analytics"
+            element={
+              <RequireRole ok={can.manage(role)}>
+                <SharingAnalyticsPage />
               </RequireRole>
             }
           />

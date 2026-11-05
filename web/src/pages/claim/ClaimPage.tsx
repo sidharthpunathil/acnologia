@@ -1,15 +1,17 @@
 // The claim link a person opens: what is shared and by whom, then, after
 // "Get my access", their token (or the keys) shown once.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Key as AriaKey } from "react-aria-components";
 import {
   RiArrowRightLine,
+  RiArrowRightSLine,
   RiDownloadLine,
   RiErrorWarningLine,
   RiEyeLine,
   RiLinkUnlinkM,
   RiRefreshLine,
+  RiRobot2Line,
   RiShieldKeyholeLine,
   RiTimeLine,
   RiUserForbidLine,
@@ -37,14 +39,19 @@ import { mcpSnippets } from "../AppMcpPanel";
 import { limitSummary } from "../sharing/Limits";
 import { Countdown } from "../sharing/Timers";
 import { EntityLogo } from "../../components/EntityLogo";
-import { GuideView } from "../../components/GuideView";
-import type { GuideResponse } from "../../lib/types";
+import { extractHeadings } from "../docs/headings";
+import { useTheme } from "../../stores/theme";
+import { toast } from "../../stores/toast";
+import { lazyPage } from "@/lazyPage";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonSpinner, Spinner } from "@/components/base/spinner/spinner";
 import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
-import { Callout, CodeBlock, CopyButton, EmptyState, SecretBox } from "@/components/acn";
+import { Callout, CodeBlock, CopyButton, EmptyState, SecretBox, copyText } from "@/components/acn";
 import { cx } from "@/utils/cx";
 import { PublicShell } from "./PublicRoutes";
+
+// The Markdown renderer is its own chunk, fetched only when the guide opens.
+const Markdown = lazyPage(() => import("../docs/Markdown").then((m) => m.Markdown));
 
 type Lang = "curl" | "python" | "typescript";
 const LANGS: { id: Lang; label: string }[] = [
@@ -352,52 +359,80 @@ function ProxyResult({ r, owner }: { r: RedeemProxy; owner: string }) {
 function downloadMd(slug: string, md: string) {
   const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
   const a = Object.assign(document.createElement("a"), { href: url, download: `${slug}-guide.md` });
+  document.body.append(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  // Revoked a moment later, once the browser has started the download.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
  * The usage guide for each shared service, the same one the provider page
- * shows: rendered, with Copy for LLM and Download .md. One guide at a time,
- * so heading anchors stay unique.
+ * shows. Download .md and Copy for LLM come first; the guide itself is long,
+ * so it opens on request. One guide at a time keeps heading anchors unique.
  */
 function ServiceGuides({ services }: { services: ClaimService[] }) {
   const withGuide = services.filter((s) => s.guide);
   const [pick, setPick] = useState(withGuide[0]?.slug ?? "");
+  const [open, setOpen] = useState(false);
+  const theme = useTheme((s) => s.theme);
   const cur = withGuide.find((s) => s.slug === pick) ?? withGuide[0];
-  if (!cur?.guide) return null;
-  const md = cur.guide;
+  const md = cur?.guide ?? "";
+  const headings = useMemo(() => extractHeadings(md), [md]);
+  if (!cur || !md) return null;
+  const copy = async () => {
+    if (await copyText(md)) toast.success("Copied. Paste it into your LLM.");
+    else toast.error("Could not copy. Download the file instead.");
+  };
   return (
-    <div className="flex flex-col gap-3">
-      {withGuide.length > 1 && (
-        <SegmentedControl
-          aria-label="Service guide"
-          selectedKeys={new Set<AriaKey>([cur.slug])}
-          onSelectionChange={(sel) => {
-            const next = [...sel][0];
-            if (next !== undefined) setPick(String(next));
-          }}
-          className="w-full overflow-x-auto sm:w-auto sm:self-start"
-        >
-          {withGuide.map((s) => (
-            <SegmentedControlItem key={s.slug} id={s.slug} className="min-h-9 flex-1 sm:min-h-0 sm:flex-none">
-              {s.name || s.slug}
-            </SegmentedControlItem>
-          ))}
-        </SegmentedControl>
-      )}
-      <GuideView
-        title={withGuide.length > 1 ? `How to use ${cur.name || cur.slug}` : "How to use it"}
-        description="Endpoints, parameters, examples, limits and errors. Send your token where it says acn_. Save it, or give it to your AI agent."
-        fetcher={() => Promise.resolve({ markdown: md, generated: false } as GuideResponse)}
-        fetchKey={cur.slug}
-        actions={
+    <Card labelledBy="guide-title">
+      <h2 id="guide-title" className="text-headline-semibold text-text-primary">
+        How to use it
+      </h2>
+      <p className="mt-1 text-body-2-regular text-text-secondary">
+        The usage guide: endpoints, parameters, examples, limits and errors. Send your token where it says acn_. Keep it, or give it to your AI agent.
+      </p>
+      <div className="mt-4 flex flex-col gap-4">
+        {withGuide.length > 1 && (
+          <SegmentedControl
+            aria-label="Service guide"
+            selectedKeys={new Set<AriaKey>([cur.slug])}
+            onSelectionChange={(sel) => {
+              const next = [...sel][0];
+              if (next !== undefined) setPick(String(next));
+            }}
+            className="w-full overflow-x-auto sm:w-auto sm:self-start"
+          >
+            {withGuide.map((s) => (
+              <SegmentedControlItem key={s.slug} id={s.slug} className="min-h-9 flex-1 sm:min-h-0 sm:flex-none">
+                {s.name || s.slug}
+              </SegmentedControlItem>
+            ))}
+          </SegmentedControl>
+        )}
+        <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="small" leadingIcon={RiDownloadLine} onClick={() => downloadMd(cur.slug, md)}>
-            Download .md
+            Download {cur.slug}-guide.md
           </Button>
-        }
-      />
-    </div>
+          <Button variant="secondary" size="small" leadingIcon={RiRobot2Line} onClick={() => void copy()}>
+            Copy for LLM
+          </Button>
+        </div>
+        <details className="group" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+          <summary className="inline-flex cursor-pointer select-none list-none items-center gap-1 rounded-md text-body-2-medium text-text-secondary outline-none transition-colors duration-150 ease hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden">
+            <RiArrowRightSLine className="size-4 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none rtl:-scale-x-100" aria-hidden />
+            Read the guide here
+          </summary>
+          {open && (
+            <div className="mt-4 min-w-0 border-t border-separator-border pt-4 [&_h2]:mt-8! [&_h2]:pt-6!">
+              <Suspense fallback={<Spinner size="sm" aria-label="Loading the guide" />}>
+                <Markdown source={md} headings={headings} theme={theme} />
+              </Suspense>
+            </div>
+          )}
+        </details>
+      </div>
+    </Card>
   );
 }
 
