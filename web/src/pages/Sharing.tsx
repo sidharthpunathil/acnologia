@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-aria-components";
 import {
   RiAddLine,
+  RiArrowRightSLine,
   RiBarChartBoxLine,
   RiLinkM,
   RiPauseLine,
@@ -1178,6 +1179,24 @@ function PeerRow({ link, isSuper, now, onChanged }: { link: PeerLink; isSuper: b
 
 // ---- page ----
 
+/** A revoked or disconnected link: history, kept out of the live list. */
+function peerEnded(l: PeerLink): boolean {
+  return l.status === "revoked" || l.status === "disconnected";
+}
+
+/** History folded under a list: revoked shares or ended connections. Closed by default. */
+function Archive({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <details className="group mt-4">
+      <summary className="inline-flex cursor-pointer select-none list-none items-center gap-1.5 rounded-md text-body-2-medium text-text-secondary outline-none transition-colors duration-150 ease hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden">
+        <RiArrowRightSLine className="size-4 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none rtl:-scale-x-100" aria-hidden />
+        {label}
+      </summary>
+      <ul className="mt-3 flex flex-col gap-3">{children}</ul>
+    </details>
+  );
+}
+
 export function SharingPage() {
   useTitle("Sharing");
   const isSuper = can.hidden(useAuth((s) => s.user?.role));
@@ -1219,7 +1238,6 @@ export function SharingPage() {
   }, [load, fetchServices, ensureProviders]);
 
   const activeShares = useMemo(() => shares.filter((s) => s.status === "active").length, [shares]);
-  const people = useMemo(() => shares.filter((s) => shareRecipient(s) === "person").length, [shares]);
 
   if (!loaded) return <PageSkeleton variant="list" />;
   if (error && !identity) return <EmptyState title="Sharing is not available" body={error} />;
@@ -1230,19 +1248,59 @@ export function SharingPage() {
     setFormOpen(true);
   };
 
-  const shown = filter === "all" ? shares : shares.filter((s) => (shareRecipient(s) === "person") === (filter === "people"));
+  // Revoked shares and ended connections are history: they leave the lists
+  // and wait, folded, under "Revoked" and "Ended" at the bottom of each.
+  const current = shares.filter((s) => s.status !== "revoked");
+  const byFilter = (list: Share[]) => (filter === "all" ? list : list.filter((s) => (shareRecipient(s) === "person") === (filter === "people")));
+  const shown = byFilter(current);
+  const revokedShown = byFilter(shares.filter((s) => s.status === "revoked"));
+  const peopleNow = current.filter((s) => shareRecipient(s) === "person").length;
   const filters: { id: ShareFilter; label: string }[] = [
-    { id: "all", label: `All ${shares.length}` },
-    { id: "servers", label: `Servers ${shares.length - people}` },
-    { id: "people", label: `People ${people}` },
+    { id: "all", label: `All ${current.length}` },
+    { id: "servers", label: `Servers ${current.length - peopleNow}` },
+    { id: "people", label: `People ${peopleNow}` },
   ];
+  const livePeers = peers.filter((l) => !peerEnded(l));
+  const endedPeers = peers.filter(peerEnded);
+  const shareRow = (s: Share) => (
+    <ShareRow
+      key={s.id}
+      share={s}
+      isSuper={isSuper}
+      now={now}
+      onChanged={() => void load()}
+      onEdit={() => {
+        setEditing(s);
+        setFormOpen(true);
+      }}
+      onInvite={(code) => setInvite({ name: s.name, code })}
+      onClaimLink={(url, expiresAt) => {
+        setClaimLink({ label: personLabel(s), url, expiresAt, mode: shareMode(s) === "reveal" ? "reveal" : "proxy", reusable: !!s.reusable, maxClaims: s.max_claims ?? 0 });
+        void load();
+      }}
+      onRevoked={(share, deadline) => setRevoked({ share, deadline })}
+    />
+  );
+  const peerRow = (l: PeerLink) => (
+    <PeerRow
+      key={l.id}
+      link={l}
+      isSuper={isSuper}
+      now={now}
+      onChanged={() => {
+        void load();
+        void fetchServices();
+      }}
+    />
+  );
+
 
   return (
     <div className="flex flex-col gap-8">
       <div>
         <PageHeader
           title="Sharing"
-          meta={`${plural(shares.length, "share")} · ${activeShares} active · ${plural(peers.length, "connection")}`}
+          meta={`${plural(current.length, "share")} · ${activeShares} active · ${plural(livePeers.length, "connection")}`}
           className="mb-4"
           actions={
             <RouterButtonLink href="/sharing/analytics" variant="secondary" leadingIcon={RiBarChartBoxLine}>
@@ -1268,16 +1326,16 @@ export function SharingPage() {
             </Button>
           )}
         </div>
-        {shares.length > 0 && (
+        {current.length > 0 && (
           <div className="mb-3">
             <ChoicePills label="Show shares with" value={filter} options={filters} onChange={setFilter} />
           </div>
         )}
-        {shares.length === 0 ? (
+        {current.length === 0 ? (
           <EmptyState
             art={UnpluggedArt}
             icon={RiShareForwardLine}
-            title="Nothing shared yet"
+            title={shares.length ? "Nothing shared right now" : "Nothing shared yet"}
             body="Share with another server by proxy or handover, with one person through a one time link, or with a team through a link anyone can claim."
             action={
               isSuper ? (
@@ -1313,27 +1371,10 @@ export function SharingPage() {
             }
           />
         ) : (
-          <ul className="flex flex-col gap-3">
-            {shown.map((s) => (
-              <ShareRow
-                key={s.id}
-                share={s}
-                isSuper={isSuper}
-                now={now}
-                onChanged={() => void load()}
-                onEdit={() => {
-                  setEditing(s);
-                  setFormOpen(true);
-                }}
-                onInvite={(code) => setInvite({ name: s.name, code })}
-                onClaimLink={(url, expiresAt) => {
-                  setClaimLink({ label: personLabel(s), url, expiresAt, mode: shareMode(s) === "reveal" ? "reveal" : "proxy", reusable: !!s.reusable, maxClaims: s.max_claims ?? 0 });
-                  void load();
-                }}
-                onRevoked={(share, deadline) => setRevoked({ share, deadline })}
-              />
-            ))}
-          </ul>
+          <ul className="flex flex-col gap-3">{shown.map(shareRow)}</ul>
+        )}
+        {revokedShown.length > 0 && (
+<Archive label={`Revoked ${revokedShown.length}`}>{revokedShown.map(shareRow)}</Archive>
         )}
       </section>
 
@@ -1348,10 +1389,10 @@ export function SharingPage() {
             </Button>
           )}
         </div>
-        {peers.length === 0 ? (
+        {livePeers.length === 0 ? (
           <EmptyState
             icon={RiLinkM}
-            title="No connections yet"
+            title={peers.length ? "No live connections" : "No connections yet"}
             body="Paste an invite from another Acnologia to use what it shares."
             action={
               isSuper ? (
@@ -1362,21 +1403,9 @@ export function SharingPage() {
             }
           />
         ) : (
-          <ul className="flex flex-col gap-3">
-            {peers.map((l) => (
-              <PeerRow
-                key={l.id}
-                link={l}
-                isSuper={isSuper}
-                now={now}
-                onChanged={() => {
-                  void load();
-                  void fetchServices();
-                }}
-              />
-            ))}
-          </ul>
+          <ul className="flex flex-col gap-3">{livePeers.map(peerRow)}</ul>
         )}
+        {endedPeers.length > 0 && <Archive label={`Ended ${endedPeers.length}`}>{endedPeers.map(peerRow)}</Archive>}
       </section>
 
       <ShareFormModal
