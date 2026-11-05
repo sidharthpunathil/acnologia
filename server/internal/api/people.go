@@ -451,6 +451,10 @@ type claimTokenService struct {
 	ProxyURL string         `json:"proxy_url"`
 	Auth     authDTO        `json:"auth"`
 	Examples []claimExample `json:"examples"`
+	// Guide is the service's usage guide as Markdown, the same one an app
+	// reads from /api/v1/services/{slug}/guide, so the person can keep it
+	// or hand it to an AI agent.
+	Guide string `json:"guide"`
 }
 
 type claimRevealedKey struct {
@@ -500,7 +504,8 @@ func (s *Server) claimRedeem(w http.ResponseWriter, r *http.Request) {
 			exs = append(exs, claimExample{Name: ex.Name, Method: orDefault(ex.Method, "GET"), Path: ex.Path, Query: ex.Query, Body: ex.Body})
 		}
 		out = append(out, claimTokenService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category,
-			ProxyURL: base + "/proxy/" + sv.Slug, Auth: authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)}, Examples: exs})
+			ProxyURL: base + "/proxy/" + sv.Slug, Auth: authDTO{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)}, Examples: exs,
+			Guide: s.serviceGuide(ctx, sv, base, false).Render(false)})
 	}
 	writeJSON(w, 200, map[string]any{"token": tok, "base_url": base + "/proxy", "services": out, "mcp_url": base + "/mcp",
 		"limits": claimed.Limits, "ends_at": claimed.ExpiresAt})

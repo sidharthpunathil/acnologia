@@ -744,3 +744,23 @@ func TestClaimAndMeShowLogos(t *testing.T) {
 		t.Fatalf("oversized logo inlined: %d bytes", len(*got))
 	}
 }
+
+// TestClaimRedeemCarriesGuide: a proxy claim returns each service's usage
+// guide as Markdown, pointed at this server's proxy and with no admin steps.
+func TestClaimRedeemCarriesGuide(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "guidekey1"})
+	_, code := e.newPersonShare(map[string]any{"name": "Guide", "services": []string{"serpapi"}})
+	_, out := e.redeemProxy(code)
+	svcs, _ := out["services"].([]any)
+	if len(svcs) != 1 {
+		t.Fatalf("services %v", out["services"])
+	}
+	g, _ := svcs[0].(map[string]any)["guide"].(string)
+	if !strings.HasPrefix(g, "# ") || !strings.Contains(g, "usage guide") || !strings.Contains(g, e.srv.URL+"/proxy/serpapi") {
+		t.Fatalf("guide %q", g)
+	}
+	if strings.Contains(g, "create an app under Apps") {
+		t.Fatalf("guide carries admin steps: %q", g)
+	}
+}

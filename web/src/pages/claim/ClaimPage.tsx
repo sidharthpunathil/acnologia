@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import type { Key as AriaKey } from "react-aria-components";
 import {
   RiArrowRightLine,
+  RiDownloadLine,
   RiErrorWarningLine,
   RiEyeLine,
   RiLinkUnlinkM,
@@ -36,6 +37,8 @@ import { mcpSnippets } from "../AppMcpPanel";
 import { limitSummary } from "../sharing/Limits";
 import { Countdown } from "../sharing/Timers";
 import { EntityLogo } from "../../components/EntityLogo";
+import { GuideView } from "../../components/GuideView";
+import type { GuideResponse } from "../../lib/types";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonSpinner, Spinner } from "@/components/base/spinner/spinner";
 import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
@@ -310,6 +313,8 @@ function ProxyResult({ r, owner }: { r: RedeemProxy; owner: string }) {
         </Card>
       )}
 
+      <ServiceGuides services={services} />
+
       <Card labelledBy="mcp-title">
         <h2 id="mcp-title" className="text-headline-semibold text-text-primary">
           Use it from an AI agent
@@ -340,6 +345,59 @@ function ProxyResult({ r, owner }: { r: RedeemProxy; owner: string }) {
         </Link>
       </Card>
     </>
+  );
+}
+
+/** Saves Markdown as a file, named after the service. */
+function downloadMd(slug: string, md: string) {
+  const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: `${slug}-guide.md` });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * The usage guide for each shared service, the same one the provider page
+ * shows: rendered, with Copy for LLM and Download .md. One guide at a time,
+ * so heading anchors stay unique.
+ */
+function ServiceGuides({ services }: { services: ClaimService[] }) {
+  const withGuide = services.filter((s) => s.guide);
+  const [pick, setPick] = useState(withGuide[0]?.slug ?? "");
+  const cur = withGuide.find((s) => s.slug === pick) ?? withGuide[0];
+  if (!cur?.guide) return null;
+  const md = cur.guide;
+  return (
+    <div className="flex flex-col gap-3">
+      {withGuide.length > 1 && (
+        <SegmentedControl
+          aria-label="Service guide"
+          selectedKeys={new Set<AriaKey>([cur.slug])}
+          onSelectionChange={(sel) => {
+            const next = [...sel][0];
+            if (next !== undefined) setPick(String(next));
+          }}
+          className="w-full overflow-x-auto sm:w-auto sm:self-start"
+        >
+          {withGuide.map((s) => (
+            <SegmentedControlItem key={s.slug} id={s.slug} className="min-h-9 flex-1 sm:min-h-0 sm:flex-none">
+              {s.name || s.slug}
+            </SegmentedControlItem>
+          ))}
+        </SegmentedControl>
+      )}
+      <GuideView
+        title={withGuide.length > 1 ? `How to use ${cur.name || cur.slug}` : "How to use it"}
+        description="Endpoints, parameters, examples, limits and errors. Send your token where it says acn_. Save it, or give it to your AI agent."
+        fetcher={() => Promise.resolve({ markdown: md, generated: false } as GuideResponse)}
+        fetchKey={cur.slug}
+        actions={
+          <Button variant="secondary" size="small" leadingIcon={RiDownloadLine} onClick={() => downloadMd(cur.slug, md)}>
+            Download .md
+          </Button>
+        }
+      />
+    </div>
   );
 }
 

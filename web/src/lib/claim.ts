@@ -17,6 +17,8 @@ export interface ClaimService {
   auth?: string | { type?: string; name?: string } | null;
   /** Example calls from the provider spec, used to build runnable snippets. */
   examples?: { method?: string; path?: string; query?: Record<string, string> | null }[] | null;
+  /** The usage guide as Markdown (proxy redeem only): endpoints, examples, limits and errors. */
+  guide?: string | null;
 }
 
 export type ClaimMode = "proxy" | "reveal";
