@@ -13,11 +13,13 @@ local transports = require("acnologia.transport")
 
 local M = {}
 
-M.VERSION = "0.1.0"
+M.VERSION = "0.2.0"
 M.USER_AGENT = "acnologia-lua/" .. M.VERSION
 M.DEFAULT_TIMEOUT = 30
 M.DEFAULT_PROXY_TIMEOUT = 120
 M.MAX_WAIT_SEC = 60
+-- Where forward_proxy_env and save_forward_proxy_ca put the proxy CA by default.
+M.DEFAULT_CA_PATH = "acnologia-ca.pem"
 M.OUTCOMES = { "ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error" }
 
 M.json = json
@@ -200,11 +202,124 @@ function Client:me()
   return self:_call("GET", "/api/v1/me")
 end
 
---- GET /api/v1/services: the services this token may use.
+--- GET /api/v1/services: the services this token may use. Each has slug,
+--- name, provider, category, available, base_url, auth {type, name,
+--- prefix} and guide_url.
 function Client:services()
   local data, err = self:_call("GET", "/api/v1/services")
   if not data then return nil, err end
   return data.services or json.array({})
+end
+
+-- Send a request to a full URL with this client's headers but no token.
+function Client:_get_raw(path, accept, with_token)
+  local headers
+  if with_token then
+    headers = self:_auth_headers({ Accept = accept })
+  else
+    headers = copy(self.headers)
+    set_header(headers, "Accept", accept)
+    set_header(headers, "User-Agent", M.USER_AGENT)
+    set_header(headers, "X-Acnologia-Client", M.USER_AGENT)
+    if self._secret("access") then set_header(headers, "X-Acnologia-Access", self._secret("access")) end
+  end
+  local status, rheaders, rbody = self:_send("GET", self.base_url .. path, headers, nil, self.timeout)
+  if not status then return nil, rheaders end
+  if status < 200 or status > 299 then
+    return nil, errors.from_response(status, rheaders, rbody, self:_secrets())
+  end
+  return rbody
+end
+
+--- GET /api/v1/services/<slug>/guide: the usage guide of a service as a
+--- table { markdown = string, generated = boolean, guide = table }. guide is
+--- the structured guide as decoded JSON. generated is true when the server
+--- built it from the provider spec because nobody wrote one.
+function Client:guide(slug)
+  local data, err = self:_call("GET", "/api/v1/services/" .. url_encode(slug) .. "/guide")
+  if not data then return nil, err end
+  return {
+    markdown = type(data.markdown) == "string" and data.markdown or "",
+    generated = data.generated == true,
+    guide = data.guide,
+  }
+end
+
+--- The usage guide of a service as a Markdown string (the same route with
+--- Accept: text/markdown).
+function Client:guide_markdown(slug)
+  return self:_get_raw("/api/v1/services/" .. url_encode(slug) .. "/guide", "text/markdown", true)
+end
+
+--- GET /api/v1/capabilities: the capabilities this token may call. Each has
+--- slug, name, description, strategy, params (decoded JSON), routes
+--- ({ service, mapped } each) and url. A share's token gets none.
+function Client:capabilities()
+  local data, err = self:_call("GET", "/api/v1/capabilities")
+  if not data then return nil, err end
+  return data.capabilities or json.array({})
+end
+
+--- GET /api/v1/proxy: how to use the forward proxy, as a table with
+--- proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough,
+--- hosts ({ host, service, name, path } each), env and service_header. Its
+--- strings carry a "<app token>" placeholder, never the token, so it is
+--- safe to log.
+function Client:forward_proxy()
+  return self:_call("GET", "/api/v1/proxy")
+end
+
+--- GET /api/v1/proxy/ca.pem: the forward proxy's CA certificate as PEM
+--- text. The route is public: no token is sent.
+function Client:forward_proxy_ca()
+  return self:_get_raw("/api/v1/proxy/ca.pem", "application/x-pem-file", false)
+end
+
+--- Download the forward proxy's CA certificate and write it to path
+--- (default "acnologia-ca.pem"). Returns path, or nil and an error.
+function Client:save_forward_proxy_ca(path)
+  path = path or M.DEFAULT_CA_PATH
+  local pem, err = self:forward_proxy_ca()
+  if not pem then return nil, err end
+  local fh, ferr = io.open(path, "wb")
+  if not fh then return nil, errors.new({ code = "io", message = tostring(ferr) }) end
+  fh:write(pem)
+  fh:close()
+  return path
+end
+
+--- The forward proxy URL with user "app" and this client's token as the
+--- password, percent escaped: http://app:acn_...@host:8888. It contains
+--- the token: keep it out of logs.
+function Client:forward_proxy_url()
+  local fp, err = self:forward_proxy()
+  if not fp then return nil, err end
+  local raw = type(fp.proxy_url) == "string" and fp.proxy_url or ""
+  local scheme, authority, rest = string.match(raw, "^(%a[%w+.%-]*)://([^/?#]+)(.*)$")
+  if not scheme then
+    return nil, errors.new({ code = "bad_response", status = 200, message = "the server sent no usable proxy_url" })
+  end
+  authority = string.gsub(authority, "^.*@", "")
+  return scheme .. "://app:" .. url_encode(self._secret("token")) .. "@" .. authority .. rest
+end
+
+--- Environment for a process that should reach providers through the
+--- forward proxy: HTTPS_PROXY and HTTP_PROXY (forward_proxy_url()),
+--- NODE_USE_ENV_PROXY=1, and NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and
+--- SSL_CERT_FILE set to ca_path (default "acnologia-ca.pem"). The proxy
+--- values contain the token: keep them out of logs.
+function Client:forward_proxy_env(ca_path)
+  ca_path = ca_path or M.DEFAULT_CA_PATH
+  local url, err = self:forward_proxy_url()
+  if not url then return nil, err end
+  return {
+    HTTPS_PROXY = url,
+    HTTP_PROXY = url,
+    NODE_USE_ENV_PROXY = "1",
+    NODE_EXTRA_CA_CERTS = ca_path,
+    REQUESTS_CA_BUNDLE = ca_path,
+    SSL_CERT_FILE = ca_path,
+  }
 end
 
 -- Proxy --------------------------------------------------------------------
@@ -228,6 +343,24 @@ function Response.__tostring(r)
   return "acnologia.Response(" .. r.status .. ", " .. #r.body .. " bytes)"
 end
 
+-- Parse X-Acnologia-Tried ("a=200, b=429") into { service, status } entries.
+local function parse_tried(v)
+  local out = {}
+  for item in string.gmatch(v or "", "[^,]+") do
+    local pair = string.match(item, "^%s*(.-)%s*$")
+    if pair ~= "" then
+      local svc, code = string.match(pair, "^(.*)=(%d+)$")
+      if svc then
+        out[#out + 1] = { service = svc, status = tonumber(code) }
+      else
+        out[#out + 1] = { service = pair }
+      end
+    end
+  end
+  return out
+end
+M.parse_tried = parse_tried
+
 local function acnologia_headers(h)
   local function get(name) return h["x-acnologia-" .. name] or h["x-cogito-" .. name] end
   return {
@@ -236,6 +369,8 @@ local function acnologia_headers(h)
     service = get("service"),
     cache = get("cache"),
     share = get("share"),
+    capability = get("capability"),
+    tried = parse_tried(get("tried")),
     replayed = h["idempotent-replayed"] == "true",
   }
 end
@@ -254,11 +389,13 @@ end
 ---   body             string sent as it is
 ---   json             value encoded as JSON (sets Content-Type)
 ---   idempotency_key  sent as Idempotency-Key
+---   no_cache         true sends Cache-Control: no-cache
 ---   timeout          seconds (default client.proxy_timeout)
 ---
 --- Returns a response { status, headers, body, acnologia } for anything the
 --- provider answered, whatever the status. headers use lower case names, and
---- acnologia holds key_id, attempts, service, cache, share and replayed.
+--- acnologia holds key_id, attempts, service, cache, share, capability,
+--- tried (a list of { service, status }) and replayed.
 ---
 --- Returns nil and an error table when Acnologia itself refused the call
 --- (for example app_limit_reached, no_key_available, upstream_unreachable,
@@ -269,6 +406,10 @@ function Client:proxy(method, service, path, opts)
   if type(service) ~= "string" or service == "" then
     return nil, errors.new({ code = "bad_request", message = "service is required" })
   end
+  return self:_proxy_send(method, self:proxy_url(service, path, opts.query), opts)
+end
+
+function Client:_proxy_send(method, url, opts)
   method = string.upper(method or "GET")
   local headers = {}
   for k, v in pairs(opts.headers or {}) do headers[k] = tostring(v) end
@@ -283,9 +424,9 @@ function Client:proxy(method, service, path, opts)
     return nil, errors.new({ code = "bad_request", message = "body must be a string; use json for tables" })
   end
   if opts.idempotency_key then set_header(headers, "Idempotency-Key", tostring(opts.idempotency_key)) end
+  if opts.no_cache and not has_header(headers, "Cache-Control") then headers["Cache-Control"] = "no-cache" end
   -- Our token always wins over a caller's Authorization header.
   headers = self:_auth_headers(headers)
-  local url = self:proxy_url(service, path, opts.query)
   local status, rheaders, rbody = self:_send(method, url, headers, body, opts.timeout or self.proxy_timeout)
   if not status then return nil, rheaders end
   local resp = setmetatable({
@@ -306,6 +447,30 @@ function Client:proxy(method, service, path, opts)
     end
   end
   return resp
+end
+
+--- Call a capability: POST /proxy/<slug> with params as the JSON body.
+---
+--- opts:
+---   service          use only this provider (?_service=)
+---   raw              true returns the provider's own body (?_raw=1)
+---   headers, idempotency_key, no_cache, timeout   as for proxy
+---
+--- Returns a response like proxy, with acnologia.capability and
+--- acnologia.tried set, or nil and an error (no_route, no_route_worked,
+--- bad_params and so on).
+function Client:capability(slug, params, opts)
+  opts = opts or {}
+  if type(slug) ~= "string" or slug == "" then
+    return nil, errors.new({ code = "bad_request", message = "capability slug is required" })
+  end
+  local query = {}
+  if opts.service and opts.service ~= "" then query._service = opts.service end
+  if opts.raw then query._raw = "1" end
+  local send = copy(opts)
+  send.json = params or json.object({})
+  send.body = nil
+  return self:_proxy_send("POST", append_query(self.base_url .. "/proxy/" .. url_encode(slug), query), send)
 end
 
 for _, m in ipairs({ "get", "post", "put", "patch", "delete", "head", "options" }) do

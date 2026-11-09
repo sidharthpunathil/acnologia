@@ -219,6 +219,79 @@ async def main():
 asyncio.run(main())
 ```
 
+## Proxy options and response headers
+
+Every proxy call takes `idempotency_key=` (sends `Idempotency-Key`) and `no_cache=True` (sends `Cache-Control: no-cache`). `proxy_info(resp)` reads the Acnologia headers of the answer:
+
+```python
+from acnologia import proxy_info
+
+resp = acn.proxy("weather").post("/v1/alerts", json=alert, idempotency_key="order-42")
+info = proxy_info(resp)
+print(info.key_id, info.attempts, info.service, info.cache, info.replayed)
+```
+
+`ProxyInfo` has `key_id` (`None` for a share's token), `attempts`, `service`, `cache` (`hit`, `miss`, ...), `replayed`, `capability` and `tried` (a list of `Tried(service, status)`). The service passed to `proxy()` may also be a service group or a capability slug.
+
+## Capabilities
+
+A capability is one call served by whichever provider can.
+
+```python
+for cap in acn.capabilities():  # slug, name, description, strategy, params, routes, url
+    print(cap.slug, [r.service for r in cap.routes])
+
+resp = acn.capability("web-search", {"q": "coffee"}, service="serpapi")  # raw=True for the provider's own body
+print(resp.json(), proxy_info(resp).tried)
+```
+
+`capability` also takes `idempotency_key` and `no_cache`, and returns the `httpx.Response` as is.
+
+## Forward proxy
+
+Point an app's own HTTP client at Acnologia and call provider URLs as they are. `forward_proxy_client()` returns an `httpx.Client` that sends everything through the forward proxy, with the token as proxy credentials and an SSL context trusting the system roots plus the Acnologia CA:
+
+```python
+with acn.forward_proxy_client(timeout=30) as http:
+    resp = http.get("https://api.openai.com/v1/models")  # Acnologia adds the key
+```
+
+For another process, or a library that reads the environment (`requests`, `openai`, Node), save the CA and hand over the environment:
+
+```python
+import os, subprocess
+
+acn.save_forward_proxy_ca("acnologia-ca.pem")
+env = {**os.environ, **acn.forward_proxy_env("acnologia-ca.pem")}
+subprocess.run(["node", "agent.js"], env=env)
+```
+
+| Call | Returns |
+|---|---|
+| `forward_proxy()` | `ForwardProxy`: `proxy_url`, `proxy_url_with_token` (with an `<app token>` placeholder), `ca_url`, `ca_fingerprint`, `passthrough`, `hosts`, `env`, `service_header` |
+| `forward_proxy_ca()` | the CA certificate as PEM text. Public: the token is not sent |
+| `save_forward_proxy_ca(path="acnologia-ca.pem")` | writes it and returns the path |
+| `forward_proxy_url()` | `http://app:acn_...@host:8888`. Contains the token |
+| `forward_proxy_env(ca_path="acnologia-ca.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `ca_path`. Contains the token |
+| `forward_proxy_client(**httpx_kwargs)` | the `httpx.Client` above (`httpx.AsyncClient` on `AsyncAcnologia`). Close it when done |
+
+## About this token
+
+`me()` returns the token's own access: `app`, `limits` (each `None` when unset), `usage`, `limit_hit`, `services` (with `available` as a count and `logo_url`) and `share` (`None` for an ordinary app; for a share's token its `status`, still answered after the share stopped).
+
+```python
+me = acn.me()
+if me.limit_hit:
+    print(me.limit_hit.limit, "resets at", me.limit_hit.reset_at)
+```
+
+## Usage guides
+
+```python
+g = acn.guide("weather")           # markdown, generated, guide (plain JSON data)
+md = acn.guide_markdown("weather")  # the Markdown alone
+```
+
 ## List services
 
 ```python
@@ -226,7 +299,7 @@ for s in acn.services():
     print(s.slug, s.available, s.auth.type, s.auth.name)
 ```
 
-Each `Service` has `slug`, `name`, `provider`, `category`, `available`, `base_url` and `auth`.
+Each `Service` has `slug`, `name`, `provider`, `category`, `available`, `base_url`, `auth` and `guide_url`.
 
 ## Errors and retries
 
@@ -236,16 +309,19 @@ Each `Service` has `slug`, `name`, `provider`, `category`, `available`, `base_ur
 | `NoKeyAvailable(AcnologiaError)` | HTTP 503 `no_key_available`. Has `.retry_after` (seconds or `None`) and `.busy` |
 | `AllKeysBusy(NoKeyAvailable)` | HTTP 503 `all_keys_busy`: every usable key is at its concurrency limit. `.busy` is `True`, `.retry_after` is usually 1 |
 | `ServiceUnavailable(AcnologiaError)` | HTTP 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Has `.retry_after`. Not a `NoKeyAvailable` |
+| `AppLimitReached(AcnologiaError)` | HTTP 429 `app_limit_reached`: the app used up a daily or monthly request or budget limit. Has `.limit`, `.reset_at` and `.retry_after` |
+| `ShareUnavailable(AcnologiaError)` | HTTP 403 `share_revoked`, `share_paused` or `share_expired`. `.status` is `revoked`, `paused` or `expired` |
 | `RateLimited`, `QuotaExhausted`, `InvalidKey` | raised by you inside `with_key` or a lease block. All subclass `KeyProblem` |
 
-Wait `retry_after` seconds before trying again when it is set.
+Every `AcnologiaError` has `.retry_after` when the server sent `retry_after_sec` or `Retry-After`; wait that long before trying again. Other codes worth checking on `.code`: `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed`, `lease_not_allowed`, `loop_detected`.
 
 ## Configuration
 
 ```python
-Acnologia(base_url=None, token=None, *, timeout=30.0, http_client=None, transport=None)
+Acnologia(base_url=None, token=None, *, timeout=30.0, http_client=None, transport=None, access_password=None)
 ```
 
+- `access_password`: sent as `X-Acnologia-Access` on every request, for a deploy behind the access password. Falls back to `ACNOLOGIA_ACCESS_PASSWORD`.
 - `timeout`: seconds, or an `httpx.Timeout`. Default 30.
 - `http_client`: your own `httpx.Client` (`httpx.AsyncClient` for `AsyncAcnologia`) to reuse connection pools, proxies or TLS settings. The SDK does not close a client you pass in.
 - `transport`: an `httpx` transport, for example `httpx.MockTransport` in tests.

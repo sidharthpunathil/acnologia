@@ -65,7 +65,7 @@ The constructor and `from_env` throw `std::invalid_argument` when the URL or the
 | Field | Default | Meaning |
 |---|---|---|
 | `transport` | libcurl | A `std::shared_ptr<acnologia::Transport>`, see [Custom transport](#custom-transport) |
-| `user_agent` | `acnologia-cpp/0.1.0` | The `User-Agent` header |
+| `user_agent` | `acnologia-cpp/0.2.0` | The `User-Agent` header |
 | `timeout` | 75 seconds | For API calls (services, me, guide, lease, report, renew). Longer than the 60 second maximum lease wait, and a longer `wait` stretches it. Zero disables it. Proxy calls have no timeout |
 | `access_password` | from the environment | The server's access password, sent as `X-Acnologia-Access` on every call. The consumer routes work without it, so you rarely need it |
 | `throw_proxy_errors` | `false` | Throw typed errors for Acnologia's own answers on the proxy, see [Proxy errors](#proxy-errors) |
@@ -94,7 +94,13 @@ A share's token whose share is paused, expired or revoked still gets an answer h
 
 `client.services()` returns the services this token may use (`GET /api/v1/services`), each with `slug`, `name`, `provider`, `category`, `available`, `base_url`, `auth{type, name, prefix}` and `guide_url`.
 
-`client.guide("agi-labs")` returns the service's usage guide as Markdown. It throws `Forbidden` for a service the token may not use.
+`client.guide("agi-labs")` (or `client.guide_markdown("agi-labs")`) returns the service's usage guide as Markdown. `client.guide_details("agi-labs")` returns a `Guide` with `markdown`, `generated` and the structured guide as raw JSON in `guide_json`. Both throw `Forbidden` for a service the token may not use.
+
+```cpp
+std::cout << client.guide_markdown("agi-labs");
+acnologia::Guide g = client.guide_details("agi-labs");
+if (g.generated) std::cout << "generated from the provider's spec\n";
+```
 
 ## Proxy mode
 
@@ -118,12 +124,25 @@ agi.del("/v1/chats/42");
 | `del(path, query, headers)` | DELETE |
 | `post_idempotent(path, body, key, content_type, headers)` | POST with an `Idempotency-Key`, see below |
 | `request(method, path, body, headers, query)` | Any method |
+| `request(method, path, body, headers, query, options)` | Any method, with `RequestOptions{idempotency_key, no_cache}` |
 | `url(path, query)` | The full proxy URL, for your own HTTP client (send `Authorization: Bearer <token>` with it) |
 | `check(resp)` | Throws the typed error when `resp` is one of Acnologia's own errors |
 
 The client also has the shorthands `proxy_url`, `proxy_get` and `proxy_request`.
 
-Every call returns an `HttpResponse` (`status`, `headers`, `body`, `header(name)`, `retry_after()`, `idempotent_replayed()`) as the provider sent it. A non 2xx status is not an exception. Redirects are never followed, so the token is not replayed to another host. The body is read fully into memory. The SDK sets `Authorization` and `User-Agent` itself and sends your other headers as given.
+Every call returns an `HttpResponse` as the provider sent it, with `status`, `headers`, `body`, `header(name)`, `retry_after()` and these accessors:
+
+| Accessor | From |
+|---|---|
+| `key_id()` | `X-Acnologia-Key-Id`, an empty optional for a share's token |
+| `attempts()` | `X-Acnologia-Attempts`, 0 when absent |
+| `service()` | `X-Acnologia-Service` |
+| `cache()` | `X-Acnologia-Cache` (`hit`, `miss`, ...) |
+| `replayed()`, `idempotent_replayed()` | `Idempotent-Replayed: true` |
+| `capability()` | `X-Acnologia-Capability` |
+| `tried()` | `X-Acnologia-Tried`, parsed into `{service, status}` pairs |
+
+ A non 2xx status is not an exception. Redirects are never followed, so the token is not replayed to another host. The body is read fully into memory. The SDK sets `Authorization` and `User-Agent` itself and sends your other headers as given.
 
 ### Idempotent POSTs
 
@@ -134,7 +153,14 @@ auto resp = agi.post_idempotent("/v1/chat", R"({"prompt":"hello"})", "order-1234
 if (resp.idempotent_replayed()) std::cout << "the server replayed the first answer\n";
 ```
 
-The proxy stores the answer for that key and replays it for a repeated key, with `Idempotent-Replayed: true`. Leave the key empty to get a random one from `acnologia::new_idempotency_key()`. When the connection fails, `post_idempotent` sends the request once more with the same key, which is safe. A key over 200 bytes throws `std::invalid_argument`. You can also set the `Idempotency-Key` header yourself on any call.
+The proxy stores the answer for that key and replays it for a repeated key, with `Idempotent-Replayed: true`. Leave the key empty to get a random one from `acnologia::new_idempotency_key()`. When the connection fails, `post_idempotent` sends the request once more with the same key, which is safe. A key over 200 bytes throws `std::invalid_argument`. You can also set the key on any call with `RequestOptions`, along with `no_cache`, which sends `Cache-Control: no-cache` so the answer never comes from the proxy's cache:
+
+```cpp
+acnologia::RequestOptions ro;
+ro.idempotency_key = "order-1234";
+ro.no_cache = true;
+agi.request("POST", "/v1/chat", R"({"prompt":"hello"})", {{"Content-Type", "application/json"}}, {}, ro);
+```
 
 ### Proxy errors
 
@@ -153,6 +179,51 @@ try {
 ```
 
 The provider's own errors are never thrown. `acnologia::is_acnologia_error(resp)` tells the two apart: Acnologia's errors carry one of its error codes at the documented status and no `X-Acnologia-Key-Id` header. `proxy.check(resp)` and `acnologia::throw_if_acnologia_error(resp)` throw for one response.
+
+## Capabilities
+
+A capability is one job several providers can do, behind one slug:
+
+```cpp
+for (const auto& c : client.capabilities()) std::cout << c.slug << " " << c.params_json << "\n";
+
+acnologia::CapabilityOptions co;
+co.service = "serpapi";  // optional: ?_service=, only that route
+co.raw = false;          // true adds ?_raw=1: the provider's own body
+auto resp = client.capability("maps-search", R"({"query":"cafes in Kochi"})", co);
+std::cout << resp.service() << " answered " << resp.status << "\n";
+for (const auto& t : resp.tried()) std::cout << "tried " << t.service << ": " << t.status << "\n";
+```
+
+`capability` sends `POST /proxy/{slug}` with the params as the body and answers like a proxy call, so `throw_proxy_errors` applies (`bad_params`, `no_route` and `no_route_worked` are Acnologia's own errors). `capabilities()` gives each one's `slug`, `name`, `description`, `strategy`, `params_json` (raw JSON), `routes{service, mapped}` and `url`.
+
+## Forward proxy
+
+An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Save the CA and set the environment, then use the app's own HTTP client:
+
+```cpp
+client.save_forward_proxy_ca();  // writes acnologia-ca.pem
+for (const auto& [name, value] : client.forward_proxy_env()) setenv(name.c_str(), value.c_str(), 1);
+// curl https://serpapi.com/search.json now goes through Acnologia
+```
+
+or with libcurl directly:
+
+```cpp
+std::string proxy = client.forward_proxy_url();  // http://app:acn_...@host:8888
+curl_easy_setopt(h, CURLOPT_PROXY, proxy.c_str());
+curl_easy_setopt(h, CURLOPT_CAINFO, "acnologia-ca.pem");
+```
+
+| Call | Returns |
+|---|---|
+| `forward_proxy()` | `ForwardProxy`: `proxy_url`, `proxy_url_with_token` (with an `<app token>` placeholder), `ca_url`, `ca_fingerprint`, `passthrough`, `hosts{host, service, name, path}`, `env`, `service_header` |
+| `forward_proxy_ca()` | The CA as PEM text. Sent without the token |
+| `save_forward_proxy_ca(path)` | Writes the CA to `path` (default `acnologia-ca.pem`) |
+| `forward_proxy_url()` | The proxy URL with user `app` and the token as the password |
+| `forward_proxy_env(ca_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `ca_path` |
+
+`ForwardProxy` and its `operator<<` never hold the token. `forward_proxy_url()` and `forward_proxy_env()` do: keep them out of logs.
 
 ## Lease mode
 
@@ -252,7 +323,7 @@ Everything derives from `acnologia::Error`, a `std::runtime_error`.
 
 | Type | When |
 |---|---|
-| `ApiError` (`status()`, `code()`, `message()`, `retry_after()`) | Any non 2xx from the consumer API without a more specific type below |
+| `ApiError` (`status()`, `code()`, `message()`, `retry_after()`) | Any non 2xx from the consumer API without a more specific type below. `code()` tells apart `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed` and the rest |
 | `NoKeyAvailable` (`busy()`) | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
 | `AllKeysBusy` (derives from `NoKeyAvailable`) | 503 `all_keys_busy`: every usable key is at its concurrency limit. Retry after `retry_after()` or lease with `wait` |
 | `ServiceUnavailable` | 503 `service_unavailable`: the provider's circuit breaker is open |
@@ -272,7 +343,7 @@ Everything derives from `acnologia::Error`, a `std::runtime_error`.
 
 ## Secrets
 
-`operator<<` on `Client`, `Lease`, `Proxy` and `AppliedAuth`, and `to_string` on `Client`, `Lease` and `AppliedAuth`, print `[redacted]` in place of the token and the secret. Error messages have the token and the access password replaced by `[redacted]`, and report messages have the lease secret replaced by `[key]`. The SDK does no logging. `lease.secret()`, `AppliedAuth::value` and `signed_url()` do contain the secret, so keep them out of your logs.
+`operator<<` on `Client`, `Lease`, `Proxy`, `AppliedAuth` and `ForwardProxy`, and `to_string` on `Client`, `Lease`, `AppliedAuth` and `ForwardProxy`, print `[redacted]` in place of the token and the secret. Error messages have the token and the access password replaced by `[redacted]`, and report messages have the lease secret replaced by `[key]`. The SDK does no logging. `lease.secret()`, `AppliedAuth::value` and `signed_url()` do contain the secret, so keep them out of your logs.
 
 ## Thread safety
 

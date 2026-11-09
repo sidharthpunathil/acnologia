@@ -63,15 +63,18 @@ resp, err = client:post("agi-labs", "/v1/chat", {
   json = { prompt = "hello" },          -- or body = "raw string"
   headers = { ["X-Trace"] = "abc" },
   idempotency_key = "order-42",
+  no_cache = true,                      -- sends Cache-Control: no-cache
   timeout = 60,
 })
 ```
+
+`idempotency_key` is sent as `Idempotency-Key`: a repeat of the same request with the same key within 10 minutes gets the stored answer, and `resp.acnologia.replayed` is true. `no_cache` makes a service with a cache TTL call the provider instead of answering from its cache. A service slug may also be a service group or a capability slug.
 
 A response has:
 
 - `status`, `headers` (lower case names) and `body` (a string).
 - `resp:json()` and `resp:ok()`.
-- `resp.acnologia`: `key_id`, `attempts`, `service`, `cache`, `share` and `replayed`, read from the `X-Acnologia-*` and `Idempotent-Replayed` headers.
+- `resp.acnologia`: `key_id`, `attempts`, `service`, `cache`, `share`, `capability`, `tried` and `replayed`, read from the `X-Acnologia-*` and `Idempotent-Replayed` headers. `key_id` is nil for a share's token. `tried` is the list of providers a capability or group call tried, as `{ service = "serpapi", status = 429 }` entries.
 
 A provider error, such as a 429 from the provider, comes back as a response. When Acnologia itself refuses the call, you get `nil` and an error instead. Examples are `app_limit_reached`, `no_key_available`, `upstream_unreachable`, `bad_path` and `body_too_large`. Then `err.response` holds the raw response.
 
@@ -132,7 +135,58 @@ local me = acnologia.assert(client:me())
 print(me.app.name, me.limit_hit, #me.services)
 ```
 
-`client:services()` lists the services the token may use.
+`client:services()` lists the services the token may use: `slug`, `name`, `provider`, `category`, `available`, `base_url`, `auth` and `guide_url`.
+
+```lua
+local md = acnologia.assert(client:guide_markdown("agi-labs"))  -- the usage guide as Markdown
+local g = acnologia.assert(client:guide("agi-labs"))
+print(g.markdown, g.generated)  -- generated is true when the server built it from the provider spec
+local endpoints = g.guide.endpoints                         -- the structured guide, decoded JSON
+```
+
+## Capabilities
+
+A capability is one call (say `web-search`) that the server sends to whichever provider can serve it.
+
+```lua
+for _, cap in ipairs(acnologia.assert(client:capabilities())) do
+  print(cap.slug, cap.description, cap.strategy, #cap.routes)  -- also name, params, url
+end
+
+local resp = acnologia.assert(client:capability("web-search", { query = "coffee" }))
+print(resp:json(), resp.acnologia.service)
+for _, t in ipairs(resp.acnologia.tried) do print(t.service, t.status) end
+
+client:capability("web-search", { query = "coffee" }, { service = "tavily", raw = true })
+```
+
+`client:capability(slug, params, opts)` POSTs `params` as JSON to `/proxy/<slug>`. `opts.service` adds `?_service=` to use only that provider and `opts.raw` adds `?_raw=1` for the provider's own body. `headers`, `idempotency_key`, `no_cache` and `timeout` work as for proxy calls. It returns a response like a proxy call, or `nil` and an error such as `no_route`, `no_route_worked` or `bad_params`.
+
+## Forward proxy
+
+Apps can also call a provider's own URL with Acnologia as their `HTTPS_PROXY`. The proxy puts a key on the request. The app trusts the proxy's CA and uses its token as the proxy password.
+
+```lua
+acnologia.assert(client:save_forward_proxy_ca("acnologia-ca.pem"))  -- public route, sends no token
+local env = acnologia.assert(client:forward_proxy_env("acnologia-ca.pem"))
+-- { HTTPS_PROXY = "http://app:acn_...@keys.example.com:8888", HTTP_PROXY = ..., NODE_USE_ENV_PROXY = "1",
+--   NODE_EXTRA_CA_CERTS = "acnologia-ca.pem", REQUESTS_CA_BUNDLE = "acnologia-ca.pem", SSL_CERT_FILE = "acnologia-ca.pem" }
+
+-- run a program whose own HTTP client then goes through the proxy
+local parts = {}
+for k, v in pairs(env) do parts[#parts + 1] = k .. "='" .. v .. "'" end
+os.execute("env " .. table.concat(parts, " ") .. " curl -s https://api.openai.com/v1/models")
+```
+
+| Call | Returns |
+|---|---|
+| `client:forward_proxy()` | `GET /api/v1/proxy` as a table: `proxy_url`, `proxy_url_with_token`, `ca_url`, `ca_fingerprint`, `passthrough`, `hosts` (`host`, `service`, `name`, `path`), `env`, `service_header` |
+| `client:forward_proxy_ca()` | The CA certificate as PEM text, from `GET /api/v1/proxy/ca.pem`, sent without a token |
+| `client:save_forward_proxy_ca(path)` | Writes the PEM to `path` (default `acnologia-ca.pem`) and returns `path` |
+| `client:forward_proxy_url()` | `proxy_url` with user `app` and your token as the password, percent escaped |
+| `client:forward_proxy_env(ca_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` |
+
+`forward_proxy()` holds a `<app token>` placeholder, never the token, so it is safe to log. `forward_proxy_url()` and `forward_proxy_env()` contain the real token: keep them out of logs.
 
 ## Errors
 
@@ -144,8 +198,10 @@ Calls return a value, or `nil` and an error table:
 | `status` | HTTP status, or 0 when the request did not get an answer. |
 | `message` | What went wrong. Never holds the token, the access password or a secret. |
 | `retry_after` | Seconds to wait, from `retry_after_sec` or the `Retry-After` header. |
-| `limit`, `reset_at` | For `app_limit_reached`: which limit, and when it resets. |
+| `limit`, `reset_at` | For `app_limit_reached`: which limit (`daily_requests`, `monthly_requests`, `daily_budget`, `monthly_budget`), and when it resets. |
 | `busy`, `no_key` | `busy` is true for `all_keys_busy`. `no_key` is true for it and for `no_key_available`. |
+| `app_limit` | True for `app_limit_reached`. |
+| `share_unavailable`, `share_status` | For `share_revoked`, `share_paused` and `share_expired` (or a 403 with only `X-Acnologia-Share`): `share_unavailable` is true and `share_status` is `revoked`, `paused` or `expired`. |
 | `body` | The decoded error body, when there was one. |
 
 A 503 without a code counts as `no_key_available`. `tostring(err)` gives one line.
@@ -162,7 +218,7 @@ if not ok and err.code == "all_keys_busy" then
 end
 ```
 
-Codes to expect: `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed`, `no_key_available`, `all_keys_busy`, `service_unavailable`, `app_limit_reached`, `share_revoked`, `share_paused`, `share_expired`, `lease_not_found`, `report_failed`, `upstream_unreachable`, `upstream_blocked`, `loop_detected`, `bad_path` and `body_too_large`. See the [HTTP API](../../docs/api.md#consumer-api).
+Codes to expect: `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed`, `no_key_available`, `all_keys_busy`, `service_unavailable`, `app_limit_reached`, `share_revoked`, `share_paused`, `share_expired`, `lease_not_found`, `report_failed`, `upstream_unreachable`, `upstream_blocked`, `loop_detected`, `bad_path`, `body_too_large`, `empty_group`, `bad_params`, `no_route` and `no_route_worked`. See the [HTTP API](../../docs/api.md#consumer-api).
 
 ## Custom transports
 

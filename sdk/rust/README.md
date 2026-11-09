@@ -46,6 +46,7 @@ Create an app on the Apps page of the dashboard and copy its token. The SDK send
 |---|---|
 | `ACNOLOGIA_URL` | Server URL, such as `http://localhost:8080` |
 | `ACNOLOGIA_TOKEN` | App token, `acn_...` |
+| `ACNOLOGIA_ACCESS_PASSWORD` | Optional. The server's access password, read by every builder that sets none |
 
 For more options, start from `Client::builder(url, token)` or `Client::builder_from_env()`:
 
@@ -53,6 +54,7 @@ For more options, start from `Client::builder(url, token)` or `Client::builder_f
 |---|---|---|
 | `timeout` | 75s | Bounds API calls. It is longer than the 60s maximum lease wait. Proxy calls have no default timeout. |
 | `user_agent` | `acnologia-rust/<version>` | |
+| `access_password` | `ACNOLOGIA_ACCESS_PASSWORD`, else none | Sent as `X-Acnologia-Access` on every request, for a deploy behind its access password. Never printed by `Debug`. |
 | `http_client` | a client the SDK builds | Your own `reqwest::Client`, used for every call. The SDK then applies no timeout or redirect policy of its own, so set `redirect::Policy::none()` on it to keep the app token from being replayed to another host. |
 
 ## Call an API through the proxy
@@ -73,6 +75,86 @@ println!("{} via key {:?}", resp.status(), resp.headers().get("x-acnologia-key-i
 - Proxy calls have no default timeout because bodies may stream. Use `RequestBuilder::timeout` to bound one.
 
 Other helpers: `get(path, query)`, `post(path, content_type, body)`, `url(path, query)`, and `request(method, path)`, which returns a `reqwest::RequestBuilder` with the token already set.
+
+Per call options go on the proxy before the call: `idempotency_key(key)` sends `Idempotency-Key` (a retry with the same key gets the first answer replayed), and `no_cache()` sends `Cache-Control: no-cache`.
+
+The `ProxyResponseExt` trait reads what Acnologia adds to the answer, on a `reqwest::Response`, a blocking `Response` or a `HeaderMap`:
+
+```rust
+use acnologia::ProxyResponseExt;
+
+let resp = acn
+    .proxy("openai")
+    .idempotency_key("order-42")
+    .no_cache()
+    .post_json("/v1/responses", &serde_json::json!({"input": "hi"}))
+    .await?;
+println!(
+    "key {:?}, {:?} attempts, cache {:?}, replayed {}",
+    resp.key_id(), resp.attempts(), resp.cache(), resp.replayed()
+);
+```
+
+| Accessor | Header |
+|---|---|
+| `key_id()` | `X-Acnologia-Key-Id` (`None` for a share's token) |
+| `attempts()` | `X-Acnologia-Attempts` |
+| `service()` | `X-Acnologia-Service` |
+| `cache()` | `X-Acnologia-Cache` (`hit`, `miss`, ...) |
+| `replayed()` | `Idempotent-Replayed: true` |
+| `capability()` | `X-Acnologia-Capability` |
+| `tried()` | `X-Acnologia-Tried`, as a `Vec<Tried { service, status }>` |
+
+A `{service}` may also be a service group or a capability slug. An error from Acnologia itself (such as 429 `app_limit_reached`) also comes back as a response; `Error::from_api(status, &headers, &body)` turns it into the typed error.
+
+## Call a capability
+
+A capability is one job (such as web search) that several providers can do. `capabilities()` lists them with their params and routes, and `capability(slug, &params, opts)` posts the params as JSON to `/proxy/{slug}`:
+
+```rust
+use acnologia::{CapabilityOptions, ProxyResponseExt};
+
+for c in acn.capabilities().await? {
+    println!("{} via {:?}", c.slug, c.routes.iter().map(|r| &r.service).collect::<Vec<_>>());
+}
+let resp = acn
+    .capability("web-search", &serde_json::json!({"q": "coffee"}), CapabilityOptions::new())
+    .await?;
+println!("served by {:?}, tried {:?}", resp.service(), resp.tried());
+```
+
+`CapabilityOptions` takes `service(slug)` (`?_service=`, use only that provider), `raw()` (`?_raw=1`, the provider's own body), `idempotency_key` and `no_cache`.
+
+## Use the forward proxy
+
+An app can also send its own HTTP calls to provider URLs, unchanged, through Acnologia as an HTTPS proxy. Save the CA, then hand the environment from `forward_proxy_env` to a child process:
+
+```rust
+use std::path::Path;
+
+let ca = acn.save_forward_proxy_ca(Some(Path::new("acnologia-ca.pem"))).await?;
+let env = acn.forward_proxy_env(ca.to_str()).await?; // HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, ...
+std::process::Command::new("node").arg("app.js").envs(&env).status()?;
+```
+
+Or, in Rust itself, `forward_proxy_client()` returns a `reqwest::Client` that goes through the proxy and trusts the Acnologia CA:
+
+```rust
+let http = acn.forward_proxy_client().await?;
+let resp = http
+    .get("https://serpapi.com/search.json?engine=google&q=coffee")
+    .send()
+    .await?; // Acnologia injects the key
+```
+
+| Call | Returns |
+|---|---|
+| `forward_proxy()` | `ForwardProxy { proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts, env, service_header }`. Holds no token (`proxy_url_with_token` has a `<app token>` placeholder). |
+| `forward_proxy_ca()` | the CA as PEM text. The route is public, so no token is sent. |
+| `save_forward_proxy_ca(path)` | writes the CA to `path` (default `acnologia-ca.pem`) and returns the path. |
+| `forward_proxy_url()` | `http://app:acn_...@host:8888`. **Contains the token.** |
+| `forward_proxy_env(ca_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `ca_path` (default `acnologia-ca.pem`). **Contains the token.** |
+| `forward_proxy_client()` | a `reqwest::Client` set up for the proxy. Carries the token. |
 
 ## Lease a key with `with_key`
 
@@ -163,11 +245,25 @@ A non-empty `auth.prefix` goes in front of the secret for every kind, and for be
 
 **Outcomes** for `Report::new` or the shortcuts: `Ok`, `RateLimited`, `QuotaExhausted`, `Invalid`, `Error`, `Busy` (the account is at its concurrency cap) and `Banned` (the provider suspended the account). `Report` also takes `status`, `retry_after`, `message` and `rotate`.
 
-## List services
+## List services and read their guides
 
 ```rust
 for s in acn.services().await? {
-    println!("{} available={} auth={:?}", s.slug, s.available, s.auth.kind);
+    println!("{} available={} auth={:?} guide={}", s.slug, s.available, s.auth.kind, s.guide_url);
+}
+let guide = acn.guide("weather").await?; // Guide { markdown, generated, guide: serde_json::Value }
+let md = acn.guide_markdown("weather").await?; // the same guide, as Markdown
+```
+
+## Check the token's own access
+
+`me()` returns the app, its limits and use, the services it may call and, for a share's token, the share (a share that stopped still answers, with its `status`):
+
+```rust
+let me = acn.me().await?;
+println!("{}: {} requests today, limit {:?}", me.app.name, me.usage.today_requests, me.limits.daily_requests);
+if let Some(hit) = &me.limit_hit {
+    println!("reached {} until {}", hit.limit, hit.reset_at);
 }
 ```
 
@@ -180,11 +276,13 @@ Every call returns `acnologia::Error`:
 | `NoKeyAvailable { retry_after, message }` | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
 | `AllKeysBusy { retry_after, message }` | 503 `all_keys_busy`: every usable key is at its concurrency limit. Retry after `retry_after` (usually 1s) or lease with a wait |
 | `ServiceUnavailable { retry_after, message }` | 503 `service_unavailable`: the provider's circuit breaker is open |
+| `AppLimitReached { limit, reset_at, retry_after, message }` | 429 `app_limit_reached`: the app used up its `daily_requests`, `monthly_requests`, `daily_budget` or `monthly_budget` until `reset_at` |
+| `ShareUnavailable { status, code, message }` | 403 `share_revoked`, `share_paused` or `share_expired`: `status` is `revoked`, `paused` or `expired` (also sent as `X-Acnologia-Share`) |
 | `Unauthenticated { code, message }` | 401: token missing, wrong, revoked or expired |
 | `Forbidden { code, message }` | 403: app disabled, or `service_not_allowed`, `lease_not_allowed`, `proxy_not_allowed` |
-| `Api { status, code, message }` | any other non-2xx from the consumer API, such as 404 `lease_not_found` or 409 `report_failed` |
+| `Api { status, code, message }` | any other non-2xx from the consumer API, such as 404 `lease_not_found`, 409 `report_failed`, 400 `bad_params`, 503 `empty_group`, `no_route` or `no_route_worked`, 508 `loop_detected` |
 | `RateLimited`, `QuotaExhausted`, `InvalidKey` | you return them from `with_key` |
-| `Http`, `Decode`, `InvalidInput`, `Other` | transport failure, bad response body, bad argument, your own error |
+| `Http`, `Decode`, `Io`, `InvalidInput`, `Other` | transport failure, bad response body, file write failure, bad argument, your own error |
 
 Helpers: `is_no_key_available()` (true for both no key and busy), `is_busy()`, `is_rotation()`, `retry_after()`, `status()` and `code()`.
 
@@ -199,7 +297,7 @@ match acn.lease("weather", LeaseOptions::new()).await {
 
 ## Keep secrets out of logs
 
-`Lease` and `LeaseInfo` print `[redacted]` in place of the secret in both `Debug` and `Display`. `Client` does the same for the token, and `Credential` redacts its value. Header values the SDK sets are marked sensitive. The SDK does no logging.
+`Lease` and `LeaseInfo` print `[redacted]` in place of the secret in both `Debug` and `Display`. `Client` does the same for the token and the access password, `ForwardProxy` never holds the token, and `Credential` redacts its value. Header values the SDK sets are marked sensitive. The SDK does no logging.
 
 ## Use the blocking client
 

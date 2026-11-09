@@ -73,6 +73,7 @@ let req = (withJsonBody (object ["prompt" .= ("hello" :: Text)]) (proxyRequest "
       { proxyQuery = [("stream", "false")]
       , proxyHeaders = [("Accept", "application/json")]
       , proxyIdempotencyKey = Just "order-42"
+      , proxyNoCache = True   -- Cache-Control: no-cache
       }
 r <- proxy client "agi-labs" req
 case r of
@@ -83,7 +84,7 @@ case r of
   Left err -> print err
 ```
 
-`responseAcnologia` holds the `X-Acnologia-*` headers: key id, attempts, service, cache, and whether an idempotent call was replayed. A retry with the same `proxyIdempotencyKey` replays the first answer instead of calling the provider again.
+`responseAcnologia` holds the `X-Acnologia-*` headers: `acnKeyId`, `acnAttempts`, `acnService`, `acnCache`, `acnReplayed` (an idempotent call was replayed), and on a capability call `acnCapability` and `acnTried` (each route tried, as `Tried {triedService, triedStatus}`). A retry with the same `proxyIdempotencyKey` replays the first answer instead of calling the provider again.
 
 `Left` means Acnologia itself refused or failed, such as `ProxyNotAllowed` or `UpstreamUnreachable`. A 429 from the provider is a `Right`.
 
@@ -130,7 +131,54 @@ print (map meServiceSlug (meServices m))
 print (usageTodayRequests (meUsage m), meLimitHit m)
 ```
 
-`meShare` is set when the token belongs to a share. `meRaw` has the whole answer. `services client` lists the services with their base URL and auth placement.
+`meShare` is set when the token belongs to a share. Each service has `meServiceAvailable` (keys free now for a share's token, 1 or 0 for an app) and `meServiceLogoUrl` (a `data:` image URI). `meRaw` has the whole answer. `services client` lists the services with their base URL, auth placement and `serviceGuideUrl`.
+
+## Usage guides
+
+```haskell
+md <- guideMarkdownOrThrow client "agi-labs"   -- the guide as Markdown
+g <- guideOrThrow client "agi-labs"            -- guideText, guideGenerated, guideStructured (JSON)
+```
+
+Both fail with `ServiceNotAllowed` for a service the token may not use.
+
+## Capabilities
+
+A capability is one job several providers can do, behind one slug:
+
+```haskell
+caps <- capabilitiesOrThrow client
+mapM_ (\k -> print (capabilitySlug k, capabilityParams k)) caps
+
+r <- capabilityOrThrow client "maps-search" (object ["query" .= ("cafes in Kochi" :: Text)])
+       defaultCapabilityOptions {capService = Just "serpapi"}   -- capRaw = True adds ?_raw=1
+print (acnService (responseAcnologia r), acnTried (responseAcnologia r))
+```
+
+`capability` sends `POST /proxy/{slug}` with the params as the body and answers like `proxy`. `capIdempotencyKey` and `capNoCache` work as on a proxy request. `bad_params`, `no_route` and `no_route_worked` come back as `ApiError` with that `errorCode`.
+
+## Forward proxy
+
+An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Save the CA, set the environment, then use the app's own HTTP client:
+
+```haskell
+saveForwardProxyCAOrThrow client "acnologia-ca.pem"
+env <- forwardProxyEnvOrThrow client "acnologia-ca.pem"
+mapM_ (\(k, v) -> setEnv (T.unpack k) (T.unpack v)) (Map.toList env)
+-- A child process (node, python, curl) now goes through Acnologia.
+```
+
+http-client's default manager also reads `HTTPS_PROXY`, but http-client-tls trusts only the system store, so a Haskell client needs the Acnologia CA added there (this SDK adds no TLS dependency to load it for you).
+
+| Call | Returns |
+|---|---|
+| `forwardProxy` | `ForwardProxy`: `fpProxyUrl`, `fpProxyUrlWithToken` (with an `<app token>` placeholder), `fpCaUrl`, `fpCaFingerprint`, `fpPassthrough`, `fpHosts`, `fpEnv`, `fpServiceHeader` |
+| `forwardProxyCA` | The CA as PEM text. Sent without the token |
+| `saveForwardProxyCA client path` | Writes the CA to `path` |
+| `forwardProxyURL` | The proxy URL with user `app` and the token as the password: `http://app:acn_...@host:8888` |
+| `forwardProxyEnv client caPath` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `caPath` |
+
+`ForwardProxy` and its `show` never hold the token. `forwardProxyURL` and `forwardProxyEnv` do: keep them out of logs. Each call has an `OrThrow` variant.
 
 ## Errors
 
@@ -142,14 +190,14 @@ print (usageTodayRequests (meUsage m), meLimitHit m)
 | `ServiceNotAllowed`, `ProxyNotAllowed`, `LeaseNotAllowed` | 403 with that code |
 | `NoKeyAvailable`, `AllKeysBusy`, `ServiceUnavailable` | 503 with that code, plus seconds to wait |
 | `AppLimitReached` | 429 `app_limit_reached`, with the limit, its reset time and seconds to wait |
-| `ShareRevoked`, `SharePaused`, `ShareExpired` | 403 with that code |
+| `ShareRevoked`, `SharePaused`, `ShareExpired` | 403 with that code. `shareUnavailable err` gives `Just "revoked"`, `"paused"` or `"expired"` for these |
 | `LeaseNotFound` | 404 `lease_not_found` |
 | `ReportFailed` | 409 or 410 `report_failed` |
 | `UpstreamUnreachable`, `UpstreamBlocked` | 502 with that code |
 | `LoopDetected` | 508 `loop_detected` |
 | `BadPath` | 400 `bad_path` |
 | `BodyTooLarge` | 413 `body_too_large` |
-| `ApiError` | any other error |
+| `ApiError` | any other error, such as `empty_group`, `bad_params`, `no_route` or `no_route_worked` (read `errorCode`) |
 | `RotationExhausted` | `withKey` ran out of attempts |
 | `HttpFailure`, `BadResponse`, `InvalidInput` | network failure, an answer that could not be decoded, a bad setting |
 

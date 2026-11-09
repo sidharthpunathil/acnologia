@@ -86,6 +86,13 @@ pub fn isNoKey(err: anyerror) bool {
     return err == error.NoKeyAvailable or err == error.AllKeysBusy;
 }
 
+/// True for `error.ShareRevoked`, `error.SharePaused` and `error.ShareExpired`:
+/// the share behind this token is unavailable. `Diagnostic.share()` says
+/// which (`revoked`, `paused` or `expired`).
+pub fn isShareUnavailable(err: anyerror) bool {
+    return err == error.ShareRevoked or err == error.SharePaused or err == error.ShareExpired;
+}
+
 /// Details of the last failed call, filled when you pass a pointer to one in
 /// a call's options. It holds fixed size buffers, so it needs no allocator
 /// and no deinit. Messages are scrubbed of the app token, the access
@@ -105,6 +112,8 @@ pub const Diagnostic = struct {
     limit_len: usize = 0,
     reset_at_buf: [64]u8 = undefined,
     reset_at_len: usize = 0,
+    share_buf: [16]u8 = undefined,
+    share_len: usize = 0,
 
     /// The server's `error.code`, such as `lease_not_found`. Empty when none.
     pub fn code(d: *const Diagnostic) []const u8 {
@@ -124,6 +133,12 @@ pub const Diagnostic = struct {
     /// For `AppLimitReached`: when the limit resets (RFC 3339).
     pub fn resetAt(d: *const Diagnostic) []const u8 {
         return d.reset_at_buf[0..d.reset_at_len];
+    }
+
+    /// For a share error (`isShareUnavailable`): `revoked`, `paused` or
+    /// `expired`, from `X-Acnologia-Share` or else from the code.
+    pub fn share(d: *const Diagnostic) []const u8 {
+        return d.share_buf[0..d.share_len];
     }
 
     pub fn reset(d: *Diagnostic) void {
@@ -187,7 +202,8 @@ pub fn isProxyCode(code: []const u8) bool {
         "all_keys_busy",    "service_unavailable", "app_limit_reached", "unknown_service",
         "share_revoked",    "share_paused",        "share_expired",     "upstream_unreachable",
         "upstream_blocked", "loop_detected",       "bad_path",          "bad_body",
-        "body_too_large",   "method_not_allowed",  "empty_group",
+        "body_too_large",   "method_not_allowed",  "empty_group",       "bad_params",
+        "no_route",         "no_route_worked",
     };
     for (codes) |c| if (std.mem.eql(u8, c, code)) return true;
     return false;
@@ -228,6 +244,9 @@ pub fn fromAnswer(
         d.limit_len = copyInto(&d.limit_buf, parsed.limit);
         d.reset_at_len = copyInto(&d.reset_at_buf, parsed.reset_at);
         d.retry_after_sec = parsed.retry_after orelse parseRetryAfter(headerValue(headers, "retry-after"));
+        const share_status = headerValue(headers, "x-acnologia-share") orelse
+            if (std.mem.startsWith(u8, parsed.code, "share_")) parsed.code["share_".len..] else "";
+        d.share_len = copyInto(&d.share_buf, std.mem.trim(u8, share_status, " "));
     }
     return errorFor(status, parsed.code);
 }

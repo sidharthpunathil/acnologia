@@ -97,12 +97,12 @@ app fake req respond = do
                 , "limit_hit" .= Null
                 ]
           , "limit_hit" .= Null
-          , "services" .= [object ["slug" .= ("agi-labs" :: Text), "name" .= ("AGI Labs" :: Text), "provider" .= ("custom" :: Text), "category" .= ("ai" :: Text), "available" .= (1 :: Int), "logo_url" .= Null]]
+          , "services" .= [object ["slug" .= ("agi-labs" :: Text), "name" .= ("AGI Labs" :: Text), "provider" .= ("custom" :: Text), "category" .= ("ai" :: Text), "available" .= (3 :: Int), "logo_url" .= ("data:image/png;base64,AAAA" :: Text)]]
           , "share" .= Null
           ]
     ["api", "v1", "services"] ->
       pure . jsonResp (mkStatus 200 "OK") [] $
-        object ["services" .= [object ["slug" .= ("agi-labs" :: Text), "available" .= True, "base_url" .= ("https://agi-labs.example" :: Text), "auth" .= object ["type" .= ("bearer" :: Text), "name" .= ("" :: Text)]]]]
+        object ["services" .= [object ["slug" .= ("agi-labs" :: Text), "available" .= True, "base_url" .= ("https://agi-labs.example" :: Text), "auth" .= object ["type" .= ("bearer" :: Text), "name" .= ("" :: Text)], "guide_url" .= ("http://acn.test/api/v1/services/agi-labs/guide" :: Text)]]]
     ["api", "v1", "lease"] -> pure $ case bodyText "service" of
       "agi-labs" -> jsonResp (mkStatus 200 "OK") [] (leaseJson "lease-1" "header" "X-Api-Key" "" 11)
       "agi-labs-query" -> jsonResp (mkStatus 200 "OK") [] (leaseJson "lease-q" "query" "key" "" 12)
@@ -160,7 +160,62 @@ app fake req respond = do
               (mkStatus 200 "OK")
               [("Content-Type", "application/json"), ("X-Acnologia-Key-Id", "4"), ("X-Acnologia-Attempts", "2"), ("X-Acnologia-Service", "agi-labs"), ("X-Acnologia-Cache", "miss")]
               (A.encode (object ["echo" .= TE.decodeUtf8 (LBS.toStrict body)]))
+    ["api", "v1", "services", "agi-labs", "guide"]
+      | lookup "Accept" (W.requestHeaders req) == Just "text/markdown" ->
+          pure (W.responseLBS (mkStatus 200 "OK") [("Content-Type", "text/markdown; charset=utf-8")] "# AGI Labs\n\nCall /v1/chat.\n")
+      | otherwise ->
+          pure . jsonResp (mkStatus 200 "OK") [] $
+            object ["markdown" .= ("# AGI Labs\n" :: Text), "generated" .= True, "guide" .= object ["endpoints" .= [object ["path" .= ("/v1/chat" :: Text)]]]]
+    ["api", "v1", "services", "secret", "guide"] ->
+      pure (jsonResp (mkStatus 403 "Forbidden") [] (errBody "service_not_allowed" "this app cannot use service secret" []))
+    ["api", "v1", "capabilities"] ->
+      pure . jsonResp (mkStatus 200 "OK") [] $
+        object
+          [ "capabilities"
+              .= [ object
+                     [ "slug" .= ("maps-search" :: Text)
+                     , "name" .= ("Maps search" :: Text)
+                     , "description" .= ("Find places" :: Text)
+                     , "strategy" .= ("priority" :: Text)
+                     , "params" .= object ["query" .= object ["type" .= ("string" :: Text), "required" .= True]]
+                     , "routes" .= [object ["service" .= ("omkar-cloud" :: Text), "mapped" .= True], object ["service" .= ("serpapi" :: Text), "mapped" .= False]]
+                     , "url" .= ("http://acn.test/proxy/maps-search" :: Text)
+                     ]
+                 ]
+          ]
+    ["proxy", "maps-search"] ->
+      pure $
+        jsonResp
+          (mkStatus 200 "OK")
+          ( [ ("X-Acnologia-Capability", "maps-search")
+            , ("X-Acnologia-Service", "serpapi")
+            , ("X-Acnologia-Tried", "omkar-cloud=503, serpapi=200")
+            , ("X-Acnologia-Key-Id", "9")
+            , ("X-Acnologia-Attempts", "1")
+            ]
+              <> [("X-Acnologia-Cache", "miss") | lookup "Cache-Control" (W.requestHeaders req) == Just "no-cache"]
+          )
+          (object ["items" .= ([] :: [Value]), "count" .= (0 :: Int)])
+    ["proxy", "no-route"] ->
+      pure (jsonResp (mkStatus 503 "Service Unavailable") [] (errBody "no_route" "no route" []))
+    ["api", "v1", "proxy"] ->
+      pure . jsonResp (mkStatus 200 "OK") [] $
+        object
+          [ "proxy_url" .= ("http://acn.test:8888" :: Text)
+          , "proxy_url_with_token" .= ("http://app:%3Capp%20token%3E@acn.test:8888" :: Text)
+          , "ca_url" .= ("http://acn.test/api/v1/proxy/ca.pem" :: Text)
+          , "ca_fingerprint" .= ("AB:CD" :: Text)
+          , "passthrough" .= True
+          , "hosts" .= [object ["host" .= ("serpapi.com" :: Text), "service" .= ("serpapi" :: Text), "name" .= ("SerpAPI" :: Text), "path" .= ("" :: Text)]]
+          , "env" .= object ["HTTPS_PROXY" .= ("http://app:%3Capp%20token%3E@acn.test:8888" :: Text), "NODE_USE_ENV_PROXY" .= ("1" :: Text)]
+          , "service_header" .= ("X-Acnologia-Service" :: Text)
+          ]
+    ["api", "v1", "proxy", "ca.pem"] ->
+      pure (W.responseLBS (mkStatus 200 "OK") [("Content-Type", "application/x-pem-file")] (LBS.fromStrict (TE.encodeUtf8 pemText)))
     _ -> pure (jsonResp (mkStatus 404 "Not Found") [] (errBody "not_found" "not found" []))
+
+pemText :: Text
+pemText = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
 
 withFake :: ((Fake, Text) -> IO a) -> IO a
 withFake act = do
@@ -211,6 +266,7 @@ tests fake url =
     , meTests fake url
     , envTests fake url
     , scrubTests fake url
+    , v2Tests fake url
     ]
 
 -- Every code the docs list, mapped through a proxy call to the fake.
@@ -494,7 +550,7 @@ meTests fake url =
         usageMonthCost (meUsage m) @?= 1.25
         usageLastUsedAt (meUsage m) @?= Just (UTCTime (fromGregorian 2026 11 4) 36000)
         meLimitHit m @?= Nothing
-        meServices m @?= [MeService "agi-labs" "AGI Labs" "custom" "ai" 1]
+        meServices m @?= [MeService "agi-labs" "AGI Labs" "custom" "ai" 3 (Just "data:image/png;base64,AAAA")]
         meShare m @?= Nothing
         s <- lastSeen fake
         seenMethod s @?= "GET"
@@ -506,6 +562,7 @@ meTests fake url =
         map serviceSlug ss @?= ["agi-labs"]
         map serviceAvailable ss @?= [True]
         map (authType . serviceAuth) ss @?= [AuthBearer]
+        map serviceGuideUrl ss @?= ["http://acn.test/api/v1/services/agi-labs/guide"]
     ]
 
 envTests :: Fake -> Text -> TestTree
@@ -589,4 +646,149 @@ scrubTests fake url =
         case KM.lookup "message" (seenJson s) of
           Just (String m) -> assertBool (T.unpack m) ("[key]" `T.isInfixOf` m && not (secret `T.isInfixOf` m))
           other -> assertFailure (show other)
+    ]
+
+-- ---------------------------------------------------------------------------
+-- 0.2.0: guides, capabilities, the forward proxy, no-cache, share status
+
+v2Tests :: Fake -> Text -> TestTree
+v2Tests fake url =
+  testGroup
+    "0.2.0"
+    [ testCase "guide decodes the JSON guide" $ do
+        c <- client url
+        g <- expectRight =<< guide c "agi-labs"
+        guideText g @?= "# AGI Labs\n"
+        guideGenerated g @?= True
+        guideStructured g @?= object ["endpoints" .= [object ["path" .= ("/v1/chat" :: Text)]]]
+        s <- lastSeen fake
+        seenMethod s @?= "GET"
+        seenPath s @?= ["api", "v1", "services", "agi-labs", "guide"]
+        seenHeader s "Accept" @?= Just "application/json"
+        seenHeader s "Authorization" @?= Just ("Bearer " <> TE.encodeUtf8 token)
+    , testCase "guideMarkdown asks for Markdown" $ do
+        c <- client url
+        md <- expectRight =<< guideMarkdown c "agi-labs"
+        md @?= "# AGI Labs\n\nCall /v1/chat.\n"
+        s <- lastSeen fake
+        seenHeader s "Accept" @?= Just "text/markdown"
+        seenHeader s "Authorization" @?= Just ("Bearer " <> TE.encodeUtf8 token)
+    , testCase "a guide the token may not read is ServiceNotAllowed" $ do
+        c <- client url
+        e1 <- expectLeft =<< guide c "secret"
+        assertBool (show e1) (case e1 of ServiceNotAllowed _ -> True; _ -> False)
+        e2 <- expectLeft =<< guideMarkdown c "secret"
+        assertBool (show e2) (case e2 of ServiceNotAllowed _ -> True; _ -> False)
+    , testCase "capabilities decodes the list" $ do
+        c <- client url
+        caps <- expectRight =<< capabilities c
+        s <- lastSeen fake
+        seenMethod s @?= "GET"
+        seenPath s @?= ["api", "v1", "capabilities"]
+        case caps of
+          [k] -> do
+            capabilitySlug k @?= "maps-search"
+            capabilityName k @?= "Maps search"
+            capabilityDescription k @?= "Find places"
+            capabilityStrategy k @?= "priority"
+            capabilityParams k @?= object ["query" .= object ["type" .= ("string" :: Text), "required" .= True]]
+            capabilityRoutes k @?= [CapabilityRoute "omkar-cloud" True, CapabilityRoute "serpapi" False]
+            capabilityUrl k @?= "http://acn.test/proxy/maps-search"
+          other -> assertFailure (show other)
+    , testCase "capability posts the params and reads the answer headers" $ do
+        c <- client url
+        let opts = defaultCapabilityOptions {capService = Just "serpapi", capRaw = True, capIdempotencyKey = Just "cap-1", capNoCache = True}
+        r <- expectRight =<< capability c "maps-search" (object ["query" .= ("cafes" :: Text)]) opts
+        s <- lastSeen fake
+        seenMethod s @?= "POST"
+        seenPath s @?= ["proxy", "maps-search"]
+        parseQuery (seenQuery s) @?= [("_service", Just "serpapi"), ("_raw", Just "1")]
+        seenJson s @?= KM.fromList [("query", String "cafes")]
+        seenHeader s "Content-Type" @?= Just "application/json"
+        seenHeader s "Idempotency-Key" @?= Just "cap-1"
+        seenHeader s "Cache-Control" @?= Just "no-cache"
+        seenHeader s "Authorization" @?= Just ("Bearer " <> TE.encodeUtf8 token)
+        let a = responseAcnologia r
+        responseStatus r @?= 200
+        acnCapability a @?= Just "maps-search"
+        acnService a @?= Just "serpapi"
+        acnCache a @?= Just "miss"
+        acnKeyId a @?= Just 9
+        acnAttempts a @?= Just 1
+        acnTried a @?= [Tried "omkar-cloud" 503, Tried "serpapi" 200]
+    , testCase "capability with default options sends an empty object" $ do
+        c <- client url
+        r <- expectRight =<< capability c "maps-search" Null defaultCapabilityOptions
+        s <- lastSeen fake
+        seenQuery s @?= ""
+        seenBody s @?= "{}"
+        seenHeader s "Cache-Control" @?= Nothing
+        seenHeader s "Idempotency-Key" @?= Nothing
+        acnCache (responseAcnologia r) @?= Nothing
+    , testCase "capability errors from Acnologia are Left" $ do
+        c <- client url
+        e <- expectLeft =<< capability c "no-route" (object []) defaultCapabilityOptions
+        errorCode e @?= "no_route"
+        errorStatus e @?= 503
+    , testCase "proxyNoCache sends Cache-Control: no-cache" $ do
+        c <- client url
+        _ <- expectRight =<< proxy c "agi-labs" (proxyRequest "GET" "v1/models") {proxyNoCache = True, proxyHeaders = [("Cache-Control", "max-age=60")]}
+        s <- lastSeen fake
+        filter ((== "Cache-Control") . fst) (seenHeaders s) @?= [("Cache-Control", "no-cache")]
+        _ <- expectRight =<< proxy c "agi-labs" (proxyRequest "GET" "v1/models")
+        s2 <- lastSeen fake
+        seenHeader s2 "Cache-Control" @?= Nothing
+        acnTried . responseAcnologia <$> (expectRight =<< proxy c "agi-labs" (proxyRequest "GET" "v1/models")) >>= (@?= [])
+    , testCase "parseTried" $ do
+        parseTried "a=200,b=503 , c" @?= [Tried "a" 200, Tried "b" 503, Tried "c" 0]
+        parseTried "" @?= []
+    , testCase "forwardProxy decodes the setup" $ do
+        c <- client url
+        fp <- expectRight =<< forwardProxy c
+        s <- lastSeen fake
+        seenPath s @?= ["api", "v1", "proxy"]
+        seenHeader s "Authorization" @?= Just ("Bearer " <> TE.encodeUtf8 token)
+        fpProxyUrl fp @?= "http://acn.test:8888"
+        fpProxyUrlWithToken fp @?= "http://app:%3Capp%20token%3E@acn.test:8888"
+        fpCaUrl fp @?= "http://acn.test/api/v1/proxy/ca.pem"
+        fpCaFingerprint fp @?= "AB:CD"
+        fpPassthrough fp @?= True
+        fpHosts fp @?= [ForwardHost "serpapi.com" "serpapi" "SerpAPI" ""]
+        Map.lookup "NODE_USE_ENV_PROXY" (fpEnv fp) @?= Just "1"
+        fpServiceHeader fp @?= "X-Acnologia-Service"
+        assertBool "show hides the token" (not (token `T.isInfixOf` T.pack (show fp)))
+    , testCase "forwardProxyCA sends no token and saveForwardProxyCA writes it" $ do
+        c <- client url
+        pem <- expectRight =<< forwardProxyCA c
+        pem @?= pemText
+        s <- lastSeen fake
+        seenPath s @?= ["api", "v1", "proxy", "ca.pem"]
+        seenHeader s "Authorization" @?= Nothing
+        -- Under dist-newstyle, which git ignores: no directory package needed.
+        let path = "dist-newstyle/acn-hs-test-ca.pem"
+        expectRight =<< saveForwardProxyCA c path
+        saved <- BS.readFile path
+        saved @?= TE.encodeUtf8 pemText
+    , testCase "forwardProxyURL and forwardProxyEnv put the token in" $ do
+        c <- newClientOrThrow defaultConfig {configBaseUrl = Just url, configToken = Just "acn_a+b/c="}
+        u <- expectRight =<< forwardProxyURL c
+        u @?= "http://app:acn_a%2Bb%2Fc%3D@acn.test:8888"
+        env <- expectRight =<< forwardProxyEnv c "acnologia-ca.pem"
+        env
+          @?= Map.fromList
+            [ ("HTTPS_PROXY", u)
+            , ("HTTP_PROXY", u)
+            , ("NODE_USE_ENV_PROXY", "1")
+            , ("NODE_EXTRA_CA_CERTS", "acnologia-ca.pem")
+            , ("REQUESTS_CA_BUNDLE", "acnologia-ca.pem")
+            , ("SSL_CERT_FILE", "acnologia-ca.pem")
+            ]
+        env2 <- expectRight =<< forwardProxyEnv c "/etc/acn.pem"
+        Map.lookup "SSL_CERT_FILE" env2 @?= Just "/etc/acn.pem"
+    , testCase "shareUnavailable names the share's status" $ do
+        c <- client url
+        e <- expectLeft =<< proxyGet c "err" "403/share_paused" []
+        shareUnavailable e @?= Just "paused"
+        e2 <- expectLeft =<< proxyGet c "err" "429/app_limit_reached" []
+        shareUnavailable e2 @?= Nothing
     ]

@@ -34,11 +34,11 @@ Then depend on it:
 <dependency>
   <groupId>dev.acnologia</groupId>
   <artifactId>acnologia</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
 </dependency>
 ```
 
-With Gradle, add `mavenLocal()` to your repositories and `implementation("dev.acnologia:acnologia:0.1.0")`.
+With Gradle, add `mavenLocal()` to your repositories and `implementation("dev.acnologia:acnologia:0.2.0")`.
 
 ## Connect to your server
 
@@ -50,6 +50,7 @@ Create an app on the Apps page of the dashboard and copy its token. Tokens with 
 |---|---|
 | `ACNOLOGIA_URL` | Server URL, such as `http://localhost:8080` |
 | `ACNOLOGIA_TOKEN` | App token, `acn_...` |
+| `ACNOLOGIA_ACCESS_PASSWORD` | Optional: the server's access password, sent as `X-Acnologia-Access` |
 
 For more options, use the builder. It falls back to the environment variables for any value you leave unset.
 
@@ -57,13 +58,15 @@ For more options, use the builder. It falls back to the environment variables fo
 Acnologia acn = Acnologia.builder()
     .baseUrl("http://localhost:8080").token("acn_...")
     .httpClient(myClient).userAgent("my-app/1.0").timeout(Duration.ofSeconds(90))
+    .accessPassword("...") // only for a server behind the access password
     .build();
 ```
 
 | Builder method | Default | Notes |
 |---|---|---|
 | `timeout` | 75 seconds (`Acnologia.DEFAULT_TIMEOUT`) | Bounds API calls; zero disables it. Keep it longer than any lease wait (at most 60 seconds). |
-| `userAgent` | `acnologia-java/0.1.0` | |
+| `userAgent` | `acnologia-java/0.2.0` | |
+| `accessPassword` | `ACNOLOGIA_ACCESS_PASSWORD` | Sent as `X-Acnologia-Access` on every request, for a deploy behind the access password. |
 | `httpClient` | a client the SDK builds | The proxy uses your client only when it does not follow redirects. Otherwise it uses its own client that never follows them. |
 
 `build()` throws `IllegalArgumentException` when no URL or token is set or found.
@@ -79,10 +82,29 @@ HttpResponse<byte[]> alert = weather.postJson("/v1/alerts", Map.of("city", "Lisb
 ```
 
 - The upstream response comes back unchanged. A non-2xx status is not an exception.
-- Each response carries `X-Acnologia-Key-Id`, `X-Acnologia-Attempts` and `X-Acnologia-Service`.
+- `{service}` may also be a service group or a capability slug.
 - Redirects are never followed, so the app token is not replayed to another host.
 - Proxy calls have no default timeout because bodies may stream. Set one on the request when you need it.
 
+Wrap a response with `ProxyResponse.of(res)` to read Acnologia's answer headers:
+
+```java
+ProxyResponse<byte[]> r = ProxyResponse.of(weather.get("/v1/forecast", Map.of("city", "Lisbon")));
+r.keyId();      // OptionalLong, X-Acnologia-Key-Id (empty for a share's token)
+r.attempts();   // X-Acnologia-Attempts
+r.service();    // X-Acnologia-Service
+r.cache();      // X-Acnologia-Cache: hit, miss, ...
+r.replayed();   // Idempotent-Replayed: true
+r.capability(); // X-Acnologia-Capability
+r.tried();      // X-Acnologia-Tried, as a list of Tried(service, status)
+```
+
+`Proxy` is immutable. `idempotencyKey(key)` and `noCache()` return a copy that adds `Idempotency-Key` or `Cache-Control: no-cache` to every call:
+
+```java
+HttpResponse<byte[]> once = acn.proxy("mailer").idempotencyKey("order-1234").postJson("/send", mail);
+HttpResponse<byte[]> fresh = acn.proxy("weather").noCache().get("/v1/forecast", Map.of("city", "Lisbon"));
+```
 Other methods:
 
 - `get(path)`, `post(path, contentType, bytes)`, `url(path[, query])`
@@ -90,7 +112,44 @@ Other methods:
 - `send(HttpRequest, bodyHandler)`: only the path and query of the request are used, so a request built against the provider's URL works
 - Async forms: `getAsync`, `postJsonAsync`, `requestAsync` and `sendAsync`
 
-To turn an Acnologia error from the proxy (a response without `X-Acnologia-Key-Id`) into an exception, call `ApiException.fromResponse(status, body)`.
+To turn an Acnologia error from the proxy (a response without `X-Acnologia-Key-Id`) into an exception, call `ApiException.fromResponse(res)` (or `fromResponse(status, body)`).
+
+## Call a capability
+
+A capability is one call, such as a web search, that whichever provider can serve answers. List them and call one with JSON params:
+
+```java
+for (Capability cap : acn.capabilities()) {
+    System.out.println(cap.slug() + " " + cap.routes());
+}
+ProxyResponse<byte[]> res = acn.capability("web_search", Map.of("query", "coffee"));
+ProxyResponse<byte[]> pinned = acn.capability("web_search", Map.of("query", "coffee"),
+    CapabilityOptions.builder().service("serpapi").raw(true).build());
+System.out.println(res.service() + " answered after " + res.tried());
+```
+
+`capability` sends `POST /proxy/{slug}`. `CapabilityOptions` takes `service` (`?_service=`), `raw` (`?_raw=1`, the provider's own answer), `idempotencyKey` and `noCache`. `capabilityAsync` is the async form.
+
+## Use the forward proxy
+
+An app can also set Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Save the CA certificate, then hand the environment to the program that makes the calls:
+
+```java
+acn.saveForwardProxyCa(Path.of("acnologia-ca.pem"));   // public route, sends no token
+Map<String, String> env = acn.forwardProxyEnv("acnologia-ca.pem");
+
+ProcessBuilder pb = new ProcessBuilder("node", "app.js");
+pb.environment().putAll(env); // HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, ...
+pb.inheritIO().start().waitFor();
+```
+
+- `forwardProxy()` returns `ForwardProxy`: `proxyUrl`, `proxyUrlWithToken` (with an `<app token>` placeholder), `caUrl`, `caFingerprint`, `passthrough`, `hosts` (`host`, `service`, `name`, `path`), `env` and `serviceHeader`. It holds no token, so it is safe to log.
+- `forwardProxyUrl()` returns the proxy URL with user `app` and your token as the password: `http://app:acn_...@host:8888`.
+- `forwardProxyEnv(caPath)` returns `HTTPS_PROXY` and `HTTP_PROXY` (that URL), `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `caPath` (default `acnologia-ca.pem`).
+- `forwardProxyUrl()` and `forwardProxyEnv()` contain the token: keep them out of logs.
+- `forwardProxyCa()` returns the PEM text. All of these have `Async` forms.
+
+The JDK's own `HttpClient` disables Basic authentication for HTTPS tunnels by default, so for Java code prefer the `proxy` helper above.
 
 ## Lease a key with `withKey`
 
@@ -184,13 +243,32 @@ A non-empty `auth.prefix` goes in front of the secret, and for `bearer` it repla
 
 **Outcomes**: `OK`, `RATE_LIMITED`, `QUOTA_EXHAUSTED`, `INVALID`, `ERROR`, `BUSY` and `BANNED`.
 
-## List services
+## List services and read their guides
 
 ```java
 for (Service s : acn.services()) {
     System.out.println(s.slug() + " available=" + s.available() + " auth=" + s.auth().type());
 }
+Guide g = acn.guide("weather");          // markdown(), generated(), guide() as a JsonNode
+String md = acn.guideMarkdown("weather"); // the Markdown alone
 ```
+
+Each `Service` also has `guideUrl()`.
+
+## See what your token may do
+
+```java
+Me me = acn.me();
+System.out.println(me.app().name() + " used " + me.usage().todayRequests() + " requests today");
+if (me.limitHit() != null) {
+    System.out.println(me.limitHit().limit() + " resets at " + me.limitHit().resetAt());
+}
+if (me.share() != null && !"active".equals(me.share().status())) {
+    System.out.println("share is " + me.share().status());
+}
+```
+
+`Me` has `app()` (`id`, `name`), `limits()` (`dailyRequests`, `monthlyRequests`, `dailyBudget`, `monthlyBudget`, each null when unset), `usage()`, `limitHit()`, `services()` (with `available` and `logoUrl`) and `share()` (null for an ordinary app). A share token whose share stopped still gets an answer, with the share's status.
 
 ## Handle errors
 
@@ -198,9 +276,11 @@ Every exception extends the unchecked `AcnologiaException`. Network failures are
 
 | Exception | When |
 |---|---|
-| `ApiException` (`statusCode()`, `code()`, `errorMessage()`) | any other non-2xx from the consumer API, such as 404 `lease_not_found` |
+| `ApiException` (`statusCode()`, `code()`, `errorMessage()`, `retryAfter()`) | any other non-2xx from the consumer API, such as 404 `lease_not_found`. Check `code()` for `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed`, `lease_not_allowed` or `loop_detected`. |
 | `UnauthenticatedException` | 401: the token is missing or wrong |
 | `ForbiddenException` | 403: the app is disabled or not allowed this service or mode |
+| `ShareUnavailableException` (extends `ForbiddenException`, `shareStatus()`) | 403 `share_revoked`, `share_paused` or `share_expired`: `revoked`, `paused` or `expired` |
+| `AppLimitReachedException` (`limit()`, `resetAt()`, `retryAfter()`) | 429 `app_limit_reached`: the app used up a daily or monthly request or budget limit |
 | `NoKeyAvailableException` (`retryAfter()`, `isBusy()`) | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
 | `AllKeysBusyException` (extends `NoKeyAvailableException`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
 | `ServiceUnavailableException` (`retryAfter()`) | 503 `service_unavailable`: the provider's circuit breaker is open |
@@ -220,7 +300,7 @@ try {
 
 ## Keep secrets out of logs
 
-`Lease.toString()` and `Acnologia.toString()` never include the secret or the token, and the SDK logs nothing.
+`Lease.toString()`, `Acnologia.toString()` and `ForwardProxy.toString()` never include the secret or the token, and the SDK logs nothing. `forwardProxyUrl()` and `forwardProxyEnv()` return the token on purpose.
 
 ## Run the tests
 

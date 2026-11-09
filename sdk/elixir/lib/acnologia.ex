@@ -15,7 +15,18 @@ defmodule Acnologia do
   The bang variants return the value or raise the error.
   """
 
-  alias Acnologia.{Client, Error, HTTP, Lease, Me, Response}
+  alias Acnologia.{
+    Capability,
+    Client,
+    Error,
+    ForwardProxy,
+    Guide,
+    HTTP,
+    Lease,
+    Me,
+    Response,
+    Service
+  }
 
   @max_wait_sec 60
   @max_report_message 500
@@ -102,6 +113,8 @@ defmodule Acnologia do
       list that is not iodata is sent as JSON.
     * `:idempotency_key` sent as `Idempotency-Key`, so a retried call is
       answered once and replayed after
+    * `:no_cache` when true, sends `Cache-Control: no-cache` so a cached
+      answer is not used
     * `:timeout` in milliseconds, for this call only
 
   The provider's answer comes back as `{:ok, %Acnologia.Response{}}` even
@@ -120,30 +133,39 @@ defmodule Acnologia do
           URI.encode(to_string(service), &URI.char_unreserved?/1) <>
           "/" <> String.trim_leading(path, "/") <> query_string(opts[:query])
 
-      headers =
-        HTTP.to_headers(opts[:headers])
-        |> then(fn h -> if ctype, do: HTTP.put_headers(h, [{"content-type", ctype}]), else: h end)
-        |> then(fn h ->
-          case opts[:idempotency_key] do
-            nil -> h
-            key -> HTTP.put_headers(h, [{"idempotency-key", to_string(key)}])
-          end
-        end)
-        |> HTTP.put_headers(HTTP.auth_headers(c))
+      send_proxy(c, method, url, body, ctype, opts)
+    end
+  end
 
-      http_opts = if opts[:timeout], do: [timeout: opts[:timeout]], else: []
+  defp send_proxy(c, method, url, body, ctype, opts) do
+    headers =
+      HTTP.to_headers(opts[:headers])
+      |> then(fn h -> if ctype, do: HTTP.put_headers(h, [{"content-type", ctype}]), else: h end)
+      |> then(fn h ->
+        case opts[:idempotency_key] do
+          nil -> h
+          key -> HTTP.put_headers(h, [{"idempotency-key", to_string(key)}])
+        end
+      end)
+      |> then(fn h ->
+        if opts[:no_cache] == true,
+          do: HTTP.put_headers(h, [{"cache-control", "no-cache"}]),
+          else: h
+      end)
+      |> HTTP.put_headers(HTTP.auth_headers(c))
 
-      case HTTP.request(c, method, url, headers, body, http_opts) do
-        {:ok, {status, rh, rb}} ->
-          if acnologia_refusal?(status, rh, rb) do
-            {:error, Error.from_response(status, rh, rb, Client.secrets(c))}
-          else
-            {:ok, Response.new(status, rh, rb)}
-          end
+    http_opts = if opts[:timeout], do: [timeout: opts[:timeout]], else: []
 
-        {:error, _} = err ->
-          err
-      end
+    case HTTP.request(c, method, url, headers, body, http_opts) do
+      {:ok, {status, rh, rb}} ->
+        if acnologia_refusal?(status, rh, rb) do
+          {:error, Error.from_response(status, rh, rb, Client.secrets(c))}
+        else
+          {:ok, Response.new(status, rh, rb)}
+        end
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -456,6 +478,211 @@ defmodule Acnologia do
   @spec me!(client()) :: Me.t()
   def me!(c), do: unwrap(me(c))
 
+  # services and guides
+
+  @doc """
+  Lists the services this token may use (`GET /api/v1/services`), each with
+  its `guide_url`.
+  """
+  @spec services(client()) :: result([Service.t()])
+  def services(%Client{} = c) do
+    with {:ok, data} <- call(c, :get, "/api/v1/services", nil) do
+      {:ok, for(s <- List.wrap(data["services"]), is_map(s), do: Service.from_json(s))}
+    end
+  end
+
+  @doc "Like `services/1`, but returns the list or raises `Acnologia.Error`."
+  @spec services!(client()) :: [Service.t()]
+  def services!(c), do: unwrap(services(c))
+
+  @doc """
+  Returns the usage guide of a service the token may use
+  (`GET /api/v1/services/{slug}/guide`): its Markdown, whether it was
+  generated, and the structured guide. Fails with `:service_not_allowed`
+  for a service the token may not use.
+  """
+  @spec guide(client(), String.t()) :: result(Guide.t())
+  def guide(%Client{} = c, slug) do
+    with {:ok, data} <- call(c, :get, "/api/v1/services/#{seg(slug)}/guide", nil) do
+      {:ok, Guide.from_json(data)}
+    end
+  end
+
+  @doc "Like `guide/2`, but returns the guide or raises `Acnologia.Error`."
+  @spec guide!(client(), String.t()) :: Guide.t()
+  def guide!(c, slug), do: unwrap(guide(c, slug))
+
+  @doc """
+  Returns the usage guide of a service as Markdown, ready for an agent's
+  prompt (the same route with `Accept: text/markdown`).
+  """
+  @spec guide_markdown(client(), String.t()) :: result(String.t())
+  def guide_markdown(%Client{} = c, slug) do
+    text(c, "/api/v1/services/#{seg(slug)}/guide", "text/markdown", HTTP.auth_headers(c))
+  end
+
+  @doc "Like `guide_markdown/2`, but returns the Markdown or raises `Acnologia.Error`."
+  @spec guide_markdown!(client(), String.t()) :: String.t()
+  def guide_markdown!(c, slug), do: unwrap(guide_markdown(c, slug))
+
+  # capabilities
+
+  @doc """
+  Lists the capabilities this app may call (`GET /api/v1/capabilities`).
+  Empty for a share's token.
+  """
+  @spec capabilities(client()) :: result([Capability.t()])
+  def capabilities(%Client{} = c) do
+    with {:ok, data} <- call(c, :get, "/api/v1/capabilities", nil) do
+      {:ok, for(x <- List.wrap(data["capabilities"]), is_map(x), do: Capability.from_json(x))}
+    end
+  end
+
+  @doc "Like `capabilities/1`, but returns the list or raises `Acnologia.Error`."
+  @spec capabilities!(client()) :: [Capability.t()]
+  def capabilities!(c), do: unwrap(capabilities(c))
+
+  @doc """
+  Calls a capability: `POST /proxy/<slug>` with `params` (a map) as the JSON
+  body. Acnologia picks a provider, translates the params, rotates keys and
+  moves to the next provider when one fails.
+
+  Options:
+
+    * `:service` pins one provider (`?_service=<slug>`)
+    * `:raw` when true, returns the provider's own body (`?_raw=1`)
+    * `:headers`, `:idempotency_key`, `:no_cache` and `:timeout`, as for
+      `proxy/5`
+
+  Returns `{:ok, %Acnologia.Response{}}` with `service`, `capability` and
+  `tried` set, or `{:error, %Acnologia.Error{}}` such as `:bad_params`,
+  `:no_route` or `:no_route_worked`.
+  """
+  @spec capability(client(), String.t(), map(), keyword()) :: result(Response.t())
+  def capability(%Client{} = c, slug, params \\ %{}, opts \\ []) do
+    query =
+      []
+      |> then(fn q -> if opts[:raw] == true, do: [{"_raw", "1"} | q], else: q end)
+      |> then(fn q ->
+        if opts[:service] in [nil, ""], do: q, else: [{"_service", to_string(opts[:service])} | q]
+      end)
+
+    with {:ok, body, ctype} <- encode_json(params) do
+      url = c.base_url <> "/proxy/" <> seg(slug) <> query_string(query)
+      send_proxy(c, :post, url, body, ctype, opts)
+    end
+  end
+
+  @doc "Like `capability/4`, but returns the response or raises `Acnologia.Error`."
+  @spec capability!(client(), String.t(), map(), keyword()) :: Response.t()
+  def capability!(c, slug, params \\ %{}, opts \\ []),
+    do: unwrap(capability(c, slug, params, opts))
+
+  # forward proxy
+
+  @doc """
+  Returns how to use the forward proxy (`GET /api/v1/proxy`): its URL, the
+  CA to trust, the provider hosts it answers for and the environment to
+  set. Nothing in it holds the token.
+  """
+  @spec forward_proxy(client()) :: result(ForwardProxy.t())
+  def forward_proxy(%Client{} = c) do
+    with {:ok, data} <- call(c, :get, "/api/v1/proxy", nil) do
+      {:ok, ForwardProxy.from_json(data)}
+    end
+  end
+
+  @doc "Like `forward_proxy/1`, but returns the struct or raises `Acnologia.Error`."
+  @spec forward_proxy!(client()) :: ForwardProxy.t()
+  def forward_proxy!(c), do: unwrap(forward_proxy(c))
+
+  @doc """
+  Downloads the forward proxy's CA certificate as PEM text
+  (`GET /api/v1/proxy/ca.pem`). The route is public: the app token is not
+  sent.
+  """
+  @spec forward_proxy_ca(client()) :: result(String.t())
+  def forward_proxy_ca(%Client{} = c) do
+    text(c, "/api/v1/proxy/ca.pem", "application/x-pem-file", HTTP.public_headers(c))
+  end
+
+  @doc "Like `forward_proxy_ca/1`, but returns the PEM or raises `Acnologia.Error`."
+  @spec forward_proxy_ca!(client()) :: String.t()
+  def forward_proxy_ca!(c), do: unwrap(forward_proxy_ca(c))
+
+  @doc """
+  Downloads the forward proxy's CA certificate and writes it to `path`
+  (default `acnologia-ca.pem`). Returns `{:ok, path}`.
+  """
+  @spec save_forward_proxy_ca(client(), Path.t()) :: result(Path.t())
+  def save_forward_proxy_ca(%Client{} = c, path \\ "acnologia-ca.pem") do
+    with {:ok, pem} <- forward_proxy_ca(c) do
+      case File.write(path, pem) do
+        :ok ->
+          {:ok, path}
+
+        {:error, reason} ->
+          {:error,
+           Error.new(:invalid_argument, "could not write #{path}: #{:file.format_error(reason)}")}
+      end
+    end
+  end
+
+  @doc "Like `save_forward_proxy_ca/2`, but returns the path or raises `Acnologia.Error`."
+  @spec save_forward_proxy_ca!(client(), Path.t()) :: Path.t()
+  def save_forward_proxy_ca!(c, path \\ "acnologia-ca.pem"),
+    do: unwrap(save_forward_proxy_ca(c, path))
+
+  @doc """
+  Returns the forward proxy URL with user `app` and this client's token as
+  the password, percent escaped: `http://app:acn_...@host:8888`.
+
+  The result holds the app token. Never log it.
+  """
+  @spec forward_proxy_url(client()) :: result(String.t())
+  def forward_proxy_url(%Client{} = c) do
+    with {:ok, fp} <- forward_proxy(c), do: {:ok, proxy_url_with_token(c, fp)}
+  end
+
+  @doc "Like `forward_proxy_url/1`, but returns the URL or raises `Acnologia.Error`."
+  @spec forward_proxy_url!(client()) :: String.t()
+  def forward_proxy_url!(c), do: unwrap(forward_proxy_url(c))
+
+  @doc """
+  Returns the environment an app needs to send its own HTTP calls through
+  the forward proxy: `HTTPS_PROXY` and `HTTP_PROXY` (the
+  `forward_proxy_url/1`), `NODE_USE_ENV_PROXY` set to `1`, and
+  `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to
+  `ca_path`. Save the CA there with `save_forward_proxy_ca/2`.
+
+  The result holds the app token. Never log it.
+  """
+  @spec forward_proxy_env(client(), Path.t()) :: result(%{String.t() => String.t()})
+  def forward_proxy_env(%Client{} = c, ca_path \\ "acnologia-ca.pem") do
+    with {:ok, url} <- forward_proxy_url(c) do
+      {:ok,
+       %{
+         "HTTPS_PROXY" => url,
+         "HTTP_PROXY" => url,
+         "NODE_USE_ENV_PROXY" => "1",
+         "NODE_EXTRA_CA_CERTS" => ca_path,
+         "REQUESTS_CA_BUNDLE" => ca_path,
+         "SSL_CERT_FILE" => ca_path
+       }}
+    end
+  end
+
+  @doc "Like `forward_proxy_env/2`, but returns the map or raises `Acnologia.Error`."
+  @spec forward_proxy_env!(client(), Path.t()) :: %{String.t() => String.t()}
+  def forward_proxy_env!(c, ca_path \\ "acnologia-ca.pem"),
+    do: unwrap(forward_proxy_env(c, ca_path))
+
+  defp proxy_url_with_token(%Client{token: token}, %ForwardProxy{proxy_url: url}) do
+    u = URI.parse(url)
+    userinfo = "app:" <> URI.encode(token, &URI.char_unreserved?/1)
+    URI.to_string(%{u | userinfo: userinfo})
+  end
+
   # helpers
 
   @doc """
@@ -481,6 +708,16 @@ defmodule Acnologia do
       end
 
     String.slice(message, 0, @max_report_message)
+  end
+
+  # A GET whose answer is text, not JSON.
+  defp text(c, path, accept, headers) do
+    with {:ok, {status, rh, rb}} <-
+           HTTP.request(c, :get, c.base_url <> path, [{"accept", accept} | headers], nil) do
+      if status < 200 or status >= 300,
+        do: {:error, Error.from_response(status, rh, rb, Client.secrets(c))},
+        else: {:ok, rb}
+    end
   end
 
   defp call(c, method, path, body, opts \\ []) do

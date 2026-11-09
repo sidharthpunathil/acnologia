@@ -108,9 +108,10 @@ end)
 
 describe("me", function()
   it("GETs /api/v1/me with the app token", function()
-    local f = fake({ { body = { app = { id = 3, name = "bot" }, limit_hit = json.null, services = { { slug = "agi-labs" } } } } })
+    local f = fake({ { body = { app = { id = 3, name = "bot" }, limit_hit = json.null, services = { { slug = "agi-labs", available = 3 } } } } })
     local c = client(f)
     local me = assert(c:me())
+    assert.are.equal(3, me.services[1].available)
     assert.are.equal("bot", me.app.name)
     assert.are.equal("agi-labs", me.services[1].slug)
     local call = f.last()
@@ -585,5 +586,191 @@ describe("with_key", function()
     assert.is_false(called)
     assert.are.equal(5, f.body(1).wait_sec)
     assert.is_true(f.body(1).exclusive)
+  end)
+end)
+
+describe("0.2.0 surface", function()
+  local FORWARD = {
+    proxy_url = "http://acn.test:8888",
+    proxy_url_with_token = "http://app:%3Capp%20token%3E@acn.test:8888",
+    ca_url = "http://acn.test/api/v1/proxy/ca.pem",
+    ca_fingerprint = "ab:cd",
+    passthrough = true,
+    hosts = { { host = "api.openai.com", service = "openai", name = "OpenAI", path = "/v1" } },
+    env = { NODE_USE_ENV_PROXY = "1" },
+    service_header = "X-Acnologia-Service",
+  }
+
+  it("is version 0.2.0", function()
+    assert.are.equal("0.2.0", acnologia.VERSION)
+    assert.are.equal("acnologia-lua/0.2.0", acnologia.USER_AGENT)
+  end)
+
+  it("services carry guide_url", function()
+    local f = fake({ { body = { services = { { slug = "agi-labs", guide_url = "http://acn.test/api/v1/services/agi-labs/guide" } } } } })
+    local list = assert(client(f):services())
+    assert.are.equal("http://acn.test/api/v1/services/agi-labs/guide", list[1].guide_url)
+  end)
+
+  it("guide returns markdown, generated and the structured guide", function()
+    local f = fake({ { body = { markdown = "# AGI\n", generated = true, guide = { endpoints = { { path = "/v1/chat" } } } } } })
+    local g = assert(client(f):guide("agi labs"))
+    local call = f.last()
+    assert.are.equal("GET", call.method)
+    assert.are.equal("http://acn.test/api/v1/services/agi%20labs/guide", call.url)
+    assert.are.equal("application/json", call.headers.Accept)
+    assert.are.equal("Bearer " .. TOKEN, call.headers.Authorization)
+    assert.are.equal("# AGI\n", g.markdown)
+    assert.is_true(g.generated)
+    assert.are.equal("/v1/chat", g.guide.endpoints[1].path)
+  end)
+
+  it("guide_markdown asks for text/markdown and returns the string", function()
+    local f = fake({ { headers = { ["Content-Type"] = "text/markdown" }, body = "# AGI\n" },
+      { status = 403, body = { error = { code = "service_not_allowed", message = "no" } } } })
+    local c = client(f)
+    assert.are.equal("# AGI\n", assert(c:guide_markdown("agi-labs")))
+    assert.are.equal("text/markdown", f.last().headers.Accept)
+    assert.are.equal("Bearer " .. TOKEN, f.last().headers.Authorization)
+    local v, err = c:guide_markdown("maps")
+    assert.is_nil(v)
+    assert.are.equal("service_not_allowed", err.code)
+  end)
+
+  it("lists capabilities", function()
+    local f = fake({ { body = { capabilities = { {
+      slug = "web-search", name = "Web search", description = "Search", strategy = "fallback",
+      params = { query = { type = "string" } }, routes = { { service = "serpapi", mapped = true } },
+      url = "http://acn.test/proxy/web-search",
+    } } } } })
+    local caps = assert(client(f):capabilities())
+    assert.are.equal("GET", f.last().method)
+    assert.are.equal("http://acn.test/api/v1/capabilities", f.last().url)
+    assert.are.equal("Bearer " .. TOKEN, f.last().headers.Authorization)
+    assert.are.equal("web-search", caps[1].slug)
+    assert.are.equal("string", caps[1].params.query.type)
+    assert.are.equal("serpapi", caps[1].routes[1].service)
+    assert.is_true(caps[1].routes[1].mapped)
+  end)
+
+  it("calls a capability with params, service, raw and the proxy options", function()
+    local f = fake({
+      { headers = { ["X-Acnologia-Capability"] = "web-search", ["X-Acnologia-Service"] = "tavily",
+        ["X-Acnologia-Tried"] = "serpapi=429, tavily=200", ["X-Acnologia-Attempts"] = "2" }, body = '{"items":[]}' },
+      { headers = { ["X-Acnologia-Service"] = "serpapi" }, body = "{}" },
+      { status = 502, headers = { ["X-Acnologia-Capability"] = "web-search", ["X-Acnologia-Tried"] = "serpapi=500" },
+        body = { error = { code = "no_route_worked", message = "every route failed" } } },
+    })
+    local c = client(f)
+    local resp = assert(c:capability("web-search", { query = "coffee" },
+      { service = "tavily", raw = true, idempotency_key = "k1", no_cache = true }))
+    local call = f.last()
+    assert.are.equal("POST", call.method)
+    assert.are.equal("http://acn.test/proxy/web-search?_raw=1&_service=tavily", call.url)
+    assert.are.equal('{"query":"coffee"}', call.body)
+    assert.are.equal("application/json", call.headers["Content-Type"])
+    assert.are.equal("Bearer " .. TOKEN, call.headers.Authorization)
+    assert.are.equal("k1", call.headers["Idempotency-Key"])
+    assert.are.equal("no-cache", call.headers["Cache-Control"])
+    assert.are.equal("web-search", resp.acnologia.capability)
+    assert.are.equal("tavily", resp.acnologia.service)
+    assert.are.equal(2, resp.acnologia.attempts)
+    assert.are.same({ { service = "serpapi", status = 429 }, { service = "tavily", status = 200 } }, resp.acnologia.tried)
+
+    assert(c:capability("web-search"))
+    assert.are.equal("http://acn.test/proxy/web-search", f.last().url)
+    assert.are.equal("{}", f.last().body)
+    assert.is_nil(f.last().headers["Cache-Control"])
+
+    local v, err = c:capability("web-search", { query = "x" })
+    assert.is_nil(v)
+    assert.are.equal("no_route_worked", err.code)
+    assert.are.same({ { service = "serpapi", status = 500 } }, err.response.acnologia.tried)
+  end)
+
+  it("sends Cache-Control: no-cache on proxy calls with no_cache", function()
+    local f = fake({ { headers = { ["X-Acnologia-Service"] = "agi-labs", ["X-Acnologia-Cache"] = "bypass" }, body = "{}" },
+      { headers = { ["X-Acnologia-Service"] = "agi-labs" }, body = "{}" } })
+    local c = client(f)
+    local resp = assert(c:get("agi-labs", "/v1/models", { no_cache = true }))
+    assert.are.equal("no-cache", f.last().headers["Cache-Control"])
+    assert.are.equal("bypass", resp.acnologia.cache)
+    assert.is_nil(resp.acnologia.capability)
+    assert.are.same({}, resp.acnologia.tried)
+    assert(c:get("agi-labs", "/v1/models"))
+    assert.is_nil(f.last().headers["Cache-Control"])
+  end)
+
+  it("reads the forward proxy setup", function()
+    local f = fake({ { body = FORWARD } })
+    local fp = assert(client(f):forward_proxy())
+    assert.are.equal("GET", f.last().method)
+    assert.are.equal("http://acn.test/api/v1/proxy", f.last().url)
+    assert.are.equal("Bearer " .. TOKEN, f.last().headers.Authorization)
+    assert.are.equal("http://acn.test:8888", fp.proxy_url)
+    assert.is_true(fp.passthrough)
+    assert.are.equal("api.openai.com", fp.hosts[1].host)
+    assert.are.equal("/v1", fp.hosts[1].path)
+    assert.are.equal("X-Acnologia-Service", fp.service_header)
+    assert.is_nil(assert(json.encode(fp)):find(TOKEN, 1, true))
+  end)
+
+  it("builds forward_proxy_url and forward_proxy_env with the escaped token", function()
+    local f = fake({ { body = FORWARD }, { body = FORWARD }, { body = FORWARD } })
+    local c = client(f, { token = "acn_a/b+c" })
+    assert.are.equal("http://app:acn_a%2Fb%2Bc@acn.test:8888", assert(c:forward_proxy_url()))
+    local env = assert(c:forward_proxy_env())
+    local url = "http://app:acn_a%2Fb%2Bc@acn.test:8888"
+    assert.are.same({
+      HTTPS_PROXY = url, HTTP_PROXY = url, NODE_USE_ENV_PROXY = "1",
+      NODE_EXTRA_CA_CERTS = "acnologia-ca.pem", REQUESTS_CA_BUNDLE = "acnologia-ca.pem", SSL_CERT_FILE = "acnologia-ca.pem",
+    }, env)
+    assert.are.equal("/etc/acn.pem", assert(c:forward_proxy_env("/etc/acn.pem")).SSL_CERT_FILE)
+  end)
+
+  it("downloads the CA without a token and saves it", function()
+    local pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+    local f = fake({ { body = pem }, { body = pem }, { status = 500, body = { error = { code = "proxy_ca", message = "no ca" } } } })
+    local c = client(f, { access_password = "gatepw" })
+    assert.are.equal(pem, assert(c:forward_proxy_ca()))
+    local call = f.last()
+    assert.are.equal("GET", call.method)
+    assert.are.equal("http://acn.test/api/v1/proxy/ca.pem", call.url)
+    assert.is_nil(call.headers.Authorization)
+    assert.are.equal("gatepw", call.headers["X-Acnologia-Access"])
+    local path = os.tmpname()
+    assert.are.equal(path, assert(c:save_forward_proxy_ca(path)))
+    local fh = assert(io.open(path, "rb"))
+    assert.are.equal(pem, fh:read("*a"))
+    fh:close()
+    os.remove(path)
+    local v, err = c:forward_proxy_ca()
+    assert.is_nil(v)
+    assert.are.equal("proxy_ca", err.code)
+  end)
+
+  it("flags app_limit_reached and share errors", function()
+    local f = fake({
+      { status = 429, body = { error = { code = "app_limit_reached", message = "m" }, limit = "daily_budget", reset_at = "2026-11-05T00:00:00Z", retry_after_sec = 30 } },
+      { status = 403, headers = { ["X-Acnologia-Share"] = "paused" }, body = { error = { code = "share_paused", message = "p" } } },
+      { status = 403, headers = { ["X-Acnologia-Share"] = "expired" }, body = "" },
+      { status = 403, body = { error = { code = "service_not_allowed", message = "no" } } },
+    })
+    local c = client(f)
+    local _, err = c:capabilities()
+    assert.is_true(err.app_limit)
+    assert.are.equal("daily_budget", err.limit)
+    assert.are.equal(30, err.retry_after)
+    assert.is_false(err.share_unavailable)
+    _, err = c:forward_proxy()
+    assert.is_true(err.share_unavailable)
+    assert.are.equal("paused", err.share_status)
+    assert.is_false(err.app_limit)
+    _, err = c:me()
+    assert.are.equal("share_expired", err.code)
+    assert.are.equal("expired", err.share_status)
+    _, err = c:me()
+    assert.is_false(err.share_unavailable)
+    assert.is_nil(err.share_status)
   end)
 end)

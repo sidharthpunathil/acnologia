@@ -3,7 +3,9 @@
 
 #include <acnologia/acnologia.hpp>
 
+#include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -1005,4 +1007,250 @@ TEST_CASE("report scrubs the secret from a message you write yourself") {
     CHECK(msg.find(l.secret()) == std::string::npos);
     CHECK(msg.rfind("failed with [key] ", 0) == 0);
     CHECK(msg.size() == 500);
+}
+
+TEST_CASE("guide_markdown and guide_details read the usage guide") {
+    Fixture f([](const acn::HttpRequest& r) {
+        if (header(r, "Accept") == "text/markdown") {
+            return acn::HttpResponse{200, {{"Content-Type", "text/markdown"}}, "# AGI Labs\n"};
+        }
+        if (r.url.find("/services/secret/") != std::string::npos) {
+            return error_reply(403, "service_not_allowed", "not yours");
+        }
+        return reply(200, {{"markdown", "# AGI Labs\n"},
+                           {"generated", true},
+                           {"guide", {{"endpoints", json::array({{{"path", "/v1/chat"}}})}}}});
+    });
+    CHECK(f.client.guide_markdown("agi-labs") == "# AGI Labs\n");
+    CHECK(f.fake->requests[0].method == "GET");
+    CHECK(header(f.fake->requests[0], "Authorization") == "Bearer acn_test_token");
+
+    acn::Guide g = f.client.guide_details("agi-labs");
+    CHECK(f.fake->path(1) == "/api/v1/services/agi-labs/guide");
+    CHECK(header(f.fake->requests[1], "Accept") == "application/json");
+    CHECK(g.markdown == "# AGI Labs\n");
+    CHECK(g.generated);
+    CHECK(json::parse(g.guide_json) == json{{"endpoints", json::array({{{"path", "/v1/chat"}}})}});
+    CHECK_THROWS_AS(f.client.guide_details("secret"), acn::Forbidden);
+}
+
+TEST_CASE("capabilities lists the capabilities with their params and routes") {
+    Fixture f([](const acn::HttpRequest&) {
+        return reply(200, {{"capabilities",
+                            {{{"slug", "maps-search"},
+                              {"name", "Maps search"},
+                              {"description", "Find places"},
+                              {"strategy", "priority"},
+                              {"params", {{"query", {{"type", "string"}, {"required", true}}}}},
+                              {"routes", {{{"service", "omkar-cloud"}, {"mapped", true}},
+                                          {{"service", "serpapi"}, {"mapped", false}}}},
+                              {"url", "http://acn.test/proxy/maps-search"}}}}});
+    });
+    auto caps = f.client.capabilities();
+    CHECK(f.fake->requests[0].method == "GET");
+    CHECK(f.fake->path(0) == "/api/v1/capabilities");
+    REQUIRE(caps.size() == 1);
+    CHECK(caps[0].slug == "maps-search");
+    CHECK(caps[0].name == "Maps search");
+    CHECK(caps[0].description == "Find places");
+    CHECK(caps[0].strategy == "priority");
+    CHECK(json::parse(caps[0].params_json)["query"]["required"] == true);
+    REQUIRE(caps[0].routes.size() == 2);
+    CHECK(caps[0].routes[0].service == "omkar-cloud");
+    CHECK(caps[0].routes[0].mapped);
+    CHECK_FALSE(caps[0].routes[1].mapped);
+    CHECK(caps[0].url == "http://acn.test/proxy/maps-search");
+}
+
+TEST_CASE("capability posts the params and reads the capability headers") {
+    Fixture f([](const acn::HttpRequest&) {
+        return acn::HttpResponse{200,
+                                 {{"Content-Type", "application/json"},
+                                  {"X-Acnologia-Capability", "maps-search"},
+                                  {"X-Acnologia-Service", "serpapi"},
+                                  {"X-Acnologia-Tried", "omkar-cloud=503, serpapi=200"},
+                                  {"X-Acnologia-Key-Id", "9"},
+                                  {"X-Acnologia-Attempts", "1"},
+                                  {"X-Acnologia-Cache", "miss"}},
+                                 R"({"items":[],"count":0})"};
+    });
+    acn::CapabilityOptions o;
+    o.service = "serpapi";
+    o.raw = true;
+    o.idempotency_key = "cap-1";
+    o.no_cache = true;
+    auto resp = f.client.capability("maps-search", R"({"query":"cafes"})", o);
+    const auto& r = f.fake->requests[0];
+    CHECK(r.method == "POST");
+    CHECK(f.fake->path(0) == "/proxy/maps-search?_service=serpapi&_raw=1");
+    CHECK(r.body == R"({"query":"cafes"})");
+    CHECK(header(r, "Content-Type") == "application/json");
+    CHECK(header(r, "Idempotency-Key") == "cap-1");
+    CHECK(header(r, "Cache-Control") == "no-cache");
+    CHECK(header(r, "Authorization") == "Bearer acn_test_token");
+    CHECK(resp.capability() == "maps-search");
+    CHECK(resp.service() == "serpapi");
+    CHECK(resp.cache() == "miss");
+    CHECK(resp.key_id() == 9);
+    CHECK(resp.attempts() == 1);
+    auto tried = resp.tried();
+    REQUIRE(tried.size() == 2);
+    CHECK(tried[0].service == "omkar-cloud");
+    CHECK(tried[0].status == 503);
+    CHECK(tried[1].service == "serpapi");
+    CHECK(tried[1].status == 200);
+
+    f.client.capability("maps-search");
+    CHECK(f.fake->path(1) == "/proxy/maps-search");
+    CHECK(f.fake->requests[1].body == "{}");
+    CHECK(header(f.fake->requests[1], "Cache-Control").empty());
+    CHECK(header(f.fake->requests[1], "Idempotency-Key").empty());
+}
+
+TEST_CASE("capability errors from Acnologia are recognized") {
+    acn::HttpResponse next = error_reply(503, "no_route", "none");
+    auto fake = std::make_shared<FakeTransport>([&](const acn::HttpRequest&) { return next; });
+    acn::ClientOptions o;
+    o.transport = fake;
+    o.throw_proxy_errors = true;
+    acn::Client strict("http://acn.test", "acn_x", o);
+    try {
+        strict.capability("maps-search", "{}");
+        FAIL("expected ApiError");
+    } catch (const acn::ApiError& e) {
+        CHECK(e.code() == "no_route");
+        CHECK(e.status() == 503);
+    }
+    next = error_reply(400, "bad_params", "query is required");
+    CHECK_THROWS_AS(strict.capability("maps-search", "{}"), acn::ApiError);
+    next = error_reply(503, "no_route_worked", "all failed");
+    CHECK(acn::is_acnologia_error(next));
+}
+
+TEST_CASE("request options send Idempotency-Key and Cache-Control and responses expose the headers") {
+    Fixture f([](const acn::HttpRequest&) {
+        return acn::HttpResponse{200,
+                                 {{"X-Acnologia-Key-Id", "12"},
+                                  {"X-Acnologia-Attempts", "2"},
+                                  {"X-Acnologia-Service", "agi-labs"},
+                                  {"X-Acnologia-Cache", "replay"},
+                                  {"Idempotent-Replayed", "true"}},
+                                 "ok"};
+    });
+    acn::RequestOptions ro;
+    ro.idempotency_key = "order-42";
+    ro.no_cache = true;
+    auto resp = f.client.proxy("agi-labs").request("post", "/v1/chat", "{}", {{"Cache-Control", "max-age=60"}}, {}, ro);
+    const auto& r = f.fake->requests[0];
+    CHECK(r.method == "POST");
+    CHECK(header(r, "Idempotency-Key") == "order-42");
+    CHECK(header(r, "Cache-Control") == "no-cache");
+    int cache_headers = 0;
+    for (const auto& h : r.headers) cache_headers += h.first == "Cache-Control";
+    CHECK(cache_headers == 1);
+    CHECK(resp.key_id() == 12);
+    CHECK(resp.attempts() == 2);
+    CHECK(resp.service() == "agi-labs");
+    CHECK(resp.cache() == "replay");
+    CHECK(resp.replayed());
+    CHECK(resp.capability().empty());
+    CHECK(resp.tried().empty());
+
+    acn::HttpResponse bare{200, {}, ""};
+    CHECK_FALSE(bare.key_id().has_value());
+    CHECK(bare.attempts() == 0);
+    CHECK_FALSE(bare.replayed());
+
+    acn::RequestOptions too_long;
+    too_long.idempotency_key = std::string(201, 'k');
+    CHECK_THROWS_AS(f.client.proxy("agi-labs").request("POST", "/x", "{}", {}, {}, too_long), std::invalid_argument);
+}
+
+TEST_CASE("parse_tried reads service=status pairs") {
+    auto t = acn::parse_tried("a=200,b=503 , c");
+    REQUIRE(t.size() == 3);
+    CHECK(t[0].service == "a");
+    CHECK(t[0].status == 200);
+    CHECK(t[1].service == "b");
+    CHECK(t[1].status == 503);
+    CHECK(t[2].service == "c");
+    CHECK(t[2].status == 0);
+    CHECK(acn::parse_tried("").empty());
+}
+
+TEST_CASE("forward proxy setup, CA, URL and environment") {
+    const std::string pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+    Fixture f([&](const acn::HttpRequest& r) {
+        if (r.url.find("/ca.pem") != std::string::npos) {
+            return acn::HttpResponse{200, {{"Content-Type", "application/x-pem-file"}}, pem};
+        }
+        return reply(200, {{"proxy_url", "http://acn.test:8888"},
+                           {"proxy_url_with_token", "http://app:%3Capp%20token%3E@acn.test:8888"},
+                           {"ca_url", "http://acn.test/api/v1/proxy/ca.pem"},
+                           {"ca_fingerprint", "AB:CD"},
+                           {"passthrough", true},
+                           {"hosts", {{{"host", "serpapi.com"}, {"service", "serpapi"}, {"name", "SerpAPI"}, {"path", ""}}}},
+                           {"env", {{"HTTPS_PROXY", "http://app:%3Capp%20token%3E@acn.test:8888"}, {"NODE_USE_ENV_PROXY", "1"}}},
+                           {"service_header", "X-Acnologia-Service"}});
+    });
+    acn::ForwardProxy fp = f.client.forward_proxy();
+    CHECK(f.fake->path(0) == "/api/v1/proxy");
+    CHECK(f.fake->requests[0].method == "GET");
+    CHECK(header(f.fake->requests[0], "Authorization") == "Bearer acn_test_token");
+    CHECK(fp.proxy_url == "http://acn.test:8888");
+    CHECK(fp.proxy_url_with_token == "http://app:%3Capp%20token%3E@acn.test:8888");
+    CHECK(fp.ca_url == "http://acn.test/api/v1/proxy/ca.pem");
+    CHECK(fp.ca_fingerprint == "AB:CD");
+    CHECK(fp.passthrough);
+    REQUIRE(fp.hosts.size() == 1);
+    CHECK(fp.hosts[0].host == "serpapi.com");
+    CHECK(fp.hosts[0].service == "serpapi");
+    CHECK(fp.hosts[0].name == "SerpAPI");
+    CHECK(fp.env.at("NODE_USE_ENV_PROXY") == "1");
+    CHECK(fp.service_header == "X-Acnologia-Service");
+    CHECK(acn::to_string(fp).find("acn_test_token") == std::string::npos);
+
+    CHECK(f.client.forward_proxy_ca() == pem);
+    const auto& ca = f.fake->requests[1];
+    CHECK(f.fake->path(1) == "/api/v1/proxy/ca.pem");
+    CHECK(header(ca, "Authorization").empty());
+
+    const std::string file = "acn-cpp-test-ca.pem";
+    f.client.save_forward_proxy_ca(file);
+    std::ifstream in(file, std::ios::binary);
+    std::stringstream saved;
+    saved << in.rdbuf();
+    in.close();
+    CHECK(saved.str() == pem);
+    std::remove(file.c_str());
+
+    Fixture g([](const acn::HttpRequest&) {
+        return reply(200, {{"proxy_url", "http://acn.test:8888"}});
+    });
+    acn::ClientOptions o;
+    o.transport = g.fake;
+    acn::Client odd("http://acn.test", "acn_a+b/c=", o);
+    CHECK(odd.forward_proxy_url() == "http://app:acn_a%2Bb%2Fc%3D@acn.test:8888");
+    auto env = odd.forward_proxy_env();
+    CHECK(env.size() == 6);
+    CHECK(env.at("HTTPS_PROXY") == "http://app:acn_a%2Bb%2Fc%3D@acn.test:8888");
+    CHECK(env.at("HTTP_PROXY") == env.at("HTTPS_PROXY"));
+    CHECK(env.at("NODE_USE_ENV_PROXY") == "1");
+    CHECK(env.at("NODE_EXTRA_CA_CERTS") == "acnologia-ca.pem");
+    CHECK(env.at("REQUESTS_CA_BUNDLE") == "acnologia-ca.pem");
+    CHECK(env.at("SSL_CERT_FILE") == "acnologia-ca.pem");
+    CHECK(odd.forward_proxy_env("/etc/acn.pem").at("SSL_CERT_FILE") == "/etc/acn.pem");
+}
+
+TEST_CASE("ShareUnavailable carries the share status") {
+    Fixture f([](const acn::HttpRequest&) {
+        return error_reply(403, "share_paused", "paused", json::object(), {{"X-Acnologia-Share", "paused"}});
+    });
+    try {
+        f.client.me();
+        FAIL("expected ShareUnavailable");
+    } catch (const acn::ShareUnavailable& e) {
+        CHECK(e.share_status() == "paused");
+        CHECK(e.status() == 403);
+    }
 }

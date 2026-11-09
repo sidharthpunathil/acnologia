@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Acnologia;
@@ -54,6 +55,10 @@ public sealed record Service
     /// <summary>Where the provider expects the key.</summary>
     [JsonPropertyName("auth")]
     public AuthSpec Auth { get; init; } = new();
+
+    /// <summary>Where the service's usage guide is, <c>{baseUrl}/api/v1/services/{slug}/guide</c>.</summary>
+    [JsonPropertyName("guide_url")]
+    public string? GuideUrl { get; init; }
 }
 
 /// <summary>Optional parameters for <see cref="AcnologiaClient.LeaseAsync"/>.</summary>
@@ -152,4 +157,386 @@ internal static class OutcomeWire
         Outcome.Banned => "banned",
         _ => throw new ArgumentOutOfRangeException(nameof(o), o, "unknown outcome"),
     };
+}
+
+/// <summary>The token's own access, from <c>GET /api/v1/me</c>.</summary>
+public sealed record Me
+{
+    /// <summary>The app (for a share's token, named after the share).</summary>
+    [JsonPropertyName("app")]
+    public MeApp App { get; init; } = new();
+
+    /// <summary>The app's limits; each is null when not set.</summary>
+    [JsonPropertyName("limits")]
+    public AppLimits Limits { get; init; } = new();
+
+    /// <summary>Use today and this month.</summary>
+    [JsonPropertyName("usage")]
+    public AppUsage Usage { get; init; } = new();
+
+    /// <summary>The limit the app has reached, or null.</summary>
+    [JsonPropertyName("limit_hit")]
+    public LimitHit? LimitHit { get; init; }
+
+    /// <summary>The services the token may use.</summary>
+    [JsonPropertyName("services")]
+    public IReadOnlyList<MeService> Services { get; init; } = Array.Empty<MeService>();
+
+    /// <summary>Null for an ordinary app; the share's details for a share's token.</summary>
+    [JsonPropertyName("share")]
+    public ShareInfo? Share { get; init; }
+}
+
+/// <summary>The app in <see cref="Me"/>.</summary>
+public sealed record MeApp
+{
+    /// <summary>App id.</summary>
+    [JsonPropertyName("id")]
+    public long Id { get; init; }
+
+    /// <summary>App name.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+}
+
+/// <summary>An app's request and budget limits. Null means no limit.</summary>
+public sealed record AppLimits
+{
+    /// <summary>Requests per day.</summary>
+    [JsonPropertyName("daily_requests")]
+    public long? DailyRequests { get; init; }
+
+    /// <summary>Requests per month.</summary>
+    [JsonPropertyName("monthly_requests")]
+    public long? MonthlyRequests { get; init; }
+
+    /// <summary>Spend per day.</summary>
+    [JsonPropertyName("daily_budget")]
+    public double? DailyBudget { get; init; }
+
+    /// <summary>Spend per month.</summary>
+    [JsonPropertyName("monthly_budget")]
+    public double? MonthlyBudget { get; init; }
+}
+
+/// <summary>An app's use, in <see cref="Me"/>.</summary>
+public sealed record AppUsage
+{
+    /// <summary>Requests today.</summary>
+    [JsonPropertyName("today_requests")]
+    public long TodayRequests { get; init; }
+
+    /// <summary>Cost today.</summary>
+    [JsonPropertyName("today_cost")]
+    public double TodayCost { get; init; }
+
+    /// <summary>Requests this month.</summary>
+    [JsonPropertyName("month_requests")]
+    public long MonthRequests { get; init; }
+
+    /// <summary>Cost this month.</summary>
+    [JsonPropertyName("month_cost")]
+    public double MonthCost { get; init; }
+
+    /// <summary>When the app last made a request.</summary>
+    [JsonPropertyName("last_used_at")]
+    public DateTimeOffset? LastUsedAt { get; init; }
+
+    /// <summary>The limit the app has reached, or null.</summary>
+    [JsonPropertyName("limit_hit")]
+    public LimitHit? LimitHit { get; init; }
+}
+
+/// <summary>A limit the app reached and when it resets.</summary>
+public sealed record LimitHit
+{
+    /// <summary><c>daily_requests</c>, <c>monthly_requests</c>, <c>daily_budget</c> or <c>monthly_budget</c>.</summary>
+    [JsonPropertyName("limit")]
+    public string Limit { get; init; } = "";
+
+    /// <summary>When the limit resets.</summary>
+    [JsonPropertyName("reset_at")]
+    public DateTimeOffset? ResetAt { get; init; }
+}
+
+/// <summary>A service in <see cref="Me"/>.</summary>
+public sealed record MeService
+{
+    /// <summary>Service slug.</summary>
+    [JsonPropertyName("slug")]
+    public string Slug { get; init; } = "";
+
+    /// <summary>Display name.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+
+    /// <summary>Provider id.</summary>
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = "";
+
+    /// <summary>Category.</summary>
+    [JsonPropertyName("category")]
+    public string Category { get; init; } = "";
+
+    /// <summary>
+    /// Keys free right now for a share's token; 1 or 0 for an ordinary app, which never learns pool sizes.
+    /// </summary>
+    [JsonPropertyName("available")]
+    public int Available { get; init; }
+
+    /// <summary>The logo as a <c>data:</c> URI, or null.</summary>
+    [JsonPropertyName("logo_url")]
+    public string? LogoUrl { get; init; }
+}
+
+/// <summary>A share's details, in <see cref="Me"/> for a share's token.</summary>
+public sealed record ShareInfo
+{
+    /// <summary>Share id.</summary>
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = "";
+
+    /// <summary>Share name.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+
+    /// <summary>Who shared it.</summary>
+    [JsonPropertyName("owner_name")]
+    public string OwnerName { get; init; } = "";
+
+    /// <summary>Who it was shared with.</summary>
+    [JsonPropertyName("recipient")]
+    public string Recipient { get; init; } = "";
+
+    /// <summary>The owner's label for it.</summary>
+    [JsonPropertyName("label")]
+    public string Label { get; init; } = "";
+
+    /// <summary><c>active</c>, <c>paused</c>, <c>expired</c> or <c>revoked</c>.</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+
+    /// <summary>How the share may be used, for example <c>proxy</c>.</summary>
+    [JsonPropertyName("mode")]
+    public string Mode { get; init; } = "";
+
+    /// <summary>When the share ends, or null.</summary>
+    [JsonPropertyName("ends_at")]
+    public DateTimeOffset? EndsAt { get; init; }
+}
+
+/// <summary>A service's usage guide, from <c>GET /api/v1/services/{slug}/guide</c>.</summary>
+public sealed record Guide
+{
+    /// <summary>The guide as Markdown.</summary>
+    [JsonPropertyName("markdown")]
+    public string Markdown { get; init; } = "";
+
+    /// <summary>True when the server generated it rather than an admin writing it.</summary>
+    [JsonPropertyName("generated")]
+    public bool Generated { get; init; }
+
+    /// <summary>The structured guide, as raw JSON.</summary>
+    [JsonPropertyName("guide")]
+    public JsonElement Content { get; init; }
+}
+
+/// <summary>A capability, from <c>GET /api/v1/capabilities</c>: one call served by several services.</summary>
+public sealed record Capability
+{
+    /// <summary>Capability slug, callable at <c>/proxy/{slug}</c>.</summary>
+    [JsonPropertyName("slug")]
+    public string Slug { get; init; } = "";
+
+    /// <summary>Display name.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+
+    /// <summary>What it does.</summary>
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = "";
+
+    /// <summary>How a route is picked, for example <c>priority</c>.</summary>
+    [JsonPropertyName("strategy")]
+    public string? Strategy { get; init; }
+
+    /// <summary>The parameters it takes, as raw JSON.</summary>
+    [JsonPropertyName("params")]
+    public JsonElement Params { get; init; }
+
+    /// <summary>The services that can serve it.</summary>
+    [JsonPropertyName("routes")]
+    public IReadOnlyList<CapabilityRoute> Routes { get; init; } = Array.Empty<CapabilityRoute>();
+
+    /// <summary>The full URL to POST params to.</summary>
+    [JsonPropertyName("url")]
+    public string Url { get; init; } = "";
+}
+
+/// <summary>One service that can serve a <see cref="Capability"/>.</summary>
+public sealed record CapabilityRoute
+{
+    /// <summary>Service slug.</summary>
+    [JsonPropertyName("service")]
+    public string Service { get; init; } = "";
+
+    /// <summary>True when the answer is mapped to the capability's common shape.</summary>
+    [JsonPropertyName("mapped")]
+    public bool Mapped { get; init; }
+}
+
+/// <summary>
+/// Per call options for a proxy request. Use with the <see cref="AcnologiaProxy"/> overloads, or
+/// <see cref="ApplyTo"/> on a request sent through <see cref="AcnologiaProxyHandler"/>.
+/// </summary>
+public record ProxyRequestOptions
+{
+    /// <summary>Sent as <c>Idempotency-Key</c>: a retry with the same key replays the first answer.</summary>
+    public string? IdempotencyKey { get; init; }
+
+    /// <summary>Sends <c>Cache-Control: no-cache</c> so the answer is not served from Acnologia's cache.</summary>
+    public bool NoCache { get; init; }
+
+    /// <summary>Adds the headers these options stand for to <paramref name="request"/>.</summary>
+    public void ApplyTo(HttpRequestMessage request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!string.IsNullOrEmpty(IdempotencyKey))
+        {
+            request.Headers.Remove("Idempotency-Key");
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", IdempotencyKey);
+        }
+        if (NoCache) request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+    }
+}
+
+/// <summary>Options for <see cref="AcnologiaClient.CapabilityAsync"/>.</summary>
+public sealed record CapabilityOptions : ProxyRequestOptions
+{
+    /// <summary>Use only this service's route, sent as <c>?_service=</c>.</summary>
+    public string? Service { get; init; }
+
+    /// <summary>Return the provider's body unmapped, sent as <c>?_raw=1</c>.</summary>
+    public bool Raw { get; init; }
+}
+
+/// <summary>One route a capability call tried, from <c>X-Acnologia-Tried</c>.</summary>
+/// <param name="Service">The service slug.</param>
+/// <param name="Status">The HTTP status it answered.</param>
+public sealed record TriedRoute(string Service, int Status);
+
+/// <summary>
+/// The Acnologia headers of a proxy response. Get it with
+/// <see cref="ProxyResponseExtensions.GetProxyInfo"/> or <see cref="From"/>.
+/// </summary>
+public sealed record ProxyResponseInfo
+{
+    /// <summary>The pool key used (<c>X-Acnologia-Key-Id</c>); null for a share's token.</summary>
+    public long? KeyId { get; init; }
+
+    /// <summary>How many keys were tried (<c>X-Acnologia-Attempts</c>).</summary>
+    public int? Attempts { get; init; }
+
+    /// <summary>The service that answered (<c>X-Acnologia-Service</c>).</summary>
+    public string? Service { get; init; }
+
+    /// <summary><c>hit</c>, <c>miss</c> and so on (<c>X-Acnologia-Cache</c>), when caching applies.</summary>
+    public string? Cache { get; init; }
+
+    /// <summary>True when the answer replays an earlier one with the same idempotency key.</summary>
+    public bool Replayed { get; init; }
+
+    /// <summary>The capability that served the call (<c>X-Acnologia-Capability</c>).</summary>
+    public string? Capability { get; init; }
+
+    /// <summary>The routes a capability call tried, in order (<c>X-Acnologia-Tried</c>).</summary>
+    public IReadOnlyList<TriedRoute> Tried { get; init; } = Array.Empty<TriedRoute>();
+
+    /// <summary>Reads the Acnologia headers of <paramref name="response"/>.</summary>
+    public static ProxyResponseInfo From(HttpResponseMessage response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        string? H(string name) =>
+            response.Headers.TryGetValues(name, out var v) ? string.Join(",", v).Trim() is { Length: > 0 } s ? s : null : null;
+        var tried = new List<TriedRoute>();
+        foreach (var part in (H("X-Acnologia-Tried") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var eq = part.LastIndexOf('=');
+            if (eq > 0 && int.TryParse(part[(eq + 1)..].Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var st))
+                tried.Add(new TriedRoute(part[..eq].Trim(), st));
+        }
+        return new ProxyResponseInfo
+        {
+            KeyId = long.TryParse(H("X-Acnologia-Key-Id"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var k) ? k : null,
+            Attempts = int.TryParse(H("X-Acnologia-Attempts"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : null,
+            Service = H("X-Acnologia-Service"),
+            Cache = H("X-Acnologia-Cache"),
+            Replayed = string.Equals(H("Idempotent-Replayed"), "true", StringComparison.OrdinalIgnoreCase),
+            Capability = H("X-Acnologia-Capability"),
+            Tried = tried,
+        };
+    }
+}
+
+/// <summary>Reads Acnologia's headers from proxy responses.</summary>
+public static class ProxyResponseExtensions
+{
+    /// <summary>The Acnologia headers of a proxy response: key id, attempts, service, cache and so on.</summary>
+    public static ProxyResponseInfo GetProxyInfo(this HttpResponseMessage response) => ProxyResponseInfo.From(response);
+}
+
+/// <summary>How to use the forward proxy, from <c>GET /api/v1/proxy</c>. Never holds the token.</summary>
+public sealed record ForwardProxy
+{
+    /// <summary>The proxy address without credentials, for example <c>http://host:8888</c>.</summary>
+    [JsonPropertyName("proxy_url")]
+    public string ProxyUrl { get; init; } = "";
+
+    /// <summary>The proxy address with an <c>&lt;app token&gt;</c> placeholder where the token goes.</summary>
+    [JsonPropertyName("proxy_url_with_token")]
+    public string ProxyUrlWithToken { get; init; } = "";
+
+    /// <summary>Where to download the CA certificate.</summary>
+    [JsonPropertyName("ca_url")]
+    public string CaUrl { get; init; } = "";
+
+    /// <summary>The CA certificate's fingerprint.</summary>
+    [JsonPropertyName("ca_fingerprint")]
+    public string CaFingerprint { get; init; } = "";
+
+    /// <summary>True when HTTPS to hosts that are no service is tunneled through untouched.</summary>
+    [JsonPropertyName("passthrough")]
+    public bool Passthrough { get; init; }
+
+    /// <summary>The hosts of the services the token may use.</summary>
+    [JsonPropertyName("hosts")]
+    public IReadOnlyList<ForwardProxyHost> Hosts { get; init; } = Array.Empty<ForwardProxyHost>();
+
+    /// <summary>The environment an app sets, with the token as a placeholder.</summary>
+    [JsonPropertyName("env")]
+    public IReadOnlyDictionary<string, string> Env { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>The request header that picks a service when several match a host.</summary>
+    [JsonPropertyName("service_header")]
+    public string ServiceHeader { get; init; } = "";
+}
+
+/// <summary>A host the forward proxy routes to a service.</summary>
+public sealed record ForwardProxyHost
+{
+    /// <summary>The host, for example <c>serpapi.com</c>.</summary>
+    [JsonPropertyName("host")]
+    public string Host { get; init; } = "";
+
+    /// <summary>The service slug.</summary>
+    [JsonPropertyName("service")]
+    public string Service { get; init; } = "";
+
+    /// <summary>The service's display name.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+
+    /// <summary>The base path under the host, when the service has one.</summary>
+    [JsonPropertyName("path")]
+    public string? Path { get; init; }
 }

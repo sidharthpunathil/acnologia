@@ -1,15 +1,58 @@
-/** Error returned by the Acnologia consumer API (any non-2xx response). */
+/**
+ * Error returned by the Acnologia consumer API (any non-2xx response). Codes worth checking
+ * here include `empty_group`, `bad_params`, `no_route`, `no_route_worked`,
+ * `proxy_not_allowed`, `lease_not_allowed` and `loop_detected`.
+ */
 export class AcnologiaError extends Error {
   readonly status: number;
   readonly code: string;
   readonly body: unknown;
+  /** Seconds to wait before retrying (`retry_after_sec` or `Retry-After`), when the server gave one. */
+  readonly retryAfter: number | null;
 
-  constructor(message: string, status: number, code: string, body?: unknown) {
+  constructor(message: string, status: number, code: string, body?: unknown, retryAfter: number | null = null) {
     super(message);
     this.name = "AcnologiaError";
     this.status = status;
     this.code = code;
     this.body = body;
+    this.retryAfter = retryAfter;
+  }
+}
+
+/**
+ * The app used up a daily or monthly request or budget limit (HTTP 429, code
+ * `app_limit_reached`). `limit` is `daily_requests`, `monthly_requests`, `daily_budget` or
+ * `monthly_budget`; `resetAt` (RFC 3339) is when it resets.
+ */
+export class AppLimitReachedError extends AcnologiaError {
+  readonly limit: string;
+  readonly resetAt: string | null;
+
+  constructor(
+    message: string,
+    opts: { limit?: string; resetAt?: string | null; retryAfter?: number | null; status?: number } = {},
+    body?: unknown,
+  ) {
+    super(message, opts.status ?? 429, "app_limit_reached", body, opts.retryAfter ?? null);
+    this.name = "AppLimitReachedError";
+    this.limit = opts.limit ?? "";
+    this.resetAt = opts.resetAt ?? null;
+  }
+}
+
+/**
+ * The share behind this token was revoked, paused or expired (HTTP 403, code `share_revoked`,
+ * `share_paused` or `share_expired`). `shareStatus` is `revoked`, `paused` or `expired` (also
+ * sent as `X-Acnologia-Share`); `status` stays the HTTP status.
+ */
+export class ShareUnavailableError extends AcnologiaError {
+  readonly shareStatus: string;
+
+  constructor(message: string, shareStatus: string, code: string, body?: unknown, status: number = 403) {
+    super(message, status, code, body);
+    this.name = "ShareUnavailableError";
+    this.shareStatus = shareStatus;
   }
 }
 
@@ -23,7 +66,7 @@ export class NoKeyAvailableError extends AcnologiaError {
   readonly retryAfter: number | null;
 
   constructor(message: string, retryAfter: number | null, body?: unknown, code: string = "no_key_available") {
-    super(message, 503, code, body);
+    super(message, 503, code, body, retryAfter);
     this.name = "NoKeyAvailableError";
     this.retryAfter = retryAfter;
   }
@@ -56,7 +99,7 @@ export class ServiceUnavailableError extends AcnologiaError {
   readonly retryAfter: number | null;
 
   constructor(message: string, retryAfter: number | null, body?: unknown, status: number = 503) {
-    super(message, status, "service_unavailable", body);
+    super(message, status, "service_unavailable", body, retryAfter);
     this.name = "ServiceUnavailableError";
     this.retryAfter = retryAfter;
   }

@@ -213,6 +213,17 @@ int acn_is_no_key(acn_code code) {
     return code == ACN_ERR_NO_KEY_AVAILABLE || code == ACN_ERR_ALL_KEYS_BUSY;
 }
 
+int acn_is_share_unavailable(acn_code code) { return acn_share_status(code) != NULL; }
+
+const char *acn_share_status(acn_code code) {
+    switch (code) {
+    case ACN_ERR_SHARE_REVOKED: return "revoked";
+    case ACN_ERR_SHARE_PAUSED: return "paused";
+    case ACN_ERR_SHARE_EXPIRED: return "expired";
+    default: return NULL;
+    }
+}
+
 const char *acn_outcome_name(acn_outcome outcome) {
     switch (outcome) {
     case ACN_OUTCOME_OK: return "ok";

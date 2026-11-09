@@ -3,6 +3,25 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// Per call options for proxy requests.
+public struct ProxyOptions: Sendable, Equatable {
+    /// Sent as `Idempotency-Key`: a retry with the same key replays the first answer instead
+    /// of calling the provider again (``ProxyResponse/replayed`` is then true).
+    public var idempotencyKey: String?
+    /// Sends `Cache-Control: no-cache`, so the answer never comes from Acnologia's cache.
+    public var noCache: Bool
+
+    public init(idempotencyKey: String? = nil, noCache: Bool = false) {
+        self.idempotencyKey = idempotencyKey
+        self.noCache = noCache
+    }
+
+    func apply(to req: inout URLRequest) {
+        if let k = idempotencyKey, !k.isEmpty { req.setValue(k, forHTTPHeaderField: "Idempotency-Key") }
+        if noCache { req.setValue("no-cache", forHTTPHeaderField: "Cache-Control") }
+    }
+}
+
 /// Sends requests through Acnologia's proxy for one service.
 ///
 /// Acnologia injects a key, retries on rate limits with the next key, and never returns the
@@ -32,7 +51,7 @@ public struct Proxy: Sendable {
     /// The request URL may be relative (`/search.json?q=x`) or absolute; only its path and
     /// query are used, and the path is resolved under `/proxy/{service}/`. A path that already
     /// starts with `/proxy/{service}/` is kept as is. Method, headers and body are kept.
-    public func send(_ request: URLRequest) async throws -> ProxyResponse {
+    public func send(_ request: URLRequest, options: ProxyOptions = ProxyOptions()) async throws -> ProxyResponse {
         var path = "/"
         var query: String?
         if let u = request.url, let comps = URLComponents(url: u, resolvingAgainstBaseURL: false) {
@@ -50,6 +69,7 @@ public struct Proxy: Sendable {
         var out = request
         out.url = full
         client.setHeaders(&out)
+        options.apply(to: &out)
         let (data, resp) = try await perform(client.proxySession, out)
         return ProxyResponse(response: resp, data: data)
     }
@@ -60,43 +80,44 @@ public struct Proxy: Sendable {
         _ path: String,
         query: [URLQueryItem] = [],
         headers: [String: String] = [:],
-        body: Data? = nil
+        body: Data? = nil,
+        options: ProxyOptions = ProxyOptions()
     ) async throws -> ProxyResponse {
         var req = URLRequest(url: try url(path, query: query))
         req.httpMethod = method.uppercased()
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         req.httpBody = body
-        return try await send(req)
+        return try await send(req, options: options)
     }
 
     /// Sends a GET with optional query parameters.
-    public func get(_ path: String, query: [URLQueryItem] = [], headers: [String: String] = [:]) async throws -> ProxyResponse {
-        try await request("GET", path, query: query, headers: headers)
+    public func get(_ path: String, query: [URLQueryItem] = [], headers: [String: String] = [:], options: ProxyOptions = ProxyOptions()) async throws -> ProxyResponse {
+        try await request("GET", path, query: query, headers: headers, options: options)
     }
 
     /// Sends a DELETE.
-    public func delete(_ path: String, query: [URLQueryItem] = [], headers: [String: String] = [:]) async throws -> ProxyResponse {
-        try await request("DELETE", path, query: query, headers: headers)
+    public func delete(_ path: String, query: [URLQueryItem] = [], headers: [String: String] = [:], options: ProxyOptions = ProxyOptions()) async throws -> ProxyResponse {
+        try await request("DELETE", path, query: query, headers: headers, options: options)
     }
 
     /// Sends a POST with the given body and content type.
-    public func post(_ path: String, body: Data?, contentType: String? = nil, headers: [String: String] = [:]) async throws -> ProxyResponse {
-        try await request("POST", path, headers: withType(headers, contentType), body: body)
+    public func post(_ path: String, body: Data?, contentType: String? = nil, headers: [String: String] = [:], options: ProxyOptions = ProxyOptions()) async throws -> ProxyResponse {
+        try await request("POST", path, headers: withType(headers, contentType), body: body, options: options)
     }
 
     /// Sends a PUT with the given body and content type.
-    public func put(_ path: String, body: Data?, contentType: String? = nil, headers: [String: String] = [:]) async throws -> ProxyResponse {
-        try await request("PUT", path, headers: withType(headers, contentType), body: body)
+    public func put(_ path: String, body: Data?, contentType: String? = nil, headers: [String: String] = [:], options: ProxyOptions = ProxyOptions()) async throws -> ProxyResponse {
+        try await request("PUT", path, headers: withType(headers, contentType), body: body, options: options)
     }
 
     /// Sends a PATCH with the given body and content type.
-    public func patch(_ path: String, body: Data?, contentType: String? = nil, headers: [String: String] = [:]) async throws -> ProxyResponse {
-        try await request("PATCH", path, headers: withType(headers, contentType), body: body)
+    public func patch(_ path: String, body: Data?, contentType: String? = nil, headers: [String: String] = [:], options: ProxyOptions = ProxyOptions()) async throws -> ProxyResponse {
+        try await request("PATCH", path, headers: withType(headers, contentType), body: body, options: options)
     }
 
     /// Encodes `value` as JSON and POSTs it.
-    public func postJSON<Body: Encodable>(_ path: String, _ value: Body, headers: [String: String] = [:]) async throws -> ProxyResponse {
-        try await post(path, body: try JSONEncoder().encode(value), contentType: "application/json", headers: headers)
+    public func postJSON<Body: Encodable>(_ path: String, _ value: Body, headers: [String: String] = [:], options: ProxyOptions = ProxyOptions()) async throws -> ProxyResponse {
+        try await post(path, body: try JSONEncoder().encode(value), contentType: "application/json", headers: headers, options: options)
     }
 
     private func withType(_ headers: [String: String], _ contentType: String?) -> [String: String] {
@@ -135,14 +156,23 @@ public struct ProxyResponse: Sendable {
         return headers.first { $0.key.lowercased() == lower }?.value
     }
 
-    /// The pool key that served the request (`X-Acnologia-Key-Id`).
+    /// The pool key that served the request (`X-Acnologia-Key-Id`). Absent for a share's token.
     public var keyID: Int64? { header("X-Acnologia-Key-Id").flatMap { Int64($0) } }
     /// How many keys were tried (`X-Acnologia-Attempts`).
     public var attempts: Int? { header("X-Acnologia-Attempts").flatMap { Int($0) } }
     /// The service that answered, which matters for service groups (`X-Acnologia-Service`).
     public var servedBy: String? { header("X-Acnologia-Service") }
-    /// The cache status (`X-Acnologia-Cache`), when caching applies.
+    /// The service that answered (`X-Acnologia-Service`). The same as ``servedBy``.
+    public var service: String? { servedBy }
+    /// The cache status (`X-Acnologia-Cache`: `hit`, `miss` and so on), when caching applies.
     public var cache: String? { header("X-Acnologia-Cache") }
+    /// True when Acnologia replayed an earlier answer for the same ``ProxyOptions/idempotencyKey``
+    /// (`Idempotent-Replayed: true`).
+    public var replayed: Bool { header("Idempotent-Replayed")?.lowercased() == "true" }
+    /// The capability that served the call (`X-Acnologia-Capability`).
+    public var capability: String? { header("X-Acnologia-Capability") }
+    /// The routes a capability call or service group tried, in order (`X-Acnologia-Tried`).
+    public var tried: [TriedRoute] { parseTried(header("X-Acnologia-Tried")) }
 
     /// The body as UTF-8 text.
     public var text: String { String(decoding: data, as: UTF8.self) }
@@ -159,7 +189,8 @@ public struct ProxyResponse: Sendable {
         if isSuccess || header("X-Acnologia-Key-Id") != nil { return nil }
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               obj["error"] is [String: Any] else { return nil }
-        return parseAPIError(status: statusCode, data: data, retryAfterHeader: header("Retry-After"))
+        return parseAPIError(status: statusCode, data: data, retryAfterHeader: header("Retry-After"),
+                             shareHeader: header("X-Acnologia-Share"))
     }
 
     /// Throws ``acnologiaError`` when there is one, and returns `self` otherwise.

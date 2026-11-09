@@ -43,7 +43,7 @@ Create an app in the dashboard and copy its token (`acn_...`, shown once; older 
 ```dart
 final acn = Acnologia(baseUrl: 'http://localhost:8080', token: 'acn_...');
 
-// or from ACNOLOGIA_URL and ACNOLOGIA_TOKEN
+// or from ACNOLOGIA_URL, ACNOLOGIA_TOKEN and ACNOLOGIA_ACCESS_PASSWORD
 final fromEnv = Acnologia.fromEnvironment();
 ```
 
@@ -54,10 +54,34 @@ Both constructors also take:
 | Argument | Default | Meaning |
 |---|---|---|
 | `httpClient` | a new `http.Client` | Any `http.Client`. `close()` closes it only if the SDK created it |
-| `userAgent` | `acnologia-dart/0.1.0` | Not sent in browsers, which forbid it |
+| `userAgent` | `acnologia-dart/0.2.0` | Not sent in browsers, which forbid it |
+| `accessPassword` | none (`ACNOLOGIA_ACCESS_PASSWORD` for `fromEnvironment`) | Sent as `X-Acnologia-Access` on every request, for a server behind the access password |
 | `timeout` | 75 seconds | For API calls (lease, report, renew, services). Longer than the 60 second maximum lease wait. Proxy calls have no SDK timeout |
 
-`await acn.services()` returns the services this token may use, each with `slug`, `name`, `provider`, `category`, `available`, `baseUrl` and `auth`.
+`await acn.services()` returns the services this token may use, each with `slug`, `name`, `provider`, `category`, `available`, `baseUrl`, `auth` and `guideUrl`.
+
+## What the token may do
+
+```dart
+final me = await acn.me();
+print('${me.app.name}: ${me.usage.todayRequests} requests today');
+print(me.limits.dailyRequests);   // null when there is no such limit
+print(me.limitHit?.limit);        // for example daily_requests, while it lasts
+for (final s in me.services) print('${s.slug} available=${s.available}');
+print(me.share?.status);          // null for an ordinary app
+```
+
+A share token whose share stopped still gets an answer here, with `me.share.status` set to `paused`, `expired` or `revoked`.
+
+## Usage guides
+
+Each service has a guide with its endpoints, params, limits and errors:
+
+```dart
+final md = await acn.guideMarkdown('weather');   // Markdown, ready for an agent's prompt
+final g = await acn.guide('weather');            // markdown, generated, and the structured guide
+print(g.generated ? 'assembled from examples' : 'written');
+```
 
 ## Proxy mode
 
@@ -72,11 +96,63 @@ print('key ${resp.acnologiaKeyId}, attempts ${resp.acnologiaAttempts}');
 await weather.post('/v1/alerts', body: {'city': 'Lisbon', 'level': 'high'});
 ```
 
-`get`, `delete`, `post`, `put`, `patch` and `request(method, path, ...)` all take `query` and `headers`; the body methods also take `body`. A `String` or `List<int>` body is sent as is. Anything else is JSON encoded with `Content-Type: application/json` unless you set one. `stream(...)` returns an `http.StreamedResponse` for large or streamed bodies, and `url(path, query)` returns the full proxy URL.
+`get`, `delete`, `post`, `put`, `patch` and `request(method, path, ...)` all take `query`, `headers`, `idempotencyKey` (sent as `Idempotency-Key`, so a retried call is answered once and replayed after) and `noCache` (sends `Cache-Control: no-cache`); the body methods also take `body`. A `String` or `List<int>` body is sent as is. Anything else is JSON encoded with `Content-Type: application/json` unless you set one. `stream(...)` returns an `http.StreamedResponse` for large or streamed bodies, and `url(path, query)` returns the full proxy URL.
 
 Redirects are not followed (browsers follow them on their own), so the app token is not sent to another host.
 
-Extensions on the response read Acnologia's headers: `acnologiaKeyId`, `acnologiaAttempts`, `acnologiaService` and `acnologiaCache`. When Acnologia itself refused the request (no key, circuit breaker open, bad token), `resp.acnologiaError` holds the typed exception and `resp.throwIfAcnologiaError()` throws it. A provider answer carries `X-Acnologia-Key-Id` and is never treated as an Acnologia error.
+```dart
+final resp = await weather.post('/v1/orders', body: {'id': 42}, idempotencyKey: 'order-42', noCache: true);
+if (resp.acnologiaReplayed) print('stored answer to an earlier call');
+```
+
+Extensions on the response read Acnologia's headers: `acnologiaKeyId` (null for a share's token), `acnologiaAttempts`, `acnologiaService`, `acnologiaCache` (`hit`, `miss`, ...), `acnologiaReplayed` (`Idempotent-Replayed: true`), `acnologiaCapability` and `acnologiaTried` (a list of `TriedRoute(service, status)` from `X-Acnologia-Tried`). When Acnologia itself refused the request (no key, circuit breaker open, bad token), `resp.acnologiaError` holds the typed exception and `resp.throwIfAcnologiaError()` throws it. A provider answer carries `X-Acnologia-Key-Id` and is never treated as an Acnologia error.
+
+## Capabilities
+
+A capability is one job (such as finding places) that several providers do. Acnologia picks a provider, translates the params, rotates keys and moves to the next provider when one fails.
+
+```dart
+for (final c in await acn.capabilities()) {
+  print('${c.slug}: ${c.description} via ${c.routes.map((r) => r.service).join(', ')}');
+}
+
+final resp = await acn.capability('places', {'q': 'coffee in Lisbon'});
+print('${resp.acnologiaService} answered after ${resp.acnologiaTried}');
+resp.throwIfAcnologiaError();   // bad_params, no_route, no_route_worked and so on
+```
+
+`capability(slug, params, {service, raw, headers, idempotencyKey, noCache})` sends `POST /proxy/{slug}` with `params` as the JSON body. `service` pins one provider (`?_service=`) and `raw: true` returns the provider's own body (`?_raw=1`).
+
+## Forward proxy
+
+An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Acnologia injects the key for the service whose host matches.
+
+```dart
+final setup = await acn.forwardProxy();          // proxyUrl, caUrl, caFingerprint, hosts, env, ...
+for (final h in setup.hosts) print('${h.host} -> ${h.service}');
+
+final pem = await acn.forwardProxyCA();          // the CA to trust, no token sent
+await acn.saveForwardProxyCA('acnologia-ca.pem'); // dart:io only, throws UnsupportedError on the web
+
+final env = await acn.forwardProxyEnv('acnologia-ca.pem');
+// HTTPS_PROXY and HTTP_PROXY = http://app:acn_...@host:8888, NODE_USE_ENV_PROXY=1,
+// NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and SSL_CERT_FILE = acnologia-ca.pem
+```
+
+Pass `env` to a child process (`Process.start(..., environment: env)`), or point the app's own `dart:io` client at the proxy:
+
+```dart
+import 'dart:io';
+
+final proxy = Uri.parse(setup.proxyUrl);
+final ctx = SecurityContext(withTrustedRoots: true)..setTrustedCertificatesBytes(utf8.encode(pem));
+final client = HttpClient(context: ctx)
+  ..findProxy = ((_) => 'PROXY ${proxy.host}:${proxy.port}')
+  ..addProxyCredentials(proxy.host, proxy.port, 'Acnologia', HttpClientBasicCredentials('app', appToken));
+final req = await client.getUrl(Uri.parse('https://serpapi.com/search.json?q=coffee'));
+```
+
+`forwardProxyURL()` and `forwardProxyEnv()` hold the app token: never log them. `ForwardProxy` itself never does (its `proxyUrlWithToken` has a `<app token>` placeholder).
 
 ## Lease mode
 
@@ -181,7 +257,9 @@ Every exception extends `AcnologiaException`, which has `message`, `statusCode`,
 | `ServiceUnavailableException` | 503 `service_unavailable`: the provider's circuit breaker is open |
 | `UnauthenticatedException` | 401: token missing, wrong, revoked or expired |
 | `ForbiddenException` | 403: app disabled, or `service_not_allowed`, `lease_not_allowed`, `proxy_not_allowed` |
-| `AcnologiaApiException` | Any other non 2xx, for example 429 `app_limit_reached` or 404 `lease_not_found` |
+| `ShareUnavailableException` | 403 `share_revoked`, `share_paused`, `share_expired`: the share behind the token stopped. `status` is `revoked`, `paused` or `expired`. A `ForbiddenException` |
+| `AppLimitReachedException` | 429 `app_limit_reached`: a daily or monthly request or budget limit is used up. Has `limit`, `resetAt` and `retryAfter`. An `AcnologiaApiException` |
+| `AcnologiaApiException` | Any other non 2xx, for example 404 `lease_not_found`. Check `code` for `empty_group`, `bad_params`, `no_route`, `no_route_worked` or `loop_detected` |
 | `RateLimitedException`, `QuotaExhaustedException`, `InvalidKeyException` | Thrown by you from `withKey` |
 
 Bad arguments throw `ArgumentError` or `RangeError`. An API call that runs past `timeout` throws `TimeoutException`.

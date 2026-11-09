@@ -141,7 +141,130 @@ pub async fn start(keys: &[i64]) -> (MockServer, Fake) {
         .with_priority(3)
         .mount(&server)
         .await;
+    mount_v2(&server).await;
     (server, fake)
+}
+
+pub const CA_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+
+/// The 0.2.0 routes: me, guides, capabilities and the forward proxy.
+async fn mount_v2(server: &MockServer) {
+    let authed = || header("authorization", format!("Bearer {TOKEN}").as_str());
+    Mock::given(method("GET"))
+        .and(path("/api/v1/me"))
+        .and(authed())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "app": {"id": "app_1", "name": "crawler"},
+            "limits": {"daily_requests": 1000, "monthly_requests": null, "daily_budget": 2.5, "monthly_budget": null},
+            "usage": {"today_requests": 12, "today_cost": 0.25, "month_requests": 340, "month_cost": 4.5,
+                      "last_used_at": "2026-11-10T09:00:00Z", "limit_hit": null},
+            "limit_hit": null,
+            "services": [{"slug": "serpapi", "name": "SerpAPI", "provider": "serpapi", "category": "search",
+                          "available": 1, "logo_url": null}],
+            "share": null
+        })))
+        .with_priority(2)
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/services/serpapi/guide"))
+        .and(authed())
+        .and(header("accept", "text/markdown"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/markdown; charset=utf-8")
+                .set_body_string("# SerpAPI\n\nSearch Google.\n"),
+        )
+        .with_priority(1)
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/services/serpapi/guide"))
+        .and(authed())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "markdown": "# SerpAPI\n\nSearch Google.\n",
+            "generated": true,
+            "guide": {"endpoints": [{"method": "GET", "path": "/search.json"}]}
+        })))
+        .with_priority(2)
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/services/nope/guide"))
+        .and(authed())
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "error": {"code": "service_not_allowed", "message": "this app cannot use service nope"}
+        })))
+        .with_priority(2)
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/capabilities"))
+        .and(authed())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"capabilities": [{
+            "slug": "web-search", "name": "Web search", "description": "Search the web",
+            "strategy": "priority",
+            "params": [{"name": "q", "type": "string", "required": true}],
+            "routes": [{"service": "serpapi", "mapped": true}, {"service": "tavily", "mapped": false}],
+            "url": "http://acn.example/proxy/web-search"
+        }]})))
+        .with_priority(2)
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/proxy/web-search"))
+        .and(authed())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("X-Acnologia-Capability", "web-search")
+                .insert_header("X-Acnologia-Service", "tavily")
+                .insert_header("X-Acnologia-Tried", "serpapi=503, tavily=200")
+                .insert_header("X-Acnologia-Key-Id", "4")
+                .insert_header("X-Acnologia-Attempts", "2")
+                .set_body_json(json!({"items": [], "count": 0, "capability": "web-search", "service": "tavily"})),
+        )
+        .with_priority(1)
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/proxy"))
+        .and(authed())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "proxy_url": "http://acn.example:8888",
+            "proxy_url_with_token": "http://app:<app token>@acn.example:8888",
+            "ca_url": "http://acn.example/api/v1/proxy/ca.pem",
+            "ca_fingerprint": "AB:CD",
+            "passthrough": true,
+            "hosts": [{"host": "serpapi.com", "service": "serpapi", "name": "SerpAPI"},
+                      {"host": "tiktok-scraper.omkar.cloud", "service": "omkar", "name": "Omkar", "path": "/~tiktok"}],
+            "env": {"HTTPS_PROXY": "http://app:<app token>@acn.example:8888", "NODE_USE_ENV_PROXY": "1"},
+            "service_header": "X-Acnologia-Service"
+        })))
+        .with_priority(2)
+        .mount(server)
+        .await;
+    // Public: answers without a token.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/proxy/ca.pem"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/x-pem-file")
+                .set_body_string(CA_PEM),
+        )
+        .with_priority(1)
+        .mount(server)
+        .await;
+}
+
+/// Every request the server saw to `p` (exact path).
+pub async fn requests(server: &MockServer, p: &str) -> Vec<Request> {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path() == p)
+        .collect()
 }
 
 /// Every request the server saw to `p` (exact path), as JSON bodies.

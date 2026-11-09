@@ -2,7 +2,18 @@ defmodule AcnologiaTest do
   # Not async: some tests set ACNOLOGIA_* environment variables.
   use ExUnit.Case, async: false
 
-  alias Acnologia.{Error, FakeServer, Lease, Me, Response}
+  alias Acnologia.{
+    Capability,
+    Error,
+    FakeServer,
+    ForwardProxy,
+    Guide,
+    Lease,
+    Me,
+    Response,
+    Service
+  }
+
   alias Acnologia.FakeServer.Request
 
   doctest Acnologia.Lease
@@ -306,6 +317,9 @@ defmodule AcnologiaTest do
     {400, "bad_body", :bad_body},
     {413, "body_too_large", :body_too_large},
     {405, "method_not_allowed", :method_not_allowed},
+    {400, "bad_params", :bad_params},
+    {503, "no_route", :no_route},
+    {503, "no_route_worked", :no_route_worked},
     {503, "", :no_key_available},
     {401, "", :unauthenticated},
     {403, "", :forbidden},
@@ -755,5 +769,301 @@ defmodule AcnologiaTest do
              "a [key] b [key]"
 
     assert Acnologia.scrub_message(nil, @secret) == nil
+  end
+
+  # 0.2.0
+
+  @fp_json %{
+    "proxy_url" => "http://acn.example:8888",
+    "proxy_url_with_token" => "http://app:%3Capp%20token%3E@acn.example:8888",
+    "ca_url" => "http://acn.example/api/v1/proxy/ca.pem",
+    "ca_fingerprint" => "SHA256:ab:cd",
+    "passthrough" => true,
+    "hosts" => [
+      %{"host" => "agi-labs.example", "service" => "agi-labs", "name" => "AGI Labs", "path" => ""}
+    ],
+    "env" => %{"HTTPS_PROXY" => "http://app:%3Capp%20token%3E@acn.example:8888"},
+    "service_header" => "X-Acnologia-Service"
+  }
+
+  describe "0.2.0 surface" do
+    test "version is 0.2.0" do
+      assert Mix.Project.config()[:version] == "0.2.0"
+      assert Acnologia.HTTP.user_agent() == "acnologia-elixir/0.2.0"
+    end
+
+    test "services/1 parses guide_url" do
+      srv =
+        serve(fn _ ->
+          {200, [],
+           %{
+             "services" => [
+               %{
+                 "slug" => "agi-labs",
+                 "name" => "AGI Labs",
+                 "provider" => "custom",
+                 "category" => "ai",
+                 "available" => true,
+                 "base_url" => "https://agi-labs.example",
+                 "auth" => %{"type" => "bearer", "name" => "Authorization", "prefix" => ""},
+                 "guide_url" => "http://acn.example/api/v1/services/agi-labs/guide"
+               }
+             ]
+           }}
+        end)
+
+      assert {:ok, [%Service{} = s]} = Acnologia.services(client(srv))
+      req = next_request()
+      assert {req.method, req.path} == {"GET", "/api/v1/services"}
+      assert req.headers["authorization"] == "Bearer " <> @token
+      assert s.slug == "agi-labs"
+      assert s.available
+      assert s.auth.type == "bearer"
+      assert s.guide_url == "http://acn.example/api/v1/services/agi-labs/guide"
+    end
+
+    test "guide/2 and guide_markdown/2" do
+      srv =
+        serve(fn req ->
+          if req.headers["accept"] == "text/markdown" do
+            {200, [{"content-type", "text/markdown; charset=utf-8"}], "# AGI Labs é"}
+          else
+            {200, [],
+             %{"markdown" => "# AGI Labs", "generated" => true, "guide" => %{"summary" => "chat"}}}
+          end
+        end)
+
+      c = client(srv)
+      assert {:ok, %Guide{} = g} = Acnologia.guide(c, "agi labs")
+      req = next_request()
+      assert {req.method, req.path} == {"GET", "/api/v1/services/agi%20labs/guide"}
+      assert req.headers["accept"] == "application/json"
+      assert g.markdown == "# AGI Labs"
+      assert g.generated
+      assert g.guide["summary"] == "chat"
+
+      assert {:ok, "# AGI Labs é"} = Acnologia.guide_markdown(c, "agi-labs")
+      req = next_request()
+      assert {req.method, req.path} == {"GET", "/api/v1/services/agi-labs/guide"}
+      assert req.headers["accept"] == "text/markdown"
+      assert req.headers["authorization"] == "Bearer " <> @token
+    end
+
+    test "guide_markdown/2 for a service not allowed" do
+      srv = serve(fn _ -> {403, [], error_body("service_not_allowed")} end)
+
+      assert {:error, %Error{reason: :service_not_allowed}} =
+               Acnologia.guide_markdown(client(srv), "x")
+    end
+
+    test "capabilities/1" do
+      srv =
+        serve(fn _ ->
+          {200, [],
+           %{
+             "capabilities" => [
+               %{
+                 "slug" => "places",
+                 "name" => "Places",
+                 "description" => "find places",
+                 "strategy" => "priority",
+                 "params" => [%{"name" => "q", "type" => "string", "required" => true}],
+                 "routes" => [
+                   %{"service" => "serpapi", "mapped" => true},
+                   %{"service" => "gmaps", "mapped" => false}
+                 ],
+                 "url" => "http://acn.example/proxy/places"
+               }
+             ]
+           }}
+        end)
+
+      assert {:ok, [%Capability{} = cap]} = Acnologia.capabilities(client(srv))
+      assert next_request().path == "/api/v1/capabilities"
+      assert cap.slug == "places"
+      assert cap.strategy == "priority"
+      assert [%{"name" => "q"}] = cap.params
+
+      assert cap.routes == [
+               %{service: "serpapi", mapped: true},
+               %{service: "gmaps", mapped: false}
+             ]
+
+      assert cap.url == "http://acn.example/proxy/places"
+    end
+
+    test "capability/4 posts the params and reads the answer headers" do
+      srv =
+        serve(fn _ ->
+          {200,
+           [
+             {"X-Acnologia-Service", "gmaps"},
+             {"X-Acnologia-Capability", "places"},
+             {"X-Acnologia-Tried", "serpapi=429, gmaps=200"}
+           ], %{"items" => [], "count" => 0}}
+        end)
+
+      c = client(srv)
+
+      assert {:ok, %Response{} = resp} =
+               Acnologia.capability(c, "places", %{q: "coffee"},
+                 service: "gmaps",
+                 raw: true,
+                 idempotency_key: "k1",
+                 no_cache: true
+               )
+
+      req = next_request()
+      assert {req.method, req.path} == {"POST", "/proxy/places"}
+      assert req.query == %{"_service" => "gmaps", "_raw" => "1"}
+      assert req.headers["authorization"] == "Bearer " <> @token
+      assert req.headers["content-type"] == "application/json"
+      assert req.headers["idempotency-key"] == "k1"
+      assert req.headers["cache-control"] == "no-cache"
+      assert Request.json(req) == %{"q" => "coffee"}
+      assert resp.service == "gmaps"
+      assert resp.capability == "places"
+      assert resp.tried == [%{service: "serpapi", status: 429}, %{service: "gmaps", status: 200}]
+
+      {:ok, _} = Acnologia.capability(c, "places")
+      req = next_request()
+      assert {req.path, req.raw_query} == {"/proxy/places", ""}
+      assert Request.json(req) == %{}
+      refute Map.has_key?(req.headers, "cache-control")
+    end
+
+    test "capability/4 bad_params is an error" do
+      srv = serve(fn _ -> {400, [], error_body("bad_params", "q is required")} end)
+
+      assert {:error, %Error{reason: :bad_params, code: "bad_params", status: 400}} =
+               Acnologia.capability(client(srv), "places", %{})
+    end
+
+    test "proxy no_cache sends Cache-Control: no-cache" do
+      srv =
+        serve(fn _ ->
+          {200, [{"X-Acnologia-Service", "agi-labs"}, {"X-Acnologia-Cache", "miss"}], ""}
+        end)
+
+      {:ok, resp} = Acnologia.proxy(client(srv), :get, "agi-labs", "/v1/models", no_cache: true)
+      assert next_request().headers["cache-control"] == "no-cache"
+      assert resp.cache == "miss"
+      assert resp.capability == nil
+      assert resp.tried == []
+    end
+
+    test "Response.parse_tried/1" do
+      assert Response.parse_tried(nil) == []
+      assert Response.parse_tried("") == []
+
+      assert Response.parse_tried("a=200,b=x, c") == [
+               %{service: "a", status: 200},
+               %{service: "b", status: 0},
+               %{service: "c", status: 0}
+             ]
+    end
+
+    test "forward_proxy/1 parses the setup" do
+      srv = serve(fn _ -> {200, [], @fp_json} end)
+      assert {:ok, %ForwardProxy{} = fp} = Acnologia.forward_proxy(client(srv))
+      req = next_request()
+      assert {req.method, req.path} == {"GET", "/api/v1/proxy"}
+      assert req.headers["authorization"] == "Bearer " <> @token
+      assert fp.proxy_url == "http://acn.example:8888"
+      assert fp.ca_fingerprint == "SHA256:ab:cd"
+      assert fp.passthrough
+      assert [%{host: "agi-labs.example", service: "agi-labs"}] = fp.hosts
+      assert fp.service_header == "X-Acnologia-Service"
+      refute inspect(fp) =~ @token
+    end
+
+    test "forward_proxy_ca/1 sends no token, and save_forward_proxy_ca/2 writes it" do
+      pem = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
+      srv = serve(fn _ -> {200, [{"content-type", "application/x-pem-file"}], pem} end)
+      c = client(srv, access_password: "gatepw")
+
+      assert {:ok, ^pem} = Acnologia.forward_proxy_ca(c)
+      req = next_request()
+      assert {req.method, req.path} == {"GET", "/api/v1/proxy/ca.pem"}
+      refute Map.has_key?(req.headers, "authorization")
+      assert req.headers["x-acnologia-access"] == "gatepw"
+
+      path = Path.join(System.tmp_dir!(), "acn-ca-#{System.unique_integer([:positive])}.pem")
+      on_exit(fn -> File.rm(path) end)
+      assert {:ok, ^path} = Acnologia.save_forward_proxy_ca(c, path)
+      assert File.read!(path) == pem
+    end
+
+    test "forward_proxy_url/1 and forward_proxy_env/2 put the token in the URL" do
+      srv = serve(fn _ -> {200, [], @fp_json} end)
+      c = Acnologia.new!(base_url: srv.url, token: "acn_a/b+c")
+      url = "http://app:acn_a%2Fb%2Bc@acn.example:8888"
+
+      assert {:ok, ^url} = Acnologia.forward_proxy_url(c)
+
+      assert Acnologia.forward_proxy_env!(c) == %{
+               "HTTPS_PROXY" => url,
+               "HTTP_PROXY" => url,
+               "NODE_USE_ENV_PROXY" => "1",
+               "NODE_EXTRA_CA_CERTS" => "acnologia-ca.pem",
+               "REQUESTS_CA_BUNDLE" => "acnologia-ca.pem",
+               "SSL_CERT_FILE" => "acnologia-ca.pem"
+             }
+
+      assert {:ok, %{"SSL_CERT_FILE" => "/etc/acn.pem"}} =
+               Acnologia.forward_proxy_env(c, "/etc/acn.pem")
+    end
+
+    test "app_limit_reached?/1" do
+      srv =
+        serve(fn _ ->
+          {429, [],
+           error_body("app_limit_reached", "limit", %{
+             "limit" => "monthly_budget",
+             "reset_at" => "2026-12-01T00:00:00Z",
+             "retry_after_sec" => 60
+           })}
+        end)
+
+      {:error, e} = Acnologia.me(client(srv))
+      assert Error.app_limit_reached?(e)
+      refute Error.share_unavailable?(e)
+
+      assert {e.limit, e.reset_at, e.retry_after} ==
+               {"monthly_budget", ~U[2026-12-01 00:00:00Z], 60}
+    end
+
+    test "share errors carry the share status" do
+      for st <- ~w(revoked paused expired) do
+        srv =
+          serve(fn _ -> {403, [{"X-Acnologia-Share", st}], error_body("share_" <> st)} end)
+
+        {:error, e} = Acnologia.proxy(client(srv), :get, "agi-labs", "/v1/chat")
+        assert Error.share_unavailable?(e)
+        assert e.share == st
+        assert e.reason == String.to_atom("share_" <> st)
+        FakeServer.stop(srv)
+      end
+
+      srv = serve(fn _ -> {403, [{"X-Acnologia-Share", "revoked"}], "forbidden"} end)
+      {:error, e} = Acnologia.me(client(srv))
+      assert {e.reason, e.share, e.code} == {:share_revoked, "revoked", ""}
+    end
+
+    test "me/1 parses available as a count and logo_url" do
+      srv =
+        serve(fn _ ->
+          {200, [],
+           %{
+             "app" => %{"id" => 1, "name" => "a"},
+             "services" => [
+               %{"slug" => "s", "available" => 3, "logo_url" => "data:image/png;base64,AA"}
+             ]
+           }}
+        end)
+
+      {:ok, me} = Acnologia.me(client(srv))
+      assert [%{available: 3, logo_url: "data:image/png;base64,AA"}] = me.services
+    end
   end
 end

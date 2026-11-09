@@ -2,7 +2,10 @@
 
 use std::time::Duration;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// The longest [`LeaseOptions::wait`] the server accepts.
 pub const MAX_WAIT: Duration = Duration::from_secs(60);
@@ -62,6 +65,10 @@ pub struct Service {
     /// Where the provider expects the key.
     #[serde(default)]
     pub auth: Auth,
+    /// Where the service's usage guide is served
+    /// (`/api/v1/services/{slug}/guide`). Empty from older servers.
+    #[serde(default)]
+    pub guide_url: String,
 }
 
 /// The result of using a leased key, sent with a report.
@@ -328,4 +335,296 @@ impl WithKeyOptions {
         self.lease.ttl = Some(ttl);
         self
     }
+}
+
+/// The answer of `GET /api/v1/me`: the token's own access, limits and use.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Me {
+    /// The app the token belongs to.
+    #[serde(default)]
+    pub app: MeApp,
+    /// The app's request and budget limits.
+    #[serde(default)]
+    pub limits: MeLimits,
+    /// What the app used today and this month.
+    #[serde(default)]
+    pub usage: MeUsage,
+    /// The limit the app reached, if any. The same as `usage.limit_hit`.
+    #[serde(default)]
+    pub limit_hit: Option<LimitHit>,
+    /// The services the token may use.
+    #[serde(default)]
+    pub services: Vec<MeService>,
+    /// The share this token belongs to, `None` for an ordinary app.
+    #[serde(default)]
+    pub share: Option<MeShare>,
+}
+
+/// The app in [`Me`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct MeApp {
+    /// App id.
+    #[serde(default)]
+    pub id: String,
+    /// App name (the share's name for a share's token).
+    #[serde(default)]
+    pub name: String,
+}
+
+/// An app's limits. `None` means no limit.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct MeLimits {
+    /// Requests per day.
+    #[serde(default)]
+    pub daily_requests: Option<i64>,
+    /// Requests per month.
+    #[serde(default)]
+    pub monthly_requests: Option<i64>,
+    /// Spend per day, in the server's currency.
+    #[serde(default)]
+    pub daily_budget: Option<f64>,
+    /// Spend per month, in the server's currency.
+    #[serde(default)]
+    pub monthly_budget: Option<f64>,
+}
+
+/// An app's use so far.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct MeUsage {
+    /// Requests today.
+    #[serde(default)]
+    pub today_requests: i64,
+    /// Spend today.
+    #[serde(default)]
+    pub today_cost: f64,
+    /// Requests this month.
+    #[serde(default)]
+    pub month_requests: i64,
+    /// Spend this month.
+    #[serde(default)]
+    pub month_cost: f64,
+    /// When the app last made a call, as RFC 3339 text.
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+    /// The limit the app reached, if any.
+    #[serde(default)]
+    pub limit_hit: Option<LimitHit>,
+}
+
+/// A limit an app reached.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct LimitHit {
+    /// `daily_requests`, `monthly_requests`, `daily_budget` or `monthly_budget`.
+    #[serde(default)]
+    pub limit: String,
+    /// When the limit resets, as RFC 3339 text.
+    #[serde(default)]
+    pub reset_at: String,
+}
+
+/// A service in [`Me`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct MeService {
+    /// Service slug.
+    pub slug: String,
+    /// Display name.
+    #[serde(default)]
+    pub name: String,
+    /// Provider slug.
+    #[serde(default)]
+    pub provider: String,
+    /// Provider category.
+    #[serde(default)]
+    pub category: String,
+    /// Keys free right now for a share's token; 1 or 0 for an ordinary app.
+    #[serde(default)]
+    pub available: i64,
+    /// The service logo as a `data:` URI, if it has one.
+    #[serde(default)]
+    pub logo_url: Option<String>,
+}
+
+/// The share behind a share's token, in [`Me`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct MeShare {
+    /// Share id.
+    #[serde(default)]
+    pub id: String,
+    /// Share name.
+    #[serde(default)]
+    pub name: String,
+    /// Who shared it.
+    #[serde(default)]
+    pub owner_name: String,
+    /// The owner's id.
+    #[serde(default)]
+    pub owner_id: String,
+    /// Who it was shared with.
+    #[serde(default)]
+    pub recipient: String,
+    /// The owner's label for it.
+    #[serde(default)]
+    pub label: String,
+    /// `active`, `paused`, `expired` or `revoked`.
+    #[serde(default)]
+    pub status: String,
+    /// The share mode.
+    #[serde(default)]
+    pub mode: String,
+    /// When the share ends, as RFC 3339 text, if it does.
+    #[serde(default)]
+    pub ends_at: Option<String>,
+}
+
+/// A service's usage guide from `GET /api/v1/services/{slug}/guide`.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Guide {
+    /// The guide as Markdown.
+    #[serde(default)]
+    pub markdown: String,
+    /// True when the server wrote the guide from the provider spec.
+    #[serde(default)]
+    pub generated: bool,
+    /// The structured guide.
+    #[serde(default)]
+    pub guide: Value,
+}
+
+/// A capability from `GET /api/v1/capabilities`: one job several providers
+/// can do, called with [`Client::capability`](crate::Client::capability).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Capability {
+    /// Capability slug, used in `/proxy/{slug}`.
+    pub slug: String,
+    /// Display name.
+    #[serde(default)]
+    pub name: String,
+    /// What it does.
+    #[serde(default)]
+    pub description: String,
+    /// How a route is picked.
+    #[serde(default)]
+    pub strategy: Option<String>,
+    /// The params it takes.
+    #[serde(default)]
+    pub params: Value,
+    /// The services that can serve it.
+    #[serde(default)]
+    pub routes: Vec<CapabilityRoute>,
+    /// Its proxy URL.
+    #[serde(default)]
+    pub url: String,
+}
+
+/// One route of a [`Capability`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct CapabilityRoute {
+    /// Service slug.
+    #[serde(default)]
+    pub service: String,
+    /// True when the answer is mapped into the capability's own shape.
+    #[serde(default)]
+    pub mapped: bool,
+}
+
+/// Options for a capability call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CapabilityOptions {
+    /// Use only this service's route (`?_service=`).
+    pub service: Option<String>,
+    /// Return the provider's own body (`?_raw=1`).
+    pub raw: bool,
+    /// Sent as `Idempotency-Key`.
+    pub idempotency_key: Option<String>,
+    /// Send `Cache-Control: no-cache`.
+    pub no_cache: bool,
+}
+
+impl CapabilityOptions {
+    /// Empty options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Pin one service.
+    pub fn service(mut self, service: impl Into<String>) -> Self {
+        self.service = Some(service.into());
+        self
+    }
+
+    /// Ask for the provider's own body.
+    pub fn raw(mut self) -> Self {
+        self.raw = true;
+        self
+    }
+
+    /// Set the idempotency key.
+    pub fn idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+
+    /// Skip the cache.
+    pub fn no_cache(mut self) -> Self {
+        self.no_cache = true;
+        self
+    }
+}
+
+/// How to use the forward proxy, from `GET /api/v1/proxy`.
+///
+/// It holds no token: `proxy_url_with_token` has a `<app token>`
+/// placeholder, so `Debug` output is safe to log.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct ForwardProxy {
+    /// The proxy URL without credentials, such as `http://host:8888`.
+    #[serde(default)]
+    pub proxy_url: String,
+    /// The proxy URL with a `<app token>` placeholder.
+    #[serde(default)]
+    pub proxy_url_with_token: String,
+    /// Where the CA certificate is served.
+    #[serde(default)]
+    pub ca_url: String,
+    /// The CA certificate's fingerprint.
+    #[serde(default)]
+    pub ca_fingerprint: String,
+    /// True when HTTPS to other hosts is tunneled through.
+    #[serde(default)]
+    pub passthrough: bool,
+    /// The hosts the proxy routes to a service.
+    #[serde(default)]
+    pub hosts: Vec<ForwardProxyHost>,
+    /// The environment the server suggests, with placeholders.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// The request header that picks a service when several match.
+    #[serde(default)]
+    pub service_header: String,
+}
+
+/// A host the forward proxy routes to a service.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct ForwardProxyHost {
+    /// Host name.
+    #[serde(default)]
+    pub host: String,
+    /// Service slug.
+    #[serde(default)]
+    pub service: String,
+    /// Service name.
+    #[serde(default)]
+    pub name: String,
+    /// Path prefix, when the host maps to a sub path of the service.
+    #[serde(default)]
+    pub path: String,
+}
+
+/// One route tried by a capability call, from `X-Acnologia-Tried`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tried {
+    /// Service slug.
+    pub service: String,
+    /// The HTTP status it answered.
+    pub status: u16,
 }

@@ -40,7 +40,7 @@ internal static class Scrubber
 [DebuggerDisplay("{ToString(),nq}")]
 internal sealed class Endpoint
 {
-    public Endpoint(string? baseUrl, string? token, string? userAgent)
+    public Endpoint(string? baseUrl, string? token, string? userAgent, string? accessPassword = null)
     {
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new ArgumentException("acnologia: base URL is required (or set ACNOLOGIA_URL)", nameof(baseUrl));
@@ -52,7 +52,10 @@ internal sealed class Endpoint
         BaseUrl = trimmed;
         Token = token.Trim();
         UserAgent = string.IsNullOrWhiteSpace(userAgent) ? AcnologiaClient.DefaultUserAgent : userAgent;
+        AccessPassword = string.IsNullOrEmpty(accessPassword) ? null : accessPassword;
     }
+
+    public Endpoint(AcnologiaClientOptions o) : this(o.BaseUrl, o.Token, o.UserAgent, o.AccessPassword) { }
 
     public string BaseUrl { get; }
 
@@ -61,11 +64,19 @@ internal sealed class Endpoint
 
     public string UserAgent { get; }
 
-    public void ApplyHeaders(HttpRequestMessage request)
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    public string? AccessPassword { get; }
+
+    public void ApplyHeaders(HttpRequestMessage request, bool withToken = true)
     {
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+        if (withToken) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
         request.Headers.Remove("User-Agent");
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+        if (AccessPassword is not null)
+        {
+            request.Headers.Remove(AcnologiaClient.AccessHeader);
+            request.Headers.TryAddWithoutValidation(AcnologiaClient.AccessHeader, AccessPassword);
+        }
     }
 
     public string ProxyPrefix(string service) => BaseUrl + "/proxy/" + Uri.EscapeDataString(service);
@@ -170,4 +181,9 @@ internal sealed class RenewResponse
 internal sealed class ServicesResponse
 {
     [JsonPropertyName("services")] public List<Service>? Services { get; set; }
+}
+
+internal sealed class CapabilitiesResponse
+{
+    [JsonPropertyName("capabilities")] public List<Capability>? Capabilities { get; set; }
 }

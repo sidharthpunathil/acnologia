@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <fstream>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -151,11 +152,11 @@ bool acnologia_code(const std::string& code, int status) {
         code == "share_revoked" || code == "share_paused" || code == "share_expired") {
         return status == 403;
     }
-    if (code == "bad_path" || code == "bad_body") return status == 400;
+    if (code == "bad_path" || code == "bad_body" || code == "bad_params") return status == 400;
     if (code == "method_not_allowed") return status == 405;
     if (code == "body_too_large") return status == 413;
     if (code == "no_key_available" || code == "all_keys_busy" || code == "service_unavailable" ||
-        code == "empty_group") {
+        code == "empty_group" || code == "no_route" || code == "no_route_worked") {
         return status == 503;
     }
     if (code == "app_limit_reached") return status == 429;
@@ -469,23 +470,42 @@ std::string Proxy::url(const std::string& path, const Query& query) const {
 
 HttpResponse Proxy::request(const std::string& method, const std::string& path, const std::string& body,
                             const Headers& headers, const Query& query) const {
+    return request(method, path, body, headers, query, RequestOptions{});
+}
+
+HttpResponse Proxy::request(const std::string& method, const std::string& path, const std::string& body,
+                            const Headers& headers, const Query& query, const RequestOptions& options) const {
+    if (options.idempotency_key.size() > max_idempotency_key) {
+        throw std::invalid_argument("acnologia: Idempotency-Key is longer than 200 bytes");
+    }
     std::string p = path;
     const std::string svc_prefix = "/proxy/" + url_encode(service_);
+    // "/proxy/{service}" alone is sent as is, without a trailing slash.
+    const bool bare = p == svc_prefix;
     if (p == svc_prefix || p.rfind(svc_prefix + "/", 0) == 0 || p.rfind(svc_prefix + "?", 0) == 0) {
         p = p.substr(svc_prefix.size());
     }
     HttpRequest req;
     req.method = method;
     for (auto& c : req.method) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    req.url = url(p, query);
+    if (bare) {
+        req.url = core_->base_url + svc_prefix;
+        if (!query.empty()) req.url += "?" + encode_query(query);
+    } else {
+        req.url = url(p, query);
+    }
     req.body = body;
     const bool own_access = !core_->access_password.empty();
     for (const auto& h : headers) {
         const std::string n = detail::lower(h.first);
         if (n == "authorization" || n == "user-agent") continue;
         if (own_access && n == "x-acnologia-access") continue;
+        if (!options.idempotency_key.empty() && n == "idempotency-key") continue;
+        if (options.no_cache && n == "cache-control") continue;
         req.headers.push_back(h);
     }
+    if (!options.idempotency_key.empty()) req.headers.emplace_back("Idempotency-Key", options.idempotency_key);
+    if (options.no_cache) req.headers.emplace_back("Cache-Control", "no-cache");
     req.headers.emplace_back("Authorization", "Bearer " + core_->token);
     req.headers.emplace_back("User-Agent", core_->user_agent);
     if (own_access) req.headers.emplace_back("X-Acnologia-Access", core_->access_password);
@@ -689,6 +709,128 @@ std::string Client::guide(const std::string& service) const {
         ->raw("GET", "/api/v1/services/" + url_encode(service) + "/guide?format=md", nullptr,
               std::chrono::milliseconds{0}, "text/markdown")
         .body;
+}
+
+std::string Client::guide_markdown(const std::string& service) const { return guide(service); }
+
+Guide Client::guide_details(const std::string& service) const {
+    json out = core_->call("GET", "/api/v1/services/" + url_encode(service) + "/guide", nullptr);
+    if (!out.is_object()) throw Error("acnologia: decode response: guide is not an object");
+    Guide g;
+    g.markdown = detail::json_string(out, "markdown");
+    if (auto it = out.find("generated"); it != out.end() && it->is_boolean()) g.generated = it->get<bool>();
+    if (auto it = out.find("guide"); it != out.end()) g.guide_json = it->dump();
+    return g;
+}
+
+std::vector<Capability> Client::capabilities() const {
+    json out = core_->call("GET", "/api/v1/capabilities", nullptr);
+    std::vector<Capability> caps;
+    if (!out.is_object()) return caps;
+    auto it = out.find("capabilities");
+    if (it == out.end() || !it->is_array()) return caps;
+    for (const auto& c : *it) {
+        if (!c.is_object()) continue;
+        Capability v;
+        v.slug = detail::json_string(c, "slug");
+        v.name = detail::json_string(c, "name");
+        v.description = detail::json_string(c, "description");
+        v.strategy = detail::json_string(c, "strategy");
+        if (auto p = c.find("params"); p != c.end()) v.params_json = p->dump();
+        if (auto r = c.find("routes"); r != c.end() && r->is_array()) {
+            for (const auto& rt : *r) {
+                if (!rt.is_object()) continue;
+                CapabilityRoute route;
+                route.service = detail::json_string(rt, "service");
+                if (auto m = rt.find("mapped"); m != rt.end() && m->is_boolean()) route.mapped = m->get<bool>();
+                v.routes.push_back(std::move(route));
+            }
+        }
+        v.url = detail::json_string(c, "url");
+        caps.push_back(std::move(v));
+    }
+    return caps;
+}
+
+HttpResponse Client::capability(const std::string& slug, const std::string& params_json,
+                                const CapabilityOptions& options) const {
+    Query q;
+    if (!options.service.empty()) q.emplace_back("_service", options.service);
+    if (options.raw) q.emplace_back("_raw", "1");
+    RequestOptions ro;
+    ro.idempotency_key = options.idempotency_key;
+    ro.no_cache = options.no_cache;
+    // The path "/proxy/{slug}" with nothing after it: POST /proxy/{slug}.
+    return proxy(slug).request("POST", "/proxy/" + url_encode(slug), params_json.empty() ? "{}" : params_json,
+                               {{"Content-Type", "application/json"}}, q, ro);
+}
+
+ForwardProxy Client::forward_proxy() const {
+    json out = core_->call("GET", "/api/v1/proxy", nullptr);
+    if (!out.is_object()) throw Error("acnologia: decode response: proxy setup is not an object");
+    ForwardProxy fp;
+    fp.proxy_url = detail::json_string(out, "proxy_url");
+    fp.proxy_url_with_token = detail::json_string(out, "proxy_url_with_token");
+    fp.ca_url = detail::json_string(out, "ca_url");
+    fp.ca_fingerprint = detail::json_string(out, "ca_fingerprint");
+    if (auto it = out.find("passthrough"); it != out.end() && it->is_boolean()) fp.passthrough = it->get<bool>();
+    if (auto it = out.find("hosts"); it != out.end() && it->is_array()) {
+        for (const auto& h : *it) {
+            if (!h.is_object()) continue;
+            fp.hosts.push_back(ForwardHost{detail::json_string(h, "host"), detail::json_string(h, "service"),
+                                           detail::json_string(h, "name"), detail::json_string(h, "path")});
+        }
+    }
+    if (const json* e = detail::json_object(out, "env")) {
+        for (auto it = e->begin(); it != e->end(); ++it) {
+            if (it->is_string()) fp.env[it.key()] = it->get<std::string>();
+        }
+    }
+    fp.service_header = detail::json_string(out, "service_header");
+    return fp;
+}
+
+std::string Client::forward_proxy_ca() const {
+    HttpRequest req;
+    req.method = "GET";
+    req.url = core_->base_url + "/api/v1/proxy/ca.pem";
+    req.timeout = core_->timeout;
+    // Public: no token.
+    req.headers = {{"User-Agent", core_->user_agent}, {"Accept", "application/x-pem-file"}};
+    if (!core_->access_password.empty()) req.headers.emplace_back("X-Acnologia-Access", core_->access_password);
+    HttpResponse resp = core_->send(req);
+    if (resp.status < 200 || resp.status > 299) {
+        detail::throw_api_error(resp.status, resp.body, resp.headers, core_->secrets());
+    }
+    return resp.body;
+}
+
+void Client::save_forward_proxy_ca(const std::string& path) const {
+    std::string pem = forward_proxy_ca();
+    const std::string target = path.empty() ? "acnologia-ca.pem" : path;
+    std::ofstream f(target, std::ios::binary | std::ios::trunc);
+    if (!f) throw Error("acnologia: cannot write " + target);
+    f << pem;
+    f.close();
+    if (!f) throw Error("acnologia: cannot write " + target);
+}
+
+std::string Client::forward_proxy_url() const {
+    const std::string u = forward_proxy().proxy_url;
+    const auto sep = u.find("://");
+    if (sep == std::string::npos) throw Error("acnologia: decode response: proxy setup has no proxy_url");
+    std::size_t host = sep + 3;
+    const std::size_t host_end = std::min(u.find_first_of("/?#", host), u.size());
+    const auto at = u.rfind('@', host_end - 1);
+    if (at != std::string::npos && at >= host) host = at + 1;
+    return u.substr(0, sep + 3) + "app:" + url_encode(core_->token) + "@" + u.substr(host);
+}
+
+std::map<std::string, std::string> Client::forward_proxy_env(const std::string& ca_path) const {
+    const std::string url = forward_proxy_url();
+    const std::string ca = ca_path.empty() ? "acnologia-ca.pem" : ca_path;
+    return {{"HTTPS_PROXY", url},       {"HTTP_PROXY", url},         {"NODE_USE_ENV_PROXY", "1"},
+            {"NODE_EXTRA_CA_CERTS", ca}, {"REQUESTS_CA_BUNDLE", ca}, {"SSL_CERT_FILE", ca}};
 }
 
 Lease Client::lease(const std::string& service, const LeaseOptions& options) const {

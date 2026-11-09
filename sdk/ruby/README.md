@@ -91,11 +91,24 @@ Every call returns an `Acnologia::Response`. Proxy calls do not raise for a non 
 | `ok?` | True for a 2xx |
 | `json` | The body parsed as JSON |
 | `res["X-Acnologia-Key-Id"]` | Any header, by name |
-| `key_id`, `attempts` | The key that served the request and how many keys the proxy tried |
-| `replayed?` | True when the proxy replayed a stored answer for a repeated `Idempotency-Key` |
+| `key_id`, `attempts` | The key that served the request and how many keys the proxy tried. `key_id` is `nil` for a share's token |
+| `service` | The service that answered (`X-Acnologia-Service`). For a group or capability, the member that served it |
+| `cache` | `X-Acnologia-Cache`: `hit`, `miss` and so on, or `nil` |
+| `replayed?` / `replayed` | True when the proxy replayed a stored answer for a repeated `Idempotency-Key` |
+| `capability` | The capability that served the call (`X-Acnologia-Capability`), or `nil` |
+| `tried` | The providers a capability or group call tried, as `Acnologia::Tried` (`service`, `status`) |
 | `retry_after` | Seconds from the `Retry-After` header, or `nil` |
 | `error` | The typed Acnologia error this answer carries, or `nil` |
 | `raise_for_status!` | Raises `error` when there is one, else returns the response |
+
+Every proxy method takes `no_cache: true`, which sends `Cache-Control: no-cache` so a service with a cache TTL calls the provider instead of answering from its cache:
+
+```ruby
+res = proxy.get("/v1/models", no_cache: true)
+res.cache  # "bypass" or "miss", never "hit"
+```
+
+A `{service}` may also be a service group or a capability slug. The call is the same.
 
 `error` maps only Acnologia's own error codes. A 401 or 403 from the provider stays a plain `Acnologia::Error`, so you can tell it apart from your own token being wrong.
 
@@ -252,7 +265,68 @@ me.share&.status             # "active", "paused", "expired" or "revoked"
 
 A share's token still gets an answer when its share is paused, expired or revoked. `share.status` says which, and `services` is empty.
 
-`acn.services` returns the services this token may use, as hashes from `GET /api/v1/services`. `acn.guide("agi-labs")` returns that service's usage guide as Markdown.
+`acn.services` returns the services this token may use, as hashes from `GET /api/v1/services`: `slug`, `name`, `provider`, `category`, `available`, `base_url`, `auth` and `guide_url`.
+
+### Guides
+
+```ruby
+md = acn.guide_markdown("agi-labs")   # the usage guide as Markdown (acn.guide does the same)
+g = acn.guide_doc("agi-labs")         # Acnologia::Guide
+g.markdown                            # the same Markdown
+g.generated?                          # true when the server built it from the provider spec
+g.guide["endpoints"]                  # the structured guide, as parsed JSON
+```
+
+## Capabilities
+
+A capability is one call (say `web-search`) that the server sends to whichever provider can serve it.
+
+```ruby
+acn.capabilities.each do |c|
+  puts c.slug, c.description, c.strategy
+  c.params                  # parsed JSON describing the params
+  c.routes.map(&:service)   # providers it can use, each with mapped
+end
+
+res = acn.capability("web-search", { "query" => "coffee" })
+res.json                    # the mapped answer
+res.service                 # the provider that answered
+res.tried.map { |t| "#{t.service}=#{t.status}" }
+
+acn.capability("web-search", { "query" => "coffee" }, service: "tavily", raw: true)
+```
+
+`acn.capability(slug, params = nil, service: nil, raw: false, headers: {}, idempotency_key: nil, no_cache: false)` POSTs `params` as JSON to `/proxy/{slug}`. `service:` adds `?_service=` to use only that provider, and `raw: true` adds `?_raw=1` for the provider's own body. Like a proxy call, it returns the `Acnologia::Response` and does not raise for a non 2xx.
+
+## Forward proxy
+
+Apps can also call a provider's own URL with Acnologia as their `HTTPS_PROXY`. The proxy puts a key on the request. The app trusts the proxy's CA and uses its token as the proxy password.
+
+```ruby
+acn.save_forward_proxy_ca("acnologia-ca.pem")   # public route, sends no token
+env = acn.forward_proxy_env("acnologia-ca.pem")
+# {"HTTPS_PROXY"=>"http://app:acn_...@keys.example.com:8888", "HTTP_PROXY"=>..., "NODE_USE_ENV_PROXY"=>"1",
+#  "NODE_EXTRA_CA_CERTS"=>"acnologia-ca.pem", "REQUESTS_CA_BUNDLE"=>"acnologia-ca.pem", "SSL_CERT_FILE"=>"acnologia-ca.pem"}
+system(env, "python", "my_script.py")           # the child's own HTTP client goes through the proxy
+```
+
+In Ruby itself, `forward_proxy_http` returns a `Net::HTTP` that goes through the proxy and trusts the system roots plus the Acnologia CA:
+
+```ruby
+http = acn.forward_proxy_http("api.openai.com")   # downloads the CA, or pass ca_path:
+res = http.start { |h| h.get("/v1/models") }      # no key in your code
+```
+
+| Call | Returns |
+|---|---|
+| `forward_proxy` | `Acnologia::ForwardProxy`: `proxy_url`, `proxy_url_with_token`, `ca_url`, `ca_fingerprint`, `passthrough?`, `hosts` (`host`, `service`, `name`, `path`), `env`, `service_header`, `raw` |
+| `forward_proxy_ca` | The CA certificate as PEM text, from `GET /api/v1/proxy/ca.pem`, sent without a token |
+| `save_forward_proxy_ca(path = "acnologia-ca.pem")` | Writes the PEM to `path` and returns `path` |
+| `forward_proxy_url` | `proxy_url` with user `app` and your token as the password, percent escaped |
+| `forward_proxy_env(ca_path = "acnologia-ca.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` |
+| `forward_proxy_http(host, port = 443, use_ssl:, ca_path: nil)` | A configured `Net::HTTP` |
+
+`ForwardProxy` holds a `<app token>` placeholder, never the token, so it is safe to print. `forward_proxy_url`, `forward_proxy_env` and `forward_proxy_http` contain the real token: keep them out of logs.
 
 ## Concurrency limits
 
@@ -284,7 +358,7 @@ With `max_retries:`, the client sleeps that long (1 second when the server gives
 acn = Acnologia::Client.new(max_retries: 3, max_retry_wait: 30)
 ```
 
-Retries apply to `services`, `me`, `lease` and proxy calls. Reports and renewals are never retried. A proxied POST or PATCH is retried only when it has an `Idempotency-Key`, and every attempt sends the same key.
+Retries apply to `services`, `me`, `guide_doc`, `capabilities`, `forward_proxy`, `lease` and proxy calls. Reports and renewals are never retried. A proxied POST or PATCH is retried only when it has an `Idempotency-Key`, and every attempt sends the same key.
 
 ## Access password
 
@@ -319,7 +393,7 @@ Every error from Acnologia is an `Acnologia::Error` with `status`, `code`, `mess
 | `Acnologia::Error` | Anything else, for example 404 `lease_not_found`, 409 `report_failed` or a transport failure (`status` 0) |
 | `Acnologia::RateLimited`, `QuotaExhausted`, `InvalidKey` | Raised by you inside `with_key` |
 
-API calls (`services`, `me`, `guide`, `lease`, `report`, `renew`) raise these. Proxy calls return the response; call `res.raise_for_status!` to raise.
+API calls (`services`, `me`, `guide`, `guide_doc`, `capabilities`, `forward_proxy`, `forward_proxy_ca`, `lease`, `report`, `renew`) raise these. Other codes to check on `Acnologia::Error#code` include `empty_group`, `bad_params`, `no_route`, `no_route_worked` and `proxy_not_allowed`. Proxy calls return the response; call `res.raise_for_status!` to raise.
 
 ```ruby
 begin

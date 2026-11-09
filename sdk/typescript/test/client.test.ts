@@ -92,7 +92,7 @@ describe("Acnologia client", () => {
     expect(calls[0].url).toBe("http://acnologia.test/api/v1/services");
     expect(calls[0].method).toBe("GET");
     expect(calls[0].headers.authorization).toBe("Bearer acn_test");
-    expect(calls[0].headers["x-acnologia-client"]).toBe("acnologia-ts/0.1.0");
+    expect(calls[0].headers["x-acnologia-client"]).toBe("acnologia-ts/0.2.0");
     expect(services).toEqual([
       {
         slug: "serpapi",
@@ -102,6 +102,7 @@ describe("Acnologia client", () => {
         available: true,
         baseUrl: "https://serpapi.com",
         auth: { type: "query", name: "api_key" },
+        guideUrl: "",
       },
     ]);
   });

@@ -1,6 +1,6 @@
 cabal-version:      2.4
 name:               acnologia
-version:            0.1.0
+version:            0.2.0
 synopsis:           Client for Acnologia, a self-hosted API key server
 description:
   Calls the Acnologia consumer API with an app token: send requests through

@@ -31,19 +31,20 @@ or pack it into a local feed:
 ```sh
 cd sdk/csharp
 dotnet pack src/Acnologia -c Release -o ./artifacts
-dotnet add path/to/YourApp.csproj package Acnologia --version 0.1.0 --source "$PWD/artifacts"
+dotnet add path/to/YourApp.csproj package Acnologia --version 0.2.0 --source "$PWD/artifacts"
 ```
 
 ## Connect to your server
 
 Create an app on the Apps page of the dashboard and copy its token. The SDK sends it as `Authorization: Bearer acn_...`. Tokens with the older `cog_` prefix still work.
 
-`AcnologiaClient.FromEnvironment()` and `AcnologiaClientOptions.FromEnvironment()` read the URL and token from the environment, and throw `ArgumentException` when one is missing:
+`AcnologiaClient.FromEnvironment()` and `AcnologiaClientOptions.FromEnvironment()` read the URL, token and access password from the environment, and throw `ArgumentException` when the URL or token is missing:
 
 | Variable | Meaning |
 |---|---|
 | `ACNOLOGIA_URL` | Server URL, such as `http://localhost:8080` |
 | `ACNOLOGIA_TOKEN` | App token, `acn_...` |
+| `ACNOLOGIA_ACCESS_PASSWORD` | Optional, for a deploy behind the access password |
 
 `AcnologiaClientOptions` holds the settings:
 
@@ -51,8 +52,9 @@ Create an app on the Apps page of the dashboard and copy its token. The SDK send
 |---|---|---|
 | `BaseUrl` | `ACNOLOGIA_URL` with `FromEnvironment` | Required. |
 | `Token` | `ACNOLOGIA_TOKEN` with `FromEnvironment` | Required. |
-| `UserAgent` | `acnologia-csharp/0.1.0` | |
-| `Timeout` | 75 seconds | Bounds services, lease, report and renew calls. It is longer than the 60 second maximum lease wait. Proxy calls are not bounded by it. |
+| `UserAgent` | `acnologia-csharp/0.2.0` | |
+| `AccessPassword` | `ACNOLOGIA_ACCESS_PASSWORD` with `FromEnvironment` | Sent as `X-Acnologia-Access` on every request, for a deploy behind the access password. |
+| `Timeout` | 75 seconds | Bounds the API calls (services, me, guides, lease, report, renew and the rest). It is longer than the 60 second maximum lease wait. Proxy calls are not bounded by it. |
 
 `new AcnologiaClient(baseUrl, token)` and `new AcnologiaClient(options)` create their own `HttpClient`, which does not follow redirects. To use `IHttpClientFactory`, register the options and a typed client:
 
@@ -74,13 +76,24 @@ A supplied `HttpClient` keeps its own `Timeout` (100 seconds by default), so kee
 ```csharp
 var weather = acn.Proxy("weather");
 using var alert = await weather.PostJsonAsync("/v1/alerts", new { city = "Lisbon" });
-if (alert.Headers.TryGetValues("X-Acnologia-Key-Id", out var keyId))
-    Console.WriteLine($"{(int)alert.StatusCode} via key {keyId.First()}");
+var info = alert.GetProxyInfo();
+Console.WriteLine($"{(int)alert.StatusCode} via {info.Service} key {info.KeyId} after {info.Attempts} attempts, cache {info.Cache}");
 ```
 
 - The upstream response comes back unchanged. A non-2xx status is not an exception.
 - Responses are returned once the headers arrive, so bodies can stream. Dispose them.
-- Each response carries `X-Acnologia-Key-Id`, `X-Acnologia-Attempts` and `X-Acnologia-Service`.
+- `response.GetProxyInfo()` reads Acnologia's answer headers into a `ProxyResponseInfo`: `KeyId` (null for a share's token), `Attempts`, `Service`, `Cache` (`hit`, `miss`, ...), `Replayed`, `Capability` and `Tried` (a list of `TriedRoute(Service, Status)`).
+- `{service}` may also be a service group or a capability slug.
+
+Per call options go in a `ProxyRequestOptions`: `IdempotencyKey` sends `Idempotency-Key` (a retry replays the first answer, and `Replayed` is true), `NoCache` sends `Cache-Control: no-cache`.
+
+```csharp
+var orders = acn.Proxy("payments", new ProxyRequestOptions { IdempotencyKey = "order-42", NoCache = true });
+using var paid = await orders.PostJsonAsync("/v1/charges", new { amount = 500 });
+Console.WriteLine(paid.GetProxyInfo().Replayed);
+```
+
+`proxy.WithOptions(options)` makes a copy of an existing proxy with options, and `options.ApplyTo(request)` adds the headers to a request sent through `AcnologiaProxyHandler`.
 
 Other helpers:
 
@@ -183,12 +196,61 @@ A non-empty `Auth.Prefix` goes in front of the secret for every type, and for `b
 
 On a service with a per key concurrency limit, each lease holds one of the key's slots until it is reported or its TTL runs out. Set `LeaseOptions.Wait` and the server waits that long for a free slot. Without it a busy pool throws `AllKeysBusyException` right away; retry after its `RetryAfter`. Proxy mode queues requests on the server and needs none of this.
 
-## List services
+## Call a capability
+
+A capability is one call (such as web search) that several services can serve. List them and call one with its params:
+
+```csharp
+foreach (var cap in await acn.CapabilitiesAsync())
+    Console.WriteLine($"{cap.Slug}: {string.Join(", ", cap.Routes.Select(r => r.Service))}");
+
+using var found = await acn.CapabilityAsync("web_search", new { query = "coffee in Lisbon" },
+    new CapabilityOptions { Service = "serpapi", Raw = false });
+var how = found.GetProxyInfo();
+Console.WriteLine($"{how.Capability} answered by {how.Service}; tried {string.Join(", ", how.Tried)}");
+```
+
+`CapabilityAsync` POSTs the params as JSON to `/proxy/{slug}`. `Service` adds `?_service=` (use only that route) and `Raw` adds `?_raw=1` (the provider's body, unmapped). `CapabilityOptions` also takes `IdempotencyKey` and `NoCache`.
+
+## List services, guides and your own access
 
 ```csharp
 foreach (var s in await acn.ServicesAsync())
-    Console.WriteLine($"{s.Slug} available={s.Available} auth={s.Auth.Type}");
+    Console.WriteLine($"{s.Slug} available={s.Available} auth={s.Auth.Type} guide={s.GuideUrl}");
+
+var guide = await acn.GuideAsync("weather");      // Markdown, Generated, Content (the structured guide as JsonElement)
+string md = await acn.GuideMarkdownAsync("weather"); // the Markdown alone
+
+var me = await acn.MeAsync();
+Console.WriteLine($"{me.App.Name}: {me.Usage.TodayRequests} today, limit hit: {me.LimitHit?.Limit ?? "none"}");
+if (me.Share is { } share) Console.WriteLine($"shared by {share.OwnerName}, {share.Status}");
 ```
+
+`MeAsync` returns `App`, `Limits` (each null when unset), `Usage`, `LimitHit`, `Services` (with `LogoUrl`) and, for a share's token, `Share`. A share that stopped still answers here with its `Status`.
+
+## Use the forward proxy
+
+An app can set Acnologia as its HTTPS proxy and call provider URLs as they are. Acnologia injects the pool key.
+
+```csharp
+var fp = await acn.ForwardProxyAsync();       // ProxyUrl, CaUrl, CaFingerprint, Hosts, Env, ServiceHeader (no token)
+await acn.SaveForwardProxyCAAsync();           // writes acnologia-ca.pem; ForwardProxyCAAsync() returns the PEM text
+var env = await acn.ForwardProxyEnvAsync();    // HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, ...
+
+var psi = new System.Diagnostics.ProcessStartInfo("node", "app.js");
+foreach (var (k, v) in env) psi.Environment[k] = v;
+System.Diagnostics.Process.Start(psi);
+```
+
+For this process's own `HttpClient`, `CreateForwardProxyHandlerAsync()` returns an `HttpClientHandler` with the proxy (user `app`, the token as password) and a certificate check that trusts the Acnologia CA next to the system roots:
+
+```csharp
+using var handler = await acn.CreateForwardProxyHandlerAsync();
+using var http = new HttpClient(handler);
+var answer = await http.GetStringAsync("https://serpapi.com/search.json?q=coffee"); // no key in the URL
+```
+
+`ForwardProxyUrlAsync()` returns the proxy URL with the token, `http://app:acn_...@host:8888`. It and `ForwardProxyEnvAsync()` contain the token, so do not log them. `ForwardProxyCAAsync()` is public and sends no token.
 
 ## Handle errors
 
@@ -196,9 +258,11 @@ All exceptions derive from `AcnologiaException`.
 
 | Type | When |
 |---|---|
-| `AcnologiaApiException` (`StatusCode`, `Code`, `ServerMessage`) | any non-2xx from the consumer API without a more specific type, such as 404 `lease_not_found` |
+| `AcnologiaApiException` (`StatusCode`, `Code`, `ServerMessage`, `RetryAfter`) | any non-2xx from the consumer API without a more specific type, such as 404 `lease_not_found`. Other codes worth checking on `Code`: `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed`, `lease_not_allowed`, `loop_detected` |
 | `UnauthenticatedException` | 401: token missing, wrong, revoked or expired |
 | `ForbiddenException` | 403: app disabled, or not allowed this service or mode |
+| `ShareUnavailableException` (`ShareStatus`) | 403 `share_revoked`, `share_paused`, `share_expired`: the share behind the token stopped. `ShareStatus` is `revoked`, `paused` or `expired`. Derives from `ForbiddenException` |
+| `AppLimitReachedException` (`Limit`, `ResetAt`, `RetryAfter`) | 429 `app_limit_reached`: the app used up its `daily_requests`, `monthly_requests`, `daily_budget` or `monthly_budget` limit |
 | `NoKeyAvailableException` (`RetryAfter`, `Busy`) | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
 | `AllKeysBusyException` (`RetryAfter`) | 503 `all_keys_busy`: every usable key is at its concurrency limit. Derives from `NoKeyAvailableException` |
 | `ServiceUnavailableException` (`RetryAfter`) | 503 `service_unavailable`: the provider's circuit breaker is open |
@@ -221,7 +285,7 @@ catch (NoKeyAvailableException e)
 
 ## Keep secrets out of logs
 
-`ToString()`, the debugger view and JSON serialization of a `Lease` never include the secret. `AcnologiaClient`, `AcnologiaClientOptions` and `AcnologiaProxyHandler` print `[redacted]` for the token. The client never logs either.
+`ToString()`, the debugger view and JSON serialization of a `Lease` never include the secret. `AcnologiaClient`, `AcnologiaClientOptions` and `AcnologiaProxyHandler` print `[redacted]` for the token and never print the access password. `ForwardProxy` never holds the token (its `ProxyUrlWithToken` has an `<app token>` placeholder). The client never logs either.
 
 ## Run the tests
 

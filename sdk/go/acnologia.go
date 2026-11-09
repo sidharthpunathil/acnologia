@@ -23,7 +23,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // DefaultTimeout bounds API calls when New is given no WithHTTPClient. It is
 // longer than MaxWait so a lease that waits for a free slot can still succeed.
@@ -35,6 +35,8 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	userAgent  string
+	// accessPassword, when set, goes out as X-Acnologia-Access.
+	accessPassword string
 	// defaultHTTP is true when httpClient was created by New, so proxy calls
 	// can drop its timeout (streamed bodies may outlive it).
 	defaultHTTP bool
@@ -58,6 +60,10 @@ func WithHTTPClient(hc *http.Client) Option {
 
 // WithUserAgent overrides the User-Agent header.
 func WithUserAgent(ua string) Option { return func(c *Client) { c.userAgent = ua } }
+
+// WithAccessPassword sends X-Acnologia-Access on every request, for a
+// deploy behind the access password.
+func WithAccessPassword(pw string) Option { return func(c *Client) { c.accessPassword = pw } }
 
 // New creates a client. baseURL is the Acnologia server, e.g. http://localhost:8080.
 func New(baseURL, token string, opts ...Option) *Client {
@@ -93,6 +99,8 @@ type Service struct {
 	Available bool   `json:"available"`
 	BaseURL   string `json:"base_url"`
 	Auth      Auth   `json:"auth"`
+	// GuideURL is where the service's usage guide is (see Guide).
+	GuideURL string `json:"guide_url"`
 }
 
 // Lease is a key handed out by the pool. Report its outcome when done.
@@ -343,6 +351,14 @@ func ceilSeconds(d time.Duration) int64 {
 
 func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	c.setPublicHeaders(req)
+}
+
+// setPublicHeaders sets every header but the token.
+func (c *Client) setPublicHeaders(req *http.Request) {
+	if c.accessPassword != "" {
+		req.Header.Set("X-Acnologia-Access", c.accessPassword)
+	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
@@ -376,7 +392,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return parseError(resp.StatusCode, data, resp.Header.Get("Retry-After"))
+		return parseError(resp.StatusCode, data, resp.Header)
 	}
 	if out == nil || len(data) == 0 {
 		return nil
@@ -387,26 +403,36 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	return nil
 }
 
-func parseError(status int, data []byte, retryAfterHeader string) error {
+func parseError(status int, data []byte, h http.Header) error {
 	var e struct {
 		Error struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 		RetryAfterSec float64 `json:"retry_after_sec"`
+		Limit         string  `json:"limit"`
+		ResetAt       string  `json:"reset_at"`
 	}
 	_ = json.Unmarshal(data, &e)
-	if e.Error.Code == "service_unavailable" {
-		retry := time.Duration(e.RetryAfterSec * float64(time.Second))
-		if retry <= 0 {
-			if n, err := strconv.ParseFloat(strings.TrimSpace(retryAfterHeader), 64); err == nil && n > 0 {
-				retry = time.Duration(n * float64(time.Second))
-			}
+	retry := time.Duration(e.RetryAfterSec * float64(time.Second))
+	if retry <= 0 {
+		if n, err := strconv.ParseFloat(strings.TrimSpace(h.Get("Retry-After")), 64); err == nil && n > 0 {
+			retry = time.Duration(n * float64(time.Second))
 		}
-		return &ErrServiceUnavailable{
-			APIError:   APIError{StatusCode: status, Code: e.Error.Code, Message: e.Error.Message},
-			RetryAfter: retry,
+	}
+	base := APIError{StatusCode: status, Code: e.Error.Code, Message: e.Error.Message, RetryAfter: retry}
+	switch e.Error.Code {
+	case "service_unavailable":
+		return &ErrServiceUnavailable{APIError: base, RetryAfter: retry}
+	case "app_limit_reached":
+		reset, _ := time.Parse(time.RFC3339Nano, e.ResetAt)
+		return &ErrAppLimitReached{APIError: base, Limit: e.Limit, ResetAt: reset}
+	case "share_revoked", "share_paused", "share_expired":
+		st := strings.TrimSpace(h.Get("X-Acnologia-Share"))
+		if st == "" {
+			st = strings.TrimPrefix(e.Error.Code, "share_")
 		}
+		return &ErrShareUnavailable{APIError: base, Status: st}
 	}
 	if e.Error.Code == "no_key_available" || e.Error.Code == "all_keys_busy" ||
 		(status == http.StatusServiceUnavailable && e.Error.Code == "") {
@@ -431,5 +457,5 @@ func parseError(status int, data []byte, retryAfterHeader string) error {
 			msg = http.StatusText(status)
 		}
 	}
-	return &APIError{StatusCode: status, Code: e.Error.Code, Message: msg}
+	return &APIError{StatusCode: status, Code: e.Error.Code, Message: msg, RetryAfter: retry}
 }

@@ -63,4 +63,33 @@ final class ProxyTests: XCTestCase {
         XCTAssertEqual(resp.acnologiaError, .serviceUnavailable(retryAfter: 30, message: "serpapi keeps failing, so Acnologia paused traffic to it"))
         XCTAssertThrowsError(try resp.throwingAcnologiaError())
     }
+
+    func testProxyOptionsAndAccessors() async throws {
+        StubProtocol.install { _ in
+            StubResponse(status: 200, headers: ["Content-Type": "application/json", "X-Acnologia-Key-Id": "9",
+                                                "X-Acnologia-Attempts": "3", "X-Acnologia-Service": "serpapi",
+                                                "X-Acnologia-Cache": "hit", "Idempotent-Replayed": "true"],
+                         body: "{}")
+        }
+        let proxy = makeClient().proxy("serpapi")
+        let resp = try await proxy.postJSON("/charge", ["a": 1], options: ProxyOptions(idempotencyKey: "order-42", noCache: true))
+        let r = StubProtocol.requests[0]
+        XCTAssertEqual(r.header("Idempotency-Key"), "order-42")
+        XCTAssertEqual(r.header("Cache-Control"), "no-cache")
+        XCTAssertEqual(resp.keyID, 9)
+        XCTAssertEqual(resp.attempts, 3)
+        XCTAssertEqual(resp.service, "serpapi")
+        XCTAssertEqual(resp.cache, "hit")
+        XCTAssertTrue(resp.replayed)
+        XCTAssertNil(resp.capability)
+        XCTAssertEqual(resp.tried, [])
+
+        _ = try await proxy.get("/search.json")
+        let r2 = StubProtocol.requests[1]
+        XCTAssertNil(r2.header("Idempotency-Key"))
+        XCTAssertNil(r2.header("Cache-Control"))
+
+        _ = try await proxy.send(URLRequest(url: URL(string: "/v1/x")!), options: ProxyOptions(noCache: true))
+        XCTAssertEqual(StubProtocol.requests[2].header("Cache-Control"), "no-cache")
+    }
 }

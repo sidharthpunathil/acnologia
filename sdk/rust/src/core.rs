@@ -3,7 +3,9 @@
 
 use std::time::Duration;
 
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use std::collections::BTreeMap;
+
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS, NON_ALPHANUMERIC};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -171,6 +173,97 @@ pub(crate) struct RenewResponse {
 pub(crate) struct ServicesResponse {
     #[serde(default)]
     pub services: Vec<crate::types::Service>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CapabilitiesResponse {
+    #[serde(default)]
+    pub capabilities: Vec<crate::types::Capability>,
+}
+
+/// Header carrying the access password.
+pub(crate) const ACCESS_HEADER: &str = "x-acnologia-access";
+
+/// Where the forward proxy CA is saved by default.
+pub(crate) const DEFAULT_CA_PATH: &str = "acnologia-ca.pem";
+
+pub(crate) fn guide_path(slug: &str) -> String {
+    format!("/api/v1/services/{}/guide", escape_segment(slug))
+}
+
+/// The proxy URL of a capability call, with `_service` and `_raw`.
+pub(crate) fn capability_url(
+    base: &str,
+    slug: &str,
+    opts: &crate::types::CapabilityOptions,
+) -> String {
+    let mut q: Vec<(&str, &str)> = Vec::new();
+    if let Some(s) = opts.service.as_deref().filter(|s| !s.is_empty()) {
+        q.push(("_service", s));
+    }
+    if opts.raw {
+        q.push(("_raw", "1"));
+    }
+    let mut u = format!("{base}/proxy/{}", escape_segment(slug));
+    if !q.is_empty() {
+        u.push('?');
+        u.push_str(&encode_query(&q));
+    }
+    u
+}
+
+/// Characters kept as is in the userinfo of a URL: the unreserved set.
+const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// `proxy_url` with user `app` and the token as the password.
+pub(crate) fn forward_proxy_url(proxy_url: &str, token: &str) -> Result<String, Error> {
+    let (scheme, rest) = proxy_url.split_once("://").ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "server sent a bad forward proxy URL: {proxy_url:?}"
+        ))
+    })?;
+    // Drop credentials the URL may already carry.
+    let rest = match rest.split_once('/') {
+        Some((auth, path)) => match auth.rsplit_once('@') {
+            Some((_, host)) => format!("{host}/{path}"),
+            None => rest.to_string(),
+        },
+        None => rest.rsplit_once('@').map_or(rest, |(_, h)| h).to_string(),
+    };
+    let rest = rest.trim_end_matches('/');
+    Ok(format!(
+        "{scheme}://app:{}@{rest}",
+        utf8_percent_encode(token, USERINFO)
+    ))
+}
+
+/// The environment for an app that uses the forward proxy.
+pub(crate) fn forward_proxy_env(proxy_url: &str, ca_path: &str) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    env.insert("HTTPS_PROXY".to_string(), proxy_url.to_string());
+    env.insert("HTTP_PROXY".to_string(), proxy_url.to_string());
+    env.insert("NODE_USE_ENV_PROXY".to_string(), "1".to_string());
+    for k in ["NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"] {
+        env.insert(k.to_string(), ca_path.to_string());
+    }
+    env
+}
+
+/// Parse `X-Acnologia-Tried`: `service=status` pairs, comma separated.
+pub(crate) fn parse_tried(v: &str) -> Vec<crate::types::Tried> {
+    v.split(',')
+        .filter_map(|part| {
+            let (svc, st) = part.trim().rsplit_once('=')?;
+            Some(crate::types::Tried {
+                service: svc.trim().to_string(),
+                status: st.trim().parse().ok()?,
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn report_path(lease_id: &str) -> String {
@@ -395,6 +488,37 @@ mod tests {
                 &[("q", "x")]
             ),
             "http://h/proxy/serpapi/search.json?q=x"
+        );
+    }
+
+    #[test]
+    fn forward_proxy_helpers() {
+        assert_eq!(
+            forward_proxy_url("http://h:8888", "acn_a/b").unwrap(),
+            "http://app:acn_a%2Fb@h:8888"
+        );
+        assert_eq!(
+            forward_proxy_url("http://x:y@h:8888/", "acn_t").unwrap(),
+            "http://app:acn_t@h:8888"
+        );
+        assert!(forward_proxy_url("h:8888", "t").is_err());
+        let env = forward_proxy_env("http://p", "ca.pem");
+        assert_eq!(env.len(), 6);
+        assert_eq!(env["NODE_USE_ENV_PROXY"], "1");
+        assert_eq!(env["SSL_CERT_FILE"], "ca.pem");
+        let t = parse_tried("serpapi=503, tavily=200,bad,x=y");
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[1].service, "tavily");
+        assert_eq!(t[1].status, 200);
+        let mut o = crate::types::CapabilityOptions::new().service("a b").raw();
+        assert_eq!(
+            capability_url("http://h", "web-search", &o),
+            "http://h/proxy/web-search?_service=a+b&_raw=1"
+        );
+        o = crate::types::CapabilityOptions::new();
+        assert_eq!(
+            capability_url("http://h", "web-search", &o),
+            "http://h/proxy/web-search"
         );
     }
 

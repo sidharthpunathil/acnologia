@@ -14,6 +14,10 @@ defmodule Acnologia.Response do
       when caching applies
     * `replayed` from `Idempotent-Replayed: true`: a stored answer to an
       earlier call with the same `Idempotency-Key`
+    * `capability` from `X-Acnologia-Capability`: the capability that ran,
+      for a capability call
+    * `tried` from `X-Acnologia-Tried`: the routes a capability call tried,
+      in order, as `[%{service: slug, status: integer}]`
 
   `key_id` and `attempts` are nil for a share's token. `acnologia` holds
   every `x-acnologia-*` header by its lower case name.
@@ -27,6 +31,8 @@ defmodule Acnologia.Response do
             service: nil,
             cache: nil,
             replayed: false,
+            capability: nil,
+            tried: [],
             acnologia: %{}
 
   @type t :: %__MODULE__{
@@ -38,6 +44,8 @@ defmodule Acnologia.Response do
           service: String.t() | nil,
           cache: String.t() | nil,
           replayed: boolean(),
+          capability: String.t() | nil,
+          tried: [%{service: String.t(), status: integer()}],
           acnologia: %{optional(String.t()) => String.t()}
         }
 
@@ -55,6 +63,8 @@ defmodule Acnologia.Response do
       service: acn["x-acnologia-service"],
       cache: acn["x-acnologia-cache"],
       replayed: header(headers, "idempotent-replayed") == "true",
+      capability: acn["x-acnologia-capability"],
+      tried: parse_tried(acn["x-acnologia-tried"]),
       acnologia: acn
     }
   end
@@ -79,6 +89,28 @@ defmodule Acnologia.Response do
     case JSON.decode(body) do
       {:ok, value} -> {:ok, value}
       {:error, _} -> {:error, Acnologia.Error.new(:decode, "response body is not JSON")}
+    end
+  end
+
+  @doc """
+  Parses `X-Acnologia-Tried` (`service=status` pairs, comma separated) into
+  `[%{service: slug, status: integer}]`. A status that is not a number is 0.
+  """
+  @spec parse_tried(String.t() | nil) :: [%{service: String.t(), status: integer()}]
+  def parse_tried(nil), do: []
+
+  def parse_tried(value) do
+    for part <- String.split(value, ","), part = String.trim(part), part != "" do
+      case :binary.matches(part, "=") do
+        [] ->
+          %{service: part, status: 0}
+
+        matches ->
+          {pos, _} = List.last(matches)
+          service = part |> binary_part(0, pos) |> String.trim()
+          status = part |> binary_part(pos + 1, byte_size(part) - pos - 1) |> String.trim()
+          %{service: service, status: int(status) || 0}
+      end
     end
   end
 

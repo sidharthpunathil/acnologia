@@ -205,9 +205,91 @@ if _, err := lease.Renew(ctx, 10*time.Minute); err != nil {
 }
 ```
 
+## Proxy options and response headers
+
+`p.WithIdempotencyKey(key)` and `p.WithNoCache()` return a copy of the `*Proxy` that sends `Idempotency-Key` or `Cache-Control: no-cache` on every request. `acnologia.ProxyInfo(resp)` reads the Acnologia headers of a proxied answer:
+
+```go
+resp, err := c.Proxy("weather").WithIdempotencyKey("order-42").PostJSON(ctx, "/v1/alerts", alert)
+if err != nil {
+	return err
+}
+info := acnologia.ProxyInfo(resp)
+fmt.Println(info.KeyID, info.Attempts, info.Service, info.Cache, info.Replayed)
+```
+
+`ProxyMeta` has `KeyID` (0 when absent, as for a share's token), `Attempts`, `Service`, `Cache` (`hit`, `miss`, ...), `Replayed`, `Capability` and `Tried` (`[]Tried{Service, Status}` from `X-Acnologia-Tried`). The service passed to `Proxy` may also be a service group or a capability slug.
+
+## Capabilities
+
+A capability is one call served by whichever provider can. `c.Capabilities(ctx)` lists them, and `c.Capability(ctx, slug, params, opts)` calls one with `params` as the JSON body. The answer comes back as is, like a proxy call.
+
+```go
+caps, err := c.Capabilities(ctx) // Slug, Name, Description, Strategy, Params, Routes, URL
+resp, err := c.Capability(ctx, "web-search", map[string]any{"q": "coffee"},
+	&acnologia.CapabilityOptions{Service: "serpapi"})
+info := acnologia.ProxyInfo(resp) // info.Capability, info.Service, info.Tried
+```
+
+`Service` adds `?_service=` (only that provider's route) and `Raw` adds `?_raw=1` (the provider's own body, unmapped).
+
+## Forward proxy
+
+Point an app's own HTTP client at Acnologia and call provider URLs as they are. `c.ForwardProxyTransport(ctx)` returns an `*http.Transport` that sends everything through the forward proxy, with the token as proxy credentials and the system roots plus the Acnologia CA as `RootCAs`:
+
+```go
+tr, err := c.ForwardProxyTransport(ctx)
+if err != nil {
+	return err
+}
+hc := &http.Client{Transport: tr}
+resp, err := hc.Get("https://api.openai.com/v1/models") // Acnologia adds the key
+```
+
+For another process (a Node or Python tool), save the CA and hand it the environment:
+
+```go
+if _, err := c.SaveForwardProxyCA(ctx, "acnologia-ca.pem"); err != nil {
+	return err
+}
+env, err := c.ForwardProxyEnv(ctx, "acnologia-ca.pem")
+cmd := exec.Command("node", "agent.js")
+cmd.Env = os.Environ()
+for k, v := range env {
+	cmd.Env = append(cmd.Env, k+"="+v)
+}
+```
+
+| Call | Returns |
+|---|---|
+| `c.ForwardProxy(ctx)` | `*ForwardProxy`: `ProxyURL`, `ProxyURLWithToken` (with an `<app token>` placeholder), `CAURL`, `CAFingerprint`, `Passthrough`, `Hosts`, `Env`, `ServiceHeader` |
+| `c.ForwardProxyCA(ctx)` | the CA certificate as PEM. Public: the token is not sent |
+| `c.SaveForwardProxyCA(ctx, path)` | writes it to `path` (default `acnologia-ca.pem`) |
+| `c.ForwardProxyURL(ctx)` | `http://app:acn_...@host:8888`. Contains the token |
+| `c.ForwardProxyEnv(ctx, caPath)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `caPath`. Contains the token |
+| `c.ForwardProxyTransport(ctx)` | the `*http.Transport` above. Its proxy URL contains the token |
+
+## About this token
+
+`c.Me(ctx)` returns the token's own access: `App`, `Limits` (each a nil pointer when unset), `Usage`, `LimitHit`, `Services` (with `Available` as a count and `LogoURL`) and `Share` (nil for an ordinary app; for a share's token its `Status`, which is still answered after the share stopped).
+
+```go
+me, err := c.Me(ctx)
+if me.LimitHit != nil {
+	fmt.Println("limit", me.LimitHit.Limit, "resets", me.LimitHit.ResetAt)
+}
+```
+
+## Usage guides
+
+```go
+g, err := c.Guide(ctx, "weather")          // Markdown, Generated, Guide (json.RawMessage)
+md, err := c.GuideMarkdown(ctx, "weather") // the Markdown alone
+```
+
 ## List services
 
-`c.Services(ctx)` returns the services this app token may use, each with `Slug`, `Name`, `Provider`, `Category`, `Available`, `BaseURL` and `Auth`.
+`c.Services(ctx)` returns the services this app token may use, each with `Slug`, `Name`, `Provider`, `Category`, `Available`, `BaseURL`, `Auth` and `GuideURL`.
 
 ```go
 svcs, err := c.Services(ctx)
@@ -223,7 +305,9 @@ for _, s := range svcs {
 | `*acnologia.ErrNoKeyAvailable{RetryAfter, Code, Busy}` | `acnologia.NoKeyAvailable` | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
 | `*acnologia.ErrNoKeyAvailable` with `Busy: true` | `acnologia.AllKeysBusy` (and `NoKeyAvailable`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
 | `*acnologia.ErrServiceUnavailable{RetryAfter}` (embeds `APIError`) | `acnologia.ServiceUnavailable` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Not a `NoKeyAvailable` |
-| `*acnologia.APIError{StatusCode, Code, Message}` | | any other non-2xx from the consumer API, such as 401, 403 `lease_not_allowed` or 404 `lease_not_found` |
+| `*acnologia.ErrAppLimitReached{Limit, ResetAt}` (embeds `APIError`) | `acnologia.AppLimitReached` | 429 `app_limit_reached`: the app used up a daily or monthly request or budget limit. `RetryAfter` says how long |
+| `*acnologia.ErrShareUnavailable{Status}` (embeds `APIError`) | `acnologia.ShareUnavailable` | 403 `share_revoked`, `share_paused` or `share_expired`. `Status` is `revoked`, `paused` or `expired` |
+| `*acnologia.APIError{StatusCode, Code, Message, RetryAfter}` | | any other non-2xx from the consumer API, such as 401, 403 `lease_not_allowed`, 404 `lease_not_found`, or `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed`, `loop_detected` |
 | `*acnologia.ErrRateLimited{RetryAfter}` | `acnologia.RateLimited` | you return it from `WithKey` |
 | `*acnologia.ErrQuotaExhausted` | `acnologia.QuotaExhausted` | you return it from `WithKey` |
 | `*acnologia.ErrInvalidKey` | `acnologia.InvalidKey` | you return it from `WithKey` |
@@ -239,14 +323,15 @@ if errors.As(err, &nk) {
 }
 ```
 
-`errors.As(err, &apiErr)` with an `*acnologia.APIError` also matches an `*ErrServiceUnavailable`.
+`errors.As(err, &apiErr)` with an `*acnologia.APIError` also matches an `*ErrServiceUnavailable`, `*ErrAppLimitReached` or `*ErrShareUnavailable`.
 
 ## Configuration
 
 | Option | Default |
 |---|---|
 | `acnologia.WithHTTPClient(*http.Client)` | a client with `acnologia.DefaultTimeout` (75 seconds, longer than the 60 second lease wait) |
-| `acnologia.WithUserAgent(string)` | `acnologia-go/0.1.0` |
+| `acnologia.WithUserAgent(string)` | `acnologia-go/0.2.0` |
+| `acnologia.WithAccessPassword(string)` | none. Sends `X-Acnologia-Access` on every request, for a deploy behind the access password |
 
 The token and lease secrets are redacted when a `Client` or `Lease` is printed with `%v`, `%+v` or `%#v`.
 

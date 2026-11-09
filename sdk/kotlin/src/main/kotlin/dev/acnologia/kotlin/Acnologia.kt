@@ -21,7 +21,20 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.Credentials
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.net.InetSocketAddress
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -50,12 +63,15 @@ import kotlin.time.Duration.Companion.seconds
  * @param httpClient the OkHttp client for API calls. The default has a 75 second call and read
  *   timeout, longer than [MAX_WAIT]. Proxy calls use a copy that never follows redirects.
  * @param userAgent sent as `User-Agent`, `acnologia-kotlin/<version>` by default.
+ * @param accessPassword sent as `X-Acnologia-Access` on every request, for a server behind the
+ *   access password. [fromEnv] reads it from `ACNOLOGIA_ACCESS_PASSWORD`.
  */
 public class Acnologia(
     baseUrl: String,
     private val token: String,
     httpClient: OkHttpClient? = null,
     public val userAgent: String = "acnologia-kotlin/$VERSION",
+    private val accessPassword: String? = null,
 ) {
     /** The server base URL, without a trailing slash. */
     public val baseUrl: String = baseUrl.trimEnd('/')
@@ -80,7 +96,7 @@ public class Acnologia(
 
     public companion object {
         /** The SDK version. */
-        public const val VERSION: String = "0.1.0"
+        public const val VERSION: String = "0.2.0"
 
         /** Default timeout for API calls; longer than [MAX_WAIT]. */
         public val DEFAULT_TIMEOUT: Duration = 75.seconds
@@ -90,15 +106,24 @@ public class Acnologia(
 
         internal val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
+        /** The file name [saveForwardProxyCA] and [forwardProxyEnv] use by default. */
+        public const val DEFAULT_CA_PATH: String = "acnologia-ca.pem"
+
         /**
-         * Creates a client from the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables.
+         * Creates a client from the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables,
+         * and `ACNOLOGIA_ACCESS_PASSWORD` when set.
          *
          * @throws IllegalArgumentException when either is missing.
          */
         public fun fromEnv(httpClient: OkHttpClient? = null): Acnologia = fromEnv(System.getenv(), httpClient)
 
         internal fun fromEnv(env: Map<String, String>, httpClient: OkHttpClient? = null): Acnologia =
-            Acnologia(env["ACNOLOGIA_URL"] ?: "", env["ACNOLOGIA_TOKEN"] ?: "", httpClient)
+            Acnologia(
+                env["ACNOLOGIA_URL"] ?: "",
+                env["ACNOLOGIA_TOKEN"] ?: "",
+                httpClient,
+                accessPassword = env["ACNOLOGIA_ACCESS_PASSWORD"]?.ifEmpty { null },
+            )
     }
 
     override fun toString(): String = "Acnologia(baseUrl=$baseUrl, token=[redacted])"
@@ -106,6 +131,116 @@ public class Acnologia(
     /** Lists the services this app token may use. */
     public suspend fun services(): List<Service> =
         call("GET", "/api/v1/services", null, ServicesWire.serializer()).services
+
+    /**
+     * The token's own access: app, limits, usage, services and, for a share's token, the share.
+     * A share that stopped still answers here, with its [MeShare.status].
+     */
+    public suspend fun me(): Me = call("GET", "/api/v1/me", null, Me.serializer())
+
+    /** The usage guide of [service], parsed. */
+    public suspend fun guide(service: String): Guide =
+        call("GET", guidePath(service), null, Guide.serializer())
+
+    /** The usage guide of [service] as Markdown. */
+    public suspend fun guideMarkdown(service: String): String =
+        text("GET", guidePath(service), null, "text/markdown", auth = true)
+
+    private fun guidePath(service: String) = "/api/v1/services/${pathEscape(service)}/guide"
+
+    /** Lists the capabilities this app may call. Empty for a share's token. */
+    public suspend fun capabilities(): List<Capability> =
+        call("GET", "/api/v1/capabilities", null, CapabilitiesWire.serializer()).capabilities
+
+    /**
+     * Calls a capability: POSTs [params] to `/proxy/{slug}`. [service] picks one route
+     * (`?_service=`), [raw] skips the output mapping (`?_raw=1`). Returns the answer as the proxy
+     * does; read [Response.acnologia] for the service that answered and the routes tried. Close it.
+     */
+    public suspend fun capability(
+        slug: String,
+        params: JsonObject = JsonObject(emptyMap()),
+        service: String? = null,
+        raw: Boolean = false,
+        options: ProxyOptions = ProxyOptions(),
+    ): Response {
+        val q = encodeQuery(mapOf("_service" to service?.ifEmpty { null }, "_raw" to if (raw) "1" else null))
+        val url = baseUrl + "/proxy/" + pathEscape(slug) + if (q.isEmpty()) "" else "?$q"
+        val req = Request.Builder().url(url).post(params.toString().toRequestBody(JSON_MEDIA))
+        return executeProxy(req, options)
+    }
+
+    /** How to use the forward proxy. The answer holds no token. */
+    public suspend fun forwardProxy(): ForwardProxy =
+        call("GET", "/api/v1/proxy", null, ForwardProxy.serializer())
+
+    /** The forward proxy's CA certificate as PEM. Public: sent without the app token. */
+    public suspend fun forwardProxyCA(): String =
+        text("GET", "/api/v1/proxy/ca.pem", null, "application/x-pem-file, */*", auth = false)
+
+    /** Saves the forward proxy's CA certificate to [path] and returns the path. */
+    public suspend fun saveForwardProxyCA(path: String = DEFAULT_CA_PATH): Path {
+        val pem = forwardProxyCA()
+        val p = Paths.get(path)
+        withContext(Dispatchers.IO) { Files.writeString(p, pem) }
+        return p
+    }
+
+    /**
+     * The forward proxy URL with user `app` and this client's token as the password, such as
+     * `http://app:acn_...@host:8888`. It contains the token: do not log it.
+     */
+    public suspend fun forwardProxyUrl(): String = withToken(forwardProxy().proxyUrl)
+
+    /**
+     * The environment an app needs to send its own HTTP calls through the forward proxy:
+     * `HTTPS_PROXY` and `HTTP_PROXY` ([forwardProxyUrl]), `NODE_USE_ENV_PROXY=1`, and
+     * `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to [caPath]. Save the CA
+     * there with [saveForwardProxyCA]. The proxy entries contain the token: do not log them.
+     */
+    public suspend fun forwardProxyEnv(caPath: String = DEFAULT_CA_PATH): Map<String, String> {
+        val url = forwardProxyUrl()
+        return linkedMapOf(
+            "HTTPS_PROXY" to url,
+            "HTTP_PROXY" to url,
+            "NODE_USE_ENV_PROXY" to "1",
+            "NODE_EXTRA_CA_CERTS" to caPath,
+            "REQUESTS_CA_BUNDLE" to caPath,
+            "SSL_CERT_FILE" to caPath,
+        )
+    }
+
+    /**
+     * Returns a copy of [base] that sends every request through the forward proxy: the proxy
+     * address from [forwardProxy], the token as `Proxy-Authorization`, and trust in the system
+     * roots plus the Acnologia CA. Call provider URLs as they are; Acnologia injects the key.
+     */
+    public suspend fun forwardProxyClient(base: OkHttpClient = OkHttpClient()): OkHttpClient {
+        val setup = forwardProxy()
+        val pem = forwardProxyCA()
+        val u = setup.proxyUrl.toHttpUrl()
+        val tm = trustManagerWith(pem)
+        val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }
+        val credential = Credentials.basic("app", token)
+        return base.newBuilder()
+            .proxy(java.net.Proxy(java.net.Proxy.Type.HTTP, InetSocketAddress.createUnresolved(u.host, u.port)))
+            .proxyAuthenticator { _, response ->
+                if (response.request.header("Proxy-Authorization") != null) null
+                else response.request.newBuilder().header("Proxy-Authorization", credential).build()
+            }
+            .sslSocketFactory(ssl.socketFactory, tm)
+            .build()
+    }
+
+    private fun withToken(proxyUrl: String): String {
+        val i = proxyUrl.indexOf("://")
+        require(i > 0) { "acnologia: bad forward proxy URL" }
+        var rest = proxyUrl.substring(i + 3)
+        val slash = rest.indexOf('/').let { if (it < 0) rest.length else it }
+        val at = rest.lastIndexOf('@', slash - 1)
+        if (at >= 0) rest = rest.substring(at + 1)
+        return proxyUrl.substring(0, i + 3) + "app:" + pathEscape(token) + "@" + rest
+    }
 
     /**
      * Asks the pool for a key. Always [Lease.report] the lease: on services with a concurrency
@@ -199,23 +334,42 @@ public class Acnologia(
 
     internal fun Request.Builder.auth(): Request.Builder {
         header("Authorization", "Bearer $token")
+        return common()
+    }
+
+    private fun Request.Builder.common(): Request.Builder {
         if (userAgent.isNotEmpty()) header("User-Agent", userAgent)
+        if (!accessPassword.isNullOrEmpty()) header("X-Acnologia-Access", accessPassword)
         return this
     }
 
-    internal suspend fun <T> call(method: String, path: String, body: JsonObject?, de: DeserializationStrategy<T>): T {
+    internal suspend fun executeProxy(builder: Request.Builder, options: ProxyOptions): Response {
+        options.idempotencyKey?.takeIf { it.isNotEmpty() }?.let { builder.header("Idempotency-Key", it) }
+        if (options.noCache) builder.header("Cache-Control", "no-cache")
+        val req = builder.auth().build()
+        return try {
+            proxyHttp.newCall(req).await()
+        } catch (e: IOException) {
+            throw AcnologiaException("acnologia: proxy ${req.method} ${req.url.encodedPath}: $e", e)
+        }
+    }
+
+    private suspend fun text(method: String, path: String, body: JsonObject?, accept: String, auth: Boolean): String {
         val rb = body?.toString()?.toRequestBody(JSON_MEDIA)
-        val req = Request.Builder().url(baseUrl + path).auth()
-            .header("Accept", "application/json")
-            .method(method, rb)
-            .build()
+        val b = Request.Builder().url(baseUrl + path).header("Accept", accept).method(method, rb)
+        val req = (if (auth) b.auth() else b.common()).build()
         val res = try {
             http.newCall(req).await()
         } catch (e: IOException) {
             throw AcnologiaException("acnologia: $method $path: $e", e)
         }
         val text = withContext(Dispatchers.IO) { res.use { it.body?.string() ?: "" } }
-        if (!res.isSuccessful) throw ApiException.fromResponse(res.code, text)
+        if (!res.isSuccessful) throw ApiException.fromResponse(res.code, text, res.headers)
+        return text
+    }
+
+    internal suspend fun <T> call(method: String, path: String, body: JsonObject?, de: DeserializationStrategy<T>): T {
+        val text = text(method, path, body, "application/json", auth = true)
         return try {
             json.decodeFromString(de, text.ifEmpty { "{}" })
         } catch (e: Exception) {
@@ -301,4 +455,23 @@ public fun scrubMessage(message: String?, secret: String): String {
         out = out.substring(0, end)
     }
     return out
+}
+
+/** A trust manager that accepts the system roots and every certificate in [pem]. */
+internal fun trustManagerWith(pem: String): X509TrustManager {
+    val system = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).run {
+        init(null as KeyStore?)
+        trustManagers.filterIsInstance<X509TrustManager>().first()
+    }
+    val extra = CertificateFactory.getInstance("X.509")
+        .generateCertificates(ByteArrayInputStream(pem.toByteArray(Charsets.US_ASCII)))
+        .filterIsInstance<X509Certificate>()
+    require(extra.isNotEmpty()) { "acnologia: the forward proxy CA has no certificate" }
+    val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
+    system.acceptedIssuers.forEachIndexed { i, c -> store.setCertificateEntry("system-$i", c) }
+    extra.forEachIndexed { i, c -> store.setCertificateEntry("acnologia-$i", c) }
+    return TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).run {
+        init(store)
+        trustManagers.filterIsInstance<X509TrustManager>().first()
+    }
 }

@@ -2,6 +2,7 @@
 
 require "json"
 require "net/http"
+require "openssl"
 require "securerandom"
 require "time"
 require "uri"
@@ -19,6 +20,8 @@ module Acnologia
   MAX_REPORT_MESSAGE = 500
   # Header that carries the access password of a locked deploy.
   ACCESS_HEADER = "X-Acnologia-Access"
+  # Where forward_proxy_env and save_forward_proxy_ca put the proxy CA by default.
+  DEFAULT_CA_PATH = "acnologia-ca.pem"
 
   # Replace the lease secret (raw and URL encoded) with "[key]" and truncate.
   # Errors from query auth services often carry the full request URL, key
@@ -301,6 +304,18 @@ module Acnologia
     end
   end
 
+  # One provider a capability or group call tried (X-Acnologia-Tried), with
+  # the status it answered.
+  Tried = Struct.new(:service, :status, keyword_init: true)
+
+  # Parse an X-Acnologia-Tried value ("a=200, b=429") into Tried entries.
+  def self.parse_tried(value)
+    value.to_s.split(",").map(&:strip).reject(&:empty?).map do |pair|
+      svc, _, code = pair.rpartition("=")
+      svc.empty? ? Tried.new(service: code, status: nil).freeze : Tried.new(service: svc, status: code.to_i).freeze
+    end
+  end
+
   # Raw HTTP response. Header names are lower cased.
   Response = Struct.new(:status, :headers, :body) do
     def ok?
@@ -331,6 +346,29 @@ module Acnologia
     def replayed?
       self["idempotent-replayed"].to_s.casecmp("true").zero?
     end
+    alias_method :replayed, :replayed?
+
+    # Slug of the service that answered (X-Acnologia-Service), or nil. For a
+    # group or capability call, the member that served it.
+    def service
+      header_value("x-acnologia-service")
+    end
+
+    # Cache result (X-Acnologia-Cache: "hit", "miss", "bypass"...), or nil.
+    def cache
+      header_value("x-acnologia-cache")
+    end
+
+    # Slug of the capability that served the call (X-Acnologia-Capability), or nil.
+    def capability
+      header_value("x-acnologia-capability")
+    end
+
+    # The providers a capability or group call tried, in order, as Tried
+    # entries (service, status). Empty when the header is absent.
+    def tried
+      Acnologia.parse_tried(self["x-acnologia-tried"])
+    end
 
     # Seconds from the Retry-After header, or nil.
     def retry_after
@@ -350,6 +388,13 @@ module Acnologia
       raise e if e
 
       self
+    end
+
+    private
+
+    def header_value(name)
+      v = self[name]
+      v.nil? || v.empty? ? nil : v
     end
   end
 
@@ -398,7 +443,8 @@ module Acnologia
       @limit_hit = limit_hit_from(data.key?("limit_hit") ? data["limit_hit"] : use["limit_hit"])
       @services = Array(data["services"]).select { |s| s.is_a?(Hash) }.map do |s|
         MeService.new(slug: s["slug"].to_s, name: s["name"].to_s, provider: s["provider"].to_s,
-                      category: s["category"].to_s, available: s["available"].to_i, logo_url: s["logo_url"]).freeze
+                      category: s["category"].to_s, available: available_count(s["available"]),
+                      logo_url: s["logo_url"]).freeze
       end.freeze
       @share = share_from(data["share"])
     end
@@ -425,6 +471,14 @@ module Acnologia
       v.is_a?(Hash) ? v : {}
     end
 
+    # services[].available is an integer here (free keys for a share's
+    # token, 1 or 0 for an app). A boolean from an older server counts as 1 or 0.
+    def available_count(v)
+      return v ? 1 : 0 if v == true || v == false
+
+      v.to_i
+    end
+
     def limit_hit_from(v)
       return nil unless v.is_a?(Hash)
 
@@ -439,6 +493,70 @@ module Acnologia
       Share.new(id: v["id"].to_s, name: v["name"].to_s, owner: owner, recipient: v["recipient"].to_s,
                 label: v["label"].to_s, status: v["status"].to_s, mode: v["mode"].to_s, ends_at: v["ends_at"]).freeze
     end
+  end
+
+  # A service's usage guide from GET /api/v1/services/{slug}/guide.
+  # markdown: the guide as Markdown. generated: true when the server built it
+  # from the provider spec because nobody wrote one. guide: the structured
+  # guide as parsed JSON.
+  Guide = Struct.new(:markdown, :generated, :guide, keyword_init: true) do
+    def generated?
+      generated == true
+    end
+  end
+
+  # A capability from GET /api/v1/capabilities: one call served by whichever
+  # provider can. params is the parsed JSON params description; routes lists
+  # Route (service, mapped); url is where to POST it.
+  Capability = Struct.new(:slug, :name, :description, :strategy, :params, :routes, :url, keyword_init: true) do
+    def self.from(h)
+      h = {} unless h.is_a?(Hash)
+      routes = Array(h["routes"]).select { |r| r.is_a?(Hash) }.map do |r|
+        self::Route.new(service: r["service"].to_s, mapped: r["mapped"] == true).freeze
+      end.freeze
+      new(slug: h["slug"].to_s, name: h["name"].to_s, description: h["description"].to_s,
+          strategy: h["strategy"].to_s, params: h["params"], routes: routes, url: h["url"].to_s).freeze
+    end
+  end
+  # One provider a capability can use. mapped is true when its answer is
+  # mapped to the capability's common output.
+  Capability::Route = Struct.new(:service, :mapped, keyword_init: true)
+
+  # How to use the forward proxy, from GET /api/v1/proxy. proxy_url_with_token
+  # and env carry a "<app token>" placeholder, never the token itself, so
+  # printing this is safe. Use Client#forward_proxy_url or
+  # Client#forward_proxy_env for values with the real token.
+  class ForwardProxy
+    Host = Struct.new(:host, :service, :name, :path, keyword_init: true)
+
+    attr_reader :proxy_url, :proxy_url_with_token, :ca_url, :ca_fingerprint, :passthrough, :hosts, :env,
+                :service_header, :raw
+
+    def initialize(data)
+      data = {} unless data.is_a?(Hash)
+      @raw = data.freeze
+      @proxy_url = data["proxy_url"].to_s
+      @proxy_url_with_token = data["proxy_url_with_token"].to_s
+      @ca_url = data["ca_url"].to_s
+      @ca_fingerprint = data["ca_fingerprint"].to_s
+      @passthrough = data["passthrough"] == true
+      @hosts = Array(data["hosts"]).select { |h| h.is_a?(Hash) }.map do |h|
+        Host.new(host: h["host"].to_s, service: h["service"].to_s, name: h["name"].to_s, path: h["path"].to_s).freeze
+      end.freeze
+      env = data["env"].is_a?(Hash) ? data["env"] : {}
+      @env = env.each_with_object({}) { |(k, v), o| o[k.to_s] = v.to_s }.freeze
+      @service_header = data["service_header"].to_s
+    end
+
+    # True when hosts outside the list are tunneled through untouched.
+    def passthrough?
+      @passthrough
+    end
+
+    def inspect
+      "#<Acnologia::ForwardProxy proxy_url=#{@proxy_url.inspect} hosts=#{@hosts.size} passthrough=#{@passthrough}>"
+    end
+    alias to_s inspect
   end
 
   # A key handed out by Acnologia.
@@ -532,36 +650,41 @@ module Acnologia
       u + (u.include?("?") ? "&" : "?") + URI.encode_www_form(query)
     end
 
-    def get(path, query = {}, headers: {}, **params)
-      request("GET", path, query: merge_query(query, params), headers: headers)
+    # no_cache: true sends Cache-Control: no-cache, so a service with a cache
+    # TTL calls the provider instead of answering from its cache.
+    def get(path, query = {}, headers: {}, no_cache: false, **params)
+      request("GET", path, query: merge_query(query, params), headers: headers, no_cache: no_cache)
     end
 
-    def head(path, query = {}, headers: {}, **params)
-      request("HEAD", path, query: merge_query(query, params), headers: headers)
+    def head(path, query = {}, headers: {}, no_cache: false, **params)
+      request("HEAD", path, query: merge_query(query, params), headers: headers, no_cache: no_cache)
     end
 
-    def options(path, query = {}, headers: {}, **params)
-      request("OPTIONS", path, query: merge_query(query, params), headers: headers)
+    def options(path, query = {}, headers: {}, no_cache: false, **params)
+      request("OPTIONS", path, query: merge_query(query, params), headers: headers, no_cache: no_cache)
     end
 
     # idempotency_key: a String is sent as the Idempotency-Key header, true
     # sends a new random one. The proxy then answers a repeat of the same
     # request with the stored response for 10 minutes instead of calling the
     # provider again (Response#replayed?).
-    def post(path, body = nil, headers: {}, query: {}, idempotency_key: nil)
-      request("POST", path, query: query, headers: headers, body: body, idempotency_key: idempotency_key)
+    def post(path, body = nil, headers: {}, query: {}, idempotency_key: nil, no_cache: false)
+      request("POST", path, query: query, headers: headers, body: body, idempotency_key: idempotency_key,
+                            no_cache: no_cache)
     end
 
-    def put(path, body = nil, headers: {}, query: {}, idempotency_key: nil)
-      request("PUT", path, query: query, headers: headers, body: body, idempotency_key: idempotency_key)
+    def put(path, body = nil, headers: {}, query: {}, idempotency_key: nil, no_cache: false)
+      request("PUT", path, query: query, headers: headers, body: body, idempotency_key: idempotency_key,
+                           no_cache: no_cache)
     end
 
-    def patch(path, body = nil, headers: {}, query: {}, idempotency_key: nil)
-      request("PATCH", path, query: query, headers: headers, body: body, idempotency_key: idempotency_key)
+    def patch(path, body = nil, headers: {}, query: {}, idempotency_key: nil, no_cache: false)
+      request("PATCH", path, query: query, headers: headers, body: body, idempotency_key: idempotency_key,
+                             no_cache: no_cache)
     end
 
-    def delete(path, query = {}, headers: {}, **params)
-      request("DELETE", path, query: merge_query(query, params), headers: headers)
+    def delete(path, query = {}, headers: {}, no_cache: false, **params)
+      request("DELETE", path, query: merge_query(query, params), headers: headers, no_cache: no_cache)
     end
 
     # body: Hash or Array is sent as JSON, String as is.
@@ -570,7 +693,14 @@ module Acnologia
     # busy, circuit open) or a 429 app_limit_reached is sent again after its
     # Retry-After, but only for methods in RETRY_SAFE or a request with an
     # Idempotency-Key (the same key on every attempt).
-    def request(method, path, query: {}, headers: {}, body: nil, idempotency_key: nil)
+    def request(method, path, query: {}, headers: {}, body: nil, idempotency_key: nil, no_cache: false)
+      send_to(method, url(path, query), headers: headers, body: body, idempotency_key: idempotency_key,
+                                        no_cache: no_cache)
+    end
+
+    # @api private
+    # Send to a full proxy URL, with the same body, header and retry rules as #request.
+    def send_to(method, target, headers: {}, body: nil, idempotency_key: nil, no_cache: false)
       method = method.to_s.upcase
       h = headers.dup
       if !body.nil? && !body.is_a?(String)
@@ -581,11 +711,11 @@ module Acnologia
       if idempotency_key && !header?(h, "idempotency-key")
         h["Idempotency-Key"] = idempotency_key == true ? SecureRandom.uuid : idempotency_key.to_s
       end
+      h["Cache-Control"] = "no-cache" if no_cache && !header?(h, "cache-control")
       h["Authorization"] = "Bearer #{@client.token}"
       retry_ok = RETRY_SAFE.include?(method) || header?(h, "idempotency-key")
-      u = url(path, query)
       @client.with_retries(retry_ok) do
-        res = @client.send_request(method, u, h, body)
+        res = @client.send_request(method, target, h, body)
         [res, retryable_error(res)]
       end
     end
@@ -671,7 +801,9 @@ module Acnologia
     end
     alias to_s inspect
 
-    # Services this token may use, as hashes from GET /api/v1/services.
+    # Services this token may use, as hashes from GET /api/v1/services:
+    # slug, name, provider, category, available, base_url, auth (type, name,
+    # prefix) and guide_url.
     def services
       call("GET", "/api/v1/services", retry_ok: true).fetch("services", [])
     end
@@ -684,13 +816,122 @@ module Acnologia
       Me.new(call("GET", "/api/v1/me", retry_ok: true))
     end
 
-    # The usage guide of a service this token may use, as Markdown.
+    # The usage guide of a service this token may use, as Markdown. Same as
+    # guide_markdown; guide_doc returns the structured guide too.
     def guide(service)
       path = "/api/v1/services/#{escape(service)}/guide"
       res = request_raw("GET", path, nil, accept: "text/markdown")
       raise error_for(res) unless res.ok?
 
       res.body.to_s
+    end
+
+    # The usage guide of a service as Markdown (GET .../guide with
+    # Accept: text/markdown).
+    def guide_markdown(service)
+      guide(service)
+    end
+
+    # The usage guide of a service as an Acnologia::Guide: markdown,
+    # generated (true when the server built it from the provider spec) and
+    # guide (the structured guide as parsed JSON).
+    def guide_doc(service)
+      data = call("GET", "/api/v1/services/#{escape(service)}/guide", retry_ok: true)
+      Guide.new(markdown: data["markdown"].to_s, generated: data["generated"] == true, guide: data["guide"]).freeze
+    end
+
+    # Capabilities this token may call (GET /api/v1/capabilities), as
+    # Acnologia::Capability values. A share's token gets none.
+    def capabilities
+      Array(call("GET", "/api/v1/capabilities", retry_ok: true)["capabilities"]).map { |c| Capability.from(c) }
+    end
+
+    # Call a capability: POST /proxy/{slug} with params as the JSON body.
+    # service: use only that provider (?_service=). raw: true returns the
+    # provider's own body, not the mapped output (?_raw=1). Returns the
+    # Acnologia::Response, never raises for a non 2xx (see
+    # Response#raise_for_status!, Response#tried and Response#capability).
+    def capability(slug, params = nil, service: nil, raw: false, headers: {}, idempotency_key: nil, no_cache: false)
+      query = {}
+      query["_service"] = service.to_s if service && !service.to_s.empty?
+      query["_raw"] = "1" if raw
+      target = "#{@base_url}/proxy/#{escape(slug)}"
+      target += "?#{URI.encode_www_form(query)}" unless query.empty?
+      Proxy.new(self, slug).send_to("POST", target, headers: headers, body: params || {},
+                                                    idempotency_key: idempotency_key, no_cache: no_cache)
+    end
+
+    # How to use the forward proxy (GET /api/v1/proxy), as an
+    # Acnologia::ForwardProxy. Its strings carry a "<app token>" placeholder,
+    # never the token.
+    def forward_proxy
+      ForwardProxy.new(call("GET", "/api/v1/proxy", retry_ok: true))
+    end
+
+    # The forward proxy's CA certificate as PEM text
+    # (GET /api/v1/proxy/ca.pem). The route is public: no token is sent.
+    def forward_proxy_ca
+      res = send_request("GET", "#{@base_url}/api/v1/proxy/ca.pem", { "Accept" => "application/x-pem-file" }, nil)
+      raise error_for(res) unless res.ok?
+
+      res.body.to_s
+    end
+
+    # Download the forward proxy's CA certificate and write it to path.
+    # Returns path.
+    def save_forward_proxy_ca(path = DEFAULT_CA_PATH)
+      File.write(path, forward_proxy_ca)
+      path
+    end
+
+    # The forward proxy URL with user "app" and this client's token as the
+    # password: http://app:acn_...@host:8888. It contains the token: keep it
+    # out of logs.
+    def forward_proxy_url
+      proxy_url_with_token(forward_proxy.proxy_url)
+    end
+
+    # Environment for a process that should reach providers through the
+    # forward proxy: HTTPS_PROXY and HTTP_PROXY (forward_proxy_url),
+    # NODE_USE_ENV_PROXY=1, and NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and
+    # SSL_CERT_FILE set to ca_path. The proxy values contain the token: keep
+    # them out of logs. Save the CA there with save_forward_proxy_ca.
+    def forward_proxy_env(ca_path = DEFAULT_CA_PATH)
+      url = forward_proxy_url
+      {
+        "HTTPS_PROXY" => url,
+        "HTTP_PROXY" => url,
+        "NODE_USE_ENV_PROXY" => "1",
+        "NODE_EXTRA_CA_CERTS" => ca_path,
+        "REQUESTS_CA_BUNDLE" => ca_path,
+        "SSL_CERT_FILE" => ca_path
+      }
+    end
+
+    # A Net::HTTP for host:port that goes through the forward proxy, with
+    # this client's token as the proxy password and the system roots plus
+    # the Acnologia CA trusted. Call the provider's own URL with it and
+    # Acnologia puts the key on the request. ca_path: a saved CA file;
+    # nil downloads it. use_ssl defaults to true unless port is 80. The
+    # returned object holds the token.
+    #
+    #   http = acn.forward_proxy_http("api.openai.com")
+    #   res = http.start { |h| h.get("/v1/models") }
+    def forward_proxy_http(host, port = 443, use_ssl: port != 80, ca_path: nil)
+      proxy = URI(forward_proxy.proxy_url)
+      store = OpenSSL::X509::Store.new
+      store.set_default_paths
+      if ca_path
+        store.add_file(ca_path)
+      else
+        store.add_cert(OpenSSL::X509::Certificate.new(forward_proxy_ca))
+      end
+      http = Net::HTTP.new(host, port, proxy.host, proxy.port, "app", @token)
+      http.use_ssl = use_ssl
+      http.cert_store = store
+      http.open_timeout = @open_timeout
+      http.read_timeout = @read_timeout
+      http
     end
 
     # Borrow a key.
@@ -788,7 +1029,7 @@ module Acnologia
       id = lease.is_a?(Lease) ? lease.lease_id : lease.to_s
       body = {}
       body["ttl_sec"] = ttl_sec.ceil if ttl_sec && ttl_sec.positive?
-      data = call("POST", "/api/v1/leases/#{escape(id)}/renew", body)
+      data = call("POST", "/api/v1/leases/#{escape(id)}/renew", body, retry_ok: false)
       exp = data["expires_at"]
       raise Error.new("renew response has no expires_at") if exp.nil? || exp.to_s.empty?
 
@@ -831,6 +1072,14 @@ module Acnologia
     end
 
     private
+
+    def proxy_url_with_token(raw)
+      u = URI(raw)
+      u.userinfo = "app:#{Acnologia.send(:percent_encode, @token)}"
+      u.to_s
+    rescue URI::Error => e
+      raise Error.new("bad proxy_url from the server: #{scrub(e.message)}")
+    end
 
     def escape(segment)
       URI.encode_www_form_component(segment.to_s).gsub("+", "%20")

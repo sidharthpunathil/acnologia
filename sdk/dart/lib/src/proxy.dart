@@ -34,16 +34,24 @@ class Proxy {
   /// bodies. [body] may be a `String`, a `List<int>`, or any other value,
   /// which is sent as JSON with `Content-Type: application/json` unless you
   /// set one.
+  ///
+  /// [idempotencyKey] is sent as `Idempotency-Key`: a retried call with the
+  /// same key is answered once and replayed after (see
+  /// [AcnologiaProxyResponse.acnologiaReplayed]). [noCache] sends
+  /// `Cache-Control: no-cache` so a cached answer is not used.
   Future<http.StreamedResponse> stream(
     String method,
     String path, {
     Map<String, Object?>? query,
     Map<String, String>? headers,
     Object? body,
+    String? idempotencyKey,
+    bool noCache = false,
   }) {
     final req = http.Request(method.toUpperCase(), url(path, query))
       ..followRedirects = false
-      ..headers.addAll(headers ?? const {});
+      ..headers.addAll(headers ?? const {})
+      ..headers.addAll(_proxyOptionHeaders(idempotencyKey, noCache));
     if (body is String) {
       req.body = body;
     } else if (body is List<int>) {
@@ -58,35 +66,58 @@ class Proxy {
     return _client._http.send(req);
   }
 
-  /// Sends a request and returns the whole response. See [stream] for [body].
+  /// Sends a request and returns the whole response. See [stream] for [body],
+  /// [idempotencyKey] and [noCache].
   Future<http.Response> request(
     String method,
     String path, {
     Map<String, Object?>? query,
     Map<String, String>? headers,
     Object? body,
+    String? idempotencyKey,
+    bool noCache = false,
   }) async =>
-      http.Response.fromStream(await stream(method, path, query: query, headers: headers, body: body));
+      http.Response.fromStream(await stream(method, path,
+          query: query, headers: headers, body: body, idempotencyKey: idempotencyKey, noCache: noCache));
 
   /// Sends a GET with optional query parameters.
-  Future<http.Response> get(String path, {Map<String, Object?>? query, Map<String, String>? headers}) =>
-      request('GET', path, query: query, headers: headers);
+  Future<http.Response> get(String path,
+          {Map<String, Object?>? query, Map<String, String>? headers, String? idempotencyKey, bool noCache = false}) =>
+      request('GET', path, query: query, headers: headers, idempotencyKey: idempotencyKey, noCache: noCache);
 
   /// Sends a DELETE.
-  Future<http.Response> delete(String path, {Map<String, Object?>? query, Map<String, String>? headers}) =>
-      request('DELETE', path, query: query, headers: headers);
+  Future<http.Response> delete(String path,
+          {Map<String, Object?>? query, Map<String, String>? headers, String? idempotencyKey, bool noCache = false}) =>
+      request('DELETE', path, query: query, headers: headers, idempotencyKey: idempotencyKey, noCache: noCache);
 
   /// Sends a POST. Maps and lists are sent as JSON.
-  Future<http.Response> post(String path, {Object? body, Map<String, Object?>? query, Map<String, String>? headers}) =>
-      request('POST', path, query: query, headers: headers, body: body);
+  Future<http.Response> post(String path,
+          {Object? body,
+          Map<String, Object?>? query,
+          Map<String, String>? headers,
+          String? idempotencyKey,
+          bool noCache = false}) =>
+      request('POST', path,
+          query: query, headers: headers, body: body, idempotencyKey: idempotencyKey, noCache: noCache);
 
   /// Sends a PUT. Maps and lists are sent as JSON.
-  Future<http.Response> put(String path, {Object? body, Map<String, Object?>? query, Map<String, String>? headers}) =>
-      request('PUT', path, query: query, headers: headers, body: body);
+  Future<http.Response> put(String path,
+          {Object? body,
+          Map<String, Object?>? query,
+          Map<String, String>? headers,
+          String? idempotencyKey,
+          bool noCache = false}) =>
+      request('PUT', path, query: query, headers: headers, body: body, idempotencyKey: idempotencyKey, noCache: noCache);
 
   /// Sends a PATCH. Maps and lists are sent as JSON.
-  Future<http.Response> patch(String path, {Object? body, Map<String, Object?>? query, Map<String, String>? headers}) =>
-      request('PATCH', path, query: query, headers: headers, body: body);
+  Future<http.Response> patch(String path,
+          {Object? body,
+          Map<String, Object?>? query,
+          Map<String, String>? headers,
+          String? idempotencyKey,
+          bool noCache = false}) =>
+      request('PATCH', path,
+          query: query, headers: headers, body: body, idempotencyKey: idempotencyKey, noCache: noCache);
 
   @override
   String toString() => 'Proxy($service)';
@@ -103,9 +134,27 @@ extension AcnologiaProxyResponse on http.BaseResponse {
   /// The service that answered, which matters for groups (`X-Acnologia-Service`).
   String? get acnologiaService => headers['x-acnologia-service'];
 
-  /// The cache status (`X-Acnologia-Cache`), when caching applies.
+  /// The cache status (`X-Acnologia-Cache`): `hit`, `miss` and so on, when
+  /// caching applies.
   String? get acnologiaCache => headers['x-acnologia-cache'];
+
+  /// True when this is a stored answer to an earlier call with the same
+  /// `Idempotency-Key` (`Idempotent-Replayed: true`).
+  bool get acnologiaReplayed => headers['idempotent-replayed']?.trim().toLowerCase() == 'true';
+
+  /// The capability that ran, for a capability call (`X-Acnologia-Capability`).
+  String? get acnologiaCapability => headers['x-acnologia-capability'];
+
+  /// The routes a capability call tried, in order (`X-Acnologia-Tried`,
+  /// `service=status` pairs). Empty when the header is absent.
+  List<TriedRoute> get acnologiaTried => TriedRoute.parseHeader(headers['x-acnologia-tried']);
 }
+
+/// Headers for the per call proxy options.
+Map<String, String> _proxyOptionHeaders(String? idempotencyKey, bool noCache) => {
+      if (idempotencyKey != null && idempotencyKey.isNotEmpty) 'Idempotency-Key': idempotencyKey,
+      if (noCache) 'Cache-Control': 'no-cache',
+    };
 
 /// Typed errors for proxied responses that Acnologia itself refused.
 extension AcnologiaProxyError on http.Response {
@@ -121,7 +170,10 @@ extension AcnologiaProxyError on http.Response {
     } on FormatException {
       return null;
     }
-    return _parseError(statusCode, body, reasonPhrase: reasonPhrase, retryAfterHeader: headers['retry-after']);
+    return _parseError(statusCode, body,
+        reasonPhrase: reasonPhrase,
+        retryAfterHeader: headers['retry-after'],
+        shareHeader: headers['x-acnologia-share']);
   }
 
   /// Throws [acnologiaError] when there is one, and returns this response

@@ -425,6 +425,305 @@ test "proxy: refuses a body on GET and a header with a line break" {
     try testing.expectEqual(@as(usize, 0), fake.count());
 }
 
+test "proxy: no_cache sends Cache-Control and capability headers are read" {
+    var fake: Fake = undefined;
+    try fake.start(&.{.{
+        .path = "/proxy/agi-labs/v1/chat",
+        .headers = &.{
+            .{ .name = "X-Acnologia-Capability", .value = "chat" },
+            .{ .name = "X-Acnologia-Tried", .value = "other=503, agi-labs=200" },
+        },
+    }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{});
+    defer client.deinit();
+
+    var res = try client.proxy(testing.allocator, .GET, "agi-labs", "v1/chat", .{ .no_cache = true });
+    defer res.deinit();
+    try testing.expectEqualStrings("no-cache", fake.last().header("cache-control").?);
+    try testing.expectEqualStrings("chat", res.acnologia.capability.?);
+    try testing.expectEqual(@as(usize, 2), res.acnologia.tried.len);
+    try testing.expectEqualStrings("other", res.acnologia.tried[0].service);
+    try testing.expectEqual(@as(u16, 503), res.acnologia.tried[0].status);
+    try testing.expectEqualStrings("agi-labs", res.acnologia.tried[1].service);
+    try testing.expectEqual(@as(u16, 200), res.acnologia.tried[1].status);
+    try testing.expect(!res.acnologia.replayed);
+    try testing.expectEqual(@as(?i64, null), res.acnologia.key_id);
+
+    var plain = try client.proxy(testing.allocator, .GET, "agi-labs", "v1/chat", .{});
+    defer plain.deinit();
+    try testing.expect(fake.last().header("cache-control") == null);
+}
+
+// ---------------------------------------------------------------- catalog
+
+test "services: reads base URL, auth and guide URL" {
+    const body =
+        \\{"services":[{"slug":"serpapi","name":"SerpApi","provider":"serpapi","category":"search","available":true,
+        \\  "base_url":"https://serpapi.com","auth":{"type":"query","name":"api_key"},
+        \\  "guide_url":"http://x/api/v1/services/serpapi/guide","extra":1}]}
+    ;
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .method = "GET", .path = "/api/v1/services", .body = body, .headers = &.{json_type} }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{ .access_password = "gate-pw" });
+    defer client.deinit();
+
+    var list = try client.services(testing.allocator, .{});
+    defer list.deinit();
+    try testing.expectEqual(@as(usize, 1), list.value.len);
+    const s = list.value[0];
+    try testing.expectEqualStrings("serpapi", s.slug);
+    try testing.expect(s.available);
+    try testing.expectEqualStrings("https://serpapi.com", s.base_url);
+    try testing.expectEqualStrings("query", s.auth.type);
+    try testing.expectEqualStrings("api_key", s.auth.name);
+    try testing.expectEqualStrings("", s.auth.prefix);
+    try testing.expectEqualStrings("http://x/api/v1/services/serpapi/guide", s.guide_url);
+
+    const rec = fake.last();
+    try testing.expectEqualStrings("GET", rec.method);
+    try testing.expectEqualStrings("/api/v1/services", rec.target);
+    try testing.expectEqualStrings("Bearer " ++ token, rec.header("authorization").?);
+    try testing.expectEqualStrings("gate-pw", rec.header("x-acnologia-access").?);
+}
+
+test "guide: JSON form and Markdown form" {
+    const body =
+        \\{"markdown":"# SerpApi\nSearch.","generated":true,"guide":{"endpoints":[{"path":"/search"}]}}
+    ;
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .method = "GET", .path = "/api/v1/services/serp%20api/guide", .body = body, .headers = &.{json_type} }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{});
+    defer client.deinit();
+
+    var g = try client.guide(testing.allocator, "serp api", .{});
+    defer g.deinit();
+    try testing.expectEqualStrings("# SerpApi\nSearch.", g.value.markdown);
+    try testing.expect(g.value.generated);
+    const eps = g.value.guide.object.get("endpoints").?.array.items;
+    try testing.expectEqualStrings("/search", eps[0].object.get("path").?.string);
+    try testing.expectEqualStrings("/api/v1/services/serp%20api/guide", fake.last().target);
+    try testing.expectEqualStrings("application/json", fake.last().header("accept").?);
+
+    const md = try client.guideMarkdown(testing.allocator, "serp api", .{});
+    defer testing.allocator.free(md);
+    try testing.expectEqualStrings(body, md);
+    try testing.expectEqualStrings("text/markdown", fake.last().header("accept").?);
+    try testing.expectEqualStrings("Bearer " ++ token, fake.last().header("authorization").?);
+}
+
+test "guide: a service the token may not use is ServiceNotAllowed" {
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .path = "/api/v1/services/*", .status = 403, .body = "{\"error\":{\"code\":\"service_not_allowed\",\"message\":\"no\"}}" }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{});
+    defer client.deinit();
+    try testing.expectError(error.ServiceNotAllowed, client.guide(testing.allocator, "x", .{}));
+    try testing.expectError(error.ServiceNotAllowed, client.guideMarkdown(testing.allocator, "x", .{}));
+}
+
+test "capabilities: reads params, routes and url" {
+    const body =
+        \\{"capabilities":[{"slug":"web-search","name":"Web search","description":"Search the web","strategy":"failover",
+        \\  "params":[{"name":"query","type":"string","required":true}],
+        \\  "routes":[{"service":"serpapi","mapped":true},{"service":"tavily","mapped":false}],
+        \\  "url":"http://x/proxy/web-search"}]}
+    ;
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .method = "GET", .path = "/api/v1/capabilities", .body = body, .headers = &.{json_type} }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{});
+    defer client.deinit();
+
+    var caps = try client.capabilities(testing.allocator, .{});
+    defer caps.deinit();
+    try testing.expectEqual(@as(usize, 1), caps.value.len);
+    const c = caps.value[0];
+    try testing.expectEqualStrings("web-search", c.slug);
+    try testing.expectEqualStrings("failover", c.strategy);
+    try testing.expectEqualStrings("query", c.params.array.items[0].object.get("name").?.string);
+    try testing.expectEqual(@as(usize, 2), c.routes.len);
+    try testing.expect(c.routes[0].mapped);
+    try testing.expectEqualStrings("tavily", c.routes[1].service);
+    try testing.expectEqualStrings("http://x/proxy/web-search", c.url);
+    try testing.expectEqualStrings("/api/v1/capabilities", fake.last().target);
+    try testing.expectEqualStrings("Bearer " ++ token, fake.last().header("authorization").?);
+}
+
+test "capability: posts params to /proxy/<slug> with _service and _raw" {
+    var fake: Fake = undefined;
+    try fake.start(&.{.{
+        .method = "POST",
+        .path = "/proxy/web-search",
+        .body = "{\"items\":[],\"count\":0}",
+        .headers = &.{
+            json_type,
+            .{ .name = "X-Acnologia-Capability", .value = "web-search" },
+            .{ .name = "X-Acnologia-Service", .value = "tavily" },
+            .{ .name = "X-Acnologia-Tried", .value = "serpapi=429, tavily=200" },
+            .{ .name = "X-Acnologia-Key-Id", .value = "12" },
+            .{ .name = "X-Acnologia-Attempts", .value = "1" },
+        },
+    }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{});
+    defer client.deinit();
+
+    var res = try client.capability(testing.allocator, "web-search", "{\"query\":\"coffee\"}", .{
+        .service = "tavily",
+        .raw = true,
+        .idempotency_key = "cap-1",
+        .no_cache = true,
+    });
+    defer res.deinit();
+    try testing.expectEqual(@as(u16, 200), res.status);
+    try testing.expectEqualStrings("web-search", res.acnologia.capability.?);
+    try testing.expectEqualStrings("tavily", res.acnologia.service.?);
+    try testing.expectEqual(@as(?i64, 12), res.acnologia.key_id);
+    try testing.expectEqual(@as(?u32, 1), res.acnologia.attempts);
+    try testing.expectEqual(@as(usize, 2), res.acnologia.tried.len);
+    try testing.expectEqualStrings("serpapi", res.acnologia.tried[0].service);
+    try testing.expectEqual(@as(u16, 429), res.acnologia.tried[0].status);
+
+    const rec = fake.last();
+    try testing.expectEqualStrings("POST", rec.method);
+    try testing.expectEqualStrings("/proxy/web-search?_service=tavily&_raw=1", rec.target);
+    try testing.expectEqualStrings("{\"query\":\"coffee\"}", rec.body);
+    try testing.expectEqualStrings("application/json", rec.header("content-type").?);
+    try testing.expectEqualStrings("cap-1", rec.header("idempotency-key").?);
+    try testing.expectEqualStrings("no-cache", rec.header("cache-control").?);
+    try testing.expectEqualStrings("Bearer " ++ token, rec.header("authorization").?);
+
+    // No params sends an empty object and no query.
+    var bare = try client.capability(testing.allocator, "web-search", null, .{});
+    defer bare.deinit();
+    try testing.expectEqualStrings("/proxy/web-search", fake.last().target);
+    try testing.expectEqualStrings("{}", fake.last().body);
+}
+
+test "capability: Acnologia's own capability errors map to errors" {
+    const cases = [_]ErrorCase{
+        .{ .status = 400, .code = "bad_params", .want = error.Api },
+        .{ .status = 503, .code = "no_route", .want = error.Api },
+        .{ .status = 503, .code = "no_route_worked", .want = error.Api },
+        .{ .status = 503, .code = "empty_group", .want = error.Api },
+    };
+    for (cases) |c| {
+        var buf: [256]u8 = undefined;
+        var fake: Fake = undefined;
+        try fake.start(&.{.{ .path = "/proxy/*", .status = c.status, .body = try errorBody(&buf, c.code) }});
+        defer fake.stop();
+        var client = try newClient(&fake, .{});
+        defer client.deinit();
+
+        var diag: acn.Diagnostic = .{};
+        try testing.expectError(c.want, client.capability(testing.allocator, "web-search", "{}", .{ .diag = &diag }));
+        try testing.expectEqualStrings(c.code, diag.code());
+        try testing.expectEqual(c.status, diag.status);
+
+        var res = try client.capability(testing.allocator, "web-search", "{}", .{ .raw_errors = true });
+        defer res.deinit();
+        try testing.expectEqual(c.status, res.status);
+    }
+}
+
+// ---------------------------------------------------------------- forward proxy
+
+const proxy_setup_body =
+    \\{"proxy_url":"http://acn.example:8888","proxy_url_with_token":"http://app:%3Capp%20token%3E@acn.example:8888",
+    \\ "ca_url":"http://acn.example/api/v1/proxy/ca.pem","ca_fingerprint":"AB:CD","passthrough":true,
+    \\ "hosts":[{"host":"serpapi.com","service":"serpapi","name":"SerpApi"},{"host":"tiktok-scraper.omkar.cloud","service":"omkar","name":"Omkar","path":"/~tiktok"}],
+    \\ "env":{"HTTPS_PROXY":"http://app:%3Capp%20token%3E@acn.example:8888","NODE_USE_ENV_PROXY":"1"},
+    \\ "service_header":"X-Acnologia-Service"}
+;
+
+const odd_token = "acn_odd/tok+en";
+
+test "forward proxy: reads the setup, and its printed form holds no token" {
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .method = "GET", .path = "/api/v1/proxy", .body = proxy_setup_body, .headers = &.{json_type} }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{});
+    defer client.deinit();
+
+    var setup = try client.forwardProxy(testing.allocator, .{});
+    defer setup.deinit();
+    const v = setup.value;
+    try testing.expectEqualStrings("http://acn.example:8888", v.proxy_url);
+    try testing.expectEqualStrings("AB:CD", v.ca_fingerprint);
+    try testing.expect(v.passthrough);
+    try testing.expectEqual(@as(usize, 2), v.hosts.len);
+    try testing.expectEqualStrings("/~tiktok", v.hosts[1].path);
+    try testing.expectEqualStrings("", v.hosts[0].path);
+    try testing.expectEqualStrings("1", v.env.map.get("NODE_USE_ENV_PROXY").?);
+    try testing.expectEqualStrings("X-Acnologia-Service", v.service_header);
+    try testing.expectEqualStrings("/api/v1/proxy", fake.last().target);
+    try testing.expectEqualStrings("Bearer " ++ token, fake.last().header("authorization").?);
+
+    var buf: [512]u8 = undefined;
+    const printed = try std.fmt.bufPrint(&buf, "{f}", .{v});
+    try testing.expect(std.mem.find(u8, printed, token) == null);
+    try testing.expect(std.mem.find(u8, printed, "acn.example:8888") != null);
+}
+
+test "forward proxy: the CA is fetched without a token and saved to a file" {
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .method = "GET", .path = "/api/v1/proxy/ca.pem", .body = pem, .headers = &.{.{ .name = "Content-Type", .value = "application/x-pem-file" }} }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{ .access_password = "gate-pw" });
+    defer client.deinit();
+
+    const got = try client.forwardProxyCA(testing.allocator, .{});
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(pem, got);
+    const rec = fake.last();
+    try testing.expectEqualStrings("GET", rec.method);
+    try testing.expectEqualStrings("/api/v1/proxy/ca.pem", rec.target);
+    try testing.expect(rec.header("authorization") == null);
+    try testing.expectEqualStrings("gate-pw", rec.header("x-acnologia-access").?);
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [256]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, ".zig-cache/tmp/{s}/ca.pem", .{tmp.sub_path});
+    try client.saveForwardProxyCA(path, .{});
+    var read_buf: [256]u8 = undefined;
+    const saved = try tmp.dir.readFile(testing.io, "ca.pem", &read_buf);
+    try testing.expectEqualStrings(pem, saved);
+    try testing.expect(fake.last().header("authorization") == null);
+}
+
+test "forward proxy: URL and environment carry the escaped token" {
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .method = "GET", .path = "/api/v1/proxy", .body = proxy_setup_body, .headers = &.{json_type} }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{ .token = odd_token });
+    defer client.deinit();
+
+    const url = try client.forwardProxyURL(testing.allocator, .{});
+    defer testing.allocator.free(url);
+    try testing.expectEqualStrings("http://app:acn_odd%2Ftok%2Ben@acn.example:8888", url);
+    try testing.expectEqualStrings("/api/v1/proxy", fake.last().target);
+    try testing.expectEqualStrings("Bearer " ++ odd_token, fake.last().header("authorization").?);
+
+    var env = try client.forwardProxyEnv(testing.allocator, null, .{});
+    defer env.deinit();
+    try testing.expectEqualStrings(url, env.get("HTTPS_PROXY").?);
+    try testing.expectEqualStrings(url, env.get("HTTP_PROXY").?);
+    try testing.expectEqualStrings("1", env.get("NODE_USE_ENV_PROXY").?);
+    try testing.expectEqualStrings("acnologia-ca.pem", env.get("NODE_EXTRA_CA_CERTS").?);
+    try testing.expectEqualStrings("acnologia-ca.pem", env.get("REQUESTS_CA_BUNDLE").?);
+    try testing.expectEqualStrings("acnologia-ca.pem", env.get("SSL_CERT_FILE").?);
+    try testing.expectEqual(@as(usize, 6), env.count());
+
+    var custom = try client.forwardProxyEnv(testing.allocator, "/etc/acn/ca.pem", .{});
+    defer custom.deinit();
+    try testing.expectEqualStrings("/etc/acn/ca.pem", custom.get("SSL_CERT_FILE").?);
+}
+
 // ---------------------------------------------------------------- errors
 
 const ErrorCase = struct {
@@ -544,6 +843,36 @@ test "errors: app_limit_reached carries limit, reset_at and retry after" {
     try testing.expectEqualStrings("2026-11-05T00:00:00Z", diag.resetAt());
     try testing.expectEqual(@as(?u32, 3600), diag.retry_after_sec);
     try testing.expectEqual(@as(u16, 429), diag.status);
+    try testing.expectEqualStrings("", diag.share());
+}
+
+test "errors: a stopped share is ShareUnavailable with its status" {
+    const cases = [_]struct { code: []const u8, status: []const u8, want: acn.Error }{
+        .{ .code = "share_revoked", .status = "revoked", .want = error.ShareRevoked },
+        .{ .code = "share_paused", .status = "paused", .want = error.SharePaused },
+        .{ .code = "share_expired", .status = "expired", .want = error.ShareExpired },
+    };
+    for (cases) |c| {
+        var buf: [256]u8 = undefined;
+        var fake: Fake = undefined;
+        try fake.start(&.{
+            .{ .path = "/proxy/*", .status = 403, .body = try errorBody(&buf, c.code), .headers = &.{.{ .name = "X-Acnologia-Share", .value = c.status }} },
+            .{ .path = "/api/v1/lease", .status = 403, .body = try errorBody(&buf, c.code) },
+        });
+        defer fake.stop();
+        var client = try newClient(&fake, .{});
+        defer client.deinit();
+
+        var diag: acn.Diagnostic = .{};
+        const err = client.proxy(testing.allocator, .GET, "agi-labs", "x", .{ .diag = &diag });
+        try testing.expectError(c.want, err);
+        _ = err catch |e| try testing.expect(acn.isShareUnavailable(e));
+        try testing.expectEqualStrings(c.status, diag.share());
+        // Without the header the status comes from the code.
+        try testing.expectError(c.want, client.lease(testing.allocator, "agi-labs", .{ .diag = &diag }));
+        try testing.expectEqualStrings(c.status, diag.share());
+    }
+    try testing.expect(!acn.isShareUnavailable(error.AppLimitReached));
 }
 
 test "errors: Retry-After comes from the body, else from the header" {

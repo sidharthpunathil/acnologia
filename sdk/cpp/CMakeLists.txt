@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(acnologia VERSION 0.1.0 DESCRIPTION "C++ client for Acnologia, a self-hosted API key pool" LANGUAGES CXX)
+project(acnologia VERSION 0.2.0 DESCRIPTION "C++ client for Acnologia, a self-hosted API key pool" LANGUAGES CXX)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   set(ACNOLOGIA_TOP_LEVEL ON)

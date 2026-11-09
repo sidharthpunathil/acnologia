@@ -1,24 +1,36 @@
 import {
   AllKeysBusyError,
   AcnologiaError,
+  AppLimitReachedError,
   KeyRotationError,
   NoKeyAvailableError,
   ServiceUnavailableError,
+  ShareUnavailableError,
 } from "./errors.js";
 import type {
   AuthSpec,
   AcnologiaOptions,
+  Capability,
+  CapabilityOptions,
   FetchLike,
+  ForwardProxy,
+  Guide,
   HeadersLike,
   LeaseJSON,
   LeaseOptions,
+  LimitHit,
+  Me,
+  ProxyInfo,
+  ProxyRequestInit,
   QueryInit,
   ReportOptions,
   Service,
   WithKeyOptions,
 } from "./types.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
+/** Where `forwardProxyEnv` points the CA variables by default. */
+export const DEFAULT_CA_PATH = "acnologia-ca.pem";
 const CLIENT_HEADER = `acnologia-ts/${VERSION}`;
 const DEFAULT_TIMEOUT_MS = 75_000;
 const MAX_REPORT_MESSAGE = 500;
@@ -70,6 +82,76 @@ function appendQuery(url: string, query?: QueryInit): string {
   return url + (url.includes("?") ? "&" : "?") + qs;
 }
 
+function optNumber(v: string | null | undefined): number | null {
+  if (v === null || v === undefined || v.trim() === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function nullableNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
+}
+
+function limitHit(v: any): LimitHit | null {
+  return v && typeof v === "object" ? { limit: str(v.limit), resetAt: str(v.reset_at) } : null;
+}
+
+/** Parse `X-Acnologia-Tried` (`svc=200, other=429`). */
+function parseTried(v: string | null): Array<{ service: string; status: number }> {
+  if (!v) return [];
+  return v
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => {
+      const i = p.indexOf("=");
+      const service = (i < 0 ? p : p.slice(0, i)).trim();
+      const status = i < 0 ? 0 : Number(p.slice(i + 1).trim());
+      return { service, status: Number.isFinite(status) ? status : 0 };
+    });
+}
+
+/** Read the Acnologia headers of a response from a proxy or capability call. */
+export function proxyInfo(res: Response): ProxyInfo {
+  const h = res.headers;
+  return {
+    keyId: optNumber(h.get("x-acnologia-key-id")),
+    attempts: optNumber(h.get("x-acnologia-attempts")),
+    service: h.get("x-acnologia-service"),
+    cache: h.get("x-acnologia-cache"),
+    replayed: (h.get("idempotent-replayed") ?? "").trim().toLowerCase() === "true",
+    capability: h.get("x-acnologia-capability"),
+    tried: parseTried(h.get("x-acnologia-tried")),
+  };
+}
+
+/** Per call headers for proxy and capability requests. */
+function callHeaders(opts: { idempotencyKey?: string; noCache?: boolean }): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (opts.idempotencyKey) out["Idempotency-Key"] = opts.idempotencyKey;
+  if (opts.noCache) out["Cache-Control"] = "no-cache";
+  return out;
+}
+
+/** `proxyUrl` with user `app` and `token` as the password, percent escaped. */
+function urlWithToken(proxyUrl: string, token: string): string {
+  let u: URL;
+  try {
+    u = new URL(proxyUrl);
+  } catch {
+    throw new AcnologiaError(`bad forward proxy URL ${JSON.stringify(proxyUrl)}`, 200, "bad_response");
+  }
+  u.username = "app";
+  u.password = encodeURIComponent(token);
+  // URL adds a trailing slash to a bare origin; proxy URLs are written without one.
+  const s = u.toString();
+  return u.pathname === "/" && !proxyUrl.endsWith("/") && !u.search && !u.hash ? s.replace(/\/$/, "") : s;
+}
+
 function isPassThroughBody(body: unknown): boolean {
   if (typeof body === "string") return true;
   if (typeof Blob !== "undefined" && body instanceof Blob) return true;
@@ -79,6 +161,38 @@ function isPassThroughBody(body: unknown): boolean {
   if (ArrayBuffer.isView(body)) return true;
   if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) return true;
   return false;
+}
+
+/** Throw the typed error for a non-2xx answer from the consumer API. */
+function throwFor(res: Response, text: string, data: any): never {
+  const code: string = data?.error?.code ?? `http_${res.status}`;
+  const message: string = data?.error?.message ?? (text || res.statusText || `HTTP ${res.status}`);
+  const ra = data?.retry_after_sec;
+  const header = Number(res.headers?.get?.("retry-after") ?? "");
+  const fallback = Number.isFinite(header) && header > 0 ? header : null;
+  const bodyRetry = typeof ra === "number" ? ra : null;
+  const retryAfter = bodyRetry && bodyRetry > 0 ? bodyRetry : fallback;
+  if (code === "service_unavailable") {
+    throw new ServiceUnavailableError(message, retryAfter, data, res.status);
+  }
+  if (code === "all_keys_busy") {
+    throw new AllKeysBusyError(message, bodyRetry, data);
+  }
+  if (code === "no_key_available") {
+    throw new NoKeyAvailableError(message, bodyRetry, data);
+  }
+  if (code === "app_limit_reached") {
+    throw new AppLimitReachedError(
+      message,
+      { limit: str(data?.limit), resetAt: typeof data?.reset_at === "string" ? data.reset_at : null, retryAfter, status: res.status },
+      data,
+    );
+  }
+  if (code === "share_revoked" || code === "share_paused" || code === "share_expired") {
+    const st = (res.headers?.get?.("x-acnologia-share") ?? "").trim() || code.slice("share_".length);
+    throw new ShareUnavailableError(message, st, code, data, res.status);
+  }
+  throw new AcnologiaError(message, res.status, code, data, retryAfter);
 }
 
 /** A key handed out by Acnologia. Report how it went with `report()`. */
@@ -219,37 +333,45 @@ export class Proxy {
     readonly service: string,
   ) {}
 
-  /** Send any request. Returns the raw upstream Response, never throws on non-2xx. */
-  request(method: string, path: string, init: RequestInit & { query?: QueryInit } = {}): Promise<Response> {
-    const { query, ...rest } = init;
+  /**
+   * Send any request. Returns the raw upstream Response, never throws on non-2xx. Read the
+   * Acnologia headers of the answer with `proxyInfo(res)`. `idempotencyKey` sends
+   * `Idempotency-Key`, `noCache` sends `Cache-Control: no-cache`.
+   */
+  request(method: string, path: string, init: ProxyRequestInit = {}): Promise<Response> {
+    const { query, idempotencyKey, noCache, ...rest } = init;
     const clean = path.replace(/^\/+/, "");
     const url = appendQuery(
       `${this.client.baseUrl}/proxy/${encodeURIComponent(this.service)}/${clean}`,
       query,
     );
-    const headers = { ...toHeaderRecord(rest.headers as HeadersLike | undefined), ...this.client._authHeaders() };
+    const headers = {
+      ...callHeaders({ idempotencyKey, noCache }),
+      ...toHeaderRecord(rest.headers as HeadersLike | undefined),
+      ...this.client._authHeaders(),
+    };
     // Never follow redirects, so the app token is not replayed to another host. No default
     // timeout here because proxied bodies may stream; pass `signal` in init to bound a call.
     return this.client._fetch(url, { ...rest, method: method.toUpperCase(), headers, redirect: "manual" });
   }
 
-  get(path: string, query?: QueryInit, init: RequestInit = {}): Promise<Response> {
+  get(path: string, query?: QueryInit, init: ProxyRequestInit = {}): Promise<Response> {
     return this.request("GET", path, { ...init, query });
   }
 
-  delete(path: string, query?: QueryInit, init: RequestInit = {}): Promise<Response> {
+  delete(path: string, query?: QueryInit, init: ProxyRequestInit = {}): Promise<Response> {
     return this.request("DELETE", path, { ...init, query });
   }
 
-  post(path: string, body?: unknown, init: RequestInit & { query?: QueryInit } = {}): Promise<Response> {
+  post(path: string, body?: unknown, init: ProxyRequestInit = {}): Promise<Response> {
     return this.withBody("POST", path, body, init);
   }
 
-  put(path: string, body?: unknown, init: RequestInit & { query?: QueryInit } = {}): Promise<Response> {
+  put(path: string, body?: unknown, init: ProxyRequestInit = {}): Promise<Response> {
     return this.withBody("PUT", path, body, init);
   }
 
-  patch(path: string, body?: unknown, init: RequestInit & { query?: QueryInit } = {}): Promise<Response> {
+  patch(path: string, body?: unknown, init: ProxyRequestInit = {}): Promise<Response> {
     return this.withBody("PATCH", path, body, init);
   }
 
@@ -257,7 +379,7 @@ export class Proxy {
     method: string,
     path: string,
     body: unknown,
-    init: RequestInit & { query?: QueryInit },
+    init: ProxyRequestInit,
   ): Promise<Response> {
     if (body === undefined || body === null) return this.request(method, path, init);
     if (isPassThroughBody(body)) {
@@ -277,6 +399,7 @@ export class Acnologia {
   private readonly fetchImpl: FetchLike | undefined;
   private readonly extraHeaders: Record<string, string>;
   private readonly timeoutMs: number;
+  private readonly accessPassword: string | undefined;
 
   constructor(opts: AcnologiaOptions) {
     if (!opts || !opts.baseUrl) throw new TypeError("Acnologia: baseUrl is required");
@@ -286,6 +409,7 @@ export class Acnologia {
     this.fetchImpl = opts.fetch;
     this.extraHeaders = opts.headers ?? {};
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.accessPassword = opts.accessPassword || undefined;
   }
 
   /** Redacted view for `console.log` and `util.inspect` in Node. */
@@ -295,11 +419,41 @@ export class Acnologia {
 
   /** @internal */
   _authHeaders(): Record<string, string> {
-    return {
-      ...this.extraHeaders,
-      Authorization: `Bearer ${this.token}`,
-      "X-Acnologia-Client": CLIENT_HEADER,
-    };
+    return { ...this._publicHeaders(), Authorization: `Bearer ${this.token}` };
+  }
+
+  /** @internal Every header but the token. */
+  _publicHeaders(): Record<string, string> {
+    const h: Record<string, string> = { ...this.extraHeaders, "X-Acnologia-Client": CLIENT_HEADER };
+    if (this.accessPassword) h["X-Acnologia-Access"] = this.accessPassword;
+    return h;
+  }
+
+  private timeoutSignal(): AbortSignal | undefined {
+    if (this.timeoutMs > 0 && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      return AbortSignal.timeout(this.timeoutMs);
+    }
+    return undefined;
+  }
+
+  /** @internal GET `path` and return the body as text. With `auth` false the token is not sent. */
+  async _text(path: string, accept: string, auth = true): Promise<string> {
+    const headers = { ...(auth ? this._authHeaders() : this._publicHeaders()), Accept: accept };
+    const init: RequestInit = { method: "GET", headers };
+    const signal = this.timeoutSignal();
+    if (signal) init.signal = signal;
+    const res = await this._fetch(this.baseUrl + path, init);
+    const text = await res.text();
+    if (!res.ok) {
+      let data: any = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      throwFor(res, text, data);
+    }
+    return text;
   }
 
   /** @internal */
@@ -315,9 +469,8 @@ export class Acnologia {
   async _json<T>(method: string, path: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = { ...this._authHeaders(), Accept: "application/json" };
     const init: RequestInit = { method, headers };
-    if (this.timeoutMs > 0 && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-      init.signal = AbortSignal.timeout(this.timeoutMs);
-    }
+    const signal = this.timeoutSignal();
+    if (signal) init.signal = signal;
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(body);
@@ -332,24 +485,7 @@ export class Acnologia {
         data = null;
       }
     }
-    if (!res.ok) {
-      const code: string = data?.error?.code ?? `http_${res.status}`;
-      const message: string = data?.error?.message ?? (text || res.statusText || `HTTP ${res.status}`);
-      const ra = data?.retry_after_sec;
-      const retryAfter = typeof ra === "number" ? ra : null;
-      if (code === "service_unavailable") {
-        const header = Number(res.headers?.get?.("retry-after") ?? "");
-        const fallback = Number.isFinite(header) && header > 0 ? header : null;
-        throw new ServiceUnavailableError(message, retryAfter && retryAfter > 0 ? retryAfter : fallback, data, res.status);
-      }
-      if (code === "all_keys_busy") {
-        throw new AllKeysBusyError(message, retryAfter, data);
-      }
-      if (code === "no_key_available") {
-        throw new NoKeyAvailableError(message, retryAfter, data);
-      }
-      throw new AcnologiaError(message, res.status, code, data);
-    }
+    if (!res.ok) throwFor(res, text, data);
     return data as T;
   }
 
@@ -364,7 +500,151 @@ export class Acnologia {
       available: Boolean(s.available),
       baseUrl: s.base_url,
       auth: s.auth,
+      guideUrl: str(s.guide_url),
     }));
+  }
+
+  /**
+   * The token's own access: app, limits, usage, services and, for a share's token, the share.
+   * A share that stopped still answers here, with its `status`.
+   */
+  async me(): Promise<Me> {
+    const d = (await this._json<any>("GET", "/api/v1/me")) ?? {};
+    const lim = d.limits ?? {};
+    const use = d.usage ?? {};
+    const sh = d.share;
+    return {
+      app: { id: Number(d.app?.id ?? 0), name: str(d.app?.name) },
+      limits: {
+        dailyRequests: nullableNumber(lim.daily_requests),
+        monthlyRequests: nullableNumber(lim.monthly_requests),
+        dailyBudget: nullableNumber(lim.daily_budget),
+        monthlyBudget: nullableNumber(lim.monthly_budget),
+      },
+      usage: {
+        todayRequests: Number(use.today_requests ?? 0),
+        todayCost: Number(use.today_cost ?? 0),
+        monthRequests: Number(use.month_requests ?? 0),
+        monthCost: Number(use.month_cost ?? 0),
+        lastUsedAt: typeof use.last_used_at === "string" ? use.last_used_at : null,
+        limitHit: limitHit(use.limit_hit),
+      },
+      limitHit: limitHit(d.limit_hit),
+      services: (Array.isArray(d.services) ? d.services : []).map((s: any) => ({
+        slug: str(s.slug),
+        name: str(s.name),
+        provider: str(s.provider),
+        category: str(s.category),
+        available: Number(s.available ?? 0),
+        logoUrl: typeof s.logo_url === "string" ? s.logo_url : null,
+      })),
+      share:
+        sh && typeof sh === "object"
+          ? {
+              id: str(sh.id),
+              name: str(sh.name),
+              ownerName: str(sh.owner_name),
+              recipient: str(sh.recipient),
+              label: str(sh.label),
+              status: str(sh.status),
+              mode: str(sh.mode),
+              endsAt: typeof sh.ends_at === "string" ? sh.ends_at : null,
+            }
+          : null,
+    };
+  }
+
+  /** The usage guide of a service the token may use. */
+  async guide(slug: string): Promise<Guide> {
+    const d = (await this._json<any>("GET", `/api/v1/services/${encodeURIComponent(slug)}/guide`)) ?? {};
+    return { markdown: str(d.markdown), generated: d.generated === true, guide: d.guide ?? null };
+  }
+
+  /** The usage guide of a service, as Markdown. */
+  guideMarkdown(slug: string): Promise<string> {
+    return this._text(`/api/v1/services/${encodeURIComponent(slug)}/guide`, "text/markdown");
+  }
+
+  /** The capabilities the app may call. Empty for a share's token. */
+  async capabilities(): Promise<Capability[]> {
+    const d = await this._json<{ capabilities?: any[] }>("GET", "/api/v1/capabilities");
+    return (d?.capabilities ?? []).map((c) => ({
+      slug: str(c.slug),
+      name: str(c.name),
+      description: str(c.description),
+      strategy: str(c.strategy),
+      params: c.params ?? null,
+      routes: (Array.isArray(c.routes) ? c.routes : []).map((r: any) => ({ service: str(r.service), mapped: r.mapped === true })),
+      url: str(c.url),
+    }));
+  }
+
+  /**
+   * Call a capability: `POST /proxy/{slug}` with `params` as the JSON body. Returns the raw
+   * Response like a proxy call; read `capability`, `service` and `tried` with `proxyInfo`.
+   */
+  capability(slug: string, params: Record<string, unknown> = {}, opts: CapabilityOptions = {}): Promise<Response> {
+    const q: Record<string, string> = {};
+    if (opts.service) q._service = opts.service;
+    if (opts.raw) q._raw = "1";
+    const url = appendQuery(`${this.baseUrl}/proxy/${encodeURIComponent(slug)}`, q);
+    const headers = { ...callHeaders(opts), ...this._authHeaders(), "Content-Type": "application/json" };
+    const init: RequestInit = { method: "POST", headers, body: JSON.stringify(params ?? {}), redirect: "manual" };
+    if (opts.signal) init.signal = opts.signal;
+    return this._fetch(url, init);
+  }
+
+  /** How to use the forward proxy: its URL, the CA, and the hosts it puts keys on. */
+  async forwardProxy(): Promise<ForwardProxy> {
+    const d = (await this._json<any>("GET", "/api/v1/proxy")) ?? {};
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(d.env ?? {})) env[k] = str(v);
+    return {
+      proxyUrl: str(d.proxy_url),
+      proxyUrlWithToken: str(d.proxy_url_with_token),
+      caUrl: str(d.ca_url),
+      caFingerprint: str(d.ca_fingerprint),
+      passthrough: d.passthrough === true,
+      hosts: (Array.isArray(d.hosts) ? d.hosts : []).map((h: any) => ({
+        host: str(h.host),
+        service: str(h.service),
+        name: str(h.name),
+        ...(h.path ? { path: str(h.path) } : {}),
+      })),
+      env,
+      serviceHeader: str(d.service_header),
+    };
+  }
+
+  /** The forward proxy's CA certificate as PEM. The route is public, so the token is not sent. */
+  forwardProxyCA(): Promise<string> {
+    return this._text("/api/v1/proxy/ca.pem", "application/x-pem-file", false);
+  }
+
+  /**
+   * The forward proxy URL with user `app` and this client's token as the password, such as
+   * `http://app:acn_...@host:8888`. It contains the token: do not log it.
+   */
+  async forwardProxyURL(): Promise<string> {
+    return urlWithToken((await this.forwardProxy()).proxyUrl, this.token);
+  }
+
+  /**
+   * Environment that sends an app's HTTP through the forward proxy: `HTTPS_PROXY` and
+   * `HTTP_PROXY` (the `forwardProxyURL`), `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`,
+   * `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `caPath`. Save `forwardProxyCA()` there
+   * first. It contains the token: do not log it.
+   */
+  async forwardProxyEnv(caPath: string = DEFAULT_CA_PATH): Promise<Record<string, string>> {
+    const url = await this.forwardProxyURL();
+    return {
+      HTTPS_PROXY: url,
+      HTTP_PROXY: url,
+      NODE_USE_ENV_PROXY: "1",
+      NODE_EXTRA_CA_CERTS: caPath,
+      REQUESTS_CA_BUNDLE: caPath,
+      SSL_CERT_FILE: caPath,
+    };
   }
 
   /**
@@ -454,7 +734,10 @@ export class Acnologia {
     return lease.renew(ttlSec);
   }
 
-  /** Proxy helper: requests go through Acnologia, which injects a key and rotates for you. */
+  /**
+   * Proxy helper: requests go through Acnologia, which injects a key and rotates for you.
+   * `service` may also be a service group or a capability slug.
+   */
   proxy(service: string): Proxy {
     return new Proxy(this, service);
   }

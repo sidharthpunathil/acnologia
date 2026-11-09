@@ -8,8 +8,9 @@ defmodule Acnologia.Me do
     * `usage`: `%{today_requests:, today_cost:, month_requests:, month_cost:, last_used_at:}`
     * `limit_hit`: `%{limit: name, reset_at: DateTime}` when a limit is reached, else nil
     * `services`: one map per service the token may use, with `slug`, `name`,
-      `provider`, `category` and `available` (keys free now: 1 or 0 for an
-      ordinary app, a count for a share's token)
+      `provider`, `category`, `available` (keys free now: 1 or 0 for an
+      ordinary app, a count for a share's token) and `logo_url` (a `data:`
+      URI or nil)
     * `share`: nil for an ordinary app; for a share's token a map with `id`,
       `name`, `owner_name`, `owner_id`, `recipient`, `label`, `status`,
       `mode` and `ends_at`
@@ -29,7 +30,8 @@ defmodule Acnologia.Me do
           name: String.t(),
           provider: String.t(),
           category: String.t(),
-          available: integer()
+          available: integer(),
+          logo_url: String.t() | nil
         }
 
   @type t :: %__MODULE__{
@@ -74,7 +76,8 @@ defmodule Acnologia.Me do
             name: s["name"] || "",
             provider: s["provider"] || "",
             category: s["category"] || "",
-            available: s["available"] || 0
+            available: s["available"] || 0,
+            logo_url: s["logo_url"]
           }
         end,
       share: share(data["share"]),

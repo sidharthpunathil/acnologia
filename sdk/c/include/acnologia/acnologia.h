@@ -2,8 +2,9 @@
  * Acnologia C SDK.
  *
  * A client for the Acnologia consumer API: the proxy (/proxy/<service>/...),
- * leases (/api/v1/lease and /api/v1/leases/<id>/...), /api/v1/services and
- * /api/v1/me, authenticated with an app token (acn_...).
+ * leases (/api/v1/lease and /api/v1/leases/<id>/...), /api/v1/services,
+ * usage guides, capabilities, the forward proxy setup and /api/v1/me,
+ * authenticated with an app token (acn_...).
  *
  * Conventions
  *
@@ -37,7 +38,7 @@ extern "C" {
 #endif
 
 /* Sent as X-Acnologia-Client and in the User-Agent: acnologia-c/<version>. */
-#define ACN_VERSION "0.1.0"
+#define ACN_VERSION "0.2.0"
 
 /* The longest wait_sec the server accepts on a lease. */
 #define ACN_MAX_WAIT_SEC 60
@@ -89,6 +90,15 @@ const char *acn_strerror(acn_code code);
 /* True (1) for the two no key codes: ACN_ERR_NO_KEY_AVAILABLE and
  * ACN_ERR_ALL_KEYS_BUSY. */
 int acn_is_no_key(acn_code code);
+
+/* True (1) for the three share codes: ACN_ERR_SHARE_REVOKED,
+ * ACN_ERR_SHARE_PAUSED and ACN_ERR_SHARE_EXPIRED (the share is unavailable).
+ * The server also sends the state as X-Acnologia-Share. */
+int acn_is_share_unavailable(acn_code code);
+
+/* The share's state for a share code: "revoked", "paused" or "expired".
+ * NULL for any other code. */
+const char *acn_share_status(acn_code code);
 
 /* Wrap curl_global_init and curl_global_cleanup. Call once each, from the
  * main thread, before and after every other thread uses the SDK. */
@@ -163,7 +173,14 @@ typedef struct acn_proxy_request {
     const void *body;              /* may be NULL */
     size_t body_len;
     const char *idempotency_key;   /* sent as Idempotency-Key when not NULL */
+    int no_cache;                  /* 1 sends Cache-Control: no-cache (since 0.2.0) */
 } acn_proxy_request;
+
+/* One route a capability call tried, from X-Acnologia-Tried. */
+typedef struct acn_tried {
+    char *service;
+    int status;                    /* 0 when the route failed before an answer */
+} acn_tried;
 
 typedef struct acn_response {
     int status;
@@ -178,6 +195,11 @@ typedef struct acn_response {
     const char *service;           /* X-Acnologia-Service, NULL when absent */
     const char *cache;             /* X-Acnologia-Cache ("hit", "replay"), NULL when absent */
     int idempotent_replayed;       /* 1 when Idempotent-Replayed: true */
+
+    /* Since 0.2.0, set on capability calls. */
+    const char *capability;        /* X-Acnologia-Capability, NULL when absent */
+    acn_tried *tried;              /* X-Acnologia-Tried, in order; NULL when absent */
+    size_t tried_count;
 } acn_response;
 
 /* Sends a request through the proxy. Redirects are never followed.
@@ -305,6 +327,7 @@ typedef struct acn_service {
     int available;
     char *base_url;
     acn_auth auth;
+    char *guide_url;               /* the usage guide's URL, "" when not given (since 0.2.0) */
 } acn_service;
 
 typedef struct acn_service_list {
@@ -322,6 +345,7 @@ typedef struct acn_me_service {
     char *provider;
     char *category;
     int64_t available;             /* keys free now for a share token; 1 or 0 for an app */
+    char *logo_url;                /* a data: image URI, NULL when none (since 0.2.0) */
 } acn_me_service;
 
 typedef struct acn_me_share {
@@ -368,6 +392,123 @@ typedef struct acn_me {
 /* GET /api/v1/me: the token's own app, limits, use, services and share. */
 acn_code acn_me_get(acn_client *client, acn_me **out, acn_error *err);
 void acn_me_free(acn_me *me);
+
+/* ---- Usage guides ---------------------------------------------------- */
+
+typedef struct acn_guide {
+    char *markdown;                /* the guide as Markdown */
+    int generated;                 /* 1 when no guide was written and this one was generated */
+    char *guide_json;              /* the structured guide as raw JSON ("null" when none) */
+} acn_guide;
+
+/* GET /api/v1/services/<slug>/guide: how to call the service. Fails with
+ * ACN_ERR_SERVICE_NOT_ALLOWED for a service the token may not use. */
+acn_code acn_guide_get(acn_client *client, const char *slug, acn_guide **out, acn_error *err);
+void acn_guide_free(acn_guide *guide);
+
+/* The same guide as Markdown only (Accept: text/markdown). Free *out with
+ * acn_free. */
+acn_code acn_guide_markdown(acn_client *client, const char *slug, char **out, acn_error *err);
+
+/* ---- Capabilities ---------------------------------------------------- */
+
+typedef struct acn_capability_route {
+    char *service;
+    int mapped;                    /* 1 when the route maps the answer to the capability's fields */
+} acn_capability_route;
+
+/* One job many providers can do, behind one slug. */
+typedef struct acn_capability {
+    char *slug;
+    char *name;
+    char *description;
+    char *strategy;
+    char *params_json;             /* the params as raw JSON ("null" when none) */
+    acn_capability_route *routes;
+    size_t route_count;
+    char *url;                     /* <server>/proxy/<slug> */
+} acn_capability;
+
+typedef struct acn_capability_list {
+    acn_capability *items;
+    size_t count;
+} acn_capability_list;
+
+/* GET /api/v1/capabilities: the capabilities this token may call. Empty for
+ * a share's token. */
+acn_code acn_capabilities(acn_client *client, acn_capability_list **out, acn_error *err);
+void acn_capability_list_free(acn_capability_list *list);
+
+typedef struct acn_capability_options {
+    const char *service;           /* adds ?_service=<slug>: use only that route */
+    int raw;                       /* 1 adds ?_raw=1: the provider's body, unmapped */
+    const char *idempotency_key;   /* sent as Idempotency-Key when not NULL */
+    int no_cache;                  /* 1 sends Cache-Control: no-cache */
+} acn_capability_options;
+
+/* POST /proxy/<slug> with params_json (a JSON object, NULL means {}) as the
+ * body. opts may be NULL. Answers and errors as for acn_proxy; the response
+ * carries capability, service and tried. */
+acn_code acn_capability_call(acn_client *client, const char *slug, const char *params_json,
+                             const acn_capability_options *opts, acn_response **out, acn_error *err);
+
+/* ---- Forward proxy --------------------------------------------------- */
+
+/* A host the forward proxy sends to a service. */
+typedef struct acn_forward_host {
+    char *host;
+    char *service;
+    char *name;
+    char *path;
+} acn_forward_host;
+
+/* How to use Acnologia as an HTTP(S) proxy. None of these fields holds the
+ * token: proxy_url_with_token has an "<app token>" placeholder. */
+typedef struct acn_forward_proxy {
+    char *proxy_url;
+    char *proxy_url_with_token;
+    char *ca_url;
+    char *ca_fingerprint;
+    int passthrough;               /* 1 when HTTPS to other hosts is tunneled */
+    acn_forward_host *hosts;
+    size_t host_count;
+    acn_header *env;               /* the server's suggested environment */
+    size_t env_count;
+    char *service_header;          /* request header that picks a service */
+} acn_forward_proxy;
+
+/* GET /api/v1/proxy. */
+acn_code acn_forward_proxy_get(acn_client *client, acn_forward_proxy **out, acn_error *err);
+void acn_forward_proxy_free(acn_forward_proxy *fp);
+
+/* GET /api/v1/proxy/ca.pem, sent without the token (it is public). Free
+ * *out with acn_free. */
+acn_code acn_forward_proxy_ca(acn_client *client, char **out, acn_error *err);
+
+/* Fetches the CA and writes it to path (NULL means "acnologia-ca.pem"). */
+acn_code acn_forward_proxy_save_ca(acn_client *client, const char *path, acn_error *err);
+
+/* The proxy URL with user "app" and the client's token as the password,
+ * percent escaped: http://app:acn_...@host:8888. It holds the token: do not
+ * log it. Free with acn_free. */
+acn_code acn_forward_proxy_url(acn_client *client, char **out, acn_error *err);
+
+/* Environment variables, owned by the acn_env. */
+typedef struct acn_env {
+    acn_header *vars;
+    size_t count;
+} acn_env;
+
+/* The environment that sends an app through the forward proxy: HTTPS_PROXY
+ * and HTTP_PROXY (acn_forward_proxy_url), NODE_USE_ENV_PROXY=1, and
+ * NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to ca_path
+ * (NULL means "acnologia-ca.pem"). The proxy values hold the token: do not
+ * log them. Free with acn_env_free, which wipes them. */
+acn_code acn_forward_proxy_env(acn_client *client, const char *ca_path, acn_env **out, acn_error *err);
+void acn_env_free(acn_env *env);
+
+/* The value of one variable, or NULL. Owned by the env. */
+const char *acn_env_get(const acn_env *env, const char *name);
 
 #ifdef __cplusplus
 }

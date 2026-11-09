@@ -167,6 +167,18 @@ class ForbiddenException extends AcnologiaException {
   String get _label => 'http 403: $code';
 }
 
+/// The share behind a share's token was revoked, paused or let expire
+/// (HTTP 403 `share_revoked`, `share_paused` or `share_expired`).
+///
+/// Extends [ForbiddenException], so existing handlers still catch it.
+class ShareUnavailableException extends ForbiddenException {
+  /// Creates the exception. [status] is `revoked`, `paused` or `expired`.
+  const ShareUnavailableException({required this.status, super.message}) : super(code: 'share_$status');
+
+  /// `revoked`, `paused` or `expired`, also sent as `X-Acnologia-Share`.
+  final String status;
+}
+
 /// Any other non-2xx answer from the consumer API.
 class AcnologiaApiException extends AcnologiaException {
   /// Creates the exception.
@@ -177,10 +189,39 @@ class AcnologiaApiException extends AcnologiaException {
   String get _label => code.isEmpty ? 'http $statusCode' : 'http $statusCode: $code';
 }
 
+/// The app used up a daily or monthly request or budget limit (HTTP 429
+/// `app_limit_reached`).
+///
+/// Extends [AcnologiaApiException], so existing handlers still catch it.
+class AppLimitReachedException extends AcnologiaApiException {
+  /// Creates the exception.
+  const AppLimitReachedException({this.limit = '', this.resetAt, Duration? retryAfter, super.message})
+      : _retryAfter = retryAfter,
+        super(statusCode: 429, code: 'app_limit_reached');
+
+  /// Which limit: `daily_requests`, `monthly_requests`, `daily_budget` or
+  /// `monthly_budget`. Empty when the server did not say.
+  final String limit;
+
+  /// When the limit resets, if the server said.
+  final DateTime? resetAt;
+
+  final Duration? _retryAfter;
+
+  @override
+  Duration? get retryAfter => _retryAfter;
+
+  @override
+  String get _label => limit.isEmpty ? 'http 429: app_limit_reached' : 'http 429: app_limit_reached ($limit)';
+}
+
 /// Builds the typed exception for a non-2xx answer from Acnologia itself.
-AcnologiaException _parseError(int status, String body, {String? reasonPhrase, String? retryAfterHeader}) {
+AcnologiaException _parseError(int status, String body,
+    {String? reasonPhrase, String? retryAfterHeader, String? shareHeader}) {
   var code = '';
   var message = '';
+  var limit = '';
+  DateTime? resetAt;
   Duration? retryAfter;
   Object? data;
   try {
@@ -198,6 +239,8 @@ AcnologiaException _parseError(int status, String body, {String? reasonPhrase, S
     }
     final ra = data['retry_after_sec'];
     if (ra is num) retryAfter = _secondsToDuration(ra);
+    if (data['limit'] is String) limit = data['limit'] as String;
+    resetAt = _parseTime(data['reset_at']);
   }
   if (retryAfter == null && retryAfterHeader != null) {
     final n = num.tryParse(retryAfterHeader.trim());
@@ -217,6 +260,14 @@ AcnologiaException _parseError(int status, String body, {String? reasonPhrase, S
       return ServiceUnavailableException(retryAfter: retryAfter, message: message);
     case '' when status == 503:
       return NoKeyAvailableException(retryAfter: retryAfter, message: message);
+    case 'app_limit_reached':
+      return AppLimitReachedException(limit: limit, resetAt: resetAt, retryAfter: retryAfter, message: message);
+    case 'share_revoked' || 'share_paused' || 'share_expired':
+      return ShareUnavailableException(status: code.substring('share_'.length), message: message);
+  }
+  final share = shareHeader?.trim() ?? '';
+  if (status == 403 && code.isEmpty && (share == 'revoked' || share == 'paused' || share == 'expired')) {
+    return ShareUnavailableException(status: share, message: message);
   }
   if (status == 401) return UnauthenticatedException(message: message);
   if (status == 403) return ForbiddenException(code: code.isEmpty ? 'forbidden' : code, message: message);

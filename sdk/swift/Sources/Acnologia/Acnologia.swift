@@ -18,11 +18,11 @@ import FoundationNetworking
 /// let lease = try await acn.lease("serpapi")
 /// ```
 ///
-/// The app token (`acn_...`, or the older `cog_...`) never appears in `description`,
-/// `debugDescription` or a `Mirror`.
+/// The app token (`acn_...`, or the older `cog_...`) and the access password never appear in
+/// `description`, `debugDescription` or a `Mirror`.
 public final class Acnologia: @unchecked Sendable {
     /// The SDK version.
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
     /// The default `User-Agent`.
     public static let defaultUserAgent = "acnologia-swift/\(version)"
     /// The default timeout for API calls, in seconds. It is longer than ``LeaseOptions/maxWait``
@@ -36,7 +36,8 @@ public final class Acnologia: @unchecked Sendable {
     /// Timeout for API calls (lease, report, renew, services). Proxy calls use the session's own.
     public let timeout: TimeInterval
 
-    private let token: String
+    let token: String
+    private let accessPassword: String?
     let apiSession: URLSession
     let proxySession: URLSession
 
@@ -48,17 +49,21 @@ public final class Acnologia: @unchecked Sendable {
     ///   - configuration: The session configuration. Pass one with custom `protocolClasses` in tests.
     ///   - userAgent: Overrides the `User-Agent` header.
     ///   - timeout: Timeout for API calls, in seconds.
+    ///   - accessPassword: Sent as `X-Acnologia-Access` on every request, for a server behind
+    ///     the access password.
     public init(
         baseURL: URL,
         token: String,
         configuration: URLSessionConfiguration = .default,
         userAgent: String = Acnologia.defaultUserAgent,
-        timeout: TimeInterval = Acnologia.defaultTimeout
+        timeout: TimeInterval = Acnologia.defaultTimeout,
+        accessPassword: String? = nil
     ) {
         var s = baseURL.absoluteString
         while s.hasSuffix("/") { s.removeLast() }
         self.baseURL = URL(string: s) ?? baseURL
         self.token = token
+        self.accessPassword = (accessPassword?.isEmpty ?? true) ? nil : accessPassword
         self.userAgent = userAgent
         self.timeout = timeout
         self.apiSession = URLSession(configuration: configuration)
@@ -74,7 +79,8 @@ public final class Acnologia: @unchecked Sendable {
         token: String,
         configuration: URLSessionConfiguration = .default,
         userAgent: String = Acnologia.defaultUserAgent,
-        timeout: TimeInterval = Acnologia.defaultTimeout
+        timeout: TimeInterval = Acnologia.defaultTimeout,
+        accessPassword: String? = nil
     ) throws {
         guard !baseURL.isEmpty, let url = URL(string: baseURL), url.scheme != nil else {
             throw AcnologiaError.invalidArgument("baseURL must be an absolute URL such as http://localhost:8080")
@@ -82,10 +88,12 @@ public final class Acnologia: @unchecked Sendable {
         guard !token.isEmpty else {
             throw AcnologiaError.invalidArgument("token is required")
         }
-        self.init(baseURL: url, token: token, configuration: configuration, userAgent: userAgent, timeout: timeout)
+        self.init(baseURL: url, token: token, configuration: configuration, userAgent: userAgent, timeout: timeout,
+                  accessPassword: accessPassword)
     }
 
-    /// Creates a client from the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables.
+    /// Creates a client from the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables, and
+    /// `ACNOLOGIA_ACCESS_PASSWORD` when `accessPassword` is `nil`.
     ///
     /// - Parameter environment: The variables to read. Defaults to the process environment.
     /// - Throws: ``AcnologiaError/invalidArgument(_:)`` when either variable is missing.
@@ -93,7 +101,8 @@ public final class Acnologia: @unchecked Sendable {
         _ environment: [String: String] = ProcessInfo.processInfo.environment,
         configuration: URLSessionConfiguration = .default,
         userAgent: String = Acnologia.defaultUserAgent,
-        timeout: TimeInterval = Acnologia.defaultTimeout
+        timeout: TimeInterval = Acnologia.defaultTimeout,
+        accessPassword: String? = nil
     ) throws -> Acnologia {
         guard let url = environment["ACNOLOGIA_URL"], !url.isEmpty else {
             throw AcnologiaError.invalidArgument("ACNOLOGIA_URL is not set")
@@ -101,7 +110,8 @@ public final class Acnologia: @unchecked Sendable {
         guard let token = environment["ACNOLOGIA_TOKEN"], !token.isEmpty else {
             throw AcnologiaError.invalidArgument("ACNOLOGIA_TOKEN is not set")
         }
-        return try Acnologia(baseURL: url, token: token, configuration: configuration, userAgent: userAgent, timeout: timeout)
+        return try Acnologia(baseURL: url, token: token, configuration: configuration, userAgent: userAgent, timeout: timeout,
+                             accessPassword: accessPassword ?? environment["ACNOLOGIA_ACCESS_PASSWORD"])
     }
 
     deinit {
@@ -115,6 +125,70 @@ public final class Acnologia: @unchecked Sendable {
     public func services() async throws -> [Service] {
         let out: ServicesResponse = try await call("GET", "/api/v1/services", body: Optional<LeaseRequest>.none)
         return out.services ?? []
+    }
+
+    /// The token's own access: its app, limits and use, the services it may call and, for a
+    /// share's token, the share. A share token whose share stopped still gets an answer, with
+    /// ``MeShare/status`` saying so.
+    public func me() async throws -> Me {
+        try await call("GET", "/api/v1/me", body: Optional<LeaseRequest>.none)
+    }
+
+    /// A service's usage guide: its endpoints, parameters, limits and errors.
+    public func guide(_ service: String) async throws -> Guide {
+        try await call("GET", "/api/v1/services/" + strictEscape(service) + "/guide", body: Optional<LeaseRequest>.none)
+    }
+
+    /// A service's usage guide as Markdown (`Accept: text/markdown`).
+    public func guideMarkdown(_ service: String) async throws -> String {
+        let data = try await raw("GET", "/api/v1/services/" + strictEscape(service) + "/guide", accept: "text/markdown")
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The capabilities the app may call: one job several providers can do, each with its params
+    /// and provider routes. Empty for a share's token.
+    public func capabilities() async throws -> [Capability] {
+        let out: CapabilitiesResponse = try await call("GET", "/api/v1/capabilities", body: Optional<LeaseRequest>.none)
+        return out.capabilities ?? []
+    }
+
+    /// Calls a capability: `POST /proxy/{slug}` with `params` as the JSON body. Acnologia picks a
+    /// provider, translates the params and moves to the next provider when one fails.
+    ///
+    /// Like a proxy call, the answer comes back whatever its status; check
+    /// ``ProxyResponse/acnologiaError`` and ``ProxyResponse/tried``.
+    public func capability(
+        _ slug: String,
+        params: [String: JSONValue] = [:],
+        options: CapabilityOptions = CapabilityOptions()
+    ) async throws -> ProxyResponse {
+        try await capabilityCall(slug, body: try JSONEncoder().encode(params), options: options)
+    }
+
+    /// Calls a capability with any `Encodable` value as its params.
+    public func capability<Params: Encodable>(
+        _ slug: String,
+        params: Params,
+        options: CapabilityOptions = CapabilityOptions()
+    ) async throws -> ProxyResponse {
+        try await capabilityCall(slug, body: try JSONEncoder().encode(params), options: options)
+    }
+
+    private func capabilityCall(_ slug: String, body: Data, options: CapabilityOptions) async throws -> ProxyResponse {
+        var query: [URLQueryItem] = []
+        if let svc = options.service, !svc.isEmpty { query.append(URLQueryItem(name: "_service", value: svc)) }
+        if options.raw { query.append(URLQueryItem(name: "_raw", value: "1")) }
+        var s = baseURL.absoluteString + "/proxy/" + strictEscape(slug)
+        if !query.isEmpty { s += "?" + encodeQuery(query) }
+        guard let url = URL(string: s) else { throw AcnologiaError.invalidArgument("bad capability \(slug)") }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.httpBody = body
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        setHeaders(&req)
+        options.proxy.apply(to: &req)
+        let (data, resp) = try await perform(proxySession, req)
+        return ProxyResponse(response: resp, data: data)
     }
 
     /// Leases a key from the pool.
@@ -155,10 +229,37 @@ public final class Acnologia: @unchecked Sendable {
     // MARK: - Transport
 
     func setHeaders(_ req: inout URLRequest) {
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        setHeaders(&req, withToken: true)
+    }
+
+    func setHeaders(_ req: inout URLRequest, withToken: Bool) {
+        if withToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let accessPassword {
+            req.setValue(accessPassword, forHTTPHeaderField: "X-Acnologia-Access")
+        }
         if !userAgent.isEmpty {
             req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         }
+    }
+
+    /// Sends an API request and returns the raw body of a 2xx answer.
+    func raw(_ method: String, _ path: String, accept: String, withToken: Bool = true) async throws -> Data {
+        guard let url = URL(string: baseURL.absoluteString + path) else {
+            throw AcnologiaError.invalidArgument("bad path \(path)")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        if timeout > 0 { req.timeoutInterval = timeout }
+        setHeaders(&req, withToken: withToken)
+        req.setValue(accept, forHTTPHeaderField: "Accept")
+        let (data, resp) = try await perform(apiSession, req)
+        guard (200...299).contains(resp.statusCode) else {
+            throw parseAPIError(status: resp.statusCode, data: data, retryAfterHeader: resp.value(forHTTPHeaderField: "Retry-After"),
+                                shareHeader: resp.value(forHTTPHeaderField: "X-Acnologia-Share"))
+        }
+        return data
     }
 
     func call<Body: Encodable, Out: Decodable>(_ method: String, _ path: String, body: Body?) async throws -> Out {
@@ -176,7 +277,8 @@ public final class Acnologia: @unchecked Sendable {
         }
         let (data, resp) = try await perform(apiSession, req)
         guard (200...299).contains(resp.statusCode) else {
-            throw parseAPIError(status: resp.statusCode, data: data, retryAfterHeader: resp.value(forHTTPHeaderField: "Retry-After"))
+            throw parseAPIError(status: resp.statusCode, data: data, retryAfterHeader: resp.value(forHTTPHeaderField: "Retry-After"),
+                                shareHeader: resp.value(forHTTPHeaderField: "X-Acnologia-Share"))
         }
         do {
             return try JSONDecoder().decode(Out.self, from: data.isEmpty ? Data("{}".utf8) : data)
@@ -190,7 +292,8 @@ extension Acnologia: CustomStringConvertible, CustomDebugStringConvertible, Cust
     public var description: String { "Acnologia(baseURL: \(baseURL.absoluteString), token: [redacted])" }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
-        Mirror(self, children: ["baseURL": baseURL, "token": "[redacted]", "userAgent": userAgent], displayStyle: .class)
+        Mirror(self, children: ["baseURL": baseURL, "token": "[redacted]", "userAgent": userAgent,
+                               "accessPassword": accessPassword == nil ? "none" : "[redacted]"], displayStyle: .class)
     }
 }
 

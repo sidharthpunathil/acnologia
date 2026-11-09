@@ -5,9 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acnologia::{
-    AuthType, Client, Credential, Error, LeaseOptions, Outcome, Report, WithKeyOptions,
+    AuthType, CapabilityOptions, Client, Credential, Error, LeaseOptions, Outcome,
+    ProxyResponseExt, Report, Tried, WithKeyOptions,
 };
-use common::{bodies, lease_error, reports, start, TOKEN};
+use common::{bodies, lease_error, reports, requests, start, CA_PEM, TOKEN};
 use serde_json::json;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, ResponseTemplate};
@@ -184,7 +185,36 @@ async fn every_error_code() {
         (
             429,
             json!({"error": {"code": "app_limit_reached", "message": "daily limit"}, "limit": "daily_requests"}),
-            |e| matches!(e, Error::Api { status: 429, code, .. } if code == "app_limit_reached"),
+            |e| matches!(e, Error::AppLimitReached { limit, .. } if limit == "daily_requests"),
+            None,
+        ),
+        (
+            429,
+            json!({"error": {"code": "app_limit_reached", "message": "monthly budget"}, "limit": "monthly_budget",
+                   "reset_at": "2026-12-01T00:00:00Z", "retry_after_sec": 3600}),
+            |e| {
+                matches!(e, Error::AppLimitReached { limit, reset_at, .. }
+                if limit == "monthly_budget" && reset_at == "2026-12-01T00:00:00Z")
+                    && e.code() == Some("app_limit_reached")
+            },
+            Some(3600),
+        ),
+        (
+            403,
+            json!({"error": {"code": "share_revoked", "message": "the owner revoked this share"}}),
+            |e| matches!(e, Error::ShareUnavailable { status, code, .. } if status == "revoked" && code == "share_revoked"),
+            None,
+        ),
+        (
+            403,
+            json!({"error": {"code": "share_expired", "message": "expired"}}),
+            |e| matches!(e, Error::ShareUnavailable { status, .. } if status == "expired"),
+            None,
+        ),
+        (
+            400,
+            json!({"error": {"code": "bad_params", "message": "q is required"}}),
+            |e| matches!(e, Error::Api { status: 400, code, .. } if code == "bad_params"),
             None,
         ),
         (
@@ -703,4 +733,276 @@ fn outcome_wire_values() {
         assert_eq!(o.as_str(), s);
         assert_eq!(serde_json::to_value(o).unwrap(), json!(s));
     }
+}
+
+#[tokio::test]
+async fn me_reports_limits_usage_and_services() {
+    let (server, _) = start(&[]).await;
+    let me = client(&server).me().await.unwrap();
+    assert_eq!(me.app.id, "app_1");
+    assert_eq!(me.app.name, "crawler");
+    assert_eq!(me.limits.daily_requests, Some(1000));
+    assert_eq!(me.limits.monthly_requests, None);
+    assert_eq!(me.limits.daily_budget, Some(2.5));
+    assert_eq!(me.usage.month_requests, 340);
+    assert_eq!(
+        me.usage.last_used_at.as_deref(),
+        Some("2026-11-10T09:00:00Z")
+    );
+    assert!(me.limit_hit.is_none());
+    assert_eq!(me.services[0].slug, "serpapi");
+    assert_eq!(me.services[0].available, 1);
+    assert!(me.share.is_none());
+    let r = &requests(&server, "/api/v1/me").await[0];
+    assert_eq!(r.method.as_str(), "GET");
+    assert_eq!(
+        r.headers["authorization"],
+        format!("Bearer {TOKEN}").as_str()
+    );
+}
+
+#[tokio::test]
+async fn services_carry_guide_url() {
+    let (server, _) = start(&[]).await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path("/api/v1/services"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"services": [{
+                "slug": "serpapi", "available": true, "auth": {"type": "query", "name": "api_key"},
+                "guide_url": "http://acn.example/api/v1/services/serpapi/guide"
+            }]})),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let s = client(&server).services().await.unwrap();
+    assert_eq!(
+        s[0].guide_url,
+        "http://acn.example/api/v1/services/serpapi/guide"
+    );
+}
+
+#[tokio::test]
+async fn guide_as_json_and_markdown() {
+    let (server, _) = start(&[]).await;
+    let c = client(&server);
+    let g = c.guide("serpapi").await.unwrap();
+    assert!(g.generated);
+    assert!(g.markdown.starts_with("# SerpAPI"));
+    assert_eq!(g.guide["endpoints"][0]["path"], "/search.json");
+    let md = c.guide_markdown("serpapi").await.unwrap();
+    assert_eq!(md, "# SerpAPI\n\nSearch Google.\n");
+    let reqs = requests(&server, "/api/v1/services/serpapi/guide").await;
+    assert_eq!(reqs[0].headers["accept"], "application/json");
+    assert_eq!(reqs[1].headers["accept"], "text/markdown");
+    let err = c.guide("nope").await.unwrap_err();
+    assert_eq!(err.code(), Some("service_not_allowed"));
+}
+
+#[tokio::test]
+async fn capabilities_and_capability_call() {
+    let (server, _) = start(&[]).await;
+    let c = client(&server);
+    let caps = c.capabilities().await.unwrap();
+    assert_eq!(caps.len(), 1);
+    assert_eq!(caps[0].slug, "web-search");
+    assert_eq!(caps[0].strategy.as_deref(), Some("priority"));
+    assert_eq!(caps[0].params[0]["name"], "q");
+    assert_eq!(caps[0].routes[1].service, "tavily");
+    assert!(caps[0].routes[0].mapped);
+    assert_eq!(caps[0].url, "http://acn.example/proxy/web-search");
+
+    let resp = c
+        .capability(
+            "web-search",
+            &json!({"q": "coffee"}),
+            CapabilityOptions::new()
+                .service("tavily")
+                .raw()
+                .idempotency_key("k1")
+                .no_cache(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.capability(), Some("web-search"));
+    assert_eq!(ProxyResponseExt::service(&resp), Some("tavily"));
+    assert_eq!(resp.key_id(), Some(4));
+    assert_eq!(resp.attempts(), Some(2));
+    assert_eq!(
+        resp.tried(),
+        vec![
+            Tried {
+                service: "serpapi".into(),
+                status: 503
+            },
+            Tried {
+                service: "tavily".into(),
+                status: 200
+            },
+        ]
+    );
+    let r = &requests(&server, "/proxy/web-search").await[0];
+    assert_eq!(r.method.as_str(), "POST");
+    assert_eq!(r.url.query(), Some("_service=tavily&_raw=1"));
+    assert_eq!(r.body, br#"{"q":"coffee"}"#);
+    assert_eq!(r.headers["idempotency-key"], "k1");
+    assert_eq!(r.headers["cache-control"], "no-cache");
+    assert_eq!(
+        r.headers["authorization"],
+        format!("Bearer {TOKEN}").as_str()
+    );
+}
+
+#[tokio::test]
+async fn proxy_options_and_response_accessors() {
+    let (server, _) = start(&[]).await;
+    Mock::given(path_regex("^/proxy/serpapi/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("X-Acnologia-Key-Id", "7")
+                .insert_header("X-Acnologia-Attempts", "1")
+                .insert_header("X-Acnologia-Service", "serpapi")
+                .insert_header("X-Acnologia-Cache", "hit")
+                .insert_header("Idempotent-Replayed", "true"),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let c = client(&server);
+    let p = c.proxy("serpapi").idempotency_key("order-42").no_cache();
+    let resp = p.get("/search.json", &[("q", "x")]).await.unwrap();
+    assert_eq!(resp.key_id(), Some(7));
+    assert_eq!(resp.attempts(), Some(1));
+    assert_eq!(ProxyResponseExt::service(&resp), Some("serpapi"));
+    assert_eq!(resp.cache(), Some("hit"));
+    assert!(resp.replayed());
+    assert_eq!(resp.capability(), None);
+    assert!(resp.tried().is_empty());
+    p.post_json("/x", &json!({})).await.unwrap();
+    // Without options nothing extra is sent.
+    c.proxy("serpapi").get("/plain", &[]).await.unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    for r in &reqs[..2] {
+        assert_eq!(r.headers["idempotency-key"], "order-42");
+        assert_eq!(r.headers["cache-control"], "no-cache");
+    }
+    assert!(reqs[2].headers.get("idempotency-key").is_none());
+    assert!(reqs[2].headers.get("cache-control").is_none());
+
+    // A share's token gets no key id.
+    let h = reqwest::header::HeaderMap::new();
+    assert_eq!(h.key_id(), None);
+    assert!(!h.replayed());
+}
+
+#[tokio::test]
+async fn forward_proxy_calls() {
+    let (server, _) = start(&[]).await;
+    let c = client(&server);
+    let fp = c.forward_proxy().await.unwrap();
+    assert_eq!(fp.proxy_url, "http://acn.example:8888");
+    assert!(fp.passthrough);
+    assert_eq!(fp.hosts.len(), 2);
+    assert_eq!(fp.hosts[1].path, "/~tiktok");
+    assert_eq!(fp.hosts[0].path, "");
+    assert_eq!(fp.env["NODE_USE_ENV_PROXY"], "1");
+    assert_eq!(fp.service_header, "X-Acnologia-Service");
+    assert!(!format!("{fp:?}").contains(TOKEN));
+
+    assert_eq!(c.forward_proxy_ca().await.unwrap(), CA_PEM);
+    let ca = &requests(&server, "/api/v1/proxy/ca.pem").await[0];
+    assert!(
+        ca.headers.get("authorization").is_none(),
+        "the CA is public"
+    );
+
+    let dir = std::env::temp_dir().join(format!("acn-ca-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ca.pem");
+    let saved = c.save_forward_proxy_ca(Some(&path)).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&saved).unwrap(), CA_PEM);
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let url = c.forward_proxy_url().await.unwrap();
+    assert_eq!(url, format!("http://app:{TOKEN}@acn.example:8888"));
+
+    let env = c.forward_proxy_env(None).await.unwrap();
+    assert_eq!(env["HTTPS_PROXY"], url);
+    assert_eq!(env["HTTP_PROXY"], url);
+    assert_eq!(env["NODE_USE_ENV_PROXY"], "1");
+    for k in ["NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"] {
+        assert_eq!(env[k], acnologia::DEFAULT_CA_PATH);
+    }
+    assert_eq!(env.len(), 6);
+    let env = c.forward_proxy_env(Some("/etc/acn.pem")).await.unwrap();
+    assert_eq!(env["SSL_CERT_FILE"], "/etc/acn.pem");
+
+    let r = &requests(&server, "/api/v1/proxy").await[0];
+    assert_eq!(r.method.as_str(), "GET");
+    assert_eq!(
+        r.headers["authorization"],
+        format!("Bearer {TOKEN}").as_str()
+    );
+}
+
+#[tokio::test]
+async fn access_password_is_sent_everywhere() {
+    let (server, _) = start(&[]).await;
+    let c = Client::builder(server.uri(), TOKEN)
+        .access_password("hunter2")
+        .build()
+        .unwrap();
+    assert!(!format!("{c:?}").contains("hunter2"));
+    c.services().await.unwrap();
+    c.forward_proxy_ca().await.unwrap();
+    c.proxy("serpapi").get("/x", &[]).await.unwrap();
+    for r in server.received_requests().await.unwrap() {
+        assert_eq!(r.headers["x-acnologia-access"], "hunter2", "{}", r.url);
+    }
+}
+
+#[tokio::test]
+async fn app_limit_and_share_errors_from_api() {
+    let (server, _) = start(&[]).await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path("/api/v1/me"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("X-Acnologia-Share", "paused")
+                .set_body_json(json!({"error": {"code": "share_paused", "message": "paused"}})),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(path_regex("^/proxy/serpapi/"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "120")
+                .set_body_json(json!({
+                    "error": {"code": "app_limit_reached", "message": "this app reached its daily requests limit"},
+                    "limit": "daily_requests", "reset_at": "2026-11-11T00:00:00Z"
+                })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let c = client(&server);
+    let err = c.me().await.unwrap_err();
+    assert!(
+        matches!(&err, Error::ShareUnavailable { status, .. } if status == "paused"),
+        "{err:?}"
+    );
+    assert_eq!(err.status(), Some(403));
+
+    let resp = c.proxy("serpapi").get("/x", &[]).await.unwrap();
+    let (status, headers) = (resp.status().as_u16(), resp.headers().clone());
+    let err = Error::from_api(status, &headers, &resp.bytes().await.unwrap());
+    assert!(
+        matches!(&err, Error::AppLimitReached { limit, reset_at, .. }
+            if limit == "daily_requests" && reset_at == "2026-11-11T00:00:00Z"),
+        "{err:?}"
+    );
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(120)));
 }

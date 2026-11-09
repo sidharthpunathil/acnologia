@@ -21,14 +21,26 @@ var (
 	// ServiceUnavailable matches an *ErrServiceUnavailable: the provider keeps
 	// failing and its circuit breaker is open (HTTP 503 service_unavailable).
 	ServiceUnavailable = errors.New("acnologia: service unavailable")
+	// AppLimitReached matches an *ErrAppLimitReached: the app used up one of
+	// its request or budget limits (HTTP 429 app_limit_reached).
+	AppLimitReached = errors.New("acnologia: app limit reached")
+	// ShareUnavailable matches an *ErrShareUnavailable: the share behind this
+	// token was revoked, paused or expired (HTTP 403 share_*).
+	ShareUnavailable = errors.New("acnologia: share unavailable")
 )
 
 // APIError is returned for any non-2xx response from the consumer API that is
 // not a more specific error type.
+//
+// Codes worth checking on it include empty_group, bad_params, no_route,
+// no_route_worked, proxy_not_allowed, lease_not_allowed and loop_detected.
 type APIError struct {
 	StatusCode int
 	Code       string
 	Message    string
+	// RetryAfter is retry_after_sec from the body, or the Retry-After
+	// header, when the server gave one.
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -154,3 +166,61 @@ func (e *ErrServiceUnavailable) As(target any) bool {
 	}
 	return false
 }
+
+// apiErrorAs lets errors.As(err, &apiErr) with apiErr *APIError see an
+// embedded APIError.
+func apiErrorAs(e *APIError, target any) bool {
+	if p, ok := target.(**APIError); ok {
+		*p = e
+		return true
+	}
+	return false
+}
+
+// ErrAppLimitReached is returned for HTTP 429 app_limit_reached: the app
+// used up a daily or monthly request or budget limit. Limit names it
+// (daily_requests, monthly_requests, daily_budget or monthly_budget) and
+// ResetAt says when it resets; RetryAfter (on the embedded APIError) is how
+// long to wait. errors.Is(err, AppLimitReached) tests it, and errors.As with
+// an **APIError also matches.
+type ErrAppLimitReached struct {
+	APIError
+	Limit   string
+	ResetAt time.Time
+}
+
+func (e *ErrAppLimitReached) Error() string {
+	msg := "acnologia: app limit reached"
+	if e.Limit != "" {
+		msg += " (" + e.Limit + ")"
+	}
+	if e.RetryAfter > 0 {
+		msg += fmt.Sprintf(" (retry after %s)", e.RetryAfter)
+	}
+	if e.Message != "" {
+		msg += ": " + e.Message
+	}
+	return msg
+}
+func (e *ErrAppLimitReached) Is(target error) bool { return target == AppLimitReached }
+func (e *ErrAppLimitReached) As(target any) bool   { return apiErrorAs(&e.APIError, target) }
+
+// ErrShareUnavailable is returned for HTTP 403 share_revoked, share_paused
+// or share_expired: the token belongs to a share its owner revoked, paused
+// or let expire. Status is "revoked", "paused" or "expired" (also sent as
+// X-Acnologia-Share). errors.Is(err, ShareUnavailable) tests it, and
+// errors.As with an **APIError also matches.
+type ErrShareUnavailable struct {
+	APIError
+	Status string
+}
+
+func (e *ErrShareUnavailable) Error() string {
+	msg := "acnologia: share " + e.Status
+	if e.Message != "" {
+		msg += ": " + e.Message
+	}
+	return msg
+}
+func (e *ErrShareUnavailable) Is(target error) bool { return target == ShareUnavailable }
+func (e *ErrShareUnavailable) As(target any) bool   { return apiErrorAs(&e.APIError, target) }

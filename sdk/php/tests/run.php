@@ -12,9 +12,11 @@ spl_autoload_register(static function (string $class): void {
 use Acnologia\Acnologia;
 use Acnologia\Exception\AcnologiaException;
 use Acnologia\Exception\AllKeysBusy;
+use Acnologia\Exception\AppLimitReached;
 use Acnologia\Exception\NoKeyAvailable;
 use Acnologia\Exception\RateLimited;
 use Acnologia\Exception\ServiceUnavailable;
+use Acnologia\Exception\ShareUnavailable;
 use Acnologia\Response;
 
 $keys = [1, 2];
@@ -271,5 +273,142 @@ try {
     $check($e instanceof NoKeyAvailable, 'empty 503 is still NoKeyAvailable');
 }
 $breaker = null;
+
+// 0.2.0 surface: each call against a scripted transport that records the request.
+$reqs = [];
+$next = null;
+$script = static function (string $method, string $url, array $headers, ?string $body) use (&$reqs, &$next): Response {
+    $reqs[] = ['method' => $method, 'url' => $url, 'path' => parse_url($url, PHP_URL_PATH), 'query' => (string) parse_url($url, PHP_URL_QUERY), 'headers' => $headers, 'body' => $body];
+    return $next;
+};
+$last = static function () use (&$reqs): array {
+    return $reqs[count($reqs) - 1];
+};
+$jsonRes = static fn (array $data, int $status = 200, array $headers = []): Response => new Response($status, $headers + ['content-type' => 'application/json'], json_encode($data));
+$c = new Acnologia('http://acn.test', 'acn_x', 30, $script);
+
+$check(Acnologia::VERSION === '0.2.0', 'version is 0.2.0');
+
+$next = $jsonRes(['app' => ['id' => 7, 'name' => 'bot'], 'limits' => ['daily_requests' => 100], 'share' => null, 'services' => [['slug' => 'serpapi', 'available' => 2]]]);
+$me = $c->me();
+$check($last()['method'] === 'GET' && $last()['path'] === '/api/v1/me' && $last()['headers']['Authorization'] === 'Bearer acn_x', 'me request');
+$check($me['app']['name'] === 'bot' && $me['limits']['daily_requests'] === 100 && $me['share'] === null && $me['services'][0]['slug'] === 'serpapi' && $me['services'][0]['available'] === 2, 'me parsed, available is a number');
+
+$next = $jsonRes(['services' => [['slug' => 'serpapi', 'guide_url' => 'http://acn.test/api/v1/services/serpapi/guide']]]);
+$check($c->services()[0]['guide_url'] === 'http://acn.test/api/v1/services/serpapi/guide', 'services carry guide_url');
+
+$next = $jsonRes(['markdown' => "# SerpApi\n", 'generated' => true, 'guide' => ['endpoints' => [['path' => '/search.json']]]]);
+$g = $c->guide('serp api');
+$check($last()['path'] === '/api/v1/services/serp%20api/guide' && $last()['headers']['Accept'] === 'application/json', 'guide request');
+$check($g['markdown'] === "# SerpApi\n" && $g['generated'] === true && $g['guide']['endpoints'][0]['path'] === '/search.json', 'guide parsed');
+
+$next = new Response(200, ['content-type' => 'text/markdown'], "# SerpApi\n");
+$check($c->guideMarkdown('serpapi') === "# SerpApi\n" && $last()['headers']['Accept'] === 'text/markdown', 'guideMarkdown');
+$next = $jsonRes(['error' => ['code' => 'service_not_allowed', 'message' => 'no']], 403);
+try {
+    $c->guideMarkdown('maps');
+    $check(false, 'guideMarkdown error');
+} catch (AcnologiaException $e) {
+    $check($e->statusCode === 403 && $e->errorCode === 'service_not_allowed', 'guideMarkdown error');
+}
+
+$next = $jsonRes(['capabilities' => [['slug' => 'web-search', 'name' => 'Web search', 'description' => 'Search', 'strategy' => 'fallback',
+    'params' => ['query' => ['type' => 'string']], 'routes' => [['service' => 'serpapi', 'mapped' => true]], 'url' => 'http://acn.test/proxy/web-search']]]);
+$caps = $c->capabilities();
+$check($last()['method'] === 'GET' && $last()['path'] === '/api/v1/capabilities' && $last()['headers']['Authorization'] === 'Bearer acn_x', 'capabilities request');
+$check($caps[0]['slug'] === 'web-search' && $caps[0]['routes'][0]['service'] === 'serpapi' && $caps[0]['routes'][0]['mapped'] === true && $caps[0]['params']['query']['type'] === 'string', 'capabilities parsed');
+
+$next = new Response(200, ['x-acnologia-capability' => 'web-search', 'x-acnologia-service' => 'tavily', 'x-acnologia-tried' => 'serpapi=429, tavily=200', 'x-acnologia-attempts' => '2'], '{"items":[]}');
+$res = $c->capability('web-search', ['query' => 'coffee'], service: 'tavily', raw: true, idempotencyKey: 'k1', noCache: true);
+$r = $last();
+$check($r['method'] === 'POST' && $r['path'] === '/proxy/web-search' && $r['query'] === '_service=tavily&_raw=1', 'capability request line');
+$check($r['body'] === '{"query":"coffee"}' && $r['headers']['Content-Type'] === 'application/json' && $r['headers']['Authorization'] === 'Bearer acn_x', 'capability body');
+$check($r['headers']['Idempotency-Key'] === 'k1' && $r['headers']['Cache-Control'] === 'no-cache', 'capability idempotency and no-cache');
+$check($res->capability() === 'web-search' && $res->service() === 'tavily' && $res->attempts() === 2, 'capability response headers');
+$check($res->tried() === [['service' => 'serpapi', 'status' => 429], ['service' => 'tavily', 'status' => 200]], 'capability tried');
+$c->capability('web-search');
+$check($last()['body'] === '{}' && $last()['query'] === '' && !isset($last()['headers']['Cache-Control']), 'capability without params sends {}');
+
+$next = new Response(200, ['x-acnologia-key-id' => '4', 'x-acnologia-attempts' => '1', 'x-acnologia-service' => 'serpapi', 'x-acnologia-cache' => 'hit', 'idempotent-replayed' => 'true'], '{}');
+$res = $c->proxy('serpapi')->get('/search.json', ['q' => 'a'], [], noCache: true);
+$check($last()['headers']['Cache-Control'] === 'no-cache', 'proxy get noCache');
+$check($res->keyId() === 4 && $res->attempts() === 1 && $res->service() === 'serpapi' && $res->cache() === 'hit' && $res->replayed() && $res->capability() === null && $res->tried() === [], 'response accessors');
+$c->proxy('serpapi')->post('/x', ['a' => 1], [], 'order-1');
+$check($last()['headers']['Idempotency-Key'] === 'order-1' && !isset($last()['headers']['Cache-Control']), 'proxy post idempotencyKey');
+$c->proxy('serpapi')->request('PATCH', '/x', ['body' => ['a' => 1], 'idempotencyKey' => 'p1', 'noCache' => true]);
+$check($last()['headers']['Idempotency-Key'] === 'p1' && $last()['headers']['Cache-Control'] === 'no-cache', 'proxy request options');
+$c->proxy('serpapi')->post('/x', null, ['Idempotency-Key' => 'mine'], 'other');
+$check($last()['headers']['Idempotency-Key'] === 'mine' && !isset($last()['headers']['idempotency-key']), 'caller Idempotency-Key wins');
+$noKey = (new Response(200, [], ''));
+$check($noKey->keyId() === null && $noKey->replayed() === false && $noKey->service() === null, 'accessors absent');
+
+$forward = ['proxy_url' => 'http://acn.test:8888', 'proxy_url_with_token' => 'http://app:%3Capp%20token%3E@acn.test:8888',
+    'ca_url' => 'http://acn.test/api/v1/proxy/ca.pem', 'ca_fingerprint' => 'ab:cd', 'passthrough' => true,
+    'hosts' => [['host' => 'api.openai.com', 'service' => 'openai', 'name' => 'OpenAI', 'path' => '/v1']],
+    'env' => ['NODE_USE_ENV_PROXY' => '1'], 'service_header' => 'X-Acnologia-Service'];
+$next = $jsonRes($forward);
+$fp = $c->forwardProxy();
+$check($last()['method'] === 'GET' && $last()['path'] === '/api/v1/proxy' && $last()['headers']['Authorization'] === 'Bearer acn_x', 'forwardProxy request');
+$check($fp['proxy_url'] === 'http://acn.test:8888' && $fp['passthrough'] === true && $fp['hosts'][0]['host'] === 'api.openai.com' && $fp['service_header'] === 'X-Acnologia-Service', 'forwardProxy parsed');
+$check(!str_contains(json_encode($fp), 'acn_x'), 'forwardProxy has no token');
+
+$enc = new Acnologia('http://acn.test', 'acn_a/b+c', 30, $script);
+$check($enc->forwardProxyURL() === 'http://app:acn_a%2Fb%2Bc@acn.test:8888', 'forwardProxyURL escapes the token');
+$env = $c->forwardProxyEnv();
+$url = 'http://app:acn_x@acn.test:8888';
+$check($env === ['HTTPS_PROXY' => $url, 'HTTP_PROXY' => $url, 'NODE_USE_ENV_PROXY' => '1', 'NODE_EXTRA_CA_CERTS' => 'acnologia-ca.pem',
+    'REQUESTS_CA_BUNDLE' => 'acnologia-ca.pem', 'SSL_CERT_FILE' => 'acnologia-ca.pem'], 'forwardProxyEnv');
+$check($c->forwardProxyEnv('/etc/acn.pem')['SSL_CERT_FILE'] === '/etc/acn.pem', 'forwardProxyEnv caPath');
+
+$pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+$next = new Response(200, ['content-type' => 'application/x-pem-file'], $pem);
+$check($c->forwardProxyCA() === $pem, 'forwardProxyCA body');
+$check($last()['method'] === 'GET' && $last()['path'] === '/api/v1/proxy/ca.pem' && !isset($last()['headers']['Authorization']), 'forwardProxyCA sends no token');
+$tmp = tempnam(sys_get_temp_dir(), 'acn');
+$check($c->saveForwardProxyCA($tmp) === $tmp && file_get_contents($tmp) === $pem, 'saveForwardProxyCA writes the file');
+unlink($tmp);
+
+$locked = new Acnologia('http://acn.test', 'acn_x', 30, $script, 'gatepw');
+$next = $jsonRes([]);
+$locked->me();
+$check($last()['headers']['X-Acnologia-Access'] === 'gatepw', 'access password on API calls');
+$locked->proxy('serpapi')->get('/x');
+$check($last()['headers']['X-Acnologia-Access'] === 'gatepw', 'access password on proxy calls');
+$c->me();
+$check(!isset($last()['headers']['X-Acnologia-Access']), 'no access header by default');
+$check(!str_contains(print_r($locked, true), 'gatepw') && !str_contains(print_r($locked, true), 'acn_x'), 'print_r hides secrets');
+
+$next = $jsonRes(['error' => ['code' => 'app_limit_reached', 'message' => 'daily limit'], 'limit' => 'daily_requests', 'reset_at' => '2026-11-05T00:00:00Z', 'retry_after_sec' => 30], 429);
+try {
+    $c->capabilities();
+    $check(false, 'app limit reached');
+} catch (AppLimitReached $e) {
+    $check($e->statusCode === 429 && $e->errorCode === 'app_limit_reached' && $e->limit === 'daily_requests' && $e->resetAt === '2026-11-05T00:00:00Z' && $e->retryAfter === 30, 'app limit reached fields');
+}
+$next = $jsonRes(['error' => ['code' => 'app_limit_reached', 'message' => 'monthly']], 429, ['retry-after' => '12']);
+try {
+    $c->me();
+} catch (AppLimitReached $e) {
+    $check($e->retryAfter === 12, 'app limit reached falls back to Retry-After');
+}
+$next = $jsonRes(['error' => ['code' => 'share_paused', 'message' => 'paused']], 403, ['x-acnologia-share' => 'paused']);
+try {
+    $c->forwardProxy();
+    $check(false, 'share unavailable');
+} catch (ShareUnavailable $e) {
+    $check($e->statusCode === 403 && $e->errorCode === 'share_paused' && $e->shareStatus === 'paused', 'share unavailable fields');
+}
+$next = new Response(403, ['x-acnologia-share' => 'revoked'], '');
+try {
+    $c->services();
+} catch (ShareUnavailable $e) {
+    $check($e->shareStatus === 'revoked', 'share status from the header alone');
+}
+$next = $jsonRes(['error' => ['code' => 'no_route', 'message' => 'no provider for acn_x']], 404);
+try {
+    $c->guide('x');
+} catch (AcnologiaException $e) {
+    $check($e->errorCode === 'no_route' && !str_contains($e->getMessage(), 'acn_x'), 'other codes stay generic and scrub the token');
+}
 
 exit($fails ? 1 : 0);
