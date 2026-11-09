@@ -144,9 +144,16 @@ func HostLogoFor(sv *store.Service) string {
 
 // LogoFrom downloads a logo from an image URL, or finds the icon of a
 // website.
+// A link without an image extension is tried as an image first, so CDN
+// and image service links work too.
 func LogoFrom(ctx context.Context, src string) ([]byte, string, error) {
 	if SniffImageURL(src) {
 		return DownloadImage(ctx, nil, src)
+	}
+	if pu, err := url.Parse(src); err == nil && pu.Path != "" && pu.Path != "/" {
+		if data, mime, err := DownloadImage(ctx, nil, src); err == nil {
+			return data, mime, nil
+		}
 	}
 	data, mime, _, err := FetchLogo(ctx, src)
 	return data, mime, err

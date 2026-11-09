@@ -34,8 +34,11 @@ type chatAsk struct {
 	Question string       `json:"question"`
 	Rows     []chatAskRow `json:"rows,omitempty"`
 	Choices  []string     `json:"choices,omitempty"`
-	Status   string       `json:"status"` // waiting, answered, expired
-	Answer   string       `json:"answer,omitempty"`
+	// Logos are the pictures of a logo question; Choices then holds their
+	// ids.
+	Logos  []chatAskLogo `json:"logos,omitempty"`
+	Status string        `json:"status"` // waiting, answered, expired
+	Answer string        `json:"answer,omitempty"`
 }
 
 type chatAskRow struct {
@@ -540,8 +543,17 @@ func askUserTool(cs *chatSession, in map[string]any) toolOut {
 		if len(ask.Choices) < 2 || len(ask.Choices) > 8 {
 			return toolFail("choice needs 2 to 8 choices")
 		}
+	case "logo":
+		ids := strList(in["logos"])
+		ask.Logos = cs.askLogos(ids)
+		if len(ask.Logos) == 0 || len(ask.Logos) > 6 {
+			return toolFail("logo needs 1 to 6 logo ids from find_logo in this chat")
+		}
+		for _, l := range ask.Logos {
+			ask.Choices = append(ask.Choices, l.ID)
+		}
 	default:
-		return toolFail("kind must be names or choice")
+		return toolFail("kind must be names, choice or logo")
 	}
 	cs.addItem(chatItem{Kind: "ask", Text: ask.Question, OK: true, Ask: ask})
 	cs.halt = true
@@ -619,6 +631,23 @@ func (s *Server) chatAnswer(w http.ResponseWriter, r *http.Request) {
 			}
 			model = fmt.Sprintf("[Answer to %q: %s. These labels are now on the pasted keys; add_keys uses them.]", a.Question, strings.Join(pairs, ", "))
 			shown = "Names: " + strings.Join(show, ", ")
+		case a.Kind == "logo":
+			if body.Choice == "none" {
+				model = fmt.Sprintf("[Answer to %q: none of these logos. Ask the user for a link to the logo or an image of it, or try other sources with find_logo.]", a.Question)
+				shown = "None of these"
+				break
+			}
+			var pick *chatAskLogo
+			for i := range a.Logos {
+				if a.Logos[i].ID == body.Choice {
+					pick = &a.Logos[i]
+				}
+			}
+			if pick == nil {
+				return errors.New("pick one of the logos")
+			}
+			model = fmt.Sprintf("[Answer to %q: the user picked logo %s (%s). Set it now.]", a.Question, pick.ID, pick.Label)
+			shown = "This one: " + pick.Label
 		default:
 			ok := false
 			for _, c := range a.Choices {

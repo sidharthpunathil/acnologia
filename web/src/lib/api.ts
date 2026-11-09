@@ -283,6 +283,7 @@ export const api = {
   sendChatMessage: (id: number, text: string, images: { media_type: string; data: string }[] = []) =>
     request<ChatReply>("POST", `/api/admin/chat/threads/${id}/messages`, images.length ? { text, images } : { text }),
   chatImageURL: (threadId: number, imageId: string) => `/api/admin/chat/threads/${threadId}/images/${encodeURIComponent(imageId)}`,
+  chatLogoURL: (threadId: number, logoId: string) => `/api/admin/chat/threads/${threadId}/logos/${encodeURIComponent(logoId)}`,
   confirmChat: (id: number, pendingId: string, approve: boolean) =>
     request<ChatReply>("POST", `/api/admin/chat/threads/${id}/confirm`, { pending_id: pendingId, approve }),
   answerChat: (id: number, body: ChatAnswer) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/answer`, body),

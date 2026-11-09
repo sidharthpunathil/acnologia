@@ -11,7 +11,7 @@ import {
   RiTimeLine,
 } from "@remixicon/react";
 import { api } from "@/lib/api";
-import type { ChatAnswer, ChatCard, ChatEntity, ChatItem, Key, Service } from "@/lib/types";
+import type { ChatAnswer, ChatCard, ChatEntity, ChatItem, ChatLogo, Key, Service } from "@/lib/types";
 import { useNow } from "@/hooks/useNow";
 import { EntityLogo } from "@/components/EntityLogo";
 import { StatusPill } from "@/components/StatusPill";
@@ -292,10 +292,12 @@ export function AskCard({
   item,
   busy,
   onAnswer,
+  logoURL,
 }: {
   item: ChatItem;
   busy: boolean;
   onAnswer: (body: ChatAnswer) => Promise<void>;
+  logoURL: (id: string) => string;
 }) {
   const a = item.ask;
   const [names, setNames] = useState<Record<string, string>>(() =>
@@ -338,7 +340,42 @@ export function AskCard({
         <div className="text-caption-2-semibold text-text-tertiary uppercase">Needs your answer</div>
         <div className="mt-1.5 text-body-regular text-text-primary">{a.question}</div>
       </div>
-      {a.kind === "names" ? (
+      {a.kind === "logo" ? (
+        <div className="px-4 pt-1 pb-3.5">
+          <ul aria-label="Logos" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {(a.logos ?? []).map((l) => (
+              <li key={l.id}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-busy={which === l.id || undefined}
+                  aria-label={`Use this logo: ${l.label}`}
+                  onClick={() => void run(l.id, { ask_id: a.id, choice: l.id })}
+                  className="flex w-full flex-col items-center gap-2 rounded-2xl border border-border-button-default bg-background-primary-default p-3 outline-none transition-colors hover:bg-background-secondary-default focus-visible:ring-2 focus-visible:ring-border-focus-ring disabled:opacity-60"
+                >
+                  <LogoPicture src={logoURL(l.id)} className="size-16" />
+                  <span className="flex max-w-full items-center gap-1 truncate text-caption-1-regular text-text-secondary">
+                    {which === l.id && <SpinnerGlyph className="size-3" />}
+                    <span className="truncate">{l.label}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-caption-1-regular text-text-tertiary">Or send a link to the logo, or drop an image of it.</p>
+            <Button
+              size="small"
+              variant="secondary"
+              leadingIcon={which === "none" ? ButtonSpinner : undefined}
+              disabled={busy}
+              onClick={() => void run("none", { ask_id: a.id, choice: "none" })}
+            >
+              None of these
+            </Button>
+          </div>
+        </div>
+      ) : a.kind === "names" ? (
         <form onSubmit={submit} className="px-4 pb-3.5">
           <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto py-1">
             {(a.rows ?? []).map((r) => (
@@ -399,6 +436,36 @@ export function AskCard({
         </div>
       )}
     </div>
+  );
+}
+
+// ---- logos ----
+
+/** A candidate logo on a soft backdrop, so white and transparent logos still show. */
+function LogoPicture({ src, className }: { src: string; className?: string }) {
+  return (
+    <span
+      className={cx(
+        "flex items-center justify-center overflow-hidden rounded-xl border border-border-button-default bg-background-secondary-default p-1.5",
+        className,
+      )}
+    >
+      {src && <img src={src} alt="" loading="lazy" className="max-h-full max-w-full object-contain" />}
+    </span>
+  );
+}
+
+/** The logos a find_logo step found, small, with their source and size. */
+function LogoStrip({ logos, logoURL }: { logos: ChatLogo[]; logoURL: (id: string) => string }) {
+  return (
+    <ul aria-label="Logos found" className="flex flex-wrap gap-2">
+      {logos.map((l) => (
+        <li key={l.id} title={l.label} className="flex items-center gap-2 rounded-xl border border-border-button-default py-1 ps-1 pe-2.5">
+          <LogoPicture src={logoURL(l.id)} className="size-8 rounded-lg p-1" />
+          <span className="max-w-40 truncate text-caption-1-regular text-text-secondary">{l.label}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -556,11 +623,13 @@ function ServiceCard({ card }: { card: ChatCard }) {
 }
 
 /** Cards for the tool rows of a turn that have one. */
-export function ToolCards({ items }: { items: ChatItem[] }) {
+export function ToolCards({ items, logoURL }: { items: ChatItem[]; logoURL: (id: string) => string }) {
   const cards = items.filter((it) => it.card && (it.card.type === "keys" || it.card.type === "service"));
-  if (!cards.length) return null;
+  const logos = items.flatMap((it) => it.logos ?? []);
+  if (!cards.length && !logos.length) return null;
   return (
     <div className="mt-2.5 flex flex-col gap-2.5">
+      {logos.length > 0 && <LogoStrip logos={logos} logoURL={logoURL} />}
       {cards.map((it) => (
         <div key={it.id} className="fade-up">
           {it.card?.type === "keys" ? <KeysCard card={it.card} ts={it.ts} /> : <ServiceCard card={it.card as ChatCard} />}

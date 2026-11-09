@@ -26,6 +26,8 @@ type toolOut struct {
 	// Card and Entities feed the rich transcript row.
 	Card     *chatCard
 	Entities []chatEntity
+	// Logos are find_logo candidates the result shows the model as pictures.
+	Logos []string
 	// Silent tools (ask_user, wait_for_build) write their own transcript
 	// item, so runTool adds no tool row for them.
 	Silent bool
@@ -251,7 +253,7 @@ func (cs *chatSession) simple(method, path string, body any, summary string, sha
 func init() {
 	none := map[string]any{}
 	defer func() {
-		chatTools = append(append(append(append(chatTools, opsTools()...), guideTools()...), providerTools()...), capabilityTools()...)
+		chatTools = append(append(append(append(append(chatTools, opsTools()...), guideTools()...), providerTools()...), capabilityTools()...), logoTools()...)
 	}()
 	chatTools = []*chatTool{
 		{
@@ -679,12 +681,13 @@ func init() {
 			Name: "ask_user", Role: store.RoleMember, Required: []string{"question", "kind"},
 			Props: map[string]any{
 				"question": map[string]any{"type": "string"},
-				"kind":     map[string]any{"type": "string", "enum": []string{"names", "choice"}, "description": "names: a name for each pasted key; choice: pick one option"},
+				"kind":     map[string]any{"type": "string", "enum": []string{"names", "choice", "logo"}, "description": "names: a name for each pasted key; choice: pick one option; logo: pick one of the find_logo candidates, shown as pictures"},
 				"key_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "for names: the keys to name"},
 				"batch":    map[string]any{"type": "string", "description": "for names: a batch id or latest instead of key_refs"},
 				"suggestions": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"},
 					"description": "for names: a suggested name per ref"},
 				"choices": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "for choice: 2 to 8 short options"},
+				"logos":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "for logo: 1 to 6 logo ids from find_logo"},
 			},
 			Desc: "Ask the user a structured question shown as a form, then end your turn; the answer comes as the next message. Only when a decision is truly theirs: never for keys that already have labels from the paste.",
 			Run:  askUserTool,

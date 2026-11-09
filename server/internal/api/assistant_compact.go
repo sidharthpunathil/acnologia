@@ -109,6 +109,8 @@ func msgChars(ms []chatMsg) int {
 				// An image costs about 1,600 tokens however large its base64 is.
 				n += 6400
 			}
+			// Logo candidates are small pictures.
+			n += 1600 * len(b.LogoIDs)
 		}
 	}
 	return n

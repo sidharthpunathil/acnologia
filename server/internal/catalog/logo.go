@@ -107,15 +107,36 @@ var iconLinkRe = regexp.MustCompile(`(?is)<link[^>]+rel=["']?([^"'>]*icon[^"'>]*
 var hrefRe = regexp.MustCompile(`(?is)href=["']([^"']+)["']`)
 var sizesRe = regexp.MustCompile(`(?is)sizes=["'](\d+)x\d+["']`)
 
-// FetchLogo finds and downloads a site's logo: the largest declared icon,
-// then apple-touch-icon, then favicon.
+// LogoCandidate is one image found for a site: where it came from, its bytes
+// and ImageScore.
+type LogoCandidate struct {
+	URL   string
+	Data  []byte
+	Mime  string
+	Score int
+}
+
+// FetchLogo finds and downloads a site's logo: the sharpest of its declared
+// icons, apple-touch-icon and favicon.
 func FetchLogo(ctx context.Context, site string) ([]byte, string, string, error) {
+	cands, err := LogoCandidates(ctx, site, 1)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return cands[0].Data, cands[0].Mime, cands[0].URL, nil
+}
+
+// LogoCandidates downloads the icons a site declares, its apple-touch-icon
+// and favicon, and returns up to n distinct images, sharpest first: SVG,
+// then the largest raster. When nothing is at least 128px, a public icon
+// service's 256px render of the site's icon joins them.
+func LogoCandidates(ctx context.Context, site string, n int) ([]LogoCandidate, error) {
 	if !strings.Contains(site, "://") {
 		site = "https://" + site
 	}
 	base, err := url.Parse(site)
 	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") {
-		return nil, "", "", errors.New("website must be an http(s) URL")
+		return nil, errors.New("website must be an http(s) URL")
 	}
 	c := SafeClient(15 * time.Second)
 	candidates := []string{}
@@ -155,38 +176,42 @@ func FetchLogo(ctx context.Context, site string) ([]byte, string, string, error)
 	}
 	root := base.Scheme + "://" + base.Host
 	candidates = append(candidates, root+"/apple-touch-icon.png", root+"/favicon.svg", root+"/favicon.png", root+"/favicon.ico")
-	// Download every candidate and keep the sharpest: SVG first, then the
-	// largest raster. Tiny favicons only win when nothing else exists.
 	seen := map[string]bool{}
-	var best []byte
-	var bestMime, bestURL string
-	bestScore := 0
+	var out []LogoCandidate
+	best := 0
+	add := func(u string, data []byte, mime string) {
+		sc := ImageScore(data, mime)
+		for _, o := range out {
+			if bytes.Equal(o.Data, data) {
+				return
+			}
+		}
+		out = append(out, LogoCandidate{URL: u, Data: data, Mime: mime, Score: sc})
+		best = max(best, sc)
+	}
 	for _, u := range candidates {
 		if seen[u] || len(seen) >= 8 {
 			continue
 		}
 		seen[u] = true
-		data, mime, err := DownloadImage(ctx, c, u)
-		if err != nil {
-			continue
-		}
-		if sc := ImageScore(data, mime); sc > bestScore {
-			best, bestMime, bestURL, bestScore = data, mime, u, sc
+		if data, mime, err := DownloadImage(ctx, c, u); err == nil {
+			add(u, data, mime)
 		}
 	}
-	if bestScore < 128 {
-		// A public icon service renders most sites' icons at 256px.
+	if best < 128 {
 		gs := "https://www.google.com/s2/favicons?sz=256&domain=" + url.QueryEscape(base.Hostname())
-		if data, mime, err := DownloadImage(ctx, c, gs); err == nil {
-			if sc := ImageScore(data, mime); sc > bestScore && sc > 16 {
-				best, bestMime, bestURL, bestScore = data, mime, gs, sc
-			}
+		if data, mime, err := DownloadImage(ctx, c, gs); err == nil && ImageScore(data, mime) > 16 {
+			add(gs, data, mime)
 		}
 	}
-	if best == nil {
-		return nil, "", "", fmt.Errorf("no usable logo found on %s", base.Host)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no usable logo found on %s", base.Host)
 	}
-	return best, bestMime, bestURL, nil
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	if n > 0 && len(out) > n {
+		out = out[:n]
+	}
+	return out, nil
 }
 
 // ImageScore ranks logo quality by size: SVGs are best, then pixel width.

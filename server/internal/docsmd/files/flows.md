@@ -806,12 +806,23 @@ Tools by role:
 | Role | Tools |
 |---|---|
 | member and up | ask_user, search_providers, provider_offers, provider_guide, get_provider_spec, list_capabilities, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
-| admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), test_webhook, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build, write_provider_guide, update_provider (base URL, auth, health, hosts or disabling after Confirm), improve_provider, fetch_provider_logo, save_capability, try_capability |
+| admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), test_webhook, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build, write_provider_guide, update_provider (base URL, auth, health, hosts or disabling after Confirm), improve_provider, find_logo, set_provider_logo, set_service_logo, save_capability, try_capability |
 | admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, delete_capability, enable_app_mcp_manage, create_webhook, update_webhook, create_egress_proxy, update_egress_proxy |
 | admin and up, after Confirm for some inputs | update_app with mode or allowed_services, update_service with base_url, auth, provider or egress_id, update_key with egress_id |
 
-`ask_user` shows a small form in the chat (name the pasted keys, or pick one
-of 2 to 8 choices); the answer goes to `POST /threads/{id}/answer`.
+`ask_user` shows a small form in the chat (name the pasted keys, pick one
+of 2 to 8 choices, or pick a logo); the answer goes to `POST /threads/{id}/answer`.
+
+**Logos.** `find_logo` looks on the websites or image links it is given
+(the site a scraper reads, or the provider's own site) and keeps up to 6
+candidates in the thread, graded vector, clear (128px or more), fair or
+small. Claude sees each raster candidate as a picture in the tool result.
+When one is clearly the right brand and sharp it sets it with
+`set_service_logo` or `set_provider_logo`; when it is not sure it asks
+with `ask_user` kind `logo`, a form of the pictures and "None of these".
+The user can also paste a link, which the set tools download (a link with
+no image extension is tried as an image before it is treated as a
+website), or send an image, which they set by its chat image id.
 
 The Assistant has no tool to reveal a stored key, manage users or read the
 audit log. New app tokens and webhook signing secrets are shown to you once

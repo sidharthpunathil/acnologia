@@ -865,6 +865,8 @@ export interface ChatItem {
   key_list?: { label: string; hint: string }[];
   /** Images a user message carried; load them with api.chatImageURL. */
   images?: { id: string; media_type: string }[];
+  /** Candidate logos a find_logo step found. */
+  logos?: ChatLogo[];
   /** Data URLs of the images on a message not yet saved, shown until the server copy arrives. */
   local_images?: string[];
   /** A provider build the turn follows (kind build). */
@@ -908,12 +910,20 @@ export interface ChatAskRow {
   suggestion: string;
 }
 
+/** A candidate logo find_logo found, shown by its id. */
+export interface ChatLogo {
+  id: string;
+  /** "linkedin.com · 180px" */
+  label: string;
+}
+
 export interface ChatAsk {
   id: string;
-  kind: "names" | "choice";
+  kind: "names" | "choice" | "logo";
   question: string;
   rows?: ChatAskRow[];
   choices?: string[];
+  logos?: ChatLogo[];
   status: "waiting" | "answered" | "expired";
   answer?: string;
 }

@@ -17,8 +17,10 @@ import (
 // or a whole AI pass over it. Every change publishes a new provider version
 // through the dashboard API, so validation, fixture tests, history and
 // rollback apply as in the editor.
+// slugProp is a provider slug argument.
+var slugProp = map[string]any{"type": "string", "description": "provider slug from list_providers"}
+
 func providerTools() []*chatTool {
-	slugProp := map[string]any{"type": "string", "description": "provider slug from list_providers"}
 	return []*chatTool{
 		{
 			Name: "get_provider_spec", Role: store.RoleMember, Required: []string{"slug"},
@@ -63,22 +65,6 @@ func providerTools() []*chatTool {
 			Run: improveProviderTool,
 		},
 		{
-			Name: "set_service_logo", Role: store.RoleAdmin, Required: []string{"service"},
-			Props: map[string]any{
-				"service": map[string]any{"type": "string"},
-				"url":     map[string]any{"type": "string", "description": "a direct image URL or a website to find the icon on; empty uses the logo of the provider host the service calls"},
-			},
-			Desc: "Set a service's own logo: for a scraper or an API that reads another site, that site's logo (LinkedIn for a LinkedIn Jobs scraper). The provider's logo then shows small beside it.",
-			Run: func(cs *chatSession, in map[string]any) toolOut {
-				sv, err := cs.resolveService(argStr(in, "service"))
-				if err != nil {
-					return toolFail(err.Error())
-				}
-				return cs.simple("POST", fmt.Sprintf("/api/admin/services/%d/logo/fetch", sv.ID), map[string]any{"url": argStr(in, "url")},
-					"Set the "+sv.Name+" logo", func(m map[string]any) any { return pick(m, "slug", "logo_url") })
-			},
-		},
-		{
 			Name: "fill_service_logos", Role: store.RoleAdmin, Props: map[string]any{},
 			Desc: "Give every service without a logo of its own the logo of the provider host it calls, where the provider's hosts name one (logo_url).",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
@@ -100,15 +86,6 @@ func providerTools() []*chatTool {
 				}
 				return cs.simple("POST", "/api/admin/services/families/link", map[string]any{"key": key}, "Linked the "+sv.Name+" family", nil)
 			},
-		},
-		{
-			Name: "fetch_provider_logo", Role: store.RoleAdmin, Required: []string{"slug"},
-			Props: map[string]any{
-				"slug": slugProp,
-				"url":  map[string]any{"type": "string", "description": "a direct image URL, or a website to find the icon on; empty uses the provider's website"},
-			},
-			Desc: "Fetch and set a provider's logo from an image URL or a website.",
-			Run:  fetchProviderLogoTool,
 		},
 	}
 }
@@ -310,15 +287,4 @@ func improveProviderTool(cs *chatSession, in map[string]any) toolOut {
 		Entities: []chatEntity{{Type: "provider", Slug: p.Slug, Name: p.Name}},
 		Model: asJSON(map[string]any{"run_id": id, "status": out["status"], "title": title,
 			"next": "call wait_for_build with this run_id now; an update run may wait for review before it publishes"})}
-}
-
-func fetchProviderLogoTool(cs *chatSession, in map[string]any) toolOut {
-	slug := argStr(in, "slug")
-	code, out, msg := cs.api("POST", "/api/admin/providers/"+url.PathEscape(slug)+"/logo/fetch", map[string]any{"url": argStr(in, "url")})
-	if code >= 400 {
-		return toolFail("could not set the logo: " + msg)
-	}
-	name := argStr(out, "name")
-	return toolOut{OK: true, Summary: "Set the " + name + " logo", Link: "/providers/" + slug,
-		Entities: []chatEntity{{Type: "provider", Slug: slug, Name: name}}, Model: asJSON(map[string]any{"slug": slug, "logo": "updated"})}
 }
