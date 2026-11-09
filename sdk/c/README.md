@@ -117,7 +117,7 @@ Pass `NULL` for the options, or leave a field `NULL`, to read it from the enviro
 | `timeout_ms` | 75000 | For API calls. A lease with `wait_sec` stretches it to `wait_sec` plus 10 seconds. Negative turns it off |
 | `connect_timeout_ms` | 10000 | Negative turns it off |
 | `proxy_timeout_ms` | none | Proxy calls have no timeout unless you set one, since a provider may take long |
-| `user_agent` | `acnologia-c/0.1.0` | The `User-Agent` header. `X-Acnologia-Client: acnologia-c/0.1.0` is always sent |
+| `user_agent` | `acnologia-c/0.2.0` | The `User-Agent` header. `X-Acnologia-Client: acnologia-c/0.2.0` is always sent |
 
 A missing URL or token fails with `ACN_ERR_INVALID_ARGUMENT`.
 
@@ -143,6 +143,7 @@ req.header_count = 1;
 req.body = body;
 req.body_len = strlen(body);
 req.idempotency_key = "order-42";    /* optional */
+req.no_cache = 1;                    /* optional: Cache-Control: no-cache */
 
 acn_response *resp = NULL;
 if (acn_proxy(client, &req, &resp, &err) == ACN_OK) {
@@ -165,6 +166,80 @@ The response holds:
 | `attempts` | `X-Acnologia-Attempts`, 0 when absent |
 | `service`, `cache` | `X-Acnologia-Service` and `X-Acnologia-Cache`, `NULL` when absent |
 | `idempotent_replayed` | 1 when the server replayed an earlier answer for the same `Idempotency-Key` |
+| `capability` | `X-Acnologia-Capability`, `NULL` when absent |
+| `tried`, `tried_count` | `X-Acnologia-Tried` parsed into `{service, status}` pairs, `NULL` and 0 when absent |
+
+## Capabilities
+
+A capability is one job several providers can do, behind one slug. List them, then call one with its params as a JSON object:
+
+```c
+acn_capability_list *caps = NULL;
+if (acn_capabilities(client, &caps, &err) == ACN_OK) {
+    for (size_t i = 0; i < caps->count; i++) printf("%s: %s\n", caps->items[i].slug, caps->items[i].params_json);
+    acn_capability_list_free(caps);
+}
+
+acn_capability_options copts = {0};
+copts.service = "serpapi";           /* optional: ?_service=, only that route */
+copts.raw = 0;                       /* 1 adds ?_raw=1: the provider's own body */
+acn_response *cr = NULL;
+if (acn_capability_call(client, "maps-search", "{\"query\":\"cafes in Kochi\"}", &copts, &cr, &err) == ACN_OK) {
+    printf("%s answered %d\n", cr->service, cr->status);
+    for (size_t i = 0; i < cr->tried_count; i++) printf("tried %s: %d\n", cr->tried[i].service, cr->tried[i].status);
+    acn_response_free(cr);
+}
+```
+
+`acn_capability_call` sends `POST /proxy/<slug>` and answers like `acn_proxy`. `params_json` `NULL` sends `{}`. `params_json` in the list is the capability's params as raw JSON.
+
+## Usage guides
+
+```c
+char *md = NULL;
+if (acn_guide_markdown(client, "agi-labs", &md, &err) == ACN_OK) {
+    puts(md);
+    acn_free(md);
+}
+
+acn_guide *g = NULL;
+if (acn_guide_get(client, "agi-labs", &g, &err) == ACN_OK) {
+    printf("generated %d, structured %s\n", g->generated, g->guide_json);
+    acn_guide_free(g);
+}
+```
+
+`acn_services` also gives each service's `guide_url`.
+
+## Forward proxy
+
+An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Save the CA, then get the proxy URL or the whole environment:
+
+```c
+acn_forward_proxy_save_ca(client, NULL, &err);   /* writes acnologia-ca.pem */
+
+acn_env *env = NULL;
+if (acn_forward_proxy_env(client, NULL, &env, &err) == ACN_OK) {
+    for (size_t i = 0; i < env->count; i++) setenv(env->vars[i].name, env->vars[i].value, 1);
+    acn_env_free(env);
+}
+```
+
+Then the app's own HTTP client goes through Acnologia. With libcurl directly:
+
+```c
+char *proxy = NULL;
+acn_forward_proxy_url(client, &proxy, &err);    /* http://app:acn_...@host:8888 */
+CURL *h = curl_easy_init();
+curl_easy_setopt(h, CURLOPT_URL, "https://serpapi.com/search.json?q=coffee");
+curl_easy_setopt(h, CURLOPT_PROXY, proxy);
+curl_easy_setopt(h, CURLOPT_CAINFO, "acnologia-ca.pem");
+curl_easy_perform(h);
+curl_easy_cleanup(h);
+acn_free(proxy);
+```
+
+`acn_forward_proxy_get` returns the server's setup (`acn_forward_proxy`: `proxy_url`, `proxy_url_with_token` with an `<app token>` placeholder, `ca_url`, `ca_fingerprint`, `passthrough`, `hosts`, `env`, `service_header`), which never holds the token. `acn_forward_proxy_ca` returns the PEM text and sends no token. The strings from `acn_forward_proxy_url` and `acn_forward_proxy_env` do hold the token: keep them out of logs. `acn_env_free` wipes them.
 
 ## Lease mode
 
@@ -241,7 +316,7 @@ if (acn_me_get(client, &me, &err) == ACN_OK) {
 }
 ```
 
-`GET /api/v1/me` returns the token's app, its limits (-1 when not set), use today and this month, the services it may call, and for a share's token the share (`me->share`, `NULL` for an ordinary app). `me->raw_json` holds the whole answer.
+`GET /api/v1/me` returns the token's app, its limits (-1 when not set), use today and this month, the services it may call, and for a share's token the share (`me->share`, `NULL` for an ordinary app). Each service has a `logo_url` (a `data:` image URI, or `NULL`). `me->raw_json` holds the whole answer.
 
 ## Errors
 
@@ -255,7 +330,7 @@ if (acn_me_get(client, &me, &err) == ACN_OK) {
 | `ACN_ERR_ALL_KEYS_BUSY` | 503 `all_keys_busy` | Every usable key is at its concurrency limit. Retry soon or lease with `wait_sec` |
 | `ACN_ERR_SERVICE_UNAVAILABLE` | 503 `service_unavailable` | The provider keeps failing and its circuit breaker is open |
 | `ACN_ERR_APP_LIMIT_REACHED` | 429 `app_limit_reached` | A daily or monthly limit. `err.limit` and `err.reset_at` say which and until when |
-| `ACN_ERR_SHARE_REVOKED`, `_PAUSED`, `_EXPIRED` | 403 `share_revoked`, `share_paused`, `share_expired` | A share's token whose share was revoked, paused or let expire |
+| `ACN_ERR_SHARE_REVOKED`, `_PAUSED`, `_EXPIRED` | 403 `share_revoked`, `share_paused`, `share_expired` | A share's token whose share was revoked, paused or let expire. `acn_is_share_unavailable(code)` is true for all three, and `acn_share_status(code)` gives `"revoked"`, `"paused"` or `"expired"` |
 | `ACN_ERR_LEASE_NOT_FOUND` | 404 `lease_not_found` | Renewing a lease that is not open |
 | `ACN_ERR_REPORT_FAILED` | 409 or 410 `report_failed` | The lease was already reported, or expired long ago |
 | `ACN_ERR_UPSTREAM_UNREACHABLE` | 502 `upstream_unreachable` | The provider could not be reached |
@@ -263,7 +338,7 @@ if (acn_me_get(client, &me, &err) == ACN_OK) {
 | `ACN_ERR_LOOP_DETECTED` | 508 `loop_detected` | The request passed through too many Acnologia servers |
 | `ACN_ERR_BAD_PATH` | 400 `bad_path` | A proxy path with `?`, `#` or a dot segment |
 | `ACN_ERR_BODY_TOO_LARGE` | 413 `body_too_large` | The proxy body is over the server's limit |
-| `ACN_ERR_API` | anything else | Check `err.status` and `err.error_code`, such as `unknown_service` |
+| `ACN_ERR_API` | anything else | Check `err.status` and `err.error_code`, such as `unknown_service`, `empty_group`, `bad_params`, `no_route` or `no_route_worked` |
 | `ACN_ERR_TRANSPORT` | none | No answer: refused, DNS, TLS or timeout |
 | `ACN_ERR_BAD_RESPONSE` | 2xx | The answer was not the JSON the SDK expected |
 | `ACN_ERR_INVALID_ARGUMENT`, `ACN_ERR_NO_MEMORY` | none | A bad argument, or out of memory |
@@ -284,6 +359,11 @@ Error messages never hold the token, the access password or a lease secret: each
 | `acn_lease *` (including `next`) | `acn_lease_free` |
 | `acn_me *` | `acn_me_free` |
 | `acn_service_list *` | `acn_service_list_free` |
+| `acn_capability_list *` | `acn_capability_list_free` |
+| `acn_guide *` | `acn_guide_free` |
+| `acn_forward_proxy *` | `acn_forward_proxy_free` |
+| `acn_env *` | `acn_env_free` |
+| `char *` from `acn_guide_markdown`, `acn_forward_proxy_ca` and `acn_forward_proxy_url` | `acn_free` |
 | `char *` from `acn_lease_apply` and `acn_lease_url` | `acn_free` |
 
 Every free function accepts `NULL`. Strings inside a struct belong to it, and `acn_response_header` and `acn_client_base_url` return pointers owned by their object. `acn_error` is yours, on the stack, with nothing to free. Use `acn_free` rather than `free` for SDK strings, so a Windows program with a different C runtime stays safe.
@@ -304,7 +384,7 @@ ctest --test-dir build --output-on-failure
 
 or `make test SAN=1`. `ACN_SANITIZE` turns on AddressSanitizer and UndefinedBehaviorSanitizer with GCC and Clang. Everything is built with `-Wall -Wextra -Werror -pedantic` (`/W4 /WX` with MSVC).
 
-The tests start a small HTTP server on 127.0.0.1 inside the test program, written with plain sockets, so they need no network and no other tools. They cover every error code, me, idempotency, `Retry-After`, the environment defaults, secret scrubbing, and applying a key to a header or a query.
+The tests start a small HTTP server on 127.0.0.1 inside the test program, written with plain sockets, so they need no network and no other tools. They cover every error code, me, guides, capabilities, the forward proxy, idempotency, no-cache, `Retry-After`, the environment defaults, secret scrubbing, and applying a key to a header or a query.
 
 [`examples/quickstart.c`](examples/quickstart.c) runs me, proxy, lease, apply, renew and report against a real server. Build it with the tests and run it with `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` set.
 

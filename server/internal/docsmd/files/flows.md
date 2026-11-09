@@ -454,8 +454,11 @@ An admin picks each app's tool sets in the dashboard (`GET`/`PUT
 
 - **core**: `list_services`, `pool_status`, `service_guide`, `get_key`,
   `renew_key`, `report_key`, `proxy_request`.
-- **service tools**: generated from each provider's examples and named
-  `<slug>_<example>`.
+- **service tools**: generated from each provider's examples, then from
+  every usage guide endpoint no example covers, typed from the guide's
+  params, and named `<slug>_<group>_<endpoint name>`. A new provider,
+  service or guide adds its tools without code or a restart. `search_tools`
+  and `call_tool` come with them.
 - **insights** (read only): `list_keys`, `key_details`, `service_stats`.
 - **manage**: `check_keys`, `set_key_status`, `add_keys`. `check_keys` needs a
   service and checks only that service's keys.
@@ -472,7 +475,15 @@ A typical session:
 1. The client initializes with `Authorization: Bearer acn_...`. The
    instructions tell the agent to read `service_guide` before calling a
    service it has not used.
-2. `tools/list` returns the tools this app's settings allow.
+2. `tools/list` returns the tools this app's settings allow. With the app's
+   `tool_mode` at `search`, or at `auto` (the default) with more than 30
+   service tools, it lists the other tools plus `search_tools` and
+   `call_tool`: the agent asks `search_tools` for what it needs ("linkedin
+   jobs") and gets matching tools with their input schemas, then calls one
+   by name or through `call_tool`. With `all` it lists every tool.
+   An agent that keeps `GET /mcp` open (`Accept: text/event-stream`) gets
+   `notifications/tools/list_changed` when the app's tools change, and lists
+   them again.
 3. `service_guide` returns the usage guide as Markdown: endpoints, params,
    limits and errors.
 4. `proxy_request` runs the proxy handler in process, with the response
@@ -876,10 +887,10 @@ Tools by role:
 
 | Role | Tools |
 |---|---|
-| member and up | ask_user, search_providers, provider_offers, provider_guide, get_provider_spec, list_capabilities, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
+| member and up | ask_user, search_providers, provider_offers, provider_guide, get_provider_spec, get_catalog, find_missing_catalog, list_capabilities, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
 | admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), test_webhook, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build, write_provider_guide, update_provider (base URL, auth, health, hosts or disabling after Confirm), improve_provider, find_logo, set_provider_logo, set_service_logo, save_capability, try_capability |
-| admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, delete_capability, enable_app_mcp_manage, create_webhook, update_webhook, create_egress_proxy, update_egress_proxy |
-| admin and up, after Confirm for some inputs | update_app with mode or allowed_services, update_service with base_url, auth, provider or egress_id, update_key with egress_id |
+| admin and up, after Confirm | update_catalog, delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, delete_capability, enable_app_mcp_manage, create_webhook, update_webhook, create_egress_proxy, update_egress_proxy |
+| admin and up, after Confirm for some inputs | verify_catalog with live, update_app with mode or allowed_services, update_service with base_url, auth, provider or egress_id, update_key with egress_id |
 
 `ask_user` shows a small form in the chat (name the pasted keys, pick one
 of 2 to 8 choices, or pick a logo); the answer goes to `POST /threads/{id}/answer`.

@@ -3,6 +3,8 @@
 require "minitest/autorun"
 require "json"
 require "socket"
+require "tmpdir"
+require "openssl"
 require "uri"
 require_relative "../lib/acnologia"
 
@@ -437,6 +439,8 @@ class AcnologiaHTTPTest < Minitest::Test
     assert_equal "2026-11-04T09:00:00Z", me.usage.last_used_at
     assert_equal %w[agi-labs maps], me.services.map(&:slug)
     assert me.services.first.available?
+    assert_equal 1, me.services.first.available
+    assert_equal 0, me.services.last.available
     refute me.services.last.available?
     refute me.share?
     refute me.limited?
@@ -785,5 +789,192 @@ class AcnologiaHTTPTest < Minitest::Test
     assert_equal "text/markdown", @fake.last[:headers]["accept"]
     answer(403, err("service_not_allowed"))
     assert_raises(Acnologia::Forbidden) { client.guide("maps") }
+  end
+
+  def test_services_carry_guide_url
+    answer(200, "services" => [{ "slug" => "agi-labs", "available" => true,
+                                 "auth" => { "type" => "bearer", "name" => "", "prefix" => "" },
+                                 "guide_url" => "http://acn.test/api/v1/services/agi-labs/guide" }])
+    svc = client.services.first
+    assert_equal "/api/v1/services", @fake.last[:path]
+    assert_equal "http://acn.test/api/v1/services/agi-labs/guide", svc["guide_url"]
+  end
+
+  def test_guide_markdown_and_guide_doc
+    @fake.handler = ->(_req) { [200, { "Content-Type" => "text/markdown" }, "# AGI Labs\n"] }
+    assert_equal "# AGI Labs\n", client.guide_markdown("agi labs")
+    assert_equal "/api/v1/services/agi%20labs/guide", @fake.last[:path]
+    assert_equal "text/markdown", @fake.last[:headers]["accept"]
+
+    answer(200, "markdown" => "# AGI Labs\n", "generated" => true, "guide" => { "endpoints" => [{ "path" => "/v1/chat" }] })
+    g = client.guide_doc("agi-labs")
+    assert_equal "GET", @fake.last[:method]
+    assert_equal "/api/v1/services/agi-labs/guide", @fake.last[:path]
+    assert_equal "application/json", @fake.last[:headers]["accept"]
+    assert_equal "Bearer #{TOKEN}", @fake.last[:headers]["authorization"]
+    assert_equal "# AGI Labs\n", g.markdown
+    assert g.generated?
+    assert_equal "/v1/chat", g.guide["endpoints"][0]["path"]
+  end
+
+  def test_capabilities
+    answer(200, "capabilities" => [{ "slug" => "web-search", "name" => "Web search", "description" => "Search the web",
+                                     "strategy" => "fallback", "params" => { "query" => { "type" => "string" } },
+                                     "routes" => [{ "service" => "serpapi", "mapped" => true },
+                                                  { "service" => "tavily", "mapped" => false }],
+                                     "url" => "http://acn.test/proxy/web-search" }])
+    caps = client.capabilities
+    assert_equal "/api/v1/capabilities", @fake.last[:path]
+    assert_equal "Bearer #{TOKEN}", @fake.last[:headers]["authorization"]
+    c = caps.first
+    assert_equal "web-search", c.slug
+    assert_equal "fallback", c.strategy
+    assert_equal "string", c.params["query"]["type"]
+    assert_equal %w[serpapi tavily], c.routes.map(&:service)
+    assert_equal [true, false], c.routes.map(&:mapped)
+    assert_equal "http://acn.test/proxy/web-search", c.url
+  end
+
+  def test_capability_call
+    @fake.handler = lambda do |_req|
+      [200, { "Content-Type" => "application/json", "X-Acnologia-Capability" => "web-search",
+              "X-Acnologia-Service" => "tavily", "X-Acnologia-Tried" => "serpapi=429, tavily=200",
+              "X-Acnologia-Attempts" => "2" }, '{"items":[]}']
+    end
+    res = client.capability("web-search", { "query" => "coffee" }, service: "tavily", raw: true,
+                                                                   idempotency_key: "k1", no_cache: true)
+    req = @fake.last
+    assert_equal "POST", req[:method]
+    assert_equal "/proxy/web-search", req[:path]
+    assert_equal({ "_service" => "tavily", "_raw" => "1" }, req[:query])
+    assert_equal({ "query" => "coffee" }, JSON.parse(req[:body]))
+    assert_equal "application/json", req[:headers]["content-type"]
+    assert_equal "Bearer #{TOKEN}", req[:headers]["authorization"]
+    assert_equal "k1", req[:headers]["idempotency-key"]
+    assert_equal "no-cache", req[:headers]["cache-control"]
+    assert_equal "web-search", res.capability
+    assert_equal "tavily", res.service
+    assert_equal 2, res.attempts
+    assert_equal [%w[serpapi 429], %w[tavily 200]], res.tried.map { |t| [t.service, t.status.to_s] }
+    assert_equal 429, res.tried.first.status
+
+    client.capability("web-search", { "query" => "tea" })
+    assert_equal({}, @fake.last[:query])
+    assert_nil @fake.last[:headers]["cache-control"]
+  end
+
+  def test_proxy_no_cache_and_response_accessors
+    @fake.handler = lambda do |_req|
+      [200, { "X-Acnologia-Key-Id" => "4", "X-Acnologia-Attempts" => "1", "X-Acnologia-Service" => "agi-labs",
+              "X-Acnologia-Cache" => "hit", "Idempotent-Replayed" => "true" }, "{}"]
+    end
+    res = client.proxy("agi-labs").get("/v1/models", no_cache: true)
+    assert_equal "no-cache", @fake.last[:headers]["cache-control"]
+    assert_equal({}, @fake.last[:query])
+    assert_equal 4, res.key_id
+    assert_equal 1, res.attempts
+    assert_equal "agi-labs", res.service
+    assert_equal "hit", res.cache
+    assert res.replayed
+    assert_nil res.capability
+    assert_equal [], res.tried
+    client.proxy("agi-labs").post("/v1/chat", { "a" => 1 }, no_cache: true)
+    assert_equal "no-cache", @fake.last[:headers]["cache-control"]
+    client.proxy("agi-labs").get("/v1/models")
+    assert_nil @fake.last[:headers]["cache-control"]
+  end
+
+  FORWARD = {
+    "proxy_url" => "http://acn.test:8888",
+    "proxy_url_with_token" => "http://app:%3Capp%20token%3E@acn.test:8888",
+    "ca_url" => "http://acn.test/api/v1/proxy/ca.pem",
+    "ca_fingerprint" => "ab:cd",
+    "passthrough" => true,
+    "hosts" => [{ "host" => "api.openai.com", "service" => "openai", "name" => "OpenAI", "path" => "/v1" }],
+    "env" => { "HTTPS_PROXY" => "http://app:%3Capp%20token%3E@acn.test:8888", "NODE_USE_ENV_PROXY" => "1" },
+    "service_header" => "X-Acnologia-Service"
+  }.freeze
+
+  def test_forward_proxy
+    answer(200, FORWARD)
+    fp = client.forward_proxy
+    assert_equal "GET", @fake.last[:method]
+    assert_equal "/api/v1/proxy", @fake.last[:path]
+    assert_equal "Bearer #{TOKEN}", @fake.last[:headers]["authorization"]
+    assert_equal "http://acn.test:8888", fp.proxy_url
+    assert_equal "ab:cd", fp.ca_fingerprint
+    assert fp.passthrough?
+    assert_equal "api.openai.com", fp.hosts.first.host
+    assert_equal "/v1", fp.hosts.first.path
+    assert_equal "1", fp.env["NODE_USE_ENV_PROXY"]
+    assert_equal "X-Acnologia-Service", fp.service_header
+    refute_includes fp.inspect, TOKEN
+    refute_includes fp.to_s, TOKEN
+  end
+
+  def test_forward_proxy_url_and_env
+    answer(200, FORWARD)
+    acn = Acnologia::Client.new(@fake.url, "acn_a/b+c")
+    assert_equal "http://app:acn_a%2Fb%2Bc@acn.test:8888", acn.forward_proxy_url
+    env = client.forward_proxy_env
+    url = "http://app:#{TOKEN}@acn.test:8888"
+    assert_equal({ "HTTPS_PROXY" => url, "HTTP_PROXY" => url, "NODE_USE_ENV_PROXY" => "1",
+                   "NODE_EXTRA_CA_CERTS" => "acnologia-ca.pem", "REQUESTS_CA_BUNDLE" => "acnologia-ca.pem",
+                   "SSL_CERT_FILE" => "acnologia-ca.pem" }, env)
+    assert_equal "/tmp/ca.pem", client.forward_proxy_env("/tmp/ca.pem")["SSL_CERT_FILE"]
+  end
+
+  def test_forward_proxy_ca_sends_no_token
+    @fake.handler = ->(_req) { [200, { "Content-Type" => "application/x-pem-file" }, "-----BEGIN CERTIFICATE-----\n"] }
+    assert_equal "-----BEGIN CERTIFICATE-----\n", client.forward_proxy_ca
+    assert_equal "GET", @fake.last[:method]
+    assert_equal "/api/v1/proxy/ca.pem", @fake.last[:path]
+    assert_nil @fake.last[:headers]["authorization"]
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "ca.pem")
+      assert_equal path, client.save_forward_proxy_ca(path)
+      assert_equal "-----BEGIN CERTIFICATE-----\n", File.read(path)
+    end
+    answer(500, err("proxy_ca"))
+    assert_raises(Acnologia::Error) { client.forward_proxy_ca }
+  end
+
+  def test_forward_proxy_http
+    key = OpenSSL::PKey::RSA.new(2048)
+    cert = OpenSSL::X509::Certificate.new
+    cert.version = 2
+    cert.serial = 1
+    cert.subject = cert.issuer = OpenSSL::X509::Name.parse("/CN=Acnologia test CA")
+    cert.public_key = key.public_key
+    cert.not_before = Time.now
+    cert.not_after = Time.now + 3600
+    cert.sign(key, OpenSSL::Digest.new("SHA256"))
+    @fake.handler = lambda do |req|
+      if req[:path] == "/api/v1/proxy/ca.pem"
+        [200, {}, cert.to_pem]
+      else
+        [200, { "Content-Type" => "application/json" }, JSON.generate(FORWARD)]
+      end
+    end
+    http = client.forward_proxy_http("api.openai.com")
+    assert_equal "api.openai.com", http.address
+    assert_equal 443, http.port
+    assert http.use_ssl?
+    assert_equal "acn.test", http.proxy_address
+    assert_equal 8888, http.proxy_port
+    assert_equal "app", http.proxy_user
+    assert_equal TOKEN, http.proxy_pass
+    assert http.cert_store.verify(cert)
+  end
+
+  def test_typed_errors_for_new_calls
+    answer(429, err("app_limit_reached", "daily", limit: "daily_requests", reset_at: "2026-11-05T00:00:00Z",
+                                                  retry_after_sec: 30))
+    e = assert_raises(Acnologia::AppLimitReached) { client.capabilities }
+    assert_equal "daily_requests", e.limit
+    assert_equal 30, e.retry_after
+    answer(403, err("share_paused"))
+    e = assert_raises(Acnologia::ShareUnavailable) { client.forward_proxy }
+    assert_equal "paused", e.share_status
   end
 end

@@ -32,7 +32,7 @@ Then in your build:
 
 ```kotlin
 repositories { mavenLocal(); mavenCentral() }
-dependencies { implementation("dev.acnologia:acnologia-kotlin:0.1.0") }
+dependencies { implementation("dev.acnologia:acnologia-kotlin:0.2.0") }
 ```
 
 It brings in OkHttp 4.12, kotlinx-coroutines 1.9 and kotlinx-serialization-json 1.7.
@@ -47,6 +47,7 @@ Create an app on the Apps page of the dashboard and copy its token. Tokens with 
 |---|---|
 | `ACNOLOGIA_URL` | Server URL, such as `http://localhost:8080` |
 | `ACNOLOGIA_TOKEN` | App token, `acn_...` |
+| `ACNOLOGIA_ACCESS_PASSWORD` | Optional: the server's access password |
 
 The constructor takes the rest as named arguments:
 
@@ -57,7 +58,8 @@ val acn = Acnologia("http://localhost:8080", "acn_...", httpClient = myOkHttp, u
 | Argument | Default | Notes |
 |---|---|---|
 | `httpClient` | an OkHttp client with a 75 second call and read timeout | That is longer than the 60 second maximum lease wait. If you pass your own, keep its timeouts longer than any wait. `fromEnv(httpClient)` takes one too. |
-| `userAgent` | `acnologia-kotlin/0.1.0` | |
+| `userAgent` | `acnologia-kotlin/0.2.0` | |
+| `accessPassword` | none, or `ACNOLOGIA_ACCESS_PASSWORD` with `fromEnv` | Sent as `X-Acnologia-Access` on every request, for a server behind the access password. |
 
 `Call.await()` is exported so you can run your own OkHttp calls without blocking a thread.
 
@@ -74,7 +76,7 @@ acn.proxy("weather").postJson("/v1/alerts", Alert("Lisbon")).use { res ->
 ```
 
 - The upstream response comes back unchanged. A non-2xx status is not an exception.
-- Each response carries `X-Acnologia-Key-Id`, `X-Acnologia-Attempts` and `X-Acnologia-Service`.
+- `res.acnologia` reads Acnologia's answer headers: `keyId` (null for a share's token), `attempts`, `service`, `cache` (`hit`, `miss`, ...), `replayed`, `capability` and `tried` (a list of `TriedRoute(service, status)`).
 - Redirects are never followed, so the app token is not replayed to another host.
 - With the default client, proxy calls drop the call timeout because bodies may stream.
 
@@ -84,6 +86,14 @@ Other methods:
 - `post(path, requestBody)`, `postJson(path, jsonElement)`, and `postJson(path, value)` for any value kotlinx.serialization can encode (a `@Serializable` class needs the serialization plugin in your build)
 - `request(method, path, query, headers, body)`
 - `send(request)`: uses only the path and query, so a request built against the provider's URL works
+
+Every one takes `options = ProxyOptions(idempotencyKey = ..., noCache = ...)`. `idempotencyKey` sends `Idempotency-Key`, so a retry with the same key replays the first answer instead of calling the provider again. `noCache` sends `Cache-Control: no-cache` to skip Acnologia's cache.
+
+```kotlin
+acn.proxy("serpapi").get("/search.json", mapOf("q" to "coffee"), options = ProxyOptions(noCache = true)).use { res ->
+    println("key ${res.acnologia.keyId}, cache ${res.acnologia.cache}")
+}
+```
 
 To turn an Acnologia error from the proxy (a response without `X-Acnologia-Key-Id`) into an exception, call `ApiException.fromResponse(code, bodyText)`.
 
@@ -153,11 +163,58 @@ A non-empty `auth.prefix` goes in front of the secret, and for `bearer` it repla
 
 **Outcomes**: `OK`, `RATE_LIMITED`, `QUOTA_EXHAUSTED`, `INVALID`, `ERROR`, `BUSY` and `BANNED`.
 
-## List services
+## List services and read guides
 
 ```kotlin
-for (s in acn.services()) println("${s.slug} available=${s.available} auth=${s.auth.type}")
+for (s in acn.services()) println("${s.slug} available=${s.available} auth=${s.auth.type} guide=${s.guideUrl}")
+
+val guide = acn.guide("serpapi")          // Guide(markdown, generated, guide as a JsonElement)
+val md: String = acn.guideMarkdown("serpapi")
 ```
+
+## Check your own access
+
+`me()` returns the app, its limits (`dailyRequests`, `monthlyRequests`, `dailyBudget`, `monthlyBudget`, each null when unset), usage, `limitHit`, the services it may call (with `logoUrl`) and, for a share's token, `share` with its `status`. A share that stopped still answers here.
+
+```kotlin
+val me = acn.me()
+println("${me.app.name}: ${me.usage.todayRequests} requests today, limit hit: ${me.limitHit?.limit}")
+```
+
+## Call a capability
+
+A capability is one call that any of several services can serve. `capabilities()` lists them with their `params` and `routes`. `capability(slug, params, service, raw, options)` POSTs the params to `/proxy/{slug}`; `service` picks one route and `raw = true` skips the output mapping.
+
+```kotlin
+val params = buildJsonObject { put("query", "bakery in Lisbon") }
+acn.capability("maps-search", params).use { res ->
+    println("${res.acnologia.service} answered after ${res.acnologia.tried}")
+    println(res.body!!.string())
+}
+```
+
+## Use the forward proxy
+
+Your app can keep calling provider URLs as they are, with Acnologia as its HTTPS proxy. Save the CA, then hand the environment to the process that makes the calls:
+
+```kotlin
+acn.saveForwardProxyCA()                  // writes acnologia-ca.pem
+val env = acn.forwardProxyEnv()           // HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE
+ProcessBuilder("node", "app.js").apply { environment().putAll(env) }.start()
+```
+
+For OkHttp in this process, `forwardProxyClient()` returns a client set up with the proxy, the token as `Proxy-Authorization` and trust in the system roots plus the Acnologia CA:
+
+```kotlin
+val http = acn.forwardProxyClient()
+http.newCall(Request.Builder().url("https://serpapi.com/search.json?q=coffee").build()).await().use { res ->
+    println(res.body!!.string())          // Acnologia injected the key
+}
+```
+
+- `forwardProxy()` returns the setup: `proxyUrl`, `proxyUrlWithToken` (with a `<app token>` placeholder), `caUrl`, `caFingerprint`, `passthrough`, `hosts`, `env` and `serviceHeader`. It holds no token, so it is safe to log.
+- `forwardProxyUrl()` is `proxyUrl` with user `app` and your token as the password. It and `forwardProxyEnv(caPath)` contain the token: do not log them.
+- `forwardProxyCA()` returns the PEM. It is public and sent without the token.
 
 ## Handle errors
 
@@ -168,12 +225,16 @@ Every exception extends `AcnologiaException`. Network failures are a plain `Acno
 | `ApiException` (`statusCode`, `code`, `errorMessage`) | any other non-2xx from the consumer API, such as 404 `lease_not_found` |
 | `UnauthenticatedException` | 401: the token is missing or wrong |
 | `ForbiddenException` | 403: the app is disabled or not allowed this service or mode |
+| `ShareUnavailableException` (`share`, extends `ForbiddenException`) | 403 `share_revoked`, `share_paused`, `share_expired`: `share` is `revoked`, `paused` or `expired` |
+| `AppLimitReachedException` (`limit`, `resetAt`, `retryAfter`) | 429 `app_limit_reached`: the app used up a daily or monthly request or budget limit |
 | `NoKeyAvailableException` (`retryAfter`, `isBusy`) | 503 `no_key_available`: every key is cooling down, exhausted or excluded |
 | `AllKeysBusyException` (extends `NoKeyAvailableException`) | 503 `all_keys_busy`: every usable key is at its concurrency limit |
 | `ServiceUnavailableException` (`retryAfter`) | 503 `service_unavailable`: the provider's circuit breaker is open |
 | `RateLimitedException` (`retryAfter`) | you throw it from `withKey` |
 | `QuotaExhaustedException` | you throw it from `withKey` |
 | `InvalidKeyException` | you throw it from `withKey` |
+
+Other codes arrive as a plain `ApiException` with that `code`, among them `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed`, `lease_not_allowed` and `loop_detected`. `ApiException.fromResponse(code, body, headers)` also reads `Retry-After` and `X-Acnologia-Share`.
 
 The API exceptions extend `ApiException`. The three rotation exceptions extend the sealed `KeyRotationException` and take an optional status code, message and cause.
 
@@ -187,7 +248,7 @@ try {
 
 ## Keep secrets out of logs
 
-`Lease.toString()` and `Acnologia.toString()` never include the secret or the token, and the SDK logs nothing.
+`Lease.toString()`, `Acnologia.toString()` and `ForwardProxy.toString()` never include the secret or the token, and the SDK logs nothing. `forwardProxyUrl()` and `forwardProxyEnv()` return the token on purpose.
 
 ## Run the tests
 

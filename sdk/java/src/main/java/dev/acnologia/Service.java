@@ -11,8 +11,10 @@ public final class Service {
     private final boolean available;
     private final String baseUrl;
     private final Auth auth;
+    private final String guideUrl;
 
-    Service(String slug, String name, String provider, String category, boolean available, String baseUrl, Auth auth) {
+    Service(String slug, String name, String provider, String category, boolean available, String baseUrl, Auth auth,
+            String guideUrl) {
         this.slug = slug;
         this.name = name;
         this.provider = provider;
@@ -20,12 +22,13 @@ public final class Service {
         this.available = available;
         this.baseUrl = baseUrl;
         this.auth = auth;
+        this.guideUrl = guideUrl;
     }
 
     static Service fromJson(JsonNode n) {
         return new Service(n.path("slug").asText(""), n.path("name").asText(""), n.path("provider").asText(""),
                 n.path("category").asText(""), n.path("available").asBoolean(false), n.path("base_url").asText(""),
-                Auth.fromJson(n.get("auth")));
+                Auth.fromJson(n.get("auth")), n.path("guide_url").asText(""));
     }
 
     /** @return the service slug used in leases and proxy paths */
@@ -63,9 +66,14 @@ public final class Service {
         return auth;
     }
 
+    /** @return the URL of the service's usage guide, or an empty string; see {@link Acnologia#guide(String)} */
+    public String guideUrl() {
+        return guideUrl;
+    }
+
     @Override
     public String toString() {
         return "Service{slug=" + slug + ", name=" + name + ", provider=" + provider + ", category=" + category
-                + ", available=" + available + ", baseUrl=" + baseUrl + ", auth=" + auth + "}";
+                + ", available=" + available + ", baseUrl=" + baseUrl + ", auth=" + auth + ", guideUrl=" + guideUrl + "}";
     }
 }

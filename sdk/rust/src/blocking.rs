@@ -15,9 +15,11 @@
 //! # Ok(()) }
 //! ```
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
 use std::panic::{self, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,15 +30,19 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::client::{env_pair, validate, DEFAULT_TIMEOUT};
+use crate::client::{access_password, env_pair, validate, DEFAULT_CA_PATH, DEFAULT_TIMEOUT};
 use crate::core::{self, Redacted};
-use crate::error::{parse_error, Error};
+use crate::error::Error;
 use crate::lease_info::LeaseInfo;
-use crate::types::{Credential, LeaseOptions, Report, Service, WithKeyOptions};
+use crate::types::{
+    Capability, CapabilityOptions, Credential, ForwardProxy, Guide, LeaseOptions, Me, Report,
+    Service, WithKeyOptions,
+};
 
 struct Inner {
     base_url: String,
     token: String,
+    access_password: Option<String>,
     user_agent: String,
     http: reqwest::blocking::Client,
     proxy_http: reqwest::blocking::Client,
@@ -63,6 +69,7 @@ pub struct ClientBuilder {
     token: String,
     timeout: Option<Duration>,
     user_agent: Option<String>,
+    access_password: Option<String>,
     http: Option<reqwest::blocking::Client>,
 }
 
@@ -71,12 +78,23 @@ impl fmt::Debug for ClientBuilder {
         f.debug_struct("blocking::ClientBuilder")
             .field("base_url", &self.base_url)
             .field("token", &Redacted)
+            .field(
+                "access_password",
+                &self.access_password.as_ref().map(|_| Redacted),
+            )
             .field("timeout", &self.timeout)
             .finish()
     }
 }
 
 impl ClientBuilder {
+    /// Send `X-Acnologia-Access` with every request. When not set,
+    /// `ACNOLOGIA_ACCESS_PASSWORD` is used if present.
+    pub fn access_password(mut self, password: impl Into<String>) -> Self {
+        self.access_password = Some(password.into());
+        self
+    }
+
     /// Timeout for API calls. Default [`DEFAULT_TIMEOUT`].
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
@@ -116,6 +134,7 @@ impl ClientBuilder {
             inner: Arc::new(Inner {
                 base_url,
                 token,
+                access_password: access_password(self.access_password),
                 user_agent: self
                     .user_agent
                     .unwrap_or_else(|| core::USER_AGENT.to_string()),
@@ -145,8 +164,15 @@ impl Client {
             token: token.into(),
             timeout: None,
             user_agent: None,
+            access_password: None,
             http: None,
         }
+    }
+
+    /// A builder seeded from `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN`.
+    pub fn builder_from_env() -> Result<ClientBuilder, Error> {
+        let (base, token) = env_pair()?;
+        Ok(Self::builder(base, token))
     }
 
     /// The server URL without a trailing slash.
@@ -154,13 +180,55 @@ impl Client {
         &self.inner.base_url
     }
 
+    fn base_headers(&self, rb: RequestBuilder) -> RequestBuilder {
+        let rb = rb.header(USER_AGENT, &self.inner.user_agent);
+        match &self.inner.access_password {
+            Some(p) => match reqwest::header::HeaderValue::from_str(p) {
+                Ok(mut v) => {
+                    v.set_sensitive(true);
+                    rb.header(core::ACCESS_HEADER, v)
+                }
+                Err(_) => rb,
+            },
+            None => rb,
+        }
+    }
+
     fn auth_headers(&self, rb: RequestBuilder) -> RequestBuilder {
         let mut auth =
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.inner.token))
                 .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static(""));
         auth.set_sensitive(true);
-        rb.header(AUTHORIZATION, auth)
-            .header(USER_AGENT, &self.inner.user_agent)
+        self.base_headers(rb.header(AUTHORIZATION, auth))
+    }
+
+    fn send(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        accept: &str,
+        with_token: bool,
+    ) -> Result<Vec<u8>, Error> {
+        let url = format!("{}{}", self.inner.base_url, path);
+        let rb = self.inner.http.request(method, url);
+        let mut rb = if with_token {
+            self.auth_headers(rb)
+        } else {
+            self.base_headers(rb)
+        }
+        .header(ACCEPT, accept);
+        if let Some(b) = body {
+            rb = rb.json(&b);
+        }
+        let resp = rb.send()?;
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp.bytes()?;
+        if !status.is_success() {
+            return Err(Error::from_api(status.as_u16(), &headers, &bytes));
+        }
+        Ok(bytes.to_vec())
     }
 
     fn call<T: DeserializeOwned>(
@@ -169,25 +237,119 @@ impl Client {
         path: &str,
         body: Option<Value>,
     ) -> Result<T, Error> {
-        let url = format!("{}{}", self.inner.base_url, path);
-        let mut rb = self
-            .auth_headers(self.inner.http.request(method, url))
-            .header(ACCEPT, "application/json");
-        if let Some(b) = body {
-            rb = rb.json(&b);
-        }
-        let resp = rb.send()?;
-        let status = resp.status();
-        let retry = resp
-            .headers()
-            .get(RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let bytes = resp.bytes()?;
-        if !status.is_success() {
-            return Err(parse_error(status.as_u16(), retry.as_deref(), &bytes));
-        }
+        let bytes = self.send(method, path, body, "application/json", true)?;
         Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// The token's own access. See [`crate::Client::me`].
+    pub fn me(&self) -> Result<Me, Error> {
+        self.call(Method::GET, "/api/v1/me", None)
+    }
+
+    /// A service's usage guide: Markdown plus the structured guide.
+    pub fn guide(&self, slug: &str) -> Result<Guide, Error> {
+        self.call(Method::GET, &core::guide_path(slug), None)
+    }
+
+    /// A service's usage guide as Markdown.
+    pub fn guide_markdown(&self, slug: &str) -> Result<String, Error> {
+        let bytes = self.send(
+            Method::GET,
+            &core::guide_path(slug),
+            None,
+            "text/markdown",
+            true,
+        )?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// The capabilities this app may call.
+    pub fn capabilities(&self) -> Result<Vec<Capability>, Error> {
+        let out: core::CapabilitiesResponse =
+            self.call(Method::GET, "/api/v1/capabilities", None)?;
+        Ok(out.capabilities)
+    }
+
+    /// Call a capability. See [`crate::Client::capability`].
+    pub fn capability<P: Serialize + ?Sized>(
+        &self,
+        slug: &str,
+        params: &P,
+        opts: CapabilityOptions,
+    ) -> Result<Response, Error> {
+        let url = core::capability_url(&self.inner.base_url, slug, &opts);
+        let mut rb = self
+            .auth_headers(self.inner.proxy_http.post(url))
+            .json(params);
+        if let Some(k) = opts.idempotency_key.as_deref().filter(|k| !k.is_empty()) {
+            rb = rb.header("idempotency-key", k);
+        }
+        if opts.no_cache {
+            rb = rb.header(reqwest::header::CACHE_CONTROL, "no-cache");
+        }
+        Ok(rb.send()?)
+    }
+
+    /// How to use the forward proxy. Holds no token.
+    pub fn forward_proxy(&self) -> Result<ForwardProxy, Error> {
+        self.call(Method::GET, "/api/v1/proxy", None)
+    }
+
+    /// The forward proxy's CA certificate as PEM text. No token is sent.
+    pub fn forward_proxy_ca(&self) -> Result<String, Error> {
+        let bytes = self.send(
+            Method::GET,
+            "/api/v1/proxy/ca.pem",
+            None,
+            "application/x-pem-file",
+            false,
+        )?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Save the forward proxy's CA certificate to `path` (default
+    /// [`DEFAULT_CA_PATH`]) and return the path.
+    pub fn save_forward_proxy_ca(&self, path: Option<&Path>) -> Result<PathBuf, Error> {
+        let pem = self.forward_proxy_ca()?;
+        let path = path.unwrap_or(Path::new(DEFAULT_CA_PATH)).to_path_buf();
+        std::fs::write(&path, pem)?;
+        Ok(path)
+    }
+
+    /// The forward proxy URL with user `app` and this client's token as the
+    /// password.
+    ///
+    /// The result contains the app token: keep it out of logs.
+    pub fn forward_proxy_url(&self) -> Result<String, Error> {
+        let fp = self.forward_proxy()?;
+        core::forward_proxy_url(&fp.proxy_url, &self.inner.token)
+    }
+
+    /// The environment that sends an app's HTTP calls through the forward
+    /// proxy. See [`crate::Client::forward_proxy_env`].
+    ///
+    /// The proxy variables contain the app token: keep them out of logs.
+    pub fn forward_proxy_env(
+        &self,
+        ca_path: Option<&str>,
+    ) -> Result<BTreeMap<String, String>, Error> {
+        let url = self.forward_proxy_url()?;
+        Ok(core::forward_proxy_env(
+            &url,
+            ca_path.unwrap_or(DEFAULT_CA_PATH),
+        ))
+    }
+
+    /// A new blocking reqwest client that sends every request through the
+    /// forward proxy and trusts the Acnologia CA. It carries the app token in
+    /// its proxy settings.
+    pub fn forward_proxy_client(&self) -> Result<reqwest::blocking::Client, Error> {
+        let url = self.forward_proxy_url()?;
+        let pem = self.forward_proxy_ca()?;
+        Ok(reqwest::blocking::Client::builder()
+            .proxy(reqwest::Proxy::all(url)?)
+            .add_root_certificate(reqwest::Certificate::from_pem(pem.as_bytes())?)
+            .build()?)
     }
 
     /// The services this app token may use.
@@ -282,6 +444,8 @@ impl Client {
         Proxy {
             client: self.clone(),
             service: service.into(),
+            idempotency_key: None,
+            no_cache: false,
         }
     }
 }
@@ -374,9 +538,33 @@ pub fn check_status(resp: Response) -> Result<Response, Error> {
 pub struct Proxy {
     client: Client,
     service: String,
+    idempotency_key: Option<String>,
+    no_cache: bool,
 }
 
 impl Proxy {
+    /// Send `Idempotency-Key` with the requests of this proxy.
+    pub fn idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+
+    /// Send `Cache-Control: no-cache` with the requests of this proxy.
+    pub fn no_cache(mut self) -> Self {
+        self.no_cache = true;
+        self
+    }
+
+    fn options(&self, mut rb: RequestBuilder) -> RequestBuilder {
+        if let Some(k) = self.idempotency_key.as_deref().filter(|k| !k.is_empty()) {
+            rb = rb.header("idempotency-key", k);
+        }
+        if self.no_cache {
+            rb = rb.header(reqwest::header::CACHE_CONTROL, "no-cache");
+        }
+        rb
+    }
+
     /// The service slug this proxy targets.
     pub fn service(&self) -> &str {
         &self.service
@@ -394,13 +582,13 @@ impl Proxy {
             .inner
             .proxy_http
             .request(method, self.url(path, &[]));
-        self.client.auth_headers(rb)
+        self.options(self.client.auth_headers(rb))
     }
 
     /// Send a GET with query parameters.
     pub fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Response, Error> {
         let rb = self.client.inner.proxy_http.get(self.url(path, query));
-        Ok(self.client.auth_headers(rb).send()?)
+        Ok(self.options(self.client.auth_headers(rb)).send()?)
     }
 
     /// Send a POST with a body and content type.

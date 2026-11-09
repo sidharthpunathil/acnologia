@@ -48,6 +48,7 @@ class AcnologiaTest {
     private val leases = CopyOnWriteArrayList<JsonObject>()
     private val reports = CopyOnWriteArrayList<JsonObject>()
     private val userAgents = CopyOnWriteArrayList<String>()
+    private val requests = CopyOnWriteArrayList<RecordedRequest>()
     @Volatile private var busy = false
     @Volatile private var failStatus = 0
     @Volatile private var failBody = ""
@@ -67,6 +68,10 @@ class AcnologiaTest {
         override fun dispatch(request: RecordedRequest): MockResponse {
             val path = request.requestUrl!!.encodedPath
             userAgents += request.getHeader("User-Agent") ?: ""
+            requests += request
+            if (path == "/api/v1/proxy/ca.pem") {
+                return MockResponse().setHeader("Content-Type", "application/x-pem-file").setBody(TEST_CA)
+            }
             if (request.getHeader("Authorization") != "Bearer acn_test") {
                 return json(401, """{"error":{"code":"unauthenticated","message":"bad token"}}""")
             }
@@ -78,6 +83,16 @@ class AcnologiaTest {
                 val out = buildJsonObject {
                     put("method", request.method); put("path", path); put("query", request.requestUrl!!.encodedQuery)
                     put("body", body); put("ct", request.getHeader("Content-Type")); put("custom", request.getHeader("X-Custom"))
+                    put("idem", request.getHeader("Idempotency-Key")); put("cc", request.getHeader("Cache-Control"))
+                }
+                if (path == "/proxy/maps-search") {
+                    return json(200, out.toString())
+                        .setHeader("X-Acnologia-Capability", "maps-search").setHeader("X-Acnologia-Service", "omkar")
+                        .setHeader("X-Acnologia-Tried", "serpapi=429, omkar=200").setHeader("X-Acnologia-Attempts", "2")
+                }
+                if (path.endsWith("/cached")) {
+                    return json(200, out.toString()).setHeader("X-Acnologia-Cache", "hit").setHeader("Idempotent-Replayed", "true")
+                        .setHeader("X-Acnologia-Service", "serpapi").setHeader("X-Acnologia-Key-Id", "7").setHeader("X-Acnologia-Attempts", "1")
                 }
                 return json(if (path.endsWith("/teapot")) 418 else 200, out.toString())
                     .setHeader("X-Acnologia-Key-Id", "7").setHeader("X-Acnologia-Attempts", "1")
@@ -87,8 +102,24 @@ class AcnologiaTest {
                 request.method == "GET" && path == "/api/v1/services" -> json(
                     200,
                     """{"services":[{"slug":"serpapi","name":"SerpAPI","provider":"serpapi","category":"search",""" +
-                        """"available":true,"base_url":"https://serpapi.com","auth":{"type":"query","name":"api_key"}}]}""",
+                        """"available":true,"base_url":"https://serpapi.com","auth":{"type":"query","name":"api_key"},""" +
+                        """"guide_url":"http://x/api/v1/services/serpapi/guide"}]}""",
                 )
+                request.method == "GET" && path == "/api/v1/me" -> json(200, ME_JSON)
+                request.method == "GET" && path == "/api/v1/services/serpapi/guide" ->
+                    if (request.getHeader("Accept") == "text/markdown") {
+                        MockResponse().setHeader("Content-Type", "text/markdown").setBody("# SerpAPI\n\nSearch.")
+                    } else {
+                        json(200, """{"markdown":"# SerpAPI","generated":true,"guide":{"endpoints":[{"path":"/search.json"}]}}""")
+                    }
+                request.method == "GET" && path == "/api/v1/capabilities" -> json(
+                    200,
+                    """{"capabilities":[{"slug":"maps-search","name":"Search places","description":"Find places",""" +
+                        """"strategy":"priority","params":[{"name":"query","type":"string"}],""" +
+                        """"routes":[{"service":"omkar","mapped":true},{"service":"serpapi","mapped":false}],""" +
+                        """"url":"http://x/proxy/maps-search"}]}""",
+                )
+                request.method == "GET" && path == "/api/v1/proxy" -> json(200, PROXY_JSON)
                 request.method == "POST" && path == "/api/v1/lease" -> {
                     leases += Json.parseToJsonElement(body).jsonObject
                     if (busy) return json(503, """{"error":{"code":"all_keys_busy","message":"every key is at its limit"},"retry_after_sec":1}""")
@@ -140,6 +171,7 @@ class AcnologiaTest {
         assertTrue(s.available)
         assertEquals("https://serpapi.com", s.baseUrl)
         assertEquals(Auth("query", "api_key"), s.auth)
+        assertEquals("http://x/api/v1/services/serpapi/guide", s.guideUrl)
         assertEquals("acnologia-kotlin/${Acnologia.VERSION}", userAgents.first())
     }
 
@@ -400,8 +432,238 @@ class AcnologiaTest {
     }
 
     @Test
+    fun me() = runBlocking {
+        val m = c.me()
+        assertEquals(MeApp(3, "crawler"), m.app)
+        assertEquals(1000L, m.limits.dailyRequests)
+        assertNull(m.limits.monthlyRequests)
+        assertEquals(5.5, m.limits.dailyBudget)
+        assertEquals(12L, m.usage.todayRequests)
+        assertEquals(0.25, m.usage.monthCost)
+        assertEquals("2026-11-01T10:00:00Z", m.usage.lastUsedAt)
+        assertEquals(LimitHit("daily_requests", "2026-11-02T00:00:00Z"), m.limitHit)
+        assertEquals(MeService("serpapi", "SerpAPI", "serpapi", "search", 1, null), m.services.single())
+        assertEquals("paused", m.share!!.status)
+        assertEquals("Ana", m.share!!.ownerName)
+        assertNull(m.share!!.endsAt)
+        val r = requests.last()
+        assertEquals("GET", r.method)
+        assertEquals("Bearer acn_test", r.getHeader("Authorization"))
+        assertNull(r.getHeader("X-Acnologia-Access"))
+    }
+
+    @Test
+    fun guide() = runBlocking {
+        val g = c.guide("serpapi")
+        assertEquals("# SerpAPI", g.markdown)
+        assertTrue(g.generated)
+        assertEquals("/search.json", g.guide.jsonObject["endpoints"]!!.jsonArray[0].jsonObject["path"]!!.jsonPrimitive.content)
+        assertEquals("application/json", requests.last().getHeader("Accept"))
+        assertEquals("# SerpAPI\n\nSearch.", c.guideMarkdown("serpapi"))
+        assertEquals("/api/v1/services/serpapi/guide", requests.last().requestUrl!!.encodedPath)
+        assertEquals("text/markdown", requests.last().getHeader("Accept"))
+    }
+
+    @Test
+    fun capabilities() = runBlocking {
+        val cap = c.capabilities().single()
+        assertEquals("maps-search", cap.slug)
+        assertEquals("priority", cap.strategy)
+        assertEquals(listOf(CapabilityRoute("omkar", true), CapabilityRoute("serpapi", false)), cap.routes)
+        assertEquals("query", cap.params.jsonArray[0].jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals("http://x/proxy/maps-search", cap.url)
+    }
+
+    @Test
+    fun capabilityCall() = runBlocking {
+        val params = buildJsonObject { put("query", "bakery") }
+        c.capability("maps-search", params, service = "omkar", raw = true, options = ProxyOptions(idempotencyKey = "k1", noCache = true)).use { res ->
+            val b = Json.parseToJsonElement(res.body!!.string()).jsonObject
+            assertEquals("POST", b["method"]!!.jsonPrimitive.content)
+            assertEquals("/proxy/maps-search", b["path"]!!.jsonPrimitive.content)
+            assertEquals("_service=omkar&_raw=1", b["query"]!!.jsonPrimitive.content)
+            assertEquals("""{"query":"bakery"}""", b["body"]!!.jsonPrimitive.content)
+            assertTrue(b["ct"]!!.jsonPrimitive.content.startsWith("application/json"))
+            assertEquals("k1", b["idem"]!!.jsonPrimitive.content)
+            assertEquals("no-cache", b["cc"]!!.jsonPrimitive.content)
+            val info = res.acnologia
+            assertEquals("maps-search", info.capability)
+            assertEquals("omkar", info.service)
+            assertEquals(2, info.attempts)
+            assertNull(info.keyId)
+            assertEquals(listOf(TriedRoute("serpapi", 429), TriedRoute("omkar", 200)), info.tried)
+        }
+        c.capability("maps-search").use { res ->
+            val b = Json.parseToJsonElement(res.body!!.string()).jsonObject
+            assertEquals("{}", b["body"]!!.jsonPrimitive.content)
+            assertTrue(b["query"] is kotlinx.serialization.json.JsonNull)
+        }
+    }
+
+    @Test
+    fun proxyOptionsAndInfo() = runBlocking {
+        c.proxy("serpapi").get("/cached", mapOf("q" to "x"), options = ProxyOptions(idempotencyKey = "abc", noCache = true)).use { res ->
+            val b = Json.parseToJsonElement(res.body!!.string()).jsonObject
+            assertEquals("abc", b["idem"]!!.jsonPrimitive.content)
+            assertEquals("no-cache", b["cc"]!!.jsonPrimitive.content)
+            val info = res.acnologia
+            assertEquals(7L, info.keyId)
+            assertEquals(1, info.attempts)
+            assertEquals("serpapi", info.service)
+            assertEquals("hit", info.cache)
+            assertTrue(info.replayed)
+            assertNull(info.capability)
+            assertTrue(info.tried.isEmpty())
+        }
+        c.proxy("serpapi").get("/plain").use { res ->
+            val b = Json.parseToJsonElement(res.body!!.string()).jsonObject
+            assertTrue(b["idem"] is kotlinx.serialization.json.JsonNull)
+            assertTrue(b["cc"] is kotlinx.serialization.json.JsonNull)
+            assertFalse(res.acnologia.replayed)
+            assertNull(res.acnologia.cache)
+        }
+    }
+
+    @Test
+    fun forwardProxy() = runBlocking {
+        val fp = c.forwardProxy()
+        assertEquals("http://127.0.0.1:8888", fp.proxyUrl)
+        assertEquals("http://app:<app token>@127.0.0.1:8888", fp.proxyUrlWithToken)
+        assertEquals("SHA256:AB", fp.caFingerprint)
+        assertTrue(fp.passthrough)
+        assertEquals(ForwardProxyHost("serpapi.com", "serpapi", "SerpAPI", ""), fp.hosts.single())
+        assertEquals("1", fp.env["NODE_USE_ENV_PROXY"])
+        assertEquals("X-Acnologia-Service", fp.serviceHeader)
+        assertFalse(fp.toString().contains("acn_test"))
+
+        assertEquals("http://app:acn_test@127.0.0.1:8888", c.forwardProxyUrl())
+        val env = c.forwardProxyEnv("/etc/acn.pem")
+        assertEquals("http://app:acn_test@127.0.0.1:8888", env["HTTPS_PROXY"])
+        assertEquals(env["HTTPS_PROXY"], env["HTTP_PROXY"])
+        assertEquals("1", env["NODE_USE_ENV_PROXY"])
+        for (k in listOf("NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE")) assertEquals("/etc/acn.pem", env[k])
+        assertEquals(6, env.size)
+        assertEquals("acnologia-ca.pem", c.forwardProxyEnv()["SSL_CERT_FILE"])
+    }
+
+    @Test
+    fun forwardProxyCA() = runBlocking {
+        assertEquals(TEST_CA, c.forwardProxyCA())
+        val r = requests.last()
+        assertEquals("/api/v1/proxy/ca.pem", r.requestUrl!!.encodedPath)
+        assertNull(r.getHeader("Authorization"))
+        val dir = kotlin.io.path.createTempDirectory("acn")
+        val saved = c.saveForwardProxyCA(dir.resolve("ca.pem").toString())
+        assertEquals(TEST_CA, saved.toFile().readText())
+        dir.toFile().deleteRecursively()
+        Unit
+    }
+
+    @Test
+    fun forwardProxyClient() = runBlocking {
+        val client = c.forwardProxyClient()
+        val addr = client.proxy!!.address() as java.net.InetSocketAddress
+        assertEquals("127.0.0.1", addr.hostString)
+        assertEquals(8888, addr.port)
+        val tm = client.x509TrustManager!!
+        assertTrue(tm.acceptedIssuers.any { it.subjectX500Principal.name.contains("Acnologia Test CA") })
+        assertTrue(tm.acceptedIssuers.size > 1)
+        val challenge = okhttp3.Response.Builder()
+            .request(Request.Builder().url("https://serpapi.com/").build())
+            .protocol(okhttp3.Protocol.HTTP_1_1).code(407).message("Proxy Authentication Required").build()
+        val authed = client.proxyAuthenticator.authenticate(null, challenge)!!
+        assertEquals(okhttp3.Credentials.basic("app", "acn_test"), authed.header("Proxy-Authorization"))
+        assertNull(client.proxyAuthenticator.authenticate(null, challenge.newBuilder().request(authed).build()))
+    }
+
+    @Test
+    fun accessPassword() = runBlocking {
+        val a = Acnologia.fromEnv(
+            mapOf("ACNOLOGIA_URL" to server.url("/").toString(), "ACNOLOGIA_TOKEN" to "acn_test", "ACNOLOGIA_ACCESS_PASSWORD" to "open sesame"),
+        )
+        a.services()
+        assertEquals("open sesame", requests.last().getHeader("X-Acnologia-Access"))
+        a.forwardProxyCA()
+        assertEquals("open sesame", requests.last().getHeader("X-Acnologia-Access"))
+        a.proxy("serpapi").get("/x").close()
+        assertEquals("open sesame", requests.last().getHeader("X-Acnologia-Access"))
+        Acnologia(server.url("/").toString(), "acn_test", accessPassword = "pw").me()
+        assertEquals("pw", requests.last().getHeader("X-Acnologia-Access"))
+    }
+
+    @Test
+    fun appLimitReached() = runBlocking {
+        failStatus = 429
+        failBody = """{"error":{"code":"app_limit_reached","message":"this app reached its daily requests limit"},""" +
+            """"limit":"daily_requests","reset_at":"2026-11-02T00:00:00Z","retry_after_sec":3600}"""
+        val e = assertFailsWith<AppLimitReachedException> { c.me() }
+        assertEquals(429, e.statusCode)
+        assertEquals("app_limit_reached", e.code)
+        assertEquals("daily_requests", e.limit)
+        assertEquals(Instant.parse("2026-11-02T00:00:00Z"), e.resetAt)
+        assertEquals(1.hours, e.retryAfter)
+
+        val h = okhttp3.Headers.headersOf("Retry-After", "90")
+        val e2 = ApiException.fromResponse(429, """{"error":{"code":"app_limit_reached","message":"m"},"limit":"monthly_budget"}""", h)
+        assertIs<AppLimitReachedException>(e2)
+        assertEquals(90.seconds, e2.retryAfter)
+        assertNull(e2.resetAt)
+    }
+
+    @Test
+    fun shareUnavailable() = runBlocking {
+        failStatus = 403
+        failBody = """{"error":{"code":"share_paused","message":"the owner paused this share"}}"""
+        val e = assertFailsWith<ShareUnavailableException> { c.services() }
+        assertEquals("paused", e.share)
+        assertEquals("share_paused", e.code)
+        assertIs<ForbiddenException>(e)
+
+        val h = okhttp3.Headers.headersOf("X-Acnologia-Share", "revoked")
+        val e2 = ApiException.fromResponse(403, """{"error":{"code":"share_revoked","message":"gone"}}""", h)
+        assertIs<ShareUnavailableException>(e2)
+        assertEquals("revoked", e2.share)
+
+        failBody = """{"error":{"code":"proxy_not_allowed","message":"lease only"}}"""
+        assertEquals(ForbiddenException::class, assertFailsWith<ForbiddenException> { c.services() }::class)
+        Unit
+    }
+
+    @Test
+    fun parseTriedEdgeCases() {
+        assertTrue(parseTried(null).isEmpty())
+        assertEquals(listOf(TriedRoute("a", 0), TriedRoute("b", 503)), parseTried("a=x,b=503, "))
+    }
+
+    @Test
     fun durationZeroIsOmitted() {
         assertEquals(0, ceilSeconds(Duration.ZERO))
         assertEquals(2, ceilSeconds(1001.milliseconds))
     }
 }
+
+private const val TEST_CA = """-----BEGIN CERTIFICATE-----
+MIIBbjCCARSgAwIBAgIUSuy6pcWr83yT5SYc4vCNjDSG2MYwCgYIKoZIzj0EAwIw
+HDEaMBgGA1UEAwwRQWNub2xvZ2lhIFRlc3QgQ0EwIBcNMjYxMTA5MTg0NTE2WhgP
+MjEyNjEwMTYxODQ1MTZaMBwxGjAYBgNVBAMMEUFjbm9sb2dpYSBUZXN0IENBMFkw
+EwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEQwOlB1vt9pZXY1i2SoGwnFvpVHFZWd56
+CvwRILXU/OVGNVNFLG/NN+31Ho4/fcaJEIsEgsc6/Vgci2vgN/3436MyMDAwHQYD
+VR0OBBYEFFpb0dq3AqJwil9DDKPa9tnr2tvLMA8GA1UdEwEB/wQFMAMBAf8wCgYI
+KoZIzj0EAwIDSAAwRQIgNR2AeqxA9p/dq70mUceCDM+Qaush/5qOZUrEIaFK7hYC
+IQDfj9zG79RmeHwjG1axIfEQn0hwBSNhSV226ilOMiviUA==
+-----END CERTIFICATE-----
+"""
+
+private const val ME_JSON = """{"app":{"id":3,"name":"crawler"},""" +
+    """"limits":{"daily_requests":1000,"monthly_requests":null,"daily_budget":5.5,"monthly_budget":null},""" +
+    """"usage":{"today_requests":12,"today_cost":0.1,"month_requests":40,"month_cost":0.25,"last_used_at":"2026-11-01T10:00:00Z",""" +
+    """"limit_hit":{"limit":"daily_requests","reset_at":"2026-11-02T00:00:00Z"}},""" +
+    """"limit_hit":{"limit":"daily_requests","reset_at":"2026-11-02T00:00:00Z"},""" +
+    """"services":[{"slug":"serpapi","name":"SerpAPI","provider":"serpapi","category":"search","available":1,"logo_url":null}],""" +
+    """"share":{"id":"sh1","name":"Search","owner":{"name":"Ana","id":"o1"},"owner_name":"Ana","owner_id":"o1",""" +
+    """"recipient":"bo@example.com","label":"","status":"paused","mode":"proxy","ends_at":null}}"""
+
+private const val PROXY_JSON = """{"proxy_url":"http://127.0.0.1:8888","proxy_url_with_token":"http://app:<app token>@127.0.0.1:8888",""" +
+    """"ca_url":"http://127.0.0.1:8080/api/v1/proxy/ca.pem","ca_fingerprint":"SHA256:AB","passthrough":true,""" +
+    """"hosts":[{"host":"serpapi.com","service":"serpapi","name":"SerpAPI","path":""}],""" +
+    """"env":{"HTTPS_PROXY":"http://app:<app token>@127.0.0.1:8888","NODE_USE_ENV_PROXY":"1"},"service_header":"X-Acnologia-Service"}"""

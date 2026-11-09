@@ -9,6 +9,7 @@ package mcpbridge
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,6 +52,18 @@ func Run(o Options, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	var hintOnce sync.Once
 	var wg sync.WaitGroup
+	// The server's notification stream (tools/list_changed and the like)
+	// is relayed to stdout until stdin ends.
+	ctx, stop := context.WithCancel(context.Background())
+	streamDone := make(chan struct{})
+	go func() {
+		defer close(streamDone)
+		relayNotifications(ctx, o, write)
+	}()
+	defer func() {
+		stop()
+		<-streamDone
+	}()
 	sc := bufio.NewScanner(stdin)
 	sc.Buffer(make([]byte, 1<<20), 8<<20)
 	for sc.Scan() {
@@ -107,6 +120,63 @@ func Run(o Options, stdin io.Reader, stdout, stderr io.Writer) error {
 		return fmt.Errorf("reading stdin: %w", err)
 	}
 	return nil
+}
+
+// relayNotifications holds GET Endpoint open as a server sent events stream
+// and writes each message it carries to stdout, reconnecting when it drops.
+// A server without the stream (an older one, or /mcp/control) answers
+// something other than 200, and the bridge stops trying.
+func relayNotifications(ctx context.Context, o Options, write func([]byte)) {
+	streamClient := &http.Client{}
+	if o.Client != nil && o.Client.Transport != nil {
+		streamClient.Transport = o.Client.Transport
+	}
+	backoff := time.Second
+	for ctx.Err() == nil {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.Endpoint, nil)
+		if err != nil {
+			return
+		}
+		for k, vs := range o.Header {
+			for _, v := range vs {
+				req.Header.Add(k, v)
+			}
+		}
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+o.Token)
+		resp, err := streamClient.Do(req)
+		if err == nil {
+			if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+				resp.Body.Close()
+				return
+			}
+			backoff = time.Second
+			sc := bufio.NewScanner(resp.Body)
+			sc.Buffer(make([]byte, 64<<10), 1<<20)
+			var data []byte
+			for sc.Scan() {
+				line := sc.Bytes()
+				switch {
+				case len(line) == 0:
+					if len(data) > 0 {
+						write(data)
+						data = nil
+					}
+				case bytes.HasPrefix(line, []byte("data:")):
+					data = append(data, bytes.TrimSpace(line[5:])...)
+				}
+			}
+			resp.Body.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < time.Minute {
+			backoff *= 2
+		}
+	}
 }
 
 // requestIDs returns the ids of the requests in msg. Notifications have no

@@ -1,8 +1,11 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "acnologia/types.hpp"
 
@@ -32,6 +35,22 @@ struct HttpResponse {
     /// True when the proxy replayed a stored answer for a repeated
     /// Idempotency-Key (Idempotent-Replayed: true).
     bool idempotent_replayed() const { return header("Idempotent-Replayed") == "true"; }
+
+    /// X-Acnologia-Key-Id: the key that served the call. Empty for a share's
+    /// token and for answers that did not come through a key.
+    std::optional<std::int64_t> key_id() const;
+    /// X-Acnologia-Attempts: how many keys were tried, 0 when absent.
+    int attempts() const;
+    /// X-Acnologia-Service: the service that answered, "" when absent.
+    std::string service() const { return header("X-Acnologia-Service"); }
+    /// X-Acnologia-Cache: hit, miss, replay and so on, "" when absent.
+    std::string cache() const { return header("X-Acnologia-Cache"); }
+    /// Same as idempotent_replayed().
+    bool replayed() const { return idempotent_replayed(); }
+    /// X-Acnologia-Capability on a capability call, "" otherwise.
+    std::string capability() const { return header("X-Acnologia-Capability"); }
+    /// X-Acnologia-Tried on a capability call: each route tried, in order.
+    std::vector<Tried> tried() const { return parse_tried(header("X-Acnologia-Tried")); }
 };
 
 /// Sends HTTP requests. Implementations must be safe to call from several

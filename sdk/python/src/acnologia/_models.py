@@ -43,6 +43,8 @@ class Service:
     available: bool
     base_url: str
     auth: Auth
+    guide_url: str = ""
+    """Where the service's usage guide is (see `guide`)."""
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> "Service":
@@ -54,6 +56,7 @@ class Service:
             available=bool(data.get("available", False)),
             base_url=str(data.get("base_url", "")),
             auth=Auth.from_json(data.get("auth")),
+            guide_url=str(data.get("guide_url") or ""),
         )
 
 
@@ -64,6 +67,308 @@ def _parse_time(value: Any) -> Optional[datetime]:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _opt_int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _opt_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dict(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+@dataclass(frozen=True)
+class LimitHit:
+    """The limit an app reached (`daily_requests`, `monthly_requests`,
+    `daily_budget` or `monthly_budget`) and when it resets."""
+
+    limit: str
+    reset_at: Optional[datetime]
+
+    @classmethod
+    def from_json(cls, data: Any) -> Optional["LimitHit"]:
+        if not isinstance(data, Mapping):
+            return None
+        return cls(limit=str(data.get("limit") or ""), reset_at=_parse_time(data.get("reset_at")))
+
+
+@dataclass(frozen=True)
+class MeApp:
+    id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class MeLimits:
+    """The app's request and budget limits; None means no limit."""
+
+    daily_requests: Optional[int] = None
+    monthly_requests: Optional[int] = None
+    daily_budget: Optional[float] = None
+    monthly_budget: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class MeUsage:
+    today_requests: int = 0
+    today_cost: float = 0.0
+    month_requests: int = 0
+    month_cost: float = 0.0
+    last_used_at: Optional[datetime] = None
+    limit_hit: Optional[LimitHit] = None
+
+
+@dataclass(frozen=True)
+class MeService:
+    slug: str
+    name: str
+    provider: str
+    category: str
+    available: int
+    """Keys free right now for a share's token; 1 or 0 for an ordinary app."""
+    logo_url: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class MeShare:
+    """The share behind a share's token. `status` is `active`, `paused`, `expired` or `revoked`."""
+
+    id: str
+    name: str
+    owner_name: str
+    recipient: str
+    label: str
+    status: str
+    mode: str
+    ends_at: Optional[datetime]
+
+
+@dataclass(frozen=True)
+class Me:
+    """The token's own access, from `GET /api/v1/me`. `share` is None for an ordinary app."""
+
+    app: MeApp
+    limits: MeLimits
+    usage: MeUsage
+    limit_hit: Optional[LimitHit]
+    services: List[MeService]
+    share: Optional[MeShare]
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> "Me":
+        app = _dict(data.get("app"))
+        lim = _dict(data.get("limits"))
+        use = _dict(data.get("usage"))
+        sh = data.get("share")
+        share = None
+        if isinstance(sh, Mapping):
+            share = MeShare(
+                id=str(sh.get("id") or ""),
+                name=str(sh.get("name") or ""),
+                owner_name=str(sh.get("owner_name") or ""),
+                recipient=str(sh.get("recipient") or ""),
+                label=str(sh.get("label") or ""),
+                status=str(sh.get("status") or ""),
+                mode=str(sh.get("mode") or ""),
+                ends_at=_parse_time(sh.get("ends_at")),
+            )
+        return cls(
+            app=MeApp(id=_opt_int(app.get("id")) or 0, name=str(app.get("name") or "")),
+            limits=MeLimits(
+                daily_requests=_opt_int(lim.get("daily_requests")),
+                monthly_requests=_opt_int(lim.get("monthly_requests")),
+                daily_budget=_opt_float(lim.get("daily_budget")),
+                monthly_budget=_opt_float(lim.get("monthly_budget")),
+            ),
+            usage=MeUsage(
+                today_requests=_opt_int(use.get("today_requests")) or 0,
+                today_cost=_opt_float(use.get("today_cost")) or 0.0,
+                month_requests=_opt_int(use.get("month_requests")) or 0,
+                month_cost=_opt_float(use.get("month_cost")) or 0.0,
+                last_used_at=_parse_time(use.get("last_used_at")),
+                limit_hit=LimitHit.from_json(use.get("limit_hit")),
+            ),
+            limit_hit=LimitHit.from_json(data.get("limit_hit")),
+            services=[
+                MeService(
+                    slug=str(s.get("slug") or ""),
+                    name=str(s.get("name") or ""),
+                    provider=str(s.get("provider") or ""),
+                    category=str(s.get("category") or ""),
+                    available=_opt_int(s.get("available")) or 0,
+                    logo_url=s.get("logo_url") if isinstance(s.get("logo_url"), str) else None,
+                )
+                for s in data.get("services") or []
+                if isinstance(s, Mapping)
+            ],
+            share=share,
+        )
+
+
+@dataclass(frozen=True)
+class Guide:
+    """A service's usage guide. `guide` is the structured guide as plain JSON
+    data; `generated` is True when it was built from the provider spec."""
+
+    markdown: str
+    generated: bool
+    guide: Any = None
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> "Guide":
+        return cls(
+            markdown=str(data.get("markdown") or ""),
+            generated=bool(data.get("generated", False)),
+            guide=data.get("guide"),
+        )
+
+
+@dataclass(frozen=True)
+class CapabilityRoute:
+    service: str
+    mapped: bool
+
+
+@dataclass(frozen=True)
+class Capability:
+    """One call served by whichever provider can. `params` is plain JSON data."""
+
+    slug: str
+    name: str
+    description: str
+    strategy: str
+    params: Any
+    routes: List[CapabilityRoute]
+    url: str
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> "Capability":
+        return cls(
+            slug=str(data.get("slug") or ""),
+            name=str(data.get("name") or ""),
+            description=str(data.get("description") or ""),
+            strategy=str(data.get("strategy") or ""),
+            params=data.get("params"),
+            routes=[
+                CapabilityRoute(service=str(r.get("service") or ""), mapped=bool(r.get("mapped", False)))
+                for r in data.get("routes") or []
+                if isinstance(r, Mapping)
+            ],
+            url=str(data.get("url") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class ForwardHost:
+    host: str
+    service: str
+    name: str
+    path: str = ""
+
+
+@dataclass(frozen=True)
+class ForwardProxy:
+    """How to use the forward proxy, from `GET /api/v1/proxy`.
+
+    It never holds the token: `proxy_url_with_token` and `env` carry an
+    `<app token>` placeholder. Use `forward_proxy_url` or `forward_proxy_env`
+    for the real values."""
+
+    proxy_url: str
+    proxy_url_with_token: str
+    ca_url: str
+    ca_fingerprint: str
+    passthrough: bool
+    hosts: List[ForwardHost]
+    env: Dict[str, str]
+    service_header: str
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> "ForwardProxy":
+        return cls(
+            proxy_url=str(data.get("proxy_url") or ""),
+            proxy_url_with_token=str(data.get("proxy_url_with_token") or ""),
+            ca_url=str(data.get("ca_url") or ""),
+            ca_fingerprint=str(data.get("ca_fingerprint") or ""),
+            passthrough=bool(data.get("passthrough", False)),
+            hosts=[
+                ForwardHost(
+                    host=str(h.get("host") or ""),
+                    service=str(h.get("service") or ""),
+                    name=str(h.get("name") or ""),
+                    path=str(h.get("path") or ""),
+                )
+                for h in data.get("hosts") or []
+                if isinstance(h, Mapping)
+            ],
+            env={str(k): str(v) for k, v in _dict(data.get("env")).items()},
+            service_header=str(data.get("service_header") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class Tried:
+    """One route a capability call tried, and the status it answered."""
+
+    service: str
+    status: int
+
+
+def _parse_tried(value: Optional[str]) -> List[Tried]:
+    out: List[Tried] = []
+    for part in (value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        svc, _, st = part.partition("=")
+        out.append(Tried(service=svc.strip(), status=_opt_int(st.strip()) or 0))
+    return out
+
+
+@dataclass(frozen=True)
+class ProxyInfo:
+    """What Acnologia says about a proxied answer in its headers.
+
+    `key_id` is None when absent (a share's token); `cache` is `hit`, `miss`
+    and so on when caching applies; `replayed` is True when the answer was
+    replayed for an Idempotency-Key; `tried` lists every route a capability
+    call tried."""
+
+    key_id: Optional[int]
+    attempts: Optional[int]
+    service: Optional[str]
+    cache: Optional[str]
+    replayed: bool
+    capability: Optional[str]
+    tried: List[Tried]
+
+
+def proxy_info(resp: Any) -> ProxyInfo:
+    """Read the Acnologia headers of a response from a proxy or capability call."""
+    h = resp.headers
+    return ProxyInfo(
+        key_id=_opt_int(h.get("x-acnologia-key-id")),
+        attempts=_opt_int(h.get("x-acnologia-attempts")),
+        service=h.get("x-acnologia-service"),
+        cache=h.get("x-acnologia-cache"),
+        replayed=(h.get("idempotent-replayed") or "").strip().lower() == "true",
+        capability=h.get("x-acnologia-capability"),
+        tried=_parse_tried(h.get("x-acnologia-tried")),
+    )
 
 
 MAX_REPORT_MESSAGE = 500

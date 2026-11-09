@@ -98,7 +98,7 @@ func (e *env) sendLong(id int64, n int, tag string) {
 
 func TestAssistantCompactsPastThresholdAndAgain(t *testing.T) {
 	e := newEnv(t)
-	e.api.Cfg.ChatCompactTokens = 2600
+	e.api.Cfg.ChatCompactTokens = 2900
 	f := &fakeClaude{}
 	sum := &fakeSummary{reply: "User is setting up serpapi. FIRST SUMMARY."}
 	e.api.chatModel, e.api.chatSummary = f.converse, sum.call
@@ -177,7 +177,7 @@ func TestAssistantCompactionSummaryIsRedacted(t *testing.T) {
 	e := newEnv(t)
 	pool := "SKPOOLSECRET9f8e7d6c5b4a"
 	e.addKeys(map[string]any{"secret": pool})
-	e.api.Cfg.ChatCompactTokens = 2600
+	e.api.Cfg.ChatCompactTokens = 2900
 	f := &fakeClaude{}
 	leak := "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
 	sum := &fakeSummary{reply: "Keys: " + pool + " and " + leak + " and [key k1 ...c21e] \u2014 done."}
@@ -215,7 +215,7 @@ func TestAssistantCompactionSummaryIsRedacted(t *testing.T) {
 
 func TestAssistantCompactionFailureKeepsHistory(t *testing.T) {
 	e := newEnv(t)
-	e.api.Cfg.ChatCompactTokens = 3000
+	e.api.Cfg.ChatCompactTokens = 3300
 	f := &fakeClaude{}
 	sum := &fakeSummary{err: errors.New("overloaded")}
 	e.api.chatModel, e.api.chatSummary = f.converse, sum.call

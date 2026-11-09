@@ -23,6 +23,13 @@ public enum AcnologiaError: Error, Sendable, Equatable {
     case allKeysBusy(retryAfter: TimeInterval?, message: String)
     /// HTTP 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open.
     case serviceUnavailable(retryAfter: TimeInterval?, message: String)
+    /// HTTP 429 `app_limit_reached`: the app used up a daily or monthly request or budget limit.
+    /// `limit` is `daily_requests`, `monthly_requests`, `daily_budget` or `monthly_budget`, and it
+    /// resets at `resetAt`.
+    case appLimitReached(limit: String, resetAt: Date?, retryAfter: TimeInterval?, message: String)
+    /// HTTP 403 `share_revoked`, `share_paused` or `share_expired`: the share behind this token
+    /// stopped. `status` is `revoked`, `paused` or `expired`.
+    case shareUnavailable(status: String, message: String)
     /// HTTP 401: the app token is missing, wrong, revoked or expired.
     case unauthenticated(message: String)
     /// HTTP 403: the app is disabled or may not use this service or mode.
@@ -41,7 +48,8 @@ public enum AcnologiaError: Error, Sendable, Equatable {
         case let .rateLimited(retryAfter, _, _),
              let .noKeyAvailable(retryAfter, _),
              let .allKeysBusy(retryAfter, _),
-             let .serviceUnavailable(retryAfter, _):
+             let .serviceUnavailable(retryAfter, _),
+             let .appLimitReached(_, _, retryAfter, _):
             return retryAfter
         default:
             return nil
@@ -55,9 +63,11 @@ public enum AcnologiaError: Error, Sendable, Equatable {
             return status
         case .noKeyAvailable, .allKeysBusy, .serviceUnavailable:
             return 503
+        case .appLimitReached:
+            return 429
         case .unauthenticated:
             return 401
-        case .forbidden:
+        case .forbidden, .shareUnavailable:
             return 403
         case let .api(status, _, _):
             return status
@@ -75,6 +85,8 @@ public enum AcnologiaError: Error, Sendable, Equatable {
         case .noKeyAvailable: return "no_key_available"
         case .allKeysBusy: return "all_keys_busy"
         case .serviceUnavailable: return "service_unavailable"
+        case .appLimitReached: return "app_limit_reached"
+        case let .shareUnavailable(status, _): return "share_" + status
         case .unauthenticated: return "unauthenticated"
         case let .forbidden(code, _): return code
         case let .api(_, code, _): return code
@@ -89,6 +101,7 @@ public enum AcnologiaError: Error, Sendable, Equatable {
         case let .rateLimited(_, _, m), let .quotaExhausted(_, m), let .invalidKey(_, m):
             return m
         case let .noKeyAvailable(_, m), let .allKeysBusy(_, m), let .serviceUnavailable(_, m),
+             let .appLimitReached(_, _, _, m), let .shareUnavailable(_, m),
              let .unauthenticated(m), let .forbidden(_, m), let .api(_, _, m),
              let .invalidArgument(m), let .decoding(m):
             return m
@@ -123,6 +136,10 @@ extension AcnologiaError: CustomStringConvertible, LocalizedError {
         case .noKeyAvailable: text = "acnologia: no key available"
         case .allKeysBusy: text = "acnologia: all keys busy"
         case .serviceUnavailable: text = "acnologia: service unavailable"
+        case let .appLimitReached(limit, _, _, _):
+            text = "acnologia: http 429: app_limit_reached"
+            if !limit.isEmpty { text += " (" + limit + ")" }
+        case let .shareUnavailable(status, _): text = "acnologia: http 403: share " + status
         case .unauthenticated: text = "acnologia: http 401: unauthenticated"
         case let .forbidden(code, _): text = "acnologia: http 403: \(code)"
         case let .api(status, code, _):
@@ -147,11 +164,17 @@ private func formatSeconds(_ s: TimeInterval) -> String {
 }
 
 /// Builds the typed error for a non-2xx answer from Acnologia itself.
-func parseAPIError(status: Int, data: Data, retryAfterHeader: String? = nil) -> AcnologiaError {
+///
+/// `shareHeader` is `X-Acnologia-Share`, which a stopped share's answer carries.
+func parseAPIError(status: Int, data: Data, retryAfterHeader: String? = nil, shareHeader: String? = nil) -> AcnologiaError {
     var code = ""
     var message = ""
     var retryAfter: TimeInterval?
+    var limit = ""
+    var resetAt: Date?
     if let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+        limit = obj["limit"] as? String ?? ""
+        resetAt = parseTimestamp(obj["reset_at"] as? String)
         if let err = obj["error"] as? [String: Any] {
             code = err["code"] as? String ?? ""
             message = err["message"] as? String ?? ""
@@ -177,6 +200,12 @@ func parseAPIError(status: Int, data: Data, retryAfterHeader: String? = nil) -> 
         return .noKeyAvailable(retryAfter: retryAfter, message: message)
     case "service_unavailable":
         return .serviceUnavailable(retryAfter: retryAfter, message: message)
+    case "app_limit_reached":
+        return .appLimitReached(limit: limit, resetAt: resetAt, retryAfter: retryAfter, message: message)
+    case "share_revoked", "share_paused", "share_expired":
+        return .shareUnavailable(status: String(code.dropFirst("share_".count)), message: message)
+    case "" where status == 403 && ["revoked", "paused", "expired"].contains(shareHeader ?? ""):
+        return .shareUnavailable(status: shareHeader ?? "", message: message)
     case "" where status == 503:
         return .noKeyAvailable(retryAfter: retryAfter, message: message)
     default:

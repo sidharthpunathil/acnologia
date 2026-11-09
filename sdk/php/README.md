@@ -45,9 +45,88 @@ $acn = new Acnologia\Acnologia(
 );
 ```
 
-The constructor takes the base URL, the token, a curl timeout in seconds (default 30) and an optional transport (see [Tests](#tests)). It throws `InvalidArgumentException` when the URL or the token is empty. It does not read `ACNOLOGIA_URL` or `ACNOLOGIA_TOKEN` itself, so pass them in with `getenv` as above.
+The constructor takes the base URL, the token, a curl timeout in seconds (default 30), an optional transport (see [Tests](#tests)) and an optional `accessPassword`. It throws `InvalidArgumentException` when the URL or the token is empty. It does not read `ACNOLOGIA_URL` or `ACNOLOGIA_TOKEN` itself, so pass them in with `getenv` as above.
 
-`$acn->services()` returns the services this token may use, from `GET /api/v1/services`.
+`accessPassword` is the access password of a locked deploy. When set, every request carries it as `X-Acnologia-Access`. The consumer routes pass the lock with the app token alone, so most clients never need it:
+
+```php
+$acn = new Acnologia\Acnologia($url, $token, accessPassword: (string) getenv('MY_ACCESS_PASSWORD'));
+```
+
+`var_dump` and `print_r` show the token and the access password as `***`.
+
+## What this token can do
+
+```php
+$me = $acn->me();                       // GET /api/v1/me
+$me['app']['name'];                     // "billing-bot"
+$me['limits']['daily_requests'];        // 1000, or null when unset
+$me['usage']['today_requests'];         // 12
+$me['limit_hit'];                       // null, or ['limit' => ..., 'reset_at' => ...]
+$me['share'];                           // null for an ordinary app; for a share's token its status and more
+```
+
+`me()` returns the decoded JSON: `app`, `limits`, `usage`, `limit_hit`, `services` and `share`. A share's token still gets an answer when its share is paused, expired or revoked, with `share['status']` saying which.
+
+`$acn->services()` returns the services this token may use, from `GET /api/v1/services`: `slug`, `name`, `provider`, `category`, `available`, `base_url`, `auth` and `guide_url`.
+
+```php
+$md = $acn->guideMarkdown('weather');   // the usage guide as Markdown
+$g = $acn->guide('weather');            // ['markdown' => ..., 'generated' => bool, 'guide' => [...]]
+```
+
+`generated` is true when the server built the guide from the provider spec because nobody wrote one.
+
+## Capabilities
+
+A capability is one call (say `web-search`) that the server sends to whichever provider can serve it.
+
+```php
+foreach ($acn->capabilities() as $cap) {
+    echo $cap['slug'], ': ', $cap['description'], PHP_EOL;   // also name, strategy, params, routes, url
+}
+
+$res = $acn->capability('web-search', ['query' => 'coffee']);
+$res->json();          // the mapped answer
+$res->service();       // the provider that answered
+$res->tried();         // [['service' => 'serpapi', 'status' => 429], ['service' => 'tavily', 'status' => 200]]
+
+$acn->capability('web-search', ['query' => 'coffee'], service: 'tavily', raw: true);
+```
+
+`$acn->capability($slug, $params = [], $service = null, $raw = false, $headers = [], $idempotencyKey = null, $noCache = false)` POSTs `$params` as JSON to `/proxy/{slug}`. `$service` adds `?_service=` to use only that provider, and `$raw` adds `?_raw=1` for the provider's own body. Like a proxy call, it returns the `Response` and does not throw for a non 2xx.
+
+## Forward proxy
+
+Apps can also call a provider's own URL with Acnologia as their `HTTPS_PROXY`. The proxy puts a key on the request. The app trusts the proxy's CA and uses its token as the proxy password.
+
+```php
+$acn->saveForwardProxyCA('acnologia-ca.pem');        // public route, sends no token
+$env = $acn->forwardProxyEnv('acnologia-ca.pem');
+// ['HTTPS_PROXY' => 'http://app:acn_...@keys.example.com:8888', 'HTTP_PROXY' => ..., 'NODE_USE_ENV_PROXY' => '1',
+//  'NODE_EXTRA_CA_CERTS' => 'acnologia-ca.pem', 'REQUESTS_CA_BUNDLE' => 'acnologia-ca.pem', 'SSL_CERT_FILE' => 'acnologia-ca.pem']
+
+// a child process uses its own HTTP client through the proxy
+$proc = proc_open(['python3', 'my_script.py'], [], $pipes, null, $env + getenv());
+
+// or curl in this process: no key in your code
+$ch = curl_init('https://api.openai.com/v1/models');
+curl_setopt_array($ch, [
+    CURLOPT_PROXY => $env['HTTPS_PROXY'],
+    CURLOPT_CAINFO => 'acnologia-ca.pem',
+    CURLOPT_RETURNTRANSFER => true,
+]);
+```
+
+| Call | Returns |
+|---|---|
+| `forwardProxy()` | `GET /api/v1/proxy` as an array: `proxy_url`, `proxy_url_with_token`, `ca_url`, `ca_fingerprint`, `passthrough`, `hosts` (`host`, `service`, `name`, `path`), `env`, `service_header` |
+| `forwardProxyCA()` | The CA certificate as PEM text, from `GET /api/v1/proxy/ca.pem`, sent without a token |
+| `saveForwardProxyCA($path = 'acnologia-ca.pem')` | Writes the PEM to `$path` and returns `$path` |
+| `forwardProxyURL()` | `proxy_url` with user `app` and your token as the password, percent escaped |
+| `forwardProxyEnv($caPath = 'acnologia-ca.pem')` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` |
+
+`forwardProxy()` holds a `<app token>` placeholder, never the token, so it is safe to log. `forwardProxyURL()` and `forwardProxyEnv()` contain the real token: keep them out of logs. With `CURLOPT_CAINFO` curl trusts only that file, which is enough for hosts the proxy opens. For a passthrough host, put the system bundle and the Acnologia CA in one file.
 
 ## Proxy mode
 
@@ -61,9 +140,27 @@ $weather->post('/v1/alerts', ['city' => 'Lisbon', 'level' => 'high']);
 $weather->request('PATCH', '/v1/alerts/42', ['query' => [], 'headers' => [], 'body' => ['level' => 'low']]);
 ```
 
-Array bodies are sent as JSON with `Content-Type: application/json`; strings are sent as is. `$weather->url($path, $query)` returns the full proxy URL.
+Array bodies are sent as JSON with `Content-Type: application/json`; strings are sent as is. `$weather->url($path, $query)` returns the full proxy URL. A service slug may also be a service group or a capability slug.
 
-Every call returns an `Acnologia\Response`, including non 2xx responses: proxy calls never throw for a provider status. It has `status`, `headers` (lower cased names), `body`, `ok()`, `json()` and `header($name)`. `$res->header('X-Acnologia-Key-Id')` is the id of the key that served the request.
+`post` and `put` take `$idempotencyKey`, sent as `Idempotency-Key`: a repeat of the same request with the same key within 10 minutes gets the stored answer and the provider is not called again. Every method takes `$noCache`, which sends `Cache-Control: no-cache` so a service with a cache TTL calls the provider. With `request()`, pass them as the `idempotencyKey` and `noCache` options.
+
+```php
+$res = $weather->post('/v1/alerts', ['level' => 'high'], idempotencyKey: 'alert-1234');
+$res->replayed();                                   // true on a replay
+$weather->get('/v1/forecast', ['city' => 'Lisbon'], noCache: true);
+```
+
+Every call returns an `Acnologia\Response`, including non 2xx responses: proxy calls never throw for a provider status. It has `status`, `headers` (lower cased names), `body`, `ok()`, `json()` and `header($name)`, plus:
+
+| Method | From |
+|---|---|
+| `keyId()` | `X-Acnologia-Key-Id`, the key that served the request (`null` for a share's token) |
+| `attempts()` | `X-Acnologia-Attempts`, how many keys the proxy tried |
+| `service()` | `X-Acnologia-Service`, the service that answered |
+| `cache()` | `X-Acnologia-Cache`: `hit`, `miss` and so on |
+| `replayed()` | `Idempotent-Replayed: true` |
+| `capability()` | `X-Acnologia-Capability` |
+| `tried()` | `X-Acnologia-Tried` as a list of `['service' => ..., 'status' => ...]` |
 
 ## Lease mode
 
@@ -203,11 +300,13 @@ All classes are in `Acnologia\Exception`.
 | `NoKeyAvailable` | 503 `no_key_available`: every key is cooling down, exhausted or excluded. `retryAfter` in seconds |
 | `AllKeysBusy` | 503 `all_keys_busy`: every usable key is at its concurrency limit. Extends `NoKeyAvailable`, `busy` is true |
 | `ServiceUnavailable` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. `retryAfter` in seconds. Not a `NoKeyAvailable` |
+| `AppLimitReached` | 429 `app_limit_reached`: the app used up a request or budget limit. `limit` (`daily_requests`, `monthly_requests`, `daily_budget`, `monthly_budget`), `resetAt` and `retryAfter` |
+| `ShareUnavailable` | 403 `share_revoked`, `share_paused` or `share_expired`. `shareStatus` is `revoked`, `paused` or `expired` |
 | `RateLimited`, `QuotaExhausted`, `InvalidKey` | Thrown by you inside `withKey` |
 
 `AllKeysBusy` clears as soon as another caller reports, so a short sleep or `waitSec` usually fixes it. Because it extends `NoKeyAvailable`, a `catch (NoKeyAvailable $e)` block catches both; check `$e->busy` to tell them apart.
 
-A 401 (bad token) or 403 (for example `lease_not_allowed` on a proxy only service) is an `AcnologiaException`: check `statusCode` and `errorCode`.
+A 401 (bad token) or 403 (for example `lease_not_allowed` on a proxy only service) is an `AcnologiaException`: check `statusCode` and `errorCode`. Other codes worth checking there: `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed`, `loop_detected`. The token and the access password are replaced with `[key]` in exception messages.
 
 ## Tests
 

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(acnologia_c VERSION 0.1.0 LANGUAGES C)
+project(acnologia_c VERSION 0.2.0 LANGUAGES C)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(ACN_TOP_LEVEL ON)

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -11,8 +12,12 @@ import java.util.concurrent.CompletableFuture;
  * Sends requests through Acnologia's proxy for one service. Acnologia injects
  * a key, retries on rate limits with the next key, and never returns the
  * secret. Upstream responses come back unchanged: a non-2xx status is not an
- * exception. Responses carry {@code X-Acnologia-Key-Id} and
- * {@code X-Acnologia-Attempts} headers.
+ * exception. Responses carry {@code X-Acnologia-Key-Id},
+ * {@code X-Acnologia-Attempts} and more; wrap one with
+ * {@link ProxyResponse#of(HttpResponse)} to read them.
+ *
+ * <p>A {@code Proxy} is immutable: {@link #idempotencyKey(String)} and
+ * {@link #noCache()} return a copy that sends one more header on every call.
  *
  * <p>Redirects are never followed, so the app token is not replayed to
  * another host. Proxy calls have no default timeout because proxied bodies
@@ -21,15 +26,49 @@ import java.util.concurrent.CompletableFuture;
 public final class Proxy {
     private final Acnologia client;
     private final String service;
+    private final Map<String, String> extra;
 
     Proxy(Acnologia client, String service) {
+        this(client, service, Map.of());
+    }
+
+    private Proxy(Acnologia client, String service, Map<String, String> extra) {
         this.client = client;
         this.service = service;
+        this.extra = extra;
     }
 
     /** @return the service slug */
     public String service() {
         return service;
+    }
+
+    private Proxy with(String name, String value) {
+        Map<String, String> m = new LinkedHashMap<>(extra);
+        m.put(name, value);
+        return new Proxy(client, service, Map.copyOf(m));
+    }
+
+    /**
+     * Returns a copy that sends {@code Idempotency-Key: key}. A retry with the
+     * same key gets the first answer replayed ({@code Idempotent-Replayed: true})
+     * instead of calling the provider again.
+     *
+     * @param key the idempotency key
+     * @return the copy
+     */
+    public Proxy idempotencyKey(String key) {
+        return with("Idempotency-Key", key);
+    }
+
+    /**
+     * Returns a copy that sends {@code Cache-Control: no-cache}, so Acnologia
+     * skips its response cache.
+     *
+     * @return the copy
+     */
+    public Proxy noCache() {
+        return with("Cache-Control", "no-cache");
     }
 
     private String prefixPath() {
@@ -237,6 +276,7 @@ public final class Proxy {
             target += "?" + u.getRawQuery();
         }
         HttpRequest.Builder b = HttpRequest.newBuilder(request, (n, v) -> true).uri(URI.create(target));
+        extra.forEach(b::setHeader);
         client.setHeaders(b);
         return b.build();
     }
@@ -246,6 +286,7 @@ public final class Proxy {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url(path, query)));
         b.method(method.toUpperCase(java.util.Locale.ROOT),
                 body == null ? HttpRequest.BodyPublishers.noBody() : body);
+        extra.forEach(b::setHeader);
         if (headers != null) {
             headers.forEach(b::setHeader);
         }

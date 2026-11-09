@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeMCP answers like /mcp/control: 401 for a wrong token, 202 for
@@ -22,6 +23,11 @@ type fakeMCP struct {
 }
 
 func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		// No notification stream here, as on /mcp/control.
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	b, _ := io.ReadAll(r.Body)
 	f.mu.Lock()
 	f.headers = append(f.headers, r.Header.Clone())
@@ -209,4 +215,54 @@ func TestTokenKinds(t *testing.T) {
 			t.Errorf("%q", tok)
 		}
 	}
+}
+
+// The bridge relays the server's notification stream to stdout while stdin
+// stays open.
+func TestBridgeRelaysNotifications(t *testing.T) {
+	sent := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Accept") != "text/event-stream" || r.Header.Get("Authorization") != "Bearer acn_x" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, ": hello\n\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n")
+		w.(http.Flusher).Flush()
+		close(sent)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	pr, pw := io.Pipe()
+	var out syncBuf
+	done := make(chan error)
+	go func() { done <- Run(Options{Endpoint: srv.URL, Token: "acn_x"}, pr, &out, io.Discard) }()
+	<-sent
+	for i := 0; i < 100 && !strings.Contains(out.String(), "list_changed"); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	pw.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` {
+		t.Fatalf("relayed: %q", got)
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

@@ -16,8 +16,12 @@ defmodule Acnologia.Error do
       `:share_revoked`, `:share_paused`, `:share_expired`,
       `:lease_not_found`, `:report_failed`, `:unknown_service`,
       `:upstream_unreachable`, `:upstream_blocked`, `:loop_detected`,
-      `:bad_path`, `:bad_body`, `:body_too_large` and `:method_not_allowed`
+      `:bad_path`, `:bad_body`, `:body_too_large`, `:method_not_allowed`,
+      `:bad_params`, `:no_route` and `:no_route_worked`
     * a 503 with no code is `:no_key_available`
+    * a 403 with no code but an `X-Acnologia-Share` header of `revoked`,
+      `paused` or `expired` is `:share_revoked`, `:share_paused` or
+      `:share_expired`
     * any other 401 is `:unauthenticated` and any other 403 is `:forbidden`
     * everything else is `:api`; `status` and `code` still say what happened
 
@@ -27,7 +31,9 @@ defmodule Acnologia.Error do
 
   `retry_after` is in seconds. It comes from `retry_after_sec` in the body,
   or else from the `Retry-After` header. `limit` and `reset_at` are set for
-  `:app_limit_reached`.
+  `:app_limit_reached` (see `app_limit_reached?/1`). `share` is `"revoked"`,
+  `"paused"` or `"expired"` for the three share errors (see
+  `share_unavailable?/1`).
 
   The message never holds the app token, the access password or a leased
   secret.
@@ -58,6 +64,9 @@ defmodule Acnologia.Error do
           | :bad_body
           | :body_too_large
           | :method_not_allowed
+          | :bad_params
+          | :no_route
+          | :no_route_worked
           | :api
           | :transport
           | :timeout
@@ -73,7 +82,8 @@ defmodule Acnologia.Error do
           message: String.t(),
           retry_after: number() | nil,
           limit: String.t() | nil,
-          reset_at: DateTime.t() | nil
+          reset_at: DateTime.t() | nil,
+          share: String.t() | nil
         }
 
   defexception reason: :api,
@@ -82,14 +92,16 @@ defmodule Acnologia.Error do
                message: "",
                retry_after: nil,
                limit: nil,
-               reset_at: nil
+               reset_at: nil,
+               share: nil
 
   @codes Map.new(
            ~w(unauthenticated service_not_allowed proxy_not_allowed lease_not_allowed
               lease_revoked no_key_available all_keys_busy service_unavailable empty_group
               app_limit_reached share_revoked share_paused share_expired lease_not_found
               report_failed unknown_service upstream_unreachable upstream_blocked
-              loop_detected bad_path bad_body body_too_large method_not_allowed)a,
+              loop_detected bad_path bad_body body_too_large method_not_allowed
+              bad_params no_route no_route_worked)a,
            &{Atom.to_string(&1), &1}
          )
 
@@ -115,6 +127,23 @@ defmodule Acnologia.Error do
   @doc "True for `:no_key_available` and `:all_keys_busy`: no key could be handed out right now."
   @spec no_key?(t()) :: boolean()
   def no_key?(%__MODULE__{reason: r}), do: r in [:no_key_available, :all_keys_busy]
+
+  @doc """
+  True for `:app_limit_reached`: the app used up a daily or monthly request
+  or budget limit. `limit` says which (`daily_requests`, `monthly_requests`,
+  `daily_budget` or `monthly_budget`), `reset_at` until when, and
+  `retry_after` how many seconds that is.
+  """
+  @spec app_limit_reached?(t()) :: boolean()
+  def app_limit_reached?(%__MODULE__{reason: r}), do: r == :app_limit_reached
+
+  @doc """
+  True for `:share_revoked`, `:share_paused` and `:share_expired`: the share
+  behind a share's token stopped. `share` holds the status.
+  """
+  @spec share_unavailable?(t()) :: boolean()
+  def share_unavailable?(%__MODULE__{reason: r}),
+    do: r in [:share_revoked, :share_paused, :share_expired]
 
   @doc "True when every usable key is at its concurrency limit (`:all_keys_busy`). It clears as soon as another caller reports."
   @spec busy?(t()) :: boolean()
@@ -176,14 +205,30 @@ defmodule Acnologia.Error do
         _ -> header_retry_after(headers)
       end
 
+    share_header =
+      case List.keyfind(headers, "x-acnologia-share", 0) do
+        {_, v} when v in ["revoked", "paused", "expired"] -> v
+        _ -> nil
+      end
+
+    reason_code =
+      if code == "" and status == 403 and share_header, do: "share_" <> share_header, else: code
+
+    share =
+      case reason_code do
+        "share_" <> st when st in ["revoked", "paused", "expired"] -> st
+        _ -> nil
+      end
+
     %__MODULE__{
-      reason: reason_for(status, code),
+      reason: reason_for(status, reason_code),
       status: status,
       code: code,
       message: scrub(message, secrets),
       retry_after: retry_after,
       limit: if(is_binary(data["limit"]) and data["limit"] != "", do: data["limit"]),
-      reset_at: parse_time(data["reset_at"])
+      reset_at: parse_time(data["reset_at"]),
+      share: share
     }
   end
 

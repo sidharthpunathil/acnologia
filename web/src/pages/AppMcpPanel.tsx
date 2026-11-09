@@ -5,12 +5,14 @@ import { CodeBlock } from "../components/CodeBlock";
 import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
 import { plural } from "../lib/format";
-import type { App, MCPSettingsInput, MCPTool, MCPToolSet, MCPView } from "../lib/types";
-import { enabledCount, inputOf, toolOn, useMcp } from "../stores/mcp";
+import type { App, MCPListing, MCPSettingsInput, MCPTool, MCPToolMode, MCPToolSet, MCPView } from "../lib/types";
+import { enabledCount, inputOf, sameInput, toolOn, useMcp } from "../stores/mcp";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Textarea } from "@/components/base/textarea/textarea";
 import { Switch } from "@/components/base/switch/switch";
+import { RadioGroup } from "@/components/base/radio/radio";
+import { RadioCard } from "@/components/base/radio/radio-card";
 import { Chip } from "@/components/base/badges/chip";
 import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { Tab as TabItem, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
@@ -30,7 +32,7 @@ const SETS: Array<{ id: MCPToolSet; label: string; body: string }> = [
   {
     id: "service_tools",
     label: "Service tools",
-    body: "One ready-made tool for each example call in your services. Acnologia builds them live, so new services show up on their own.",
+    body: "One ready-made tool for each documented endpoint and example call of your services. Acnologia builds them live, so new services and providers show up on their own.",
   },
   {
     id: "insights",
@@ -43,6 +45,21 @@ const SETS: Array<{ id: MCPToolSet; label: string; body: string }> = [
     body: "Run health checks, enable or disable keys, and add new keys to a service.",
   },
 ];
+
+const MODES: Array<{ id: MCPToolMode; label: string; body: (autoMax: number) => string }> = [
+  { id: "auto", label: "Auto", body: (n) => `Lists everything up to ${n} service tools, then uses search.` },
+  { id: "all", label: "All tools", body: () => "Always lists every tool, however long the list gets." },
+  { id: "search", label: "Search", body: () => "Lists core tools plus search_tools and call_tool. The rest stay callable." },
+];
+
+/** What tools/list shows with the saved settings, in one line. */
+export function listingSummary(l: MCPListing): string {
+  if (l.mode === "search" && l.listed < l.total) {
+    return `Listing ${l.listed} of ${plural(l.total, "tool")}: the rest are found with search_tools.`;
+  }
+  if (l.mode === "search") return `Listing ${l.total === 1 ? "the only tool" : `all ${plural(l.total, "tool")}`}. New service tools are found with search_tools.`;
+  return l.total === 1 ? "Listing the only tool." : `Listing all ${plural(l.total, "tool")}.`;
+}
 
 type Tab = "settings" | "tools" | "connect";
 type Client = "claude-code" | "claude-desktop" | "cursor" | "vscode" | "other";
@@ -157,7 +174,71 @@ function SwitchRow({
   );
 }
 
-function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit: (p: Partial<MCPSettingsInput>) => void; readOnly: boolean }) {
+function ListingLine({ view, draft }: { view: MCPView; draft: MCPSettingsInput }) {
+  // The line describes the saved settings, so say so while edits wait.
+  const pending = !sameInput(draft, inputOf(view.settings));
+  return (
+    <p className="text-caption-1-regular text-text-secondary" aria-live="polite" data-testid="mcp-listing">
+      {listingSummary(view.listing)}
+      {pending && " Save to update."}
+    </p>
+  );
+}
+
+function ToolModeGroup({
+  view,
+  draft,
+  edit,
+  readOnly,
+}: {
+  view: MCPView;
+  draft: MCPSettingsInput;
+  edit: (p: Partial<MCPSettingsInput>) => void;
+  readOnly: boolean;
+}) {
+  const id = useId();
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 id={id} className="text-caption-2-semibold uppercase text-text-tertiary">
+        Tool list
+      </h3>
+      <RadioGroup
+        aria-labelledby={id}
+        value={draft.tool_mode || "auto"}
+        isDisabled={readOnly}
+        onChange={(v) => edit({ tool_mode: v as MCPToolMode })}
+        className="gap-2"
+      >
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {MODES.map((m) => (
+            <RadioCard
+              key={m.id}
+              value={m.id}
+              title={m.label}
+              // RadioCard truncates its description; this inner span lets it wrap.
+              description={<span className="whitespace-normal text-caption-1-regular">{m.body(view.listing.auto_max)}</span>}
+              className="items-start"
+            />
+          ))}
+        </div>
+      </RadioGroup>
+      <ListingLine view={view} draft={draft} />
+      {!draft.service_tools && <p className="text-caption-1-regular text-text-tertiary">Only matters while Service tools is on.</p>}
+    </section>
+  );
+}
+
+function SettingsTab({
+  view,
+  draft,
+  edit,
+  readOnly,
+}: {
+  view: MCPView;
+  draft: MCPSettingsInput;
+  edit: (p: Partial<MCPSettingsInput>) => void;
+  readOnly: boolean;
+}) {
   const [kb, setKb] = useState(String(draft.max_result_kb));
   // Follow outside changes, such as Discard or a save. NaN marks the field's own invalid text.
   useEffect(() => {
@@ -181,6 +262,8 @@ function SettingsTab({ draft, edit, readOnly }: { draft: MCPSettingsInput; edit:
           </Row>
         ))}
       </Group>
+
+      <ToolModeGroup view={view} draft={draft} edit={edit} readOnly={readOnly} />
 
       <Group title="Context">
         <Row>
@@ -286,6 +369,7 @@ function ToolsTab({
 
   return (
     <div className="flex flex-col gap-6">
+      <ListingLine view={view} draft={draft} />
       {SETS.map(({ id, label }) => {
         const tools = bySet[id];
         const setOn = draft[id];
@@ -309,17 +393,22 @@ function ToolsTab({
                 {!savedOn
                   ? "Save to see the tools in this set."
                   : id === "service_tools"
-                    ? "No ready-made tools yet. They appear when a service has example calls."
+                    ? "No ready-made tools yet. They appear when a service's provider documents endpoints or example calls."
                     : "No tools in this set."}
               </div>
             ) : (
               <ul className="divide-y divide-separator-border rounded-2xl border border-border-button-default">
                 {tools.map((t) => {
                   const checked = toolOn(draft, t);
+                  // On, but left out of tools/list: the agent finds it with search_tools.
+                  const searchOnly = t.enabled && t.listed === false;
                   return (
                     <li key={t.name} className="flex items-start gap-3 px-4 py-3">
                       <div className="min-w-0 flex-1">
-                        <div className="break-all font-mono text-body-2-regular text-text-primary">{t.name}</div>
+                        <div className="flex flex-wrap items-baseline gap-x-2">
+                          <span className="break-all font-mono text-body-2-regular text-text-primary">{t.name}</span>
+                          {searchOnly && <span className="text-caption-1-regular text-text-tertiary">via search</span>}
+                        </div>
                         {t.description && <p className="mt-0.5 text-caption-1-regular text-text-secondary">{t.description}</p>}
                       </div>
                       <Switch
@@ -472,7 +561,7 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
         <LoadingBody />
       )
     ) : which === "settings" ? (
-      <SettingsTab draft={draft} edit={edit} readOnly={readOnly} />
+      <SettingsTab view={view} draft={draft} edit={edit} readOnly={readOnly} />
     ) : which === "tools" ? (
       <ToolsTab view={view} draft={draft} edit={edit} readOnly={readOnly} goSettings={() => setTab("settings")} />
     ) : (
@@ -535,8 +624,8 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
             </TabPanel>
           ))}
         </Tabs>
-        {view && tab !== "connect" && dirty && (
-          <p className="text-caption-1-regular text-text-secondary">Some clients keep the old tool list until you reconnect them after saving.</p>
+        {view && tab !== "connect" && (
+          <p className="text-caption-1-regular text-text-tertiary">Connected clients are told when the tool list changes, so they update without reconnecting.</p>
         )}
       </div>
     </Modal>

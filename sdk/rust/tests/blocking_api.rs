@@ -5,8 +5,8 @@ mod common;
 use std::time::Duration;
 
 use acnologia::blocking::Client;
-use acnologia::{Error, LeaseOptions, Report, WithKeyOptions};
-use common::{reports, start, TOKEN};
+use acnologia::{CapabilityOptions, Error, LeaseOptions, ProxyResponseExt, Report, WithKeyOptions};
+use common::{reports, requests, start, CA_PEM, TOKEN};
 use serde_json::json;
 
 /// The mock server runs on its own thread; the runtime only drives setup and
@@ -106,4 +106,64 @@ fn blocking_proxy() {
         reqs[0].headers["authorization"],
         format!("Bearer {TOKEN}").as_str()
     );
+}
+
+#[test]
+fn blocking_v2_calls() {
+    let rt = rt();
+    let (server, _) = rt.block_on(start(&[]));
+    let c = Client::builder(server.uri(), TOKEN)
+        .access_password("pw")
+        .build()
+        .unwrap();
+
+    let me = c.me().unwrap();
+    assert_eq!(me.app.name, "crawler");
+    assert_eq!(me.limits.daily_requests, Some(1000));
+
+    let g = c.guide("serpapi").unwrap();
+    assert!(g.generated);
+    assert_eq!(
+        c.guide_markdown("serpapi").unwrap(),
+        "# SerpAPI\n\nSearch Google.\n"
+    );
+
+    let caps = c.capabilities().unwrap();
+    assert_eq!(caps[0].slug, "web-search");
+    let resp = c
+        .capability(
+            "web-search",
+            &json!({"q": "tea"}),
+            CapabilityOptions::new().service("serpapi").no_cache(),
+        )
+        .unwrap();
+    assert_eq!(resp.capability(), Some("web-search"));
+    assert_eq!(resp.tried().len(), 2);
+    assert_eq!(resp.key_id(), Some(4));
+
+    let fp = c.forward_proxy().unwrap();
+    assert_eq!(fp.hosts[0].host, "serpapi.com");
+    assert_eq!(c.forward_proxy_ca().unwrap(), CA_PEM);
+    let url = c.forward_proxy_url().unwrap();
+    assert_eq!(url, format!("http://app:{TOKEN}@acn.example:8888"));
+    let env = c.forward_proxy_env(Some("ca.pem")).unwrap();
+    assert_eq!(env["HTTP_PROXY"], url);
+    assert_eq!(env["REQUESTS_CA_BUNDLE"], "ca.pem");
+
+    c.proxy("serpapi")
+        .idempotency_key("k9")
+        .no_cache()
+        .get("/search.json", &[])
+        .unwrap();
+
+    let cap = &rt.block_on(requests(&server, "/proxy/web-search"))[0];
+    assert_eq!(cap.url.query(), Some("_service=serpapi"));
+    assert_eq!(cap.headers["cache-control"], "no-cache");
+    let ca = &rt.block_on(requests(&server, "/api/v1/proxy/ca.pem"))[0];
+    assert!(ca.headers.get("authorization").is_none());
+    let px = &rt.block_on(requests(&server, "/proxy/serpapi/search.json"))[0];
+    assert_eq!(px.headers["idempotency-key"], "k9");
+    for r in rt.block_on(server.received_requests()).unwrap() {
+        assert_eq!(r.headers["x-acnologia-access"], "pw");
+    }
 }

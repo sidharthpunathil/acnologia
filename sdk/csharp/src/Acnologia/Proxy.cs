@@ -7,9 +7,10 @@ namespace Acnologia;
 /// <summary>
 /// Sends requests through Acnologia's proxy for one service. Acnologia injects a key, retries on
 /// rate limits with the next key, and never returns the secret. Upstream responses are returned
-/// as they are: a non-2xx status is not an exception. Responses carry <c>X-Acnologia-Key-Id</c>,
-/// <c>X-Acnologia-Attempts</c> and <c>X-Acnologia-Service</c>. Responses are returned as soon as
-/// the headers arrive, so bodies can stream; dispose them when done.
+/// as they are: a non-2xx status is not an exception. Read Acnologia's answer headers (key id,
+/// attempts, service, cache, replay, capability, tried routes) with
+/// <see cref="ProxyResponseExtensions.GetProxyInfo"/>. Responses are returned as soon as the
+/// headers arrive, so bodies can stream; dispose them when done.
 /// </summary>
 [DebuggerDisplay("AcnologiaProxy {{ Service = {Service} }}")]
 public sealed class AcnologiaProxy
@@ -17,15 +18,25 @@ public sealed class AcnologiaProxy
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private readonly AcnologiaClient _client;
 
-    internal AcnologiaProxy(AcnologiaClient client, string service)
+    internal AcnologiaProxy(AcnologiaClient client, string service, ProxyRequestOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(service);
         _client = client;
         Service = service;
+        Options = options;
     }
 
-    /// <summary>The service slug (or service group) this proxy calls.</summary>
+    /// <summary>The service slug (or service group, or capability) this proxy calls.</summary>
     public string Service { get; }
+
+    /// <summary>Options applied to every request this proxy sends (idempotency key, no cache), or null.</summary>
+    public ProxyRequestOptions? Options { get; }
+
+    /// <summary>
+    /// A proxy for the same service that applies <paramref name="options"/> to every request, for
+    /// example <c>proxy.WithOptions(new() { IdempotencyKey = "order-42" }).PostJsonAsync(...)</c>.
+    /// </summary>
+    public AcnologiaProxy WithOptions(ProxyRequestOptions? options) => new(_client, Service, options);
 
     /// <summary>The full proxy URL for a provider path and query.</summary>
     public string Url(string path, IEnumerable<KeyValuePair<string, string>>? query = null)
@@ -47,6 +58,7 @@ public sealed class AcnologiaProxy
         request.RequestUri = _client.Endpoint.ProxyUri(Service, request.RequestUri
             ?? throw new ArgumentException("acnologia: request has no URI", nameof(request)));
         _client.Endpoint.ApplyHeaders(request);
+        Options?.ApplyTo(request);
         return _client.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }
 
@@ -99,12 +111,12 @@ public sealed class AcnologiaProxyHandler : DelegatingHandler
         Service = service;
     }
 
-    /// <summary>Creates a handler from options (base URL, token, user agent).</summary>
+    /// <summary>Creates a handler from options (base URL, token, user agent, access password).</summary>
     public AcnologiaProxyHandler(AcnologiaClientOptions options, string service)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrEmpty(service);
-        _endpoint = new Endpoint(options.BaseUrl, options.Token, options.UserAgent);
+        _endpoint = new Endpoint(options);
         Service = service;
     }
 

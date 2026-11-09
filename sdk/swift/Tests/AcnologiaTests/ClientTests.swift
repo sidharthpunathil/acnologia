@@ -76,8 +76,11 @@ final class ClientTests: XCTestCase {
              .unauthenticated(message: "invalid app token")),
             (403, #"{"error":{"code":"service_not_allowed","message":"this app cannot use service x"}}"#,
              .forbidden(code: "service_not_allowed", message: "this app cannot use service x")),
-            (429, #"{"error":{"code":"app_limit_reached","message":"daily limit"}}"#,
-             .api(statusCode: 429, code: "app_limit_reached", message: "daily limit")),
+            (429, #"{"error":{"code":"app_limit_reached","message":"daily limit"},"limit":"daily_requests","reset_at":"2026-11-02T00:00:00Z","retry_after_sec":3600}"#,
+             .appLimitReached(limit: "daily_requests", resetAt: ISO8601DateFormatter().date(from: "2026-11-02T00:00:00Z"),
+                              retryAfter: 3600, message: "daily limit")),
+            (403, #"{"error":{"code":"share_paused","message":"the owner paused this share"}}"#,
+             .shareUnavailable(status: "paused", message: "the owner paused this share")),
             (500, "boom", .api(statusCode: 500, code: "", message: "boom")),
         ]
         for (status, body, want) in cases {

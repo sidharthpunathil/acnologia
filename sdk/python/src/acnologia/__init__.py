@@ -1,8 +1,40 @@
 """Client for Acnologia, a self-hosted API key pool with automatic rotation."""
 
 from ._client import AsyncAcnologia, AsyncProxy, Acnologia, Proxy, __version__
-from ._errors import AllKeysBusy, AcnologiaError, InvalidKey, KeyProblem, NoKeyAvailable, QuotaExhausted, RateLimited, ServiceUnavailable
-from ._models import OUTCOMES, AsyncLease, Auth, Lease, Service
+from ._errors import (
+    AllKeysBusy,
+    AcnologiaError,
+    AppLimitReached,
+    InvalidKey,
+    KeyProblem,
+    NoKeyAvailable,
+    QuotaExhausted,
+    RateLimited,
+    ServiceUnavailable,
+    ShareUnavailable,
+)
+from ._models import (
+    OUTCOMES,
+    AsyncLease,
+    Auth,
+    Capability,
+    CapabilityRoute,
+    ForwardHost,
+    ForwardProxy,
+    Guide,
+    Lease,
+    LimitHit,
+    Me,
+    MeApp,
+    MeLimits,
+    MeService,
+    MeShare,
+    MeUsage,
+    ProxyInfo,
+    Service,
+    Tried,
+    proxy_info,
+)
 
 __all__ = [
     "Acnologia",
@@ -18,6 +50,23 @@ __all__ = [
     "NoKeyAvailable",
     "AllKeysBusy",
     "ServiceUnavailable",
+    "AppLimitReached",
+    "ShareUnavailable",
+    "Me",
+    "MeApp",
+    "MeLimits",
+    "MeUsage",
+    "MeService",
+    "MeShare",
+    "LimitHit",
+    "Guide",
+    "Capability",
+    "CapabilityRoute",
+    "ForwardProxy",
+    "ForwardHost",
+    "ProxyInfo",
+    "Tried",
+    "proxy_info",
     "KeyProblem",
     "RateLimited",
     "QuotaExhausted",

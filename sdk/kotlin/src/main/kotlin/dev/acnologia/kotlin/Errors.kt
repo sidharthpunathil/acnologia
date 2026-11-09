@@ -2,6 +2,9 @@ package dev.acnologia.kotlin
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import okhttp3.Headers
+import java.time.Instant
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -37,8 +40,15 @@ public open class ApiException(
          * on a proxy response that Acnologia produced rather than the provider
          * (one without an `X-Acnologia-Key-Id` header).
          */
-        public fun fromResponse(status: Int, body: String?): ApiException {
+        public fun fromResponse(status: Int, body: String?): ApiException = fromResponse(status, body, null)
+
+        /**
+         * Like [fromResponse], also reading `Retry-After` and `X-Acnologia-Share` from [headers].
+         */
+        public fun fromResponse(status: Int, body: String?, headers: Headers?): ApiException {
             var code = ""
+            var limit = ""
+            var resetAt = ""
             var message = ""
             var retryAfterSec = 0.0
             val text = body ?: ""
@@ -49,10 +59,13 @@ public open class ApiException(
                     code = (err?.get("code"))?.jsonPrimitive?.contentOrNull ?: ""
                     message = (err?.get("message"))?.jsonPrimitive?.contentOrNull ?: ""
                     retryAfterSec = root["retry_after_sec"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+                    limit = (root["limit"] as? JsonPrimitive)?.contentOrNull ?: ""
+                    resetAt = (root["reset_at"] as? JsonPrimitive)?.contentOrNull ?: ""
                 }
             } catch (_: Exception) {
                 // not JSON, fall through to the raw body
             }
+            if (retryAfterSec <= 0.0) retryAfterSec = headers?.get("Retry-After")?.trim()?.toDoubleOrNull() ?: 0.0
             val retryAfter = (max(retryAfterSec, 0.0) * 1000).roundToLong().milliseconds
 
             if (code == "no_key_available" || code == "all_keys_busy" || (status == 503 && code.isEmpty())) {
@@ -63,6 +76,14 @@ public open class ApiException(
                 }
             }
             if (code == "service_unavailable") return ServiceUnavailableException(status, message, retryAfter)
+            if (code == "app_limit_reached") {
+                val reset = try { if (resetAt.isEmpty()) null else Instant.parse(resetAt) } catch (_: Exception) { null }
+                return AppLimitReachedException(status, message, limit, reset, retryAfter)
+            }
+            if (code.startsWith("share_")) {
+                val share = headers?.get("X-Acnologia-Share")?.ifEmpty { null } ?: code.removePrefix("share_")
+                return ShareUnavailableException(code, message, share)
+            }
             if (message.isEmpty() && code.isEmpty()) {
                 message = text.trim().take(200).ifEmpty { "HTTP $status" }
             }
@@ -80,9 +101,33 @@ public class UnauthenticatedException(code: String, message: String) : ApiExcept
 
 /**
  * HTTP 403: the app is disabled, or not allowed this service or mode. The code is one of
- * `unauthenticated`, `service_not_allowed`, `proxy_not_allowed` or `lease_not_allowed`.
+ * `unauthenticated`, `service_not_allowed`, `proxy_not_allowed` or `lease_not_allowed`. A share
+ * that stopped is the subclass [ShareUnavailableException].
  */
-public class ForbiddenException(code: String, message: String) : ApiException(403, code, message)
+public open class ForbiddenException(code: String, message: String) : ApiException(403, code, message)
+
+/**
+ * HTTP 403 `share_revoked`, `share_paused` or `share_expired`: the token belongs to a share the
+ * owner revoked, paused or let expire. [share] is `revoked`, `paused` or `expired`, as also sent
+ * in `X-Acnologia-Share`. Extends [ForbiddenException], so existing catches still match.
+ */
+public class ShareUnavailableException(code: String, message: String, public val share: String) :
+    ForbiddenException(code, message)
+
+/**
+ * HTTP 429 `app_limit_reached`: the app used up one of its own request or budget limits.
+ *
+ * @property limit `daily_requests`, `monthly_requests`, `daily_budget` or `monthly_budget`.
+ * @property resetAt when the limit resets, null if the server did not say.
+ * @property retryAfter how long until then, [Duration.ZERO] if unknown.
+ */
+public class AppLimitReachedException(
+    statusCode: Int,
+    message: String,
+    public val limit: String,
+    public val resetAt: Instant?,
+    public val retryAfter: Duration,
+) : ApiException(statusCode, "app_limit_reached", message)
 
 /**
  * HTTP 503: no key can be leased right now. The code is `no_key_available` when every key is

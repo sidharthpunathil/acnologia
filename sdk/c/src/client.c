@@ -107,6 +107,14 @@ static struct curl_slist *add_header(struct curl_slist *list, int *ok, const cha
     return next;
 }
 
+static struct curl_slist *public_headers(const acn_client *c, struct curl_slist *list, int *ok) {
+    list = add_header(list, ok, "X-Acnologia-Client", CLIENT_ID);
+    if (c->access_password) list = add_header(list, ok, "X-Acnologia-Access", c->access_password);
+    /* No 100-continue round trip. */
+    list = add_header(list, ok, "Expect", NULL);
+    return list;
+}
+
 static struct curl_slist *sdk_headers(const acn_client *c, struct curl_slist *list, int *ok) {
     acn__buf auth = {0};
     acn__buf_puts(&auth, "Bearer ");
@@ -119,11 +127,7 @@ static struct curl_slist *sdk_headers(const acn_client *c, struct curl_slist *li
     list = add_header(list, ok, "Authorization", bearer);
     acn__wipe(bearer);
     free(bearer);
-    list = add_header(list, ok, "X-Acnologia-Client", CLIENT_ID);
-    if (c->access_password) list = add_header(list, ok, "X-Acnologia-Access", c->access_password);
-    /* No 100-continue round trip. */
-    list = add_header(list, ok, "Expect", NULL);
-    return list;
+    return public_headers(c, list, ok);
 }
 
 /* ---- client ---- */
@@ -254,6 +258,49 @@ static acn_code api_call(acn_client *c, const char *method, const char *path, co
         } else {
             *out = json;
         }
+    }
+    acn__http_resp_free(&resp);
+    return rc;
+}
+
+/* GETs path and hands back the 2xx body as text. with_token 0 sends no
+ * Authorization header, for the public routes. */
+static acn_code text_call(acn_client *c, const char *path, const char *accept, int with_token, char **out,
+                          acn_error *err) {
+    *out = NULL;
+    char *url = join2(c->base_url, path);
+    int ok = 1;
+    struct curl_slist *headers = with_token ? sdk_headers(c, NULL, &ok) : public_headers(c, NULL, &ok);
+    headers = add_header(headers, &ok, "Accept", accept);
+    if (!url || !ok) {
+        free(url);
+        curl_slist_free_all(headers);
+        return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    }
+    acn__http_req req = {0};
+    req.method = "GET";
+    req.url = url;
+    req.user_agent = c->user_agent;
+    req.headers = headers;
+    req.timeout_ms = c->timeout_ms;
+    req.connect_timeout_ms = c->connect_timeout_ms;
+
+    acn__http_resp resp = {0};
+    char errbuf[512];
+    int failed = acn__http_do(&req, &resp, errbuf, sizeof errbuf);
+    curl_slist_free_all(headers);
+    free(url);
+
+    acn_code rc = ACN_OK;
+    if (failed) {
+        rc = fail_transport(c, NULL, errbuf, err);
+    } else if (resp.status < 200 || resp.status > 299) {
+        acn__redact r[3];
+        size_t n = redactions(c, NULL, r);
+        rc = acn__map_error(&resp, r, n, err);
+    } else {
+        *out = acn__buf_take(&resp.body);
+        if (!*out) rc = acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
     }
     acn__http_resp_free(&resp);
     return rc;
@@ -626,7 +673,38 @@ void acn_response_free(acn_response *r) {
     }
     free(r->headers);
     free(r->body);
+    for (size_t i = 0; i < r->tried_count; i++) free(r->tried[i].service);
+    free(r->tried);
     free(r);
+}
+
+/* Parses "svc=200, other=503" into r->tried. 0 when out of memory. */
+static int parse_tried(acn_response *r, const char *v) {
+    if (!v || !*v) return 1;
+    size_t n = 1;
+    for (const char *p = v; *p; p++) n += *p == ',';
+    r->tried = calloc(n, sizeof *r->tried);
+    if (!r->tried) return 0;
+    const char *p = v;
+    while (*p) {
+        const char *end = strchr(p, ',');
+        if (!end) end = p + strlen(p);
+        const char *a = p, *b = end;
+        while (a < b && (*a == ' ' || *a == '\t')) a++;
+        while (b > a && (b[-1] == ' ' || b[-1] == '\t')) b--;
+        if (a < b) {
+            const char *eq = b;
+            while (eq > a && eq[-1] != '=') eq--;
+            const char *name_end = eq > a ? eq - 1 : b;
+            acn_tried *t = &r->tried[r->tried_count];
+            t->service = acn__strndup(a, (size_t)(name_end - a));
+            if (!t->service) return 0;
+            t->status = eq > a ? atoi(eq) : 0;
+            r->tried_count++;
+        }
+        p = *end ? end + 1 : end;
+    }
+    return 1;
 }
 
 const char *acn_response_header(const acn_response *r, const char *name) {
@@ -641,7 +719,10 @@ static char *proxy_url(const acn_client *c, const acn_proxy_request *req) {
     acn__buf_puts(&prefix, "/proxy/");
     acn__buf_puts(&prefix, req->service);
     acn__buf_putc(&prefix, '/');
-    if (prefix.data && strncmp(path, prefix.data, prefix.len) == 0) {
+    /* "/proxy/<service>/..." is kept, and so is "/proxy/<service>" alone. */
+    int whole = prefix.data && strncmp(path, prefix.data, prefix.len - 1) == 0 &&
+                (path[prefix.len - 1] == '\0' || path[prefix.len - 1] == '?');
+    if (whole || (prefix.data && strncmp(path, prefix.data, prefix.len) == 0)) {
         acn__buf_puts(&b, path);
     } else {
         while (*path == '/') path++;
@@ -729,6 +810,7 @@ acn_code acn_proxy(acn_client *c, const acn_proxy_request *req, acn_response **o
     }
     headers = sdk_headers(c, headers, &ok);
     if (req->idempotency_key) headers = add_header(headers, &ok, "Idempotency-Key", req->idempotency_key);
+    if (req->no_cache) headers = add_header(headers, &ok, "Cache-Control", "no-cache");
     int has_body = req->body != NULL || method_has_body(method);
     /* Without this libcurl would label a body as a form. */
     if (has_body && !has_type) headers = add_header(headers, &ok, "Content-Type", NULL);
@@ -792,6 +874,11 @@ acn_code acn_proxy(acn_client *c, const acn_proxy_request *req, acn_response **o
     o->service = acn_response_header(o, "X-Acnologia-Service");
     o->cache = acn_response_header(o, "X-Acnologia-Cache");
     o->idempotent_replayed = rep && acn__strcaseeq(rep, "true");
+    o->capability = acn_response_header(o, "X-Acnologia-Capability");
+    if (!parse_tried(o, acn_response_header(o, "X-Acnologia-Tried"))) {
+        acn_response_free(o);
+        return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    }
     *out = o;
     return ACN_OK;
 }
@@ -805,6 +892,7 @@ static void free_service(acn_service *s) {
     free(s->category);
     free(s->base_url);
     free_auth(&s->auth);
+    free(s->guide_url);
 }
 
 void acn_service_list_free(acn_service_list *list) {
@@ -837,6 +925,7 @@ acn_code acn_services(acn_client *c, acn_service_list **out, acn_error *err) {
             s->available = jbool(it, "available");
             s->base_url = jdup_or_empty(it, "base_url", &ok);
             parse_auth(it, &s->auth, &ok);
+            s->guide_url = jdup_or_empty(it, "guide_url", &ok);
         }
     }
     cJSON_Delete(json);
@@ -859,6 +948,7 @@ void acn_me_free(acn_me *me) {
         free(me->services[i].name);
         free(me->services[i].provider);
         free(me->services[i].category);
+        free(me->services[i].logo_url);
     }
     free(me->services);
     if (me->share) {
@@ -927,6 +1017,7 @@ acn_code acn_me_get(acn_client *c, acn_me **out, acn_error *err) {
                 s->category = jdup_or_empty(it, "category", &ok);
                 const cJSON *av = cJSON_GetObjectItemCaseSensitive(it, "available");
                 s->available = cJSON_IsBool(av) ? cJSON_IsTrue(av) : jint(it, "available", 0);
+                s->logo_url = jdup(it, "logo_url", &ok);
             }
         }
 
@@ -958,5 +1049,358 @@ acn_code acn_me_get(acn_client *c, acn_me **out, acn_error *err) {
         return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
     }
     *out = me;
+    return ACN_OK;
+}
+
+/* ---- usage guides ---- */
+
+static char *guide_path(const char *slug) {
+    acn__buf b = {0};
+    acn__buf_puts(&b, "/api/v1/services/");
+    acn__buf_encode(&b, slug);
+    acn__buf_puts(&b, "/guide");
+    return acn__buf_take(&b);
+}
+
+/* cJSON value as raw JSON, "null" when missing. */
+static char *jraw(const cJSON *obj, const char *name, int *ok) {
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, name);
+    char *d = v ? cJSON_PrintUnformatted(v) : acn__strdup("null");
+    if (!d) *ok = 0;
+    return d;
+}
+
+void acn_guide_free(acn_guide *g) {
+    if (!g) return;
+    free(g->markdown);
+    free(g->guide_json);
+    free(g);
+}
+
+acn_code acn_guide_get(acn_client *c, const char *slug, acn_guide **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !slug || !*slug || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client, slug and out are required");
+    char *path = guide_path(slug);
+    if (!path) return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    cJSON *json = NULL;
+    acn_code rc = api_call(c, "GET", path, NULL, c->timeout_ms, NULL, &json, err);
+    free(path);
+    if (rc != ACN_OK) return rc;
+    acn_guide *g = calloc(1, sizeof *g);
+    int ok = g != NULL;
+    if (ok) {
+        g->markdown = jdup_or_empty(json, "markdown", &ok);
+        g->generated = jbool(json, "generated");
+        g->guide_json = jraw(json, "guide", &ok);
+    }
+    cJSON_Delete(json);
+    if (!ok) {
+        acn_guide_free(g);
+        return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    }
+    *out = g;
+    return ACN_OK;
+}
+
+acn_code acn_guide_markdown(acn_client *c, const char *slug, char **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !slug || !*slug || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client, slug and out are required");
+    char *path = guide_path(slug);
+    if (!path) return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    acn_code rc = text_call(c, path, "text/markdown", 1, out, err);
+    free(path);
+    return rc;
+}
+
+/* ---- capabilities ---- */
+
+void acn_capability_list_free(acn_capability_list *list) {
+    if (!list) return;
+    for (size_t i = 0; i < list->count; i++) {
+        acn_capability *k = &list->items[i];
+        free(k->slug);
+        free(k->name);
+        free(k->description);
+        free(k->strategy);
+        free(k->params_json);
+        for (size_t j = 0; j < k->route_count; j++) free(k->routes[j].service);
+        free(k->routes);
+        free(k->url);
+    }
+    free(list->items);
+    free(list);
+}
+
+acn_code acn_capabilities(acn_client *c, acn_capability_list **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client and out are required");
+    cJSON *json = NULL;
+    acn_code rc = api_call(c, "GET", "/api/v1/capabilities", NULL, c->timeout_ms, NULL, &json, err);
+    if (rc != ACN_OK) return rc;
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(json, "capabilities");
+    size_t n = cJSON_IsArray(arr) ? (size_t)cJSON_GetArraySize(arr) : 0;
+    acn_capability_list *list = calloc(1, sizeof *list);
+    if (list && n) list->items = calloc(n, sizeof *list->items);
+    int ok = list && (!n || list->items);
+    const cJSON *it = NULL;
+    if (ok) {
+        cJSON_ArrayForEach(it, arr) {
+            if (!cJSON_IsObject(it)) continue;
+            acn_capability *k = &list->items[list->count++];
+            k->slug = jdup_or_empty(it, "slug", &ok);
+            k->name = jdup_or_empty(it, "name", &ok);
+            k->description = jdup_or_empty(it, "description", &ok);
+            k->strategy = jdup_or_empty(it, "strategy", &ok);
+            k->params_json = jraw(it, "params", &ok);
+            k->url = jdup_or_empty(it, "url", &ok);
+            const cJSON *routes = cJSON_GetObjectItemCaseSensitive(it, "routes");
+            size_t rn = cJSON_IsArray(routes) ? (size_t)cJSON_GetArraySize(routes) : 0;
+            if (rn) {
+                k->routes = calloc(rn, sizeof *k->routes);
+                if (!k->routes) ok = 0;
+            }
+            const cJSON *rt = NULL;
+            if (k->routes) {
+                cJSON_ArrayForEach(rt, routes) {
+                    if (!cJSON_IsObject(rt)) continue;
+                    acn_capability_route *r = &k->routes[k->route_count++];
+                    r->service = jdup_or_empty(rt, "service", &ok);
+                    r->mapped = jbool(rt, "mapped");
+                }
+            }
+        }
+    }
+    cJSON_Delete(json);
+    if (!ok) {
+        acn_capability_list_free(list);
+        return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    }
+    *out = list;
+    return ACN_OK;
+}
+
+acn_code acn_capability_call(acn_client *c, const char *slug, const char *params_json,
+                             const acn_capability_options *opts, acn_response **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !slug || !*slug || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client, slug and out are required");
+    acn_capability_options none = {0};
+    if (!opts) opts = &none;
+    acn_pair query[2];
+    size_t nq = 0;
+    if (opts->service && *opts->service) {
+        query[nq].name = "_service";
+        query[nq++].value = opts->service;
+    }
+    if (opts->raw) {
+        query[nq].name = "_raw";
+        query[nq++].value = "1";
+    }
+    acn_pair headers[] = {{"Content-Type", "application/json"}};
+    const char *body = params_json && *params_json ? params_json : "{}";
+    char *path = join2("/proxy/", slug);
+    if (!path) return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    acn_proxy_request req = {0};
+    req.method = "POST";
+    req.service = slug;
+    req.path = path;
+    req.query = nq ? query : NULL;
+    req.query_count = nq;
+    req.headers = headers;
+    req.header_count = 1;
+    req.body = body;
+    req.body_len = strlen(body);
+    req.idempotency_key = opts->idempotency_key;
+    req.no_cache = opts->no_cache;
+    acn_code rc = acn_proxy(c, &req, out, err);
+    free(path);
+    return rc;
+}
+
+/* ---- forward proxy ---- */
+
+void acn_forward_proxy_free(acn_forward_proxy *fp) {
+    if (!fp) return;
+    free(fp->proxy_url);
+    free(fp->proxy_url_with_token);
+    free(fp->ca_url);
+    free(fp->ca_fingerprint);
+    for (size_t i = 0; i < fp->host_count; i++) {
+        free(fp->hosts[i].host);
+        free(fp->hosts[i].service);
+        free(fp->hosts[i].name);
+        free(fp->hosts[i].path);
+    }
+    free(fp->hosts);
+    for (size_t i = 0; i < fp->env_count; i++) {
+        free(fp->env[i].name);
+        free(fp->env[i].value);
+    }
+    free(fp->env);
+    free(fp->service_header);
+    free(fp);
+}
+
+acn_code acn_forward_proxy_get(acn_client *c, acn_forward_proxy **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client and out are required");
+    cJSON *json = NULL;
+    acn_code rc = api_call(c, "GET", "/api/v1/proxy", NULL, c->timeout_ms, NULL, &json, err);
+    if (rc != ACN_OK) return rc;
+    acn_forward_proxy *fp = calloc(1, sizeof *fp);
+    int ok = fp != NULL;
+    if (ok) {
+        fp->proxy_url = jdup_or_empty(json, "proxy_url", &ok);
+        fp->proxy_url_with_token = jdup_or_empty(json, "proxy_url_with_token", &ok);
+        fp->ca_url = jdup_or_empty(json, "ca_url", &ok);
+        fp->ca_fingerprint = jdup_or_empty(json, "ca_fingerprint", &ok);
+        fp->passthrough = jbool(json, "passthrough");
+        fp->service_header = jdup_or_empty(json, "service_header", &ok);
+
+        const cJSON *hosts = cJSON_GetObjectItemCaseSensitive(json, "hosts");
+        size_t n = cJSON_IsArray(hosts) ? (size_t)cJSON_GetArraySize(hosts) : 0;
+        if (n) {
+            fp->hosts = calloc(n, sizeof *fp->hosts);
+            if (!fp->hosts) ok = 0;
+        }
+        const cJSON *it = NULL;
+        if (fp->hosts) {
+            cJSON_ArrayForEach(it, hosts) {
+                if (!cJSON_IsObject(it)) continue;
+                acn_forward_host *h = &fp->hosts[fp->host_count++];
+                h->host = jdup_or_empty(it, "host", &ok);
+                h->service = jdup_or_empty(it, "service", &ok);
+                h->name = jdup_or_empty(it, "name", &ok);
+                h->path = jdup_or_empty(it, "path", &ok);
+            }
+        }
+
+        const cJSON *env = cJSON_GetObjectItemCaseSensitive(json, "env");
+        size_t en = cJSON_IsObject(env) ? (size_t)cJSON_GetArraySize(env) : 0;
+        if (en) {
+            fp->env = calloc(en, sizeof *fp->env);
+            if (!fp->env) ok = 0;
+        }
+        if (fp->env) {
+            cJSON_ArrayForEach(it, env) {
+                if (!cJSON_IsString(it) || !it->string) continue;
+                acn_header *h = &fp->env[fp->env_count++];
+                h->name = acn__strdup(it->string);
+                h->value = acn__strdup(it->valuestring);
+                if (!h->name || !h->value) ok = 0;
+            }
+        }
+    }
+    cJSON_Delete(json);
+    if (!ok) {
+        acn_forward_proxy_free(fp);
+        return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    }
+    *out = fp;
+    return ACN_OK;
+}
+
+acn_code acn_forward_proxy_ca(acn_client *c, char **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client and out are required");
+    return text_call(c, "/api/v1/proxy/ca.pem", "application/x-pem-file", 0, out, err);
+}
+
+acn_code acn_forward_proxy_save_ca(acn_client *c, const char *path, acn_error *err) {
+    if (!c) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client is required");
+    if (!path || !*path) path = "acnologia-ca.pem";
+    char *pem = NULL;
+    acn_code rc = acn_forward_proxy_ca(c, &pem, err);
+    if (rc != ACN_OK) return rc;
+    FILE *f = fopen(path, "wb");
+    size_t len = strlen(pem);
+    int written = f && fwrite(pem, 1, len, f) == len;
+    if (f && fclose(f) != 0) written = 0;
+    free(pem);
+    if (!written) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "could not write the CA file");
+    return ACN_OK;
+}
+
+/* proxy_url with app:<token>@ put in, any user info it had replaced. */
+static char *url_with_token(const acn_client *c, const char *proxy_url) {
+    const char *sep = strstr(proxy_url, "://");
+    if (!sep) return NULL;
+    const char *host = sep + 3;
+    const char *end = host + strcspn(host, "/?#");
+    const char *at = NULL;
+    for (const char *p = host; p < end; p++) {
+        if (*p == '@') at = p;
+    }
+    if (at) host = at + 1;
+    acn__buf b = {0};
+    acn__buf_append(&b, proxy_url, (size_t)(sep + 3 - proxy_url));
+    acn__buf_puts(&b, "app:");
+    acn__buf_encode(&b, c->token);
+    acn__buf_putc(&b, '@');
+    acn__buf_puts(&b, host);
+    return acn__buf_take(&b);
+}
+
+acn_code acn_forward_proxy_url(acn_client *c, char **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client and out are required");
+    acn_forward_proxy *fp = NULL;
+    acn_code rc = acn_forward_proxy_get(c, &fp, err);
+    if (rc != ACN_OK) return rc;
+    if (!fp->proxy_url || !strstr(fp->proxy_url, "://")) {
+        acn_forward_proxy_free(fp);
+        rc = acn__fail(err, ACN_ERR_BAD_RESPONSE, "the proxy answer has no proxy_url");
+        if (err) err->status = 200;
+        return rc;
+    }
+    *out = url_with_token(c, fp->proxy_url);
+    acn_forward_proxy_free(fp);
+    return *out ? ACN_OK : acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+}
+
+void acn_env_free(acn_env *e) {
+    if (!e) return;
+    for (size_t i = 0; i < e->count; i++) {
+        acn__wipe(e->vars[i].value);
+        free(e->vars[i].name);
+        free(e->vars[i].value);
+    }
+    free(e->vars);
+    free(e);
+}
+
+const char *acn_env_get(const acn_env *e, const char *name) {
+    if (!e || !name) return NULL;
+    for (size_t i = 0; i < e->count; i++) {
+        if (strcmp(e->vars[i].name, name) == 0) return e->vars[i].value;
+    }
+    return NULL;
+}
+
+acn_code acn_forward_proxy_env(acn_client *c, const char *ca_path, acn_env **out, acn_error *err) {
+    if (out) *out = NULL;
+    if (!c || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client and out are required");
+    if (!ca_path || !*ca_path) ca_path = "acnologia-ca.pem";
+    char *url = NULL;
+    acn_code rc = acn_forward_proxy_url(c, &url, err);
+    if (rc != ACN_OK) return rc;
+    const char *names[] = {"HTTPS_PROXY", "HTTP_PROXY", "NODE_USE_ENV_PROXY",
+                           "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"};
+    const char *values[] = {url, url, "1", ca_path, ca_path, ca_path};
+    size_t n = sizeof names / sizeof names[0];
+    acn_env *e = calloc(1, sizeof *e);
+    int ok = e && (e->vars = calloc(n, sizeof *e->vars)) != NULL;
+    for (size_t i = 0; ok && i < n; i++) {
+        e->vars[i].name = acn__strdup(names[i]);
+        e->vars[i].value = acn__strdup(values[i]);
+        e->count++;
+        if (!e->vars[i].name || !e->vars[i].value) ok = 0;
+    }
+    acn__wipe(url);
+    free(url);
+    if (!ok) {
+        acn_env_free(e);
+        return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    }
+    *out = e;
     return ACN_OK;
 }

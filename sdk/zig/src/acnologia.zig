@@ -2,11 +2,13 @@
 //!
 //! Proxy mode sends a request through `/proxy/<service>/<path>`, so the key
 //! never reaches your process. Lease mode borrows the raw key for a while;
-//! report how it did, and renew it for a long job. `me` describes the token.
+//! report how it did, and renew it for a long job. `me` describes the token,
+//! `services`, `guide` and `capabilities` describe what it may call, and
+//! `forwardProxy` sets an app up to use Acnologia as its HTTPS_PROXY.
 //!
 //! Memory rules, in short: the Client copies its config and frees it in
 //! `deinit`. Every value a call returns is owned by the caller and has a
-//! `deinit` (ProxyResponse, Lease, std.json.Parsed(Me)) or is a plain slice
+//! `deinit` (ProxyResponse, Lease, a std.json.Parsed) or is a plain slice
 //! freed with the allocator you passed. Details of a failed call go into an
 //! optional `Diagnostic`, which needs no allocator.
 
@@ -19,12 +21,14 @@ const errors = @import("errors.zig");
 const lease_mod = @import("lease.zig");
 const transport = @import("transport.zig");
 pub const me_types = @import("me.zig");
+pub const catalog = @import("catalog.zig");
 
 pub const Error = errors.Error;
 pub const ApiError = errors.ApiError;
 pub const ClientError = errors.ClientError;
 pub const Diagnostic = errors.Diagnostic;
 pub const isNoKey = errors.isNoKey;
+pub const isShareUnavailable = errors.isShareUnavailable;
 pub const errorFor = errors.errorFor;
 
 pub const Lease = lease_mod.Lease;
@@ -36,8 +40,19 @@ pub const RenewOptions = lease_mod.RenewOptions;
 pub const max_report_message = lease_mod.max_report_message;
 
 pub const Me = me_types.Me;
+pub const Service = catalog.Service;
+pub const ServiceAuth = catalog.ServiceAuth;
+pub const Guide = catalog.Guide;
+pub const Capability = catalog.Capability;
+pub const CapabilityRoute = catalog.CapabilityRoute;
+pub const ForwardProxy = catalog.ForwardProxy;
+pub const ForwardProxyHost = catalog.ForwardProxyHost;
+pub const Tried = catalog.Tried;
 
-pub const version = "0.1.0";
+/// Where `saveForwardProxyCA` and `forwardProxyEnv` put the CA by default.
+pub const default_ca_path = "acnologia-ca.pem";
+
+pub const version = "0.2.0";
 pub const user_agent = "acnologia-zig/" ++ version;
 
 /// Default timeout for API calls (lease, report, renew, me): 75 seconds,
@@ -99,6 +114,8 @@ pub const ProxyOptions = struct {
     /// Sent as `Idempotency-Key`. A repeat with the same key within the
     /// server's window replays the first answer (`replayed` is then true).
     idempotency_key: ?[]const u8 = null,
+    /// Sends `Cache-Control: no-cache`, so Acnologia skips its answer cache.
+    no_cache: bool = false,
     /// Overrides `Options.proxy_timeout_ms`. 0 disables the timeout.
     timeout_ms: ?u32 = null,
     /// When false (the default), an error Acnologia itself answers with
@@ -125,6 +142,10 @@ pub const ProxyInfo = struct {
     share: ?[]const u8 = null,
     /// `Idempotent-Replayed: true`: this answer is a replay.
     replayed: bool = false,
+    /// `X-Acnologia-Capability`: the capability that ran, for a capability call.
+    capability: ?[]const u8 = null,
+    /// `X-Acnologia-Tried`: every route a capability call tried, in order.
+    tried: []const Tried = &.{},
 };
 
 /// A proxied answer, returned as the provider sent it, whatever its status.
@@ -169,6 +190,31 @@ pub const LeaseOptions = struct {
 };
 
 pub const MeOptions = struct {
+    diag: ?*Diagnostic = null,
+};
+
+/// Options of the read calls (services, guide, capabilities, forward proxy).
+pub const CallOptions = struct {
+    diag: ?*Diagnostic = null,
+};
+
+pub const CapabilityOptions = struct {
+    /// Use only this provider's route: `?_service=<slug>`.
+    service: ?[]const u8 = null,
+    /// Return the provider's own body, not the mapped shape: `?_raw=1`.
+    raw: bool = false,
+    /// Extra request headers, as in `ProxyOptions.headers`.
+    headers: []const http.Header = &.{},
+    /// Sent as `Idempotency-Key`.
+    idempotency_key: ?[]const u8 = null,
+    /// Sends `Cache-Control: no-cache`.
+    no_cache: bool = false,
+    /// Overrides `Options.proxy_timeout_ms`. 0 disables the timeout.
+    timeout_ms: ?u32 = null,
+    /// Like `ProxyOptions.raw`: when true, Acnologia's own errors (such as
+    /// `bad_params` or `no_route_worked`) come back as a ProxyResponse
+    /// instead of a Zig error.
+    raw_errors: bool = false,
     diag: ?*Diagnostic = null,
 };
 
@@ -269,6 +315,56 @@ pub const Client = struct {
         path: []const u8,
         options: ProxyOptions,
     ) Error!ProxyResponse {
+        return self.proxyTo(allocator, method, service, path, true, options);
+    }
+
+    /// Calls a capability: `POST /proxy/<slug>` with `params_json` (a JSON
+    /// object, such as `{"query":"coffee"}`) as the body. Null sends `{}`.
+    /// Acnologia picks a provider, translates the params and moves to the
+    /// next route on failure; `res.acnologia.capability`, `.service` and
+    /// `.tried` say what happened. Owned by the caller: call `deinit`.
+    pub fn capability(
+        self: *Client,
+        allocator: Allocator,
+        slug: []const u8,
+        params_json: ?[]const u8,
+        options: CapabilityOptions,
+    ) Error!ProxyResponse {
+        var query_buf: [2]QueryParam = undefined;
+        var n: usize = 0;
+        if (options.service) |sv| {
+            query_buf[n] = .{ .name = "_service", .value = sv };
+            n += 1;
+        }
+        if (options.raw) {
+            query_buf[n] = .{ .name = "_raw", .value = "1" };
+            n += 1;
+        }
+        var headers: std.ArrayList(http.Header) = .empty;
+        defer headers.deinit(self.gpa);
+        try headers.append(self.gpa, .{ .name = "Content-Type", .value = "application/json" });
+        try headers.appendSlice(self.gpa, options.headers);
+        return self.proxyTo(allocator, .POST, slug, "", false, .{
+            .query = query_buf[0..n],
+            .headers = headers.items,
+            .body = params_json orelse "{}",
+            .idempotency_key = options.idempotency_key,
+            .no_cache = options.no_cache,
+            .timeout_ms = options.timeout_ms,
+            .raw = options.raw_errors,
+            .diag = options.diag,
+        });
+    }
+
+    fn proxyTo(
+        self: *Client,
+        allocator: Allocator,
+        method: http.Method,
+        service: []const u8,
+        path: []const u8,
+        trailing_slash: bool,
+        options: ProxyOptions,
+    ) Error!ProxyResponse {
         if (options.body != null and !method.requestHasBody()) return self.fail(options.diag, error.InvalidArgument, "a body needs POST, PUT or PATCH");
         if (service.len == 0) return self.fail(options.diag, error.InvalidArgument, "service is empty");
 
@@ -278,7 +374,7 @@ pub const Client = struct {
 
         var url: Io.Writer.Allocating = .init(self.gpa);
         defer url.deinit();
-        writeProxyUrl(&url.writer, self.base_url, service, path, options.query) catch return error.OutOfMemory;
+        writeProxyUrl(&url.writer, self.base_url, service, path, trailing_slash, options.query) catch return error.OutOfMemory;
 
         var headers: std.ArrayList(http.Header) = .empty;
         defer headers.deinit(self.gpa);
@@ -297,6 +393,7 @@ pub const Client = struct {
             if (hasLineBreak(k)) return self.fail(options.diag, error.InvalidArgument, "the idempotency key holds a line break");
             try headers.append(self.gpa, .{ .name = "Idempotency-Key", .value = k });
         }
+        if (options.no_cache) try headers.append(self.gpa, .{ .name = "Cache-Control", .value = "no-cache" });
         try self.appendClientHeaders(&headers);
 
         const req: transport.Request = .{
@@ -326,7 +423,7 @@ pub const Client = struct {
             .status = answer.status,
             .headers = answer.headers,
             .body = answer.body,
-            .acnologia = proxyInfo(answer.headers),
+            .acnologia = try proxyInfo(a, answer.headers),
         };
     }
 
@@ -368,6 +465,145 @@ pub const Client = struct {
         };
     }
 
+    /// Reads `GET /api/v1/services`: the services this token may use, with
+    /// their base URL, auth and guide URL. Owned by the caller: call `deinit`.
+    pub fn services(self: *Client, allocator: Allocator, options: CallOptions) Error!std.json.Parsed([]const Service) {
+        const Wrap = struct { services: []const Service = &.{} };
+        const p = try self.getJson(Wrap, allocator, "/api/v1/services", "the services answer could not be read", options.diag);
+        return .{ .arena = p.arena, .value = p.value.services };
+    }
+
+    /// Reads `GET /api/v1/services/<slug>/guide`: the usage guide as
+    /// Markdown plus the structured guide as JSON. Owned by the caller:
+    /// call `deinit`.
+    pub fn guide(self: *Client, allocator: Allocator, slug: []const u8, options: CallOptions) Error!std.json.Parsed(Guide) {
+        var path: Io.Writer.Allocating = .init(self.gpa);
+        defer path.deinit();
+        writeGuidePath(&path.writer, slug) catch return error.OutOfMemory;
+        return self.getJson(Guide, allocator, path.written(), "the guide answer could not be read", options.diag);
+    }
+
+    /// The usage guide as raw Markdown (`Accept: text/markdown`). The slice
+    /// is allocated with `allocator` and owned by the caller.
+    pub fn guideMarkdown(self: *Client, allocator: Allocator, slug: []const u8, options: CallOptions) Error![]u8 {
+        var scratch: std.heap.ArenaAllocator = .init(self.gpa);
+        defer scratch.deinit();
+        var path: Io.Writer.Allocating = .init(scratch.allocator());
+        writeGuidePath(&path.writer, slug) catch return error.OutOfMemory;
+        const body = try self.apiRequest(scratch.allocator(), path.written(), .{ .accept = "text/markdown" }, options.diag);
+        return allocator.dupe(u8, body);
+    }
+
+    /// Reads `GET /api/v1/capabilities`: the capabilities this token may
+    /// call with `capability`. Owned by the caller: call `deinit`.
+    pub fn capabilities(self: *Client, allocator: Allocator, options: CallOptions) Error!std.json.Parsed([]const Capability) {
+        const Wrap = struct { capabilities: []const Capability = &.{} };
+        const p = try self.getJson(Wrap, allocator, "/api/v1/capabilities", "the capabilities answer could not be read", options.diag);
+        return .{ .arena = p.arena, .value = p.value.capabilities };
+    }
+
+    /// Reads `GET /api/v1/proxy`: how to use Acnologia as the app's
+    /// HTTPS_PROXY. The answer holds no token. Owned by the caller: call
+    /// `deinit`.
+    pub fn forwardProxy(self: *Client, allocator: Allocator, options: CallOptions) Error!std.json.Parsed(ForwardProxy) {
+        return self.getJson(ForwardProxy, allocator, "/api/v1/proxy", "the forward proxy answer could not be read", options.diag);
+    }
+
+    /// Downloads the forward proxy's CA certificate (PEM) from
+    /// `GET /api/v1/proxy/ca.pem`. The route is public, so no token is sent.
+    /// The slice is allocated with `allocator` and owned by the caller.
+    pub fn forwardProxyCA(self: *Client, allocator: Allocator, options: CallOptions) Error![]u8 {
+        var scratch: std.heap.ArenaAllocator = .init(self.gpa);
+        defer scratch.deinit();
+        const body = try self.apiRequest(scratch.allocator(), "/api/v1/proxy/ca.pem", .{
+            .accept = "application/x-pem-file",
+            .send_token = false,
+        }, options.diag);
+        return allocator.dupe(u8, body);
+    }
+
+    /// Downloads the CA certificate and writes it to `path` (relative to
+    /// the current directory), or to `default_ca_path` when null.
+    pub fn saveForwardProxyCA(self: *Client, path: ?[]const u8, options: CallOptions) (Error || Io.Dir.WriteFileError)!void {
+        const pem = try self.forwardProxyCA(self.gpa, options);
+        defer self.gpa.free(pem);
+        try Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path orelse default_ca_path, .data = pem });
+    }
+
+    /// The forward proxy URL with this client's token as the password,
+    /// percent encoded: `http://app:acn_...@host:8888`. Calls `forwardProxy`.
+    ///
+    /// The result CONTAINS THE TOKEN. It is allocated with `allocator` and
+    /// owned by the caller: wipe it (`std.crypto.secureZero`) and free it.
+    pub fn forwardProxyURL(self: *Client, allocator: Allocator, options: CallOptions) Error![]u8 {
+        var setup = try self.forwardProxy(self.gpa, options);
+        defer setup.deinit();
+        return self.proxyUrlWithToken(allocator, setup.value.proxy_url, options.diag);
+    }
+
+    /// The environment that sends an app's HTTP through the forward proxy:
+    /// `HTTPS_PROXY` and `HTTP_PROXY` (the `forwardProxyURL`),
+    /// `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`
+    /// and `SSL_CERT_FILE` set to `ca_path` (`default_ca_path` when null).
+    /// Save the CA there with `saveForwardProxyCA`. Calls `forwardProxy`.
+    ///
+    /// The map CONTAINS THE TOKEN. It is allocated with `allocator` and
+    /// owned by the caller: call its `deinit`. Pass it as a child process's
+    /// `environ_map`, or copy entries into one.
+    pub fn forwardProxyEnv(self: *Client, allocator: Allocator, ca_path: ?[]const u8, options: CallOptions) Error!std.process.Environ.Map {
+        const url = try self.forwardProxyURL(self.gpa, options);
+        defer freeSecret(self.gpa, url);
+        const ca = ca_path orelse default_ca_path;
+        var env = std.process.Environ.Map.init(allocator);
+        errdefer env.deinit();
+        try env.put("HTTPS_PROXY", url);
+        try env.put("HTTP_PROXY", url);
+        try env.put("NODE_USE_ENV_PROXY", "1");
+        try env.put("NODE_EXTRA_CA_CERTS", ca);
+        try env.put("REQUESTS_CA_BUNDLE", ca);
+        try env.put("SSL_CERT_FILE", ca);
+        return env;
+    }
+
+    fn proxyUrlWithToken(self: *Client, allocator: Allocator, proxy_url: []const u8, diag: ?*Diagnostic) Error![]u8 {
+        const sep = std.mem.find(u8, proxy_url, "://") orelse
+            return self.fail(diag, error.BadResponse, "the forward proxy URL could not be read");
+        var rest = proxy_url[sep + 3 ..];
+        // Drop any user info the server put there; the token goes in its place.
+        const host_end = std.mem.findAny(u8, rest, "/?#") orelse rest.len;
+        if (std.mem.findScalarLast(u8, rest[0..host_end], '@')) |at| rest = rest[at + 1 ..];
+        var out: Io.Writer.Allocating = .init(allocator);
+        errdefer {
+            std.crypto.secureZero(u8, out.writer.buffer);
+            out.deinit();
+        }
+        writeProxyUrlWithToken(&out.writer, proxy_url[0 .. sep + 3], self.token, rest) catch return error.OutOfMemory;
+        return out.toOwnedSlice() catch error.OutOfMemory;
+    }
+
+    fn getJson(self: *Client, comptime T: type, allocator: Allocator, path: []const u8, what: []const u8, diag: ?*Diagnostic) Error!std.json.Parsed(T) {
+        var scratch: std.heap.ArenaAllocator = .init(self.gpa);
+        defer scratch.deinit();
+        const answer = try self.apiCall(scratch.allocator(), .GET, path, null, 0, "", diag);
+        return std.json.parseFromSlice(T, allocator, answer, .{
+            .ignore_unknown_fields = true,
+            .allocate = .alloc_always,
+        }) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => self.fail(diag, error.BadResponse, what),
+        };
+    }
+
+    const RequestExtra = struct {
+        accept: []const u8 = "application/json",
+        send_token: bool = true,
+    };
+
+    /// A GET with a chosen Accept, and optionally no token.
+    fn apiRequest(self: *Client, arena: Allocator, path: []const u8, extra: RequestExtra, diag: ?*Diagnostic) Error![]const u8 {
+        return self.apiRequestFull(arena, .GET, path, null, self.timeout_ms, "", extra, diag);
+    }
+
     /// The same as `lease.report(options)`.
     pub fn report(self: *Client, l: *Lease, options: ReportOptions) Error!?Lease {
         _ = self;
@@ -407,14 +643,28 @@ pub const Client = struct {
         extra_secret: []const u8,
         diag: ?*Diagnostic,
     ) Error![]const u8 {
+        return self.apiRequestFull(arena, method, path, body, timeout_ms, extra_secret, .{}, diag);
+    }
+
+    fn apiRequestFull(
+        self: *Client,
+        arena: Allocator,
+        method: http.Method,
+        path: []const u8,
+        body: ?[]const u8,
+        timeout_ms: u64,
+        extra_secret: []const u8,
+        extra: RequestExtra,
+        diag: ?*Diagnostic,
+    ) Error![]const u8 {
         const url = try std.mem.concat(arena, u8, &.{ self.base_url, path });
         var headers: std.ArrayList(http.Header) = .empty;
-        try headers.append(arena, .{ .name = "Accept", .value = "application/json" });
+        try headers.append(arena, .{ .name = "Accept", .value = extra.accept });
         try self.appendClientHeadersTo(arena, &headers);
         const req: transport.Request = .{
             .method = method,
             .url = url,
-            .authorization = self.authorization,
+            .authorization = if (extra.send_token) self.authorization else "",
             .user_agent = user_agent,
             .content_type = if (body != null) "application/json" else null,
             .headers = headers.items,
@@ -468,18 +718,33 @@ pub const Client = struct {
     }
 };
 
-fn writeProxyUrl(w: *Io.Writer, base_url: []const u8, service: []const u8, path: []const u8, query: []const QueryParam) Io.Writer.Error!void {
+fn writeProxyUrl(w: *Io.Writer, base_url: []const u8, service: []const u8, path: []const u8, trailing_slash: bool, query: []const QueryParam) Io.Writer.Error!void {
     try w.writeAll(base_url);
     try w.writeAll("/proxy/");
     try errors.percentEncode(w, service);
-    try w.writeByte('/');
-    try errors.percentEncodePath(w, std.mem.trimStart(u8, path, "/"));
+    const rest = std.mem.trimStart(u8, path, "/");
+    if (trailing_slash or rest.len > 0) try w.writeByte('/');
+    try errors.percentEncodePath(w, rest);
     for (query, 0..) |q, i| {
         try w.writeByte(if (i == 0) '?' else '&');
         try errors.percentEncode(w, q.name);
         try w.writeByte('=');
         try errors.percentEncode(w, q.value);
     }
+}
+
+fn writeGuidePath(w: *Io.Writer, slug: []const u8) Io.Writer.Error!void {
+    try w.writeAll("/api/v1/services/");
+    try errors.percentEncode(w, slug);
+    try w.writeAll("/guide");
+}
+
+fn writeProxyUrlWithToken(w: *Io.Writer, scheme: []const u8, token: []const u8, host_and_rest: []const u8) Io.Writer.Error!void {
+    try w.writeAll(scheme);
+    try w.writeAll("app:");
+    try errors.percentEncode(w, token);
+    try w.writeByte('@');
+    try w.writeAll(host_and_rest);
 }
 
 fn writeLeaseBody(w: *Io.Writer, service: []const u8, options: LeaseOptions) Io.Writer.Error!void {
@@ -506,7 +771,7 @@ fn writeLeaseBody(w: *Io.Writer, service: []const u8, options: LeaseOptions) Io.
     try js.endObject();
 }
 
-fn proxyInfo(headers: []const http.Header) ProxyInfo {
+fn proxyInfo(arena: Allocator, headers: []const http.Header) Allocator.Error!ProxyInfo {
     const get = errors.headerValue;
     return .{
         .key_id = if (get(headers, "x-acnologia-key-id")) |v| std.fmt.parseInt(i64, std.mem.trim(u8, v, " "), 10) catch null else null,
@@ -515,6 +780,8 @@ fn proxyInfo(headers: []const http.Header) ProxyInfo {
         .cache = get(headers, "x-acnologia-cache"),
         .share = get(headers, "x-acnologia-share"),
         .replayed = if (get(headers, "idempotent-replayed")) |v| std.ascii.eqlIgnoreCase(std.mem.trim(u8, v, " "), "true") else false,
+        .capability = get(headers, "x-acnologia-capability"),
+        .tried = if (get(headers, "x-acnologia-tried")) |v| try catalog.parseTried(arena, v) else &.{},
     };
 }
 
@@ -567,4 +834,5 @@ fn portOf(u: std.Uri) u16 {
 test {
     _ = errors;
     _ = lease_mod;
+    _ = catalog;
 }

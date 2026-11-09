@@ -46,6 +46,9 @@ type mcpTool struct {
 	// capability is set on a capability's tool: its arguments are the
 	// capability's params, sent to /proxy/{capability}.
 	capability string
+	// keywords are extra words search_tools matches: the service's slug,
+	// name, provider, category, product group and hosts.
+	keywords string
 }
 
 func readOnly(title string) map[string]any {
@@ -142,84 +145,47 @@ var pathParamRe = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
 // serviceTools turns each provider example into a ready to call tool, for
 // example "acme_search" with a q parameter, so agents need not know paths.
 func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
-	svcs, err := s.Store.ListServices(ctx)
-	if err != nil {
-		return nil
+	c := s.toolCatalog(ctx)
+	v := c.view(a)
+	out := make([]mcpTool, len(v.ids))
+	for i, id := range v.ids {
+		out[i] = c.tools[id]
 	}
-	names := serviceToolNames(svcs, a)
+	return out
+}
+
+// buildServiceTools makes the tools of every service and capability, named
+// as for an app that may use them all. Each app sees the ones it may use
+// (toolCatalog.view), so a tool keeps its name whatever the app's access.
+func buildServiceTools(svcs []*store.Service, caps []*store.Capability) []mcpTool {
+	all := &store.App{}
+	names := serviceToolNames(svcs, all)
 	out := []mcpTool{}
 	for _, sv := range svcs {
-		if !a.CanUse(sv.Slug) {
-			continue
-		}
 		spec := docSpec(sv)
-		for i := range spec.Examples {
-			ex := spec.Examples[i]
+		for i, src := range toolSources(spec) {
 			name := names[toolKey{sv.ID, i}]
 			if name == "" {
 				continue
 			}
-			props := map[string]any{}
-			required := []string{}
-			params := []string{}
-			for _, m := range pathParamRe.FindAllStringSubmatch(ex.Path, -1) {
-				props[m[1]] = str("Path parameter")
-				required = append(required, m[1])
-			}
-			keys := make([]string, 0, len(ex.Query))
-			for k := range ex.Query {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				props[k] = map[string]any{"type": "string", "description": fmt.Sprintf("Query parameter (example: %s)", ex.Query[k])}
-				params = append(params, k)
-			}
-			props["extra_query"] = map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Any other query parameters"}
-			if ex.Body != nil {
-				eb, _ := json.Marshal(ex.Body)
-				props["body"] = map[string]any{"type": "object", "description": "JSON body. Example: " + string(eb)}
-				required = append(required, "body")
-			}
-			desc := fmt.Sprintf("%s on %s (%s %s). Acnologia adds a pooled key and rotates on rate limits.", ex.Name, sv.Name, strings.ToUpper(orDefault(ex.Method, "GET")), ex.Path)
-			desc += offerHint(spec, orDefault(ex.Method, "GET"), ex.Path)
-			if sv.Description != "" {
-				desc += " " + sv.Description
-			}
-			exCopy := ex
-			out = append(out, mcpTool{
-				Name: name, Title: sv.Name + ": " + ex.Name, Description: desc, Set: setService,
-				InputSchema: obj(props, required...),
-				Annotations: map[string]any{"title": sv.Name + ": " + ex.Name, "openWorldHint": true, "readOnlyHint": strings.EqualFold(orDefault(ex.Method, "GET"), "GET")},
-				service:     sv.Slug, example: &exCopy, params: params,
-			})
+			out = append(out, sourceTool(sv, spec, src, name))
 		}
 	}
-	return append(out, s.capabilityTools(ctx, a, out)...)
+	return append(out, capabilityMCPTools(caps, out)...)
 }
 
-// capabilityTools makes one tool per capability the app may call, with the
+// capabilityMCPTools makes one tool per capability the app may call, with the
 // capability's params as its input. A name a service tool already took gets
 // a "_any" suffix.
-func (s *Server) capabilityTools(ctx context.Context, a *store.App, taken []mcpTool) []mcpTool {
-	if a.ShareID != nil {
-		return nil
-	}
-	cs, err := s.Store.ListCapabilities(ctx)
-	if err != nil {
-		return nil
-	}
+func capabilityMCPTools(cs []*store.Capability, taken []mcpTool) []mcpTool {
 	used := map[string]bool{}
-	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, taken} {
+	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, discoveryTools, taken} {
 		for _, t := range set {
 			used[t.Name] = true
 		}
 	}
 	out := []mcpTool{}
 	for _, c := range cs {
-		if !a.CanUse(c.Slug) {
-			continue
-		}
 		name := toolName(c.Slug)
 		for used[name] {
 			name = toolName(name + "_any")
@@ -254,6 +220,7 @@ func (s *Server) capabilityTools(ctx context.Context, a *store.App, taken []mcpT
 			InputSchema: obj(props, required...),
 			Annotations: map[string]any{"title": c.Name, "openWorldHint": true},
 			capability:  c.Slug,
+			keywords:    strings.Join(append([]string{c.Slug, c.Name}, routes...), " "),
 		})
 	}
 	return out
@@ -274,7 +241,7 @@ type toolKey struct {
 // the names do not depend on how the services are sorted.
 func serviceToolNames(svcs []*store.Service, a *store.App) map[toolKey]string {
 	seen := map[string]bool{}
-	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools} {
+	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, discoveryTools} {
 		for _, t := range set {
 			seen[t.Name] = true
 		}
@@ -294,15 +261,15 @@ func serviceToolNames(svcs []*store.Service, a *store.App) map[toolKey]string {
 	})
 	names := map[toolKey]string{}
 	for _, sv := range ordered {
-		for i, ex := range docSpec(sv).Examples {
-			name := toolName(sv.Slug, ex.Name)
+		for i, src := range toolSources(docSpec(sv)) {
+			name := toolName(sv.Slug, src.name)
 			if name == "" {
 				continue
 			}
 			for n := 0; seen[name]; n++ {
-				sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", sv.Slug, ex.Name, n)))
+				sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", sv.Slug, src.name, n)))
 				suffix := "_" + hex.EncodeToString(sum[:])[:6]
-				base := toolName(sv.Slug, ex.Name)
+				base := toolName(sv.Slug, src.name)
 				if len(base) > 64-len(suffix) {
 					base = base[:64-len(suffix)]
 				}
@@ -343,7 +310,7 @@ func (s *Server) mcpTools(ctx context.Context, a *store.App, st store.MCPSetting
 // isStaticTool reports whether name is a core, insight or manage tool.
 // serviceToolNames never gives a service tool one of these names.
 func isStaticTool(name string) bool {
-	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools} {
+	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, discoveryTools} {
 		if findTool(set, name) != nil {
 			return true
 		}
@@ -356,7 +323,24 @@ func isStaticTool(name string) bool {
 // so the service tools (every service's examples) are built only when the
 // name is not a static one.
 func (s *Server) mcpTool(ctx context.Context, a *store.App, st store.MCPSettings, name string) *mcpTool {
-	return findTool(s.mcpToolSet(ctx, a, st, !isStaticTool(name)), name)
+	if isStaticTool(name) {
+		return findTool(s.mcpToolSet(ctx, a, st, false), name)
+	}
+	if !st.ServiceTools || !a.AllowsProxy() {
+		return nil
+	}
+	for _, n := range st.DisabledTools {
+		if n == name {
+			return nil
+		}
+	}
+	c := s.toolCatalog(ctx)
+	id, ok := c.byName[name]
+	if !ok || !c.view(a).allowed[id] {
+		return nil
+	}
+	t := c.tools[id]
+	return &t
 }
 
 func (s *Server) mcpToolSet(ctx context.Context, a *store.App, st store.MCPSettings, withService bool) []mcpTool {
@@ -372,8 +356,11 @@ func (s *Server) mcpToolSet(ctx context.Context, a *store.App, st store.MCPSetti
 			all = append(all, t)
 		}
 	}
-	if withService && st.ServiceTools && a.AllowsProxy() {
-		all = append(all, s.serviceTools(ctx, a)...)
+	if st.ServiceTools && a.AllowsProxy() {
+		all = append(all, discoveryTools...)
+		if withService {
+			all = append(all, s.serviceTools(ctx, a)...)
+		}
 	}
 	if st.Insights {
 		all = append(all, insightTools...)

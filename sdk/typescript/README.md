@@ -201,11 +201,76 @@ const lease = await acnologia.lease("weather", { ttlSec: 600, exclusive: true })
 await lease.renew(600);
 ```
 
+## Proxy options and response headers
+
+Every proxy call takes `idempotencyKey` (sends `Idempotency-Key`) and `noCache: true` (sends `Cache-Control: no-cache`) in its init. `proxyInfo(res)` reads the Acnologia headers of the answer:
+
+```ts
+import { proxyInfo } from "@acnologia/keys";
+
+const res = await acnologia.proxy("weather").post("/v1/alerts", alert, { idempotencyKey: "order-42" });
+const info = proxyInfo(res);
+console.log(info.keyId, info.attempts, info.service, info.cache, info.replayed);
+```
+
+`ProxyInfo` has `keyId` (`null` for a share's token), `attempts`, `service`, `cache` (`hit`, `miss`, ...), `replayed`, `capability` and `tried` (`[{ service, status }]`). The service passed to `proxy()` may also be a service group or a capability slug.
+
+## Capabilities
+
+A capability is one call served by whichever provider can.
+
+```ts
+const caps = await acnologia.capabilities(); // slug, name, description, strategy, params, routes, url
+const res = await acnologia.capability("web-search", { q: "coffee" }, { service: "serpapi" }); // raw: true for the provider's own body
+console.log(await res.json(), proxyInfo(res).tried);
+```
+
+`capability` also takes `idempotencyKey`, `noCache` and `signal`, and returns the `Response` as is.
+
+## Forward proxy
+
+Point an app's own HTTP client at Acnologia and call provider URLs as they are. Save the CA, then start the app with the environment from `forwardProxyEnv`. Node releases that support `NODE_USE_ENV_PROXY=1` route `fetch` and `http` through `HTTPS_PROXY`; the CA variables cover Node, Python and most other runtimes.
+
+```ts
+import { writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+
+await writeFile("acnologia-ca.pem", await acnologia.forwardProxyCA());
+const env = await acnologia.forwardProxyEnv("acnologia-ca.pem");
+spawn("node", ["agent.js"], { env: { ...process.env, ...env }, stdio: "inherit" });
+
+// in agent.js, the app's own client, unchanged:
+const res = await fetch("https://api.openai.com/v1/models"); // Acnologia adds the key
+```
+
+| Call | Returns |
+|---|---|
+| `forwardProxy()` | `ForwardProxy`: `proxyUrl`, `proxyUrlWithToken` (with an `<app token>` placeholder), `caUrl`, `caFingerprint`, `passthrough`, `hosts`, `env`, `serviceHeader` |
+| `forwardProxyCA()` | the CA certificate as PEM text. Public: the token is not sent |
+| `forwardProxyURL()` | `http://app:acn_...@host:8888`. Contains the token |
+| `forwardProxyEnv(caPath = "acnologia-ca.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `caPath`. Contains the token |
+
+## About this token
+
+`me()` returns the token's own access: `app`, `limits` (each `null` when unset), `usage`, `limitHit`, `services` (with `available` as a count and `logoUrl`) and `share` (`null` for an ordinary app; for a share's token its `status`, still answered after the share stopped).
+
+```ts
+const me = await acnologia.me();
+if (me.limitHit) console.log(me.limitHit.limit, "resets at", me.limitHit.resetAt);
+```
+
+## Usage guides
+
+```ts
+const g = await acnologia.guide("weather");          // markdown, generated, guide (plain JSON)
+const md = await acnologia.guideMarkdown("weather"); // the Markdown alone
+```
+
 ## List services
 
 ```ts
 const services = await acnologia.services();
-// [{ slug: "weather", name: "...", provider: "...", category: "...", available: true, baseUrl: "...", auth: { type: "query", name: "..." } }]
+// [{ slug: "weather", name: "...", provider: "...", category: "...", available: true, baseUrl: "...", auth: { type: "query", name: "..." }, guideUrl: "..." }]
 ```
 
 ## Errors and retries
@@ -216,9 +281,11 @@ const services = await acnologia.services();
 | `NoKeyAvailableError` | 503 `no_key_available`. Has `retryAfter` (seconds or `null`) and `busy`. Extends `AcnologiaError` |
 | `AllKeysBusyError` | 503 `all_keys_busy`: every usable key is at its concurrency limit. `busy` is true, `retryAfter` usually 1. Extends `NoKeyAvailableError` |
 | `ServiceUnavailableError` | 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Has `retryAfter` (seconds or `null`). Extends `AcnologiaError`, not `NoKeyAvailableError` |
+| `AppLimitReachedError` | 429 `app_limit_reached`: the app used up a daily or monthly request or budget limit. Has `limit`, `resetAt` and `retryAfter`. Extends `AcnologiaError` |
+| `ShareUnavailableError` | 403 `share_revoked`, `share_paused` or `share_expired`. `shareStatus` is `revoked`, `paused` or `expired` (`status` stays the HTTP status). Extends `AcnologiaError` |
 | `RateLimitedError`, `QuotaExhaustedError`, `InvalidKeyError` | you throw them inside `withKey` |
 
-When the server sends no error code, `code` is `http_<status>`. Wait `retryAfter` seconds before trying again when it is set.
+When the server sends no error code, `code` is `http_<status>`. Every `AcnologiaError` has `retryAfter` when the server sent `retry_after_sec` or `Retry-After`; wait that long before trying again. Other codes worth checking: `empty_group`, `bad_params`, `no_route`, `no_route_worked`, `proxy_not_allowed`, `lease_not_allowed`, `loop_detected`.
 
 ## Configuration
 
@@ -229,6 +296,7 @@ new Acnologia({
   fetch: customFetch,             // defaults to globalThis.fetch
   headers: { "X-Team": "data" },  // sent with every request to Acnologia
   timeoutMs: 75_000,              // lease, report, renew and services calls; 0 disables
+  accessPassword: "...",          // sent as X-Acnologia-Access, for a deploy behind the access password
 });
 ```
 

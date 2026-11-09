@@ -42,6 +42,8 @@ module Acnologia
   , proxyGet
   , proxyPostJson
   , gatewayError
+  , Tried (..)
+  , parseTried
 
     -- * Leases
   , Lease (..)
@@ -86,6 +88,37 @@ module Acnologia
   , services
   , servicesOrThrow
 
+    -- * Usage guides
+  , Guide (..)
+  , guide
+  , guideOrThrow
+  , guideMarkdown
+  , guideMarkdownOrThrow
+
+    -- * Capabilities
+  , Capability (..)
+  , CapabilityRoute (..)
+  , capabilities
+  , capabilitiesOrThrow
+  , CapabilityOptions (..)
+  , defaultCapabilityOptions
+  , capability
+  , capabilityOrThrow
+
+    -- * Forward proxy
+  , ForwardProxy (..)
+  , ForwardHost (..)
+  , forwardProxy
+  , forwardProxyOrThrow
+  , forwardProxyCA
+  , forwardProxyCAOrThrow
+  , saveForwardProxyCA
+  , saveForwardProxyCAOrThrow
+  , forwardProxyURL
+  , forwardProxyURLOrThrow
+  , forwardProxyEnv
+  , forwardProxyEnvOrThrow
+
     -- * Errors
   , AcnologiaError (..)
   , ErrorInfo (..)
@@ -93,10 +126,11 @@ module Acnologia
   , errorStatus
   , errorCode
   , errorRetryAfter
+  , shareUnavailable
   , orThrow
   ) where
 
-import Control.Exception (Exception (..), SomeException, catch, throwIO, try)
+import Control.Exception (Exception (..), IOException, SomeException, catch, throwIO, try)
 import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), object, withObject, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Key as AK
@@ -125,7 +159,7 @@ import System.Environment (lookupEnv)
 
 -- | The SDK version, sent in the @User-Agent@ and @X-Acnologia-Client@ headers.
 acnologiaVersion :: Text
-acnologiaVersion = "0.1.0"
+acnologiaVersion = "0.2.0"
 
 userAgent :: BS.ByteString
 userAgent = "acnologia-haskell/" <> TE.encodeUtf8 acnologiaVersion
@@ -370,6 +404,17 @@ errorRetryAfter = \case
   AppLimitReached _ _ _ r -> r
   _ -> Nothing
 
+-- | For the three ways a share stops working ('ShareRevoked', 'SharePaused'
+-- and 'ShareExpired', together the share unavailable errors): the share's
+-- status, @revoked@, @paused@ or @expired@, as also sent in
+-- @X-Acnologia-Share@. 'Nothing' for any other error.
+shareUnavailable :: AcnologiaError -> Maybe Text
+shareUnavailable = \case
+  ShareRevoked _ -> Just "revoked"
+  SharePaused _ -> Just "paused"
+  ShareExpired _ -> Just "expired"
+  _ -> Nothing
+
 -- | Turn a @Left@ into a thrown 'AcnologiaError'.
 orThrow :: IO (Either AcnologiaError a) -> IO a
 orThrow act = act >>= either throwIO pure
@@ -555,6 +600,9 @@ data ProxyRequest = ProxyRequest
     -- ^ Sent as @Idempotency-Key@. A retry with the same key within the
     -- server's window replays the first answer instead of calling the provider
     -- again.
+  , proxyNoCache :: Bool
+    -- ^ Sends @Cache-Control: no-cache@, so the answer never comes from the
+    -- proxy's cache.
   }
   deriving (Eq, Show)
 
@@ -568,6 +616,7 @@ proxyRequest m p =
     , proxyHeaders = []
     , proxyBody = Nothing
     , proxyIdempotencyKey = Nothing
+    , proxyNoCache = False
     }
 
 -- | Set a JSON body, and @Content-Type: application/json@ unless a content
@@ -595,6 +644,10 @@ data AcnologiaHeaders = AcnologiaHeaders
     -- ^ @X-Acnologia-Cache@: @hit@, @miss@, @bypass@ or @replay@.
   , acnReplayed :: Bool
     -- ^ True when @Idempotent-Replayed: true@ was set.
+  , acnCapability :: Maybe Text
+    -- ^ @X-Acnologia-Capability@: set on a capability call.
+  , acnTried :: [Tried]
+    -- ^ @X-Acnologia-Tried@: every route a capability call tried, in order.
   , acnAll :: Map.Map Text Text
     -- ^ Every @X-Acnologia-*@ header, keyed by its lower case name.
   }
@@ -609,6 +662,28 @@ data Response = Response
   }
   deriving (Eq, Show)
 
+-- | One route a capability call tried.
+data Tried = Tried
+  { triedService :: Text
+  , triedStatus :: Int
+    -- ^ The route's status, 0 when it failed before an answer.
+  }
+  deriving (Eq, Show)
+
+-- | Parse an @X-Acnologia-Tried@ value: @service=status@ pairs, comma
+-- separated.
+parseTried :: Text -> [Tried]
+parseTried = map one . filter (not . T.null) . map T.strip . T.splitOn ","
+  where
+    one part =
+      let (name, rest) = T.breakOnEnd "=" part
+       in if T.null name
+            then Tried part 0
+            else Tried (T.strip (T.dropEnd 1 name)) (readInt (T.strip rest))
+    readInt t = case reads (T.unpack t) of
+      [(n, "")] -> n
+      _ -> 0
+
 readAcnologiaHeaders :: ResponseHeaders -> AcnologiaHeaders
 readAcnologiaHeaders hdrs =
   AcnologiaHeaders
@@ -617,6 +692,8 @@ readAcnologiaHeaders hdrs =
     , acnService = Map.lookup "x-acnologia-service" allH
     , acnCache = Map.lookup "x-acnologia-cache" allH
     , acnReplayed = maybe False ((== "true") . T.toLower . decodeLenient) (lookup "Idempotent-Replayed" hdrs)
+    , acnCapability = Map.lookup "x-acnologia-capability" allH
+    , acnTried = maybe [] parseTried (Map.lookup "x-acnologia-tried" allH)
     , acnAll = allH
     }
   where
@@ -639,18 +716,25 @@ readAcnologiaHeaders hdrs =
 proxy :: Client -> Text -> ProxyRequest -> IO (Either AcnologiaError Response)
 proxy c service pr
   | T.null service = pure (Left (InvalidInput "service is required"))
-  | otherwise = do
-      let path = T.dropWhile (== '/') (proxyPath pr)
-          query = HT.renderQuery True (HT.queryTextToQuery [(k, Just v) | (k, v) <- proxyQuery pr])
-          url = clientBaseUrl c <> "/proxy/" <> encodeSegment service <> "/" <> path <> decodeLenient query
+  | otherwise =
+      sendProxy c (clientBaseUrl c <> "/proxy/" <> encodeSegment service <> "/" <> T.dropWhile (== '/') (proxyPath pr)) pr
+
+-- | Send a proxy request to a URL (without its query), with the SDK's
+-- headers and the request's options.
+sendProxy :: Client -> Text -> ProxyRequest -> IO (Either AcnologiaError Response)
+sendProxy c base pr = do
+      let query = HT.renderQuery True (HT.queryTextToQuery [(k, Just v) | (k, v) <- proxyQuery pr])
+          url = base <> decodeLenient query
           userHdrs =
             [ h
             | h@(k, _) <- proxyHeaders pr
             , k `notElem` ownedHeaders
             , not (isJust (proxyIdempotencyKey pr) && k == "Idempotency-Key")
+            , not (proxyNoCache pr && k == "Cache-Control")
             ]
           idem = maybe [] (\k -> [("Idempotency-Key", TE.encodeUtf8 k)]) (proxyIdempotencyKey pr)
-          hdrs = userHdrs <> idem <> authHeaders c
+          noCache = [("Cache-Control", "no-cache") | proxyNoCache pr]
+          hdrs = userHdrs <> idem <> noCache <> authHeaders c
       r <- send c (clientProxyTimeout c) (proxyMethod pr) url hdrs (proxyBody pr)
       case r of
         Left e -> pure (Left e)
@@ -1105,6 +1189,8 @@ data MeService = MeService
   , meServiceCategory :: Text
   , meServiceAvailable :: Int
     -- ^ For an ordinary app 1 or 0; for a share's token the keys free now.
+  , meServiceLogoUrl :: Maybe Text
+    -- ^ The service's logo as a @data:@ image URI, when it has one.
   }
   deriving (Eq, Show)
 
@@ -1165,6 +1251,7 @@ instance FromJSON MeService where
       <*> o .:? "provider" .!= ""
       <*> o .:? "category" .!= ""
       <*> (availableCount <$> o .:? "available" .!= Null)
+      <*> o .:? "logo_url"
 
 instance FromJSON Share where
   parseJSON = withObject "Share" $ \o ->
@@ -1214,6 +1301,8 @@ data Service = Service
   , serviceAvailable :: Bool
   , serviceBaseUrl :: Text
   , serviceAuth :: Auth
+  , serviceGuideUrl :: Text
+    -- ^ Where the usage guide is served ('guide' and 'guideMarkdown' fetch it).
   }
   deriving (Eq, Show)
 
@@ -1227,6 +1316,7 @@ instance FromJSON Service where
       <*> ((> 0) . availableCount <$> o .:? "available" .!= Null)
       <*> o .:? "base_url" .!= ""
       <*> o .:? "auth" .!= Auth AuthHeader "" ""
+      <*> o .:? "guide_url" .!= ""
 
 newtype ServiceList = ServiceList [Service]
 
@@ -1240,3 +1330,290 @@ services c = fmap (\(ServiceList s) -> s) <$> callJson c (clientTimeout c) "GET"
 -- | 'services' that throws.
 servicesOrThrow :: Client -> IO [Service]
 servicesOrThrow = orThrow . services
+
+-- ---------------------------------------------------------------------------
+-- Usage guides
+
+-- | A service's usage guide (@GET /api/v1/services/{slug}/guide@).
+data Guide = Guide
+  { guideText :: Text
+    -- ^ The guide as Markdown.
+  , guideGenerated :: Bool
+    -- ^ True when no guide was written for the provider and this one was
+    -- generated from its spec.
+  , guideStructured :: Value
+    -- ^ The structured guide, as JSON.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON Guide where
+  parseJSON = withObject "Guide" $ \o ->
+    Guide
+      <$> o .:? "markdown" .!= ""
+      <*> o .:? "generated" .!= False
+      <*> o .:? "guide" .!= Null
+
+guidePath :: Text -> Text
+guidePath slug = "/api/v1/services/" <> encodeSegment slug <> "/guide"
+
+-- | How to call a service: the Markdown, whether it was generated, and the
+-- structured guide. 'ServiceNotAllowed' for a service the token may not use.
+guide :: Client -> Text -> IO (Either AcnologiaError Guide)
+guide c slug
+  | T.null slug = pure (Left (InvalidInput "service is required"))
+  | otherwise = callJson c (clientTimeout c) "GET" (guidePath slug) Nothing
+
+-- | 'guide' that throws.
+guideOrThrow :: Client -> Text -> IO Guide
+guideOrThrow c = orThrow . guide c
+
+-- | The same guide as Markdown only (@Accept: text/markdown@).
+guideMarkdown :: Client -> Text -> IO (Either AcnologiaError Text)
+guideMarkdown c slug
+  | T.null slug = pure (Left (InvalidInput "service is required"))
+  | otherwise = callText c True "text/markdown" (guidePath slug)
+
+-- | 'guideMarkdown' that throws.
+guideMarkdownOrThrow :: Client -> Text -> IO Text
+guideMarkdownOrThrow c = orThrow . guideMarkdown c
+
+-- | GET a route and return the 2xx body as text. With 'False' the token is
+-- not sent, for the public routes.
+callText :: Client -> Bool -> BS.ByteString -> Text -> IO (Either AcnologiaError Text)
+callText c withToken accept path = do
+  let base = if withToken then authHeaders c else publicHeaders c
+  r <- send c (clientTimeout c) "GET" (clientBaseUrl c <> path) (base <> [("Accept", accept)]) Nothing
+  case r of
+    Left e -> pure (Left e)
+    Right resp -> do
+      let status = HT.statusCode (H.responseStatus resp)
+      if status >= 200 && status < 300
+        then pure (Right (decodeLenient (LBS.toStrict (H.responseBody resp))))
+        else do
+          now <- getCurrentTime
+          pure (Left (decodeError now (secretsOf c) (H.responseStatus resp) (H.responseHeaders resp) (H.responseBody resp)))
+
+-- | The SDK's headers without the token.
+publicHeaders :: Client -> RequestHeaders
+publicHeaders c = filter ((/= "Authorization") . fst) (authHeaders c)
+
+-- ---------------------------------------------------------------------------
+-- Capabilities
+
+-- | A route of a capability: a service that can do the job.
+data CapabilityRoute = CapabilityRoute
+  { routeService :: Text
+  , routeMapped :: Bool
+    -- ^ True when the route maps the answer to the capability's own fields.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON CapabilityRoute where
+  parseJSON = withObject "CapabilityRoute" $ \o ->
+    CapabilityRoute <$> o .:? "service" .!= "" <*> o .:? "mapped" .!= False
+
+-- | One job several providers can do, behind one slug.
+data Capability = Capability
+  { capabilitySlug :: Text
+  , capabilityName :: Text
+  , capabilityDescription :: Text
+  , capabilityStrategy :: Text
+  , capabilityParams :: Value
+    -- ^ The params it takes, as JSON.
+  , capabilityRoutes :: [CapabilityRoute]
+  , capabilityUrl :: Text
+    -- ^ Where to call it: @{server}/proxy/{slug}@.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON Capability where
+  parseJSON = withObject "Capability" $ \o ->
+    Capability
+      <$> o .:? "slug" .!= ""
+      <*> o .:? "name" .!= ""
+      <*> o .:? "description" .!= ""
+      <*> o .:? "strategy" .!= ""
+      <*> o .:? "params" .!= Null
+      <*> o .:? "routes" .!= []
+      <*> o .:? "url" .!= ""
+
+newtype CapabilityList = CapabilityList [Capability]
+
+instance FromJSON CapabilityList where
+  parseJSON = withObject "CapabilityList" $ \o -> CapabilityList <$> o .:? "capabilities" .!= []
+
+-- | The capabilities this token may call (@GET /api/v1/capabilities@).
+-- Empty for a share's token.
+capabilities :: Client -> IO (Either AcnologiaError [Capability])
+capabilities c = fmap (\(CapabilityList l) -> l) <$> callJson c (clientTimeout c) "GET" "/api/v1/capabilities" Nothing
+
+-- | 'capabilities' that throws.
+capabilitiesOrThrow :: Client -> IO [Capability]
+capabilitiesOrThrow = orThrow . capabilities
+
+-- | Options for 'capability'.
+data CapabilityOptions = CapabilityOptions
+  { capService :: Maybe Text
+    -- ^ Adds @?_service=<slug>@: use only that service's route.
+  , capRaw :: Bool
+    -- ^ Adds @?_raw=1@: the provider's own body, not mapped.
+  , capIdempotencyKey :: Maybe Text
+    -- ^ Sent as @Idempotency-Key@.
+  , capNoCache :: Bool
+    -- ^ Sends @Cache-Control: no-cache@.
+  }
+  deriving (Eq, Show)
+
+-- | Any route, mapped answer, no idempotency key, cache allowed.
+defaultCapabilityOptions :: CapabilityOptions
+defaultCapabilityOptions = CapabilityOptions Nothing False Nothing False
+
+-- | Call a capability: @POST /proxy/{slug}@ with the params as the JSON body.
+-- Answers like 'proxy', and 'acnCapability', 'acnService' and 'acnTried' say
+-- who served it. A missing param is @bad_params@, and no usable route
+-- @no_route@ or @no_route_worked@, as an 'ApiError'.
+capability :: Client -> Text -> Value -> CapabilityOptions -> IO (Either AcnologiaError Response)
+capability c slug params opts
+  | T.null slug = pure (Left (InvalidInput "capability is required"))
+  | otherwise =
+      sendProxy c (clientBaseUrl c <> "/proxy/" <> encodeSegment slug) $
+        (withJsonBody body (proxyRequest "POST" ""))
+          { proxyQuery =
+              maybe [] (\s -> [("_service", s)]) (capService opts) <> [("_raw", "1") | capRaw opts]
+          , proxyIdempotencyKey = capIdempotencyKey opts
+          , proxyNoCache = capNoCache opts
+          }
+  where
+    body = case params of
+      Null -> object []
+      v -> v
+
+-- | 'capability' that throws.
+capabilityOrThrow :: Client -> Text -> Value -> CapabilityOptions -> IO Response
+capabilityOrThrow c s p = orThrow . capability c s p
+
+-- ---------------------------------------------------------------------------
+-- Forward proxy
+
+-- | A host the forward proxy sends to a service.
+data ForwardHost = ForwardHost
+  { fhHost :: Text
+  , fhService :: Text
+  , fhName :: Text
+  , fhPath :: Text
+  }
+  deriving (Eq, Show)
+
+instance FromJSON ForwardHost where
+  parseJSON = withObject "ForwardHost" $ \o ->
+    ForwardHost
+      <$> o .:? "host" .!= ""
+      <*> o .:? "service" .!= ""
+      <*> o .:? "name" .!= ""
+      <*> o .:? "path" .!= ""
+
+-- | How to use Acnologia as an HTTP(S) proxy (@GET /api/v1/proxy@). It never
+-- holds the token, so 'show' is safe: 'fpProxyUrlWithToken' has an
+-- @<app token>@ placeholder.
+data ForwardProxy = ForwardProxy
+  { fpProxyUrl :: Text
+  , fpProxyUrlWithToken :: Text
+  , fpCaUrl :: Text
+  , fpCaFingerprint :: Text
+  , fpPassthrough :: Bool
+    -- ^ True when HTTPS to hosts that are no service is tunneled as is.
+  , fpHosts :: [ForwardHost]
+  , fpEnv :: Map.Map Text Text
+    -- ^ The server's suggested environment.
+  , fpServiceHeader :: Text
+    -- ^ The request header that picks a service.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON ForwardProxy where
+  parseJSON = withObject "ForwardProxy" $ \o ->
+    ForwardProxy
+      <$> o .:? "proxy_url" .!= ""
+      <*> o .:? "proxy_url_with_token" .!= ""
+      <*> o .:? "ca_url" .!= ""
+      <*> o .:? "ca_fingerprint" .!= ""
+      <*> o .:? "passthrough" .!= False
+      <*> o .:? "hosts" .!= []
+      <*> o .:? "env" .!= Map.empty
+      <*> o .:? "service_header" .!= ""
+
+-- | The forward proxy's setup for this token.
+forwardProxy :: Client -> IO (Either AcnologiaError ForwardProxy)
+forwardProxy c = callJson c (clientTimeout c) "GET" "/api/v1/proxy" Nothing
+
+-- | 'forwardProxy' that throws.
+forwardProxyOrThrow :: Client -> IO ForwardProxy
+forwardProxyOrThrow = orThrow . forwardProxy
+
+-- | The forward proxy's CA certificate as PEM (@GET /api/v1/proxy/ca.pem@).
+-- It is public, so the token is not sent.
+forwardProxyCA :: Client -> IO (Either AcnologiaError Text)
+forwardProxyCA c = callText c False "application/x-pem-file" "/api/v1/proxy/ca.pem"
+
+-- | 'forwardProxyCA' that throws.
+forwardProxyCAOrThrow :: Client -> IO Text
+forwardProxyCAOrThrow = orThrow . forwardProxyCA
+
+-- | Fetch the CA and write it to a file (pass @"acnologia-ca.pem"@ for the
+-- usual name). A file that cannot be written is 'InvalidInput'.
+saveForwardProxyCA :: Client -> FilePath -> IO (Either AcnologiaError ())
+saveForwardProxyCA c path = do
+  r <- forwardProxyCA c
+  case r of
+    Left e -> pure (Left e)
+    Right pem -> do
+      w <- try (BS.writeFile (if null path then "acnologia-ca.pem" else path) (TE.encodeUtf8 pem))
+      pure $ case w of
+        Left (e :: IOException) -> Left (InvalidInput ("could not write the CA: " <> T.pack (displayException e)))
+        Right () -> Right ()
+
+-- | 'saveForwardProxyCA' that throws.
+saveForwardProxyCAOrThrow :: Client -> FilePath -> IO ()
+saveForwardProxyCAOrThrow c = orThrow . saveForwardProxyCA c
+
+-- | The proxy URL with user @app@ and the client's token as the password,
+-- percent escaped: @http://app:acn_...\@host:8888@. It holds the token: keep
+-- it out of logs.
+forwardProxyURL :: Client -> IO (Either AcnologiaError Text)
+forwardProxyURL c = do
+  r <- forwardProxy c
+  pure $ r >>= \fp -> case T.breakOn "://" (fpProxyUrl fp) of
+    (_, "") -> Left (BadResponse "the proxy setup has no proxy_url")
+    (scheme, rest0) ->
+      let rest = T.drop 3 rest0
+          (authority, tailPart) = T.break (`elem` ("/?#" :: String)) rest
+          host = snd (T.breakOnEnd "@" authority)
+          tokenEnc = decodeLenient (HT.urlEncode True (TE.encodeUtf8 (clientToken c)))
+       in Right (scheme <> "://app:" <> tokenEnc <> "@" <> host <> tailPart)
+
+-- | 'forwardProxyURL' that throws.
+forwardProxyURLOrThrow :: Client -> IO Text
+forwardProxyURLOrThrow = orThrow . forwardProxyURL
+
+-- | The environment that sends an app through the forward proxy:
+-- @HTTPS_PROXY@ and @HTTP_PROXY@ ('forwardProxyURL'), @NODE_USE_ENV_PROXY=1@,
+-- and @NODE_EXTRA_CA_CERTS@, @REQUESTS_CA_BUNDLE@ and @SSL_CERT_FILE@ set to
+-- the CA path (pass @"acnologia-ca.pem"@ for the usual name). The proxy
+-- values hold the token: keep them out of logs.
+forwardProxyEnv :: Client -> FilePath -> IO (Either AcnologiaError (Map.Map Text Text))
+forwardProxyEnv c caPath = fmap env <$> forwardProxyURL c
+  where
+    ca = T.pack (if null caPath then "acnologia-ca.pem" else caPath)
+    env u =
+      Map.fromList
+        [ ("HTTPS_PROXY", u)
+        , ("HTTP_PROXY", u)
+        , ("NODE_USE_ENV_PROXY", "1")
+        , ("NODE_EXTRA_CA_CERTS", ca)
+        , ("REQUESTS_CA_BUNDLE", ca)
+        , ("SSL_CERT_FILE", ca)
+        ]
+
+-- | 'forwardProxyEnv' that throws.
+forwardProxyEnvOrThrow :: Client -> FilePath -> IO (Map.Map Text Text)
+forwardProxyEnvOrThrow c = orThrow . forwardProxyEnv c

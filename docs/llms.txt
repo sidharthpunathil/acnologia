@@ -59,12 +59,12 @@ Key facts for agents:
 
 ## MCP
 
-- [POST /mcp](/llms-full.txt): MCP streamable HTTP endpoint (JSON responses), same app token. Core tools: `list_services`, `pool_status`, `service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`. Apps can also enable service tools generated from provider examples, read only insights (`list_keys`, `key_details`, `service_stats`) and key management (`check_keys`, `set_key_status`, `add_keys`). Stdio clients can run `acnologia mcp --url <base> --token acn_...`.
+- [POST /mcp](/llms-full.txt): MCP streamable HTTP endpoint (JSON responses), same app token. Core tools: `list_services`, `pool_status`, `service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`. Apps can also enable service tools generated from every provider example and usage guide endpoint (adding a provider adds its tools, no restart), read only insights (`list_keys`, `key_details`, `service_stats`) and key management (`check_keys`, `set_key_status`, `add_keys`). With many service tools (over 30 in the default `auto` tool mode, or always in `search` mode) `tools/list` shows the core tools plus `search_tools` {query} and `call_tool` {name, arguments}, so the context stays small however many providers there are. `initialize` advertises `tools.listChanged`; `GET /mcp` with `Accept: text/event-stream` streams `notifications/tools/list_changed` when the app's tools change. Stdio clients can run `acnologia mcp --url <base> --token acn_...`.
 - [POST /mcp/control](/llms-full.txt): the control MCP, for running the server itself from an MCP client. It takes an admin API token (`acnadm_...`) and acts as its owner: services, keys, apps, providers, AI builds, sharing, usage and `call_service` (a provider call through the proxy). Destructive tools need `confirm: true`. Choose tools with `?groups=`, `exclude=`, `read_only=1`.
 
 ## SDKs
 
-Twelve SDKs share one surface: proxy, lease, report with rotate, renew, an `exclusive` lease option, `with_key` (or `withKey`), typed errors including a busy error that still counts as "no key available" and a service unavailable error for an open circuit breaker, and `ACNOLOGIA_URL` / `ACNOLOGIA_TOKEN`. `with_key` always reports its leases. None is on a package registry yet: [SDKs](/docs/sdks.md) shows how to install each today.
+Seventeen SDKs, all at version 0.2.0, share one surface: proxy (with `idempotencyKey`, `noCache` and response metadata `keyId`, `attempts`, `service`, `cache`, `replayed`, `capability`, `tried`), lease, report with rotate, renew, an `exclusive` lease option, `with_key` (or `withKey`), `me`, `services` (with `guide_url`), `guide` and `guideMarkdown`, `capabilities` and `capability`, the forward proxy calls (`forwardProxy`, `forwardProxyCA` and a save to file variant, `forwardProxyURL`, `forwardProxyEnv`), an `accessPassword` option, and typed errors including a busy error that still counts as "no key available", a service unavailable error for an open circuit breaker, `app_limit_reached` and the share errors (`share_revoked`, `share_paused`, `share_expired`). Go, Python, Rust, Kotlin, C# and Ruby also build an HTTP client set up for the forward proxy. `with_key` always reports its leases. None is on a package registry yet: [SDKs](/docs/sdks.md) shows how to install each today.
 
 - [Python](/llms-full.txt): `pip install acnologia`, then `from acnologia import Acnologia`.
 - [TypeScript and JavaScript](/llms-full.txt): `npm install @acnologia/keys`, then `import { Acnologia } from "@acnologia/keys"`. Node 18+, Bun, Deno, browsers.
@@ -78,6 +78,11 @@ Twelve SDKs share one surface: proxy, lease, report with rotate, renew, an `excl
 - [Swift](/llms-full.txt): `.package(url: "https://github.com/sidharthpunathil/acnologia", branch: "main")`, `import Acnologia`.
 - [Dart and Flutter](/llms-full.txt): git dependency with `path: sdk/dart`, `import 'package:acnologia/acnologia.dart'`.
 - [C++](/llms-full.txt): CMake target `acnologia::acnologia`, `#include <acnologia/acnologia.hpp>`. C++17 and libcurl.
+- [C](/llms-full.txt): CMake target `acnologia::acnologia` from `sdk/c`, `#include <acnologia/acnologia.h>`. C11 and libcurl.
+- [Zig](/llms-full.txt): `zig fetch` the repository, module `sdk/zig/src/acnologia.zig`. Zig 0.17.0.
+- [Elixir](/llms-full.txt): Mix git dependency with `sparse: "sdk/elixir"`, then `Acnologia.new/1`. Elixir 1.18.
+- [Haskell](/llms-full.txt): cabal `source-repository-package` with `subdir: sdk/haskell`, `import Acnologia`.
+- [Lua](/llms-full.txt): luarocks from the rockspec URL, `require("acnologia")`. Lua 5.1 to 5.5 or LuaJIT.
 
 ## Admin API and CLI
 

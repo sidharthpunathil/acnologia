@@ -1,6 +1,6 @@
 {
   "name": "@acnologia/keys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Client for Acnologia, a self-hosted API key pool. Lease keys or proxy calls with automatic rotation on rate limits.",
   "license": "MIT",
   "type": "module",

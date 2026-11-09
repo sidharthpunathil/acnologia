@@ -13,9 +13,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,7 +49,7 @@ import java.util.function.Function;
  */
 public final class Acnologia {
     /** The SDK version. */
-    public static final String VERSION = "0.1.0";
+    public static final String VERSION = "0.2.0";
 
     /**
      * Default timeout for API calls (services, lease, report, renew). It is
@@ -67,6 +70,7 @@ public final class Acnologia {
     private final HttpClient proxyHttp;
     private final String userAgent;
     private final Duration timeout;
+    private final String accessPassword;
 
     private Acnologia(Builder b) {
         String url = b.baseUrl;
@@ -87,6 +91,11 @@ public final class Acnologia {
         this.token = tok;
         this.userAgent = b.userAgent == null ? "acnologia-java/" + VERSION : b.userAgent;
         this.timeout = b.timeout == null ? DEFAULT_TIMEOUT : b.timeout;
+        String access = b.accessPassword;
+        if (access == null || access.isEmpty()) {
+            access = b.env.get("ACNOLOGIA_ACCESS_PASSWORD");
+        }
+        this.accessPassword = access == null ? "" : access;
         HttpClient given = b.httpClient;
         this.http = given != null ? given : defaultClient();
         // The proxy must never follow redirects, so the app token is not replayed to another host.
@@ -142,6 +151,28 @@ public final class Acnologia {
         return "Acnologia{baseUrl=" + baseUrl + ", token=[redacted]}";
     }
 
+    // Me
+
+    /**
+     * Tells this token about its own access: the app, its limits and use,
+     * the services it may call and, for a share's token, the share. A share
+     * token whose share stopped still gets an answer, with the share's status.
+     *
+     * @return the token's access
+     */
+    public Me me() {
+        return Me.fromJson(call("GET", "/api/v1/me", null));
+    }
+
+    /**
+     * Async form of {@link #me()}.
+     *
+     * @return the token's access
+     */
+    public CompletableFuture<Me> meAsync() {
+        return callAsync("GET", "/api/v1/me", null).thenApply(Me::fromJson);
+    }
+
     // Services
 
     /**
@@ -162,12 +193,323 @@ public final class Acnologia {
         return callAsync("GET", "/api/v1/services", null).thenApply(Acnologia::parseServices);
     }
 
+    /**
+     * Fetches a service's usage guide: endpoints, parameters, limits and
+     * errors, as Markdown and as structured JSON.
+     *
+     * @param service the service slug
+     * @return the guide
+     * @throws ForbiddenException {@code service_not_allowed} when the token may not use the service
+     */
+    public Guide guide(String service) {
+        return Guide.fromJson(call("GET", guidePath(service), null));
+    }
+
+    /**
+     * Async form of {@link #guide(String)}.
+     *
+     * @param service the service slug
+     * @return the guide
+     */
+    public CompletableFuture<Guide> guideAsync(String service) {
+        return callAsync("GET", guidePath(service), null).thenApply(Guide::fromJson);
+    }
+
+    /**
+     * Fetches a service's usage guide as Markdown only
+     * ({@code Accept: text/markdown}).
+     *
+     * @param service the service slug
+     * @return the Markdown
+     */
+    public String guideMarkdown(String service) {
+        return callText(guidePath(service), "text/markdown", true);
+    }
+
+    /**
+     * Async form of {@link #guideMarkdown(String)}.
+     *
+     * @param service the service slug
+     * @return the Markdown
+     */
+    public CompletableFuture<String> guideMarkdownAsync(String service) {
+        return callTextAsync(guidePath(service), "text/markdown", true);
+    }
+
+    private static String guidePath(String service) {
+        return "/api/v1/services/" + pathEscape(service) + "/guide";
+    }
+
     private static List<Service> parseServices(JsonNode root) {
         List<Service> out = new ArrayList<>();
         for (JsonNode n : root.path("services")) {
             out.add(Service.fromJson(n));
         }
         return Collections.unmodifiableList(out);
+    }
+
+    // Capabilities
+
+    /**
+     * Lists the capabilities this app may call: one call each, served by
+     * whichever provider can. Empty for a share's token.
+     *
+     * @return the capabilities
+     */
+    public List<Capability> capabilities() {
+        return parseCapabilities(call("GET", "/api/v1/capabilities", null));
+    }
+
+    /**
+     * Async form of {@link #capabilities()}.
+     *
+     * @return the capabilities
+     */
+    public CompletableFuture<List<Capability>> capabilitiesAsync() {
+        return callAsync("GET", "/api/v1/capabilities", null).thenApply(Acnologia::parseCapabilities);
+    }
+
+    private static List<Capability> parseCapabilities(JsonNode root) {
+        List<Capability> out = new ArrayList<>();
+        for (JsonNode n : root.path("capabilities")) {
+            out.add(Capability.fromJson(n));
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    /**
+     * Calls a capability with the default options.
+     *
+     * @param slug   the capability slug
+     * @param params the params, any value Jackson can write; null sends {@code {}}
+     * @return the answer; a non-2xx status is not an exception
+     * @see #capability(String, Object, CapabilityOptions)
+     */
+    public ProxyResponse<byte[]> capability(String slug, Object params) {
+        return capability(slug, params, CapabilityOptions.DEFAULT);
+    }
+
+    /**
+     * Calls a capability: {@code POST /proxy/{slug}} with {@code params} as
+     * the JSON body. Like the proxy, the answer comes back as it is (use
+     * {@link ApiException#fromResponse(HttpResponse)} on an Acnologia error),
+     * and {@link ProxyResponse#tried()} lists the routes tried.
+     *
+     * @param slug    the capability slug
+     * @param params  the params, any value Jackson can write; null sends {@code {}}
+     * @param options pin a service, ask for the raw answer, idempotency and cache
+     * @return the answer
+     */
+    public ProxyResponse<byte[]> capability(String slug, Object params, CapabilityOptions options) {
+        HttpRequest req = capabilityRequest(slug, params, options);
+        try {
+            return ProxyResponse.of(proxyHttp.send(req, HttpResponse.BodyHandlers.ofByteArray()));
+        } catch (IOException e) {
+            throw new AcnologiaException("acnologia: capability " + slug + ": " + e, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AcnologiaException("acnologia: interrupted", e);
+        }
+    }
+
+    /**
+     * Async form of {@link #capability(String, Object, CapabilityOptions)}.
+     *
+     * @param slug    the capability slug
+     * @param params  the params; null sends {@code {}}
+     * @param options the options
+     * @return the answer
+     */
+    public CompletableFuture<ProxyResponse<byte[]>> capabilityAsync(String slug, Object params,
+                                                                    CapabilityOptions options) {
+        HttpRequest req;
+        try {
+            req = capabilityRequest(slug, params, options);
+        } catch (RuntimeException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        return proxyHttp.sendAsync(req, HttpResponse.BodyHandlers.ofByteArray()).thenApply(ProxyResponse::of);
+    }
+
+    private HttpRequest capabilityRequest(String slug, Object params, CapabilityOptions o) {
+        CapabilityOptions opts = o == null ? CapabilityOptions.DEFAULT : o;
+        Map<String, Object> query = new LinkedHashMap<>();
+        if (opts.service() != null && !opts.service().isEmpty()) {
+            query.put("_service", opts.service());
+        }
+        if (opts.raw()) {
+            query.put("_raw", "1");
+        }
+        String q = encodeQuery(query);
+        String url = baseUrl + "/proxy/" + pathEscape(slug) + (q.isEmpty() ? "" : "?" + q);
+        byte[] body;
+        try {
+            body = params == null ? "{}".getBytes(StandardCharsets.UTF_8) : JSON.writeValueAsBytes(params);
+        } catch (IOException e) {
+            throw new AcnologiaException("acnologia: encode JSON: " + e.getMessage(), e);
+        }
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .setHeader("Content-Type", "application/json");
+        if (opts.idempotencyKey() != null && !opts.idempotencyKey().isEmpty()) {
+            b.setHeader("Idempotency-Key", opts.idempotencyKey());
+        }
+        if (opts.noCache()) {
+            b.setHeader("Cache-Control", "no-cache");
+        }
+        setHeaders(b);
+        return b.build();
+    }
+
+    // Forward proxy
+
+    /**
+     * Describes the forward proxy: its address, the CA to trust, the hosts
+     * this token may reach and the environment an app needs. Nothing in the
+     * answer holds the token.
+     *
+     * @return the setup
+     */
+    public ForwardProxy forwardProxy() {
+        return ForwardProxy.fromJson(call("GET", "/api/v1/proxy", null));
+    }
+
+    /**
+     * Async form of {@link #forwardProxy()}.
+     *
+     * @return the setup
+     */
+    public CompletableFuture<ForwardProxy> forwardProxyAsync() {
+        return callAsync("GET", "/api/v1/proxy", null).thenApply(ForwardProxy::fromJson);
+    }
+
+    /**
+     * Downloads the forward proxy's CA certificate. The route is public, so
+     * no token is sent.
+     *
+     * @return the PEM text
+     */
+    public String forwardProxyCa() {
+        return callText(CA_PATH, "application/x-pem-file", false);
+    }
+
+    /**
+     * Async form of {@link #forwardProxyCa()}.
+     *
+     * @return the PEM text
+     */
+    public CompletableFuture<String> forwardProxyCaAsync() {
+        return callTextAsync(CA_PATH, "application/x-pem-file", false);
+    }
+
+    /**
+     * Saves the forward proxy's CA certificate to {@code acnologia-ca.pem}.
+     *
+     * @return the path written
+     * @see #saveForwardProxyCa(Path)
+     */
+    public Path saveForwardProxyCa() {
+        return saveForwardProxyCa(Path.of(DEFAULT_CA_PATH));
+    }
+
+    /**
+     * Downloads the forward proxy's CA certificate and writes it to
+     * {@code path}.
+     *
+     * @param path where to write the PEM
+     * @return {@code path}
+     */
+    public Path saveForwardProxyCa(Path path) {
+        try {
+            Files.writeString(path, forwardProxyCa(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new AcnologiaException("acnologia: write " + path + ": " + e.getMessage(), e);
+        }
+        return path;
+    }
+
+    /**
+     * Returns the forward proxy URL with user {@code app} and this client's
+     * token as the password, such as {@code http://app:acn_...@host:8888}.
+     * The result contains the token: keep it out of logs.
+     *
+     * @return the proxy URL with the token
+     */
+    public String forwardProxyUrl() {
+        return proxyUrlWithToken(forwardProxy());
+    }
+
+    /**
+     * Async form of {@link #forwardProxyUrl()}. The result contains the token.
+     *
+     * @return the proxy URL with the token
+     */
+    public CompletableFuture<String> forwardProxyUrlAsync() {
+        return forwardProxyAsync().thenApply(this::proxyUrlWithToken);
+    }
+
+    /**
+     * {@link #forwardProxyEnv(String)} with the CA at {@code acnologia-ca.pem}.
+     * The result contains the token.
+     *
+     * @return the environment
+     */
+    public Map<String, String> forwardProxyEnv() {
+        return forwardProxyEnv(DEFAULT_CA_PATH);
+    }
+
+    /**
+     * Returns the environment that sends an app's HTTP calls through the
+     * forward proxy: {@code HTTPS_PROXY} and {@code HTTP_PROXY} (the
+     * {@link #forwardProxyUrl()}), {@code NODE_USE_ENV_PROXY=1}, and
+     * {@code NODE_EXTRA_CA_CERTS}, {@code REQUESTS_CA_BUNDLE} and
+     * {@code SSL_CERT_FILE} set to {@code caPath}. The proxy URLs contain the
+     * token: keep the map out of logs.
+     *
+     * @param caPath where the CA certificate is (see {@link #saveForwardProxyCa(Path)})
+     * @return the environment, in a fixed order
+     */
+    public Map<String, String> forwardProxyEnv(String caPath) {
+        return proxyEnv(forwardProxy(), caPath);
+    }
+
+    /**
+     * Async form of {@link #forwardProxyEnv(String)}. The result contains the token.
+     *
+     * @param caPath where the CA certificate is
+     * @return the environment
+     */
+    public CompletableFuture<Map<String, String>> forwardProxyEnvAsync(String caPath) {
+        return forwardProxyAsync().thenApply(fp -> proxyEnv(fp, caPath));
+    }
+
+    private static final String CA_PATH = "/api/v1/proxy/ca.pem";
+    private static final String DEFAULT_CA_PATH = "acnologia-ca.pem";
+
+    private Map<String, String> proxyEnv(ForwardProxy fp, String caPath) {
+        String url = proxyUrlWithToken(fp);
+        String ca = caPath == null || caPath.isEmpty() ? DEFAULT_CA_PATH : caPath;
+        Map<String, String> env = new LinkedHashMap<>();
+        env.put("HTTPS_PROXY", url);
+        env.put("HTTP_PROXY", url);
+        env.put("NODE_USE_ENV_PROXY", "1");
+        env.put("NODE_EXTRA_CA_CERTS", ca);
+        env.put("REQUESTS_CA_BUNDLE", ca);
+        env.put("SSL_CERT_FILE", ca);
+        return Collections.unmodifiableMap(env);
+    }
+
+    private String proxyUrlWithToken(ForwardProxy fp) {
+        String u = fp.proxyUrl();
+        int scheme = u.indexOf("://");
+        String prefix = scheme < 0 ? "http://" : u.substring(0, scheme + 3);
+        String rest = scheme < 0 ? u : u.substring(scheme + 3);
+        int slash = rest.indexOf('/');
+        int at = rest.lastIndexOf('@', slash < 0 ? rest.length() - 1 : slash);
+        if (at >= 0) {
+            rest = rest.substring(at + 1);
+        }
+        return prefix + "app:" + pathEscape(token) + "@" + rest;
     }
 
     // Leases
@@ -447,7 +789,7 @@ public final class Acnologia {
      * Acnologia injects a key, retries with the next key on rate limits, and
      * never returns the secret.
      *
-     * @param service the service (or service group) slug
+     * @param service the service, service group or capability slug
      * @return the proxy helper
      */
     public Proxy proxy(String service) {
@@ -460,17 +802,32 @@ public final class Acnologia {
 
     void setHeaders(HttpRequest.Builder b) {
         b.setHeader("Authorization", "Bearer " + token);
+        setCommonHeaders(b);
+    }
+
+    private void setCommonHeaders(HttpRequest.Builder b) {
         if (!userAgent.isEmpty()) {
             b.setHeader("User-Agent", userAgent);
+        }
+        if (!accessPassword.isEmpty()) {
+            b.setHeader("X-Acnologia-Access", accessPassword);
         }
     }
 
     // Transport
 
     private HttpRequest buildRequest(String method, String path, JsonNode body) {
+        return buildRequest(method, path, body, "application/json", true);
+    }
+
+    private HttpRequest buildRequest(String method, String path, JsonNode body, String accept, boolean auth) {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(baseUrl + path));
-        setHeaders(b);
-        b.setHeader("Accept", "application/json");
+        if (auth) {
+            setHeaders(b);
+        } else {
+            setCommonHeaders(b);
+        }
+        b.setHeader("Accept", accept);
         if (timeout != null && !timeout.isZero() && !timeout.isNegative()) {
             b.timeout(timeout);
         }
@@ -521,11 +878,53 @@ public final class Acnologia {
                 });
     }
 
+    private String callText(String path, String accept, boolean auth) {
+        HttpRequest req = buildRequest("GET", path, null, accept, auth);
+        HttpResponse<byte[]> res;
+        try {
+            res = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException e) {
+            throw new AcnologiaException("acnologia: GET " + path + ": " + e, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AcnologiaException("acnologia: interrupted", e);
+        }
+        return handleText(res);
+    }
+
+    private CompletableFuture<String> callTextAsync(String path, String accept, boolean auth) {
+        HttpRequest req;
+        try {
+            req = buildRequest("GET", path, null, accept, auth);
+        } catch (RuntimeException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        return http.sendAsync(req, HttpResponse.BodyHandlers.ofByteArray())
+                .handle((res, err) -> {
+                    if (err != null) {
+                        Throwable t = unwrap(err);
+                        if (t instanceof AcnologiaException) {
+                            throw (AcnologiaException) t;
+                        }
+                        throw new AcnologiaException("acnologia: GET " + path + ": " + t, t);
+                    }
+                    return handleText(res);
+                });
+    }
+
+    private static String handleText(HttpResponse<byte[]> res) {
+        int status = res.statusCode();
+        if (status < 200 || status > 299) {
+            throw ApiException.fromResponse(status, res.body(), res.headers());
+        }
+        return res.body() == null ? "" : new String(res.body(), StandardCharsets.UTF_8);
+    }
+
     private static JsonNode handle(HttpResponse<byte[]> res) {
         int status = res.statusCode();
         byte[] data = res.body();
         if (status < 200 || status > 299) {
-            throw ApiException.fromResponse(status, data);
+            throw ApiException.fromResponse(status, data, res.headers());
         }
         if (data == null || data.length == 0) {
             return JSON.createObjectNode();
@@ -646,6 +1045,7 @@ public final class Acnologia {
         private HttpClient httpClient;
         private String userAgent;
         private Duration timeout;
+        private String accessPassword;
         private Map<String, String> env = System.getenv();
 
         private Builder() {
@@ -701,6 +1101,19 @@ public final class Acnologia {
          */
         public Builder timeout(Duration timeout) {
             this.timeout = timeout;
+            return this;
+        }
+
+        /**
+         * Sends {@code X-Acnologia-Access} on every request, for a server
+         * behind the access password. Defaults to
+         * {@code ACNOLOGIA_ACCESS_PASSWORD}.
+         *
+         * @param accessPassword the server's access password
+         * @return this builder
+         */
+        public Builder accessPassword(String accessPassword) {
+            this.accessPassword = accessPassword;
             return this;
         }
 

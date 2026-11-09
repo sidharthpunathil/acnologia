@@ -20,6 +20,148 @@ export interface Service {
   available: boolean;
   baseUrl: string;
   auth: AuthSpec;
+  /** Where the service's usage guide is (see `guide`). */
+  guideUrl: string;
+}
+
+/** The limit an app reached and when it resets (RFC 3339). */
+export interface LimitHit {
+  /** `daily_requests`, `monthly_requests`, `daily_budget` or `monthly_budget`. */
+  limit: string;
+  resetAt: string;
+}
+
+/** The token's own access, from `GET /api/v1/me`. */
+export interface Me {
+  app: { id: number; name: string };
+  /** Each null when the app has no such limit. */
+  limits: {
+    dailyRequests: number | null;
+    monthlyRequests: number | null;
+    dailyBudget: number | null;
+    monthlyBudget: number | null;
+  };
+  usage: {
+    todayRequests: number;
+    todayCost: number;
+    monthRequests: number;
+    monthCost: number;
+    lastUsedAt: string | null;
+    limitHit: LimitHit | null;
+  };
+  limitHit: LimitHit | null;
+  services: MeService[];
+  /** Null for an ordinary app. */
+  share: MeShare | null;
+}
+
+export interface MeService {
+  slug: string;
+  name: string;
+  provider: string;
+  category: string;
+  /** Keys free right now for a share's token; 1 or 0 for an ordinary app. */
+  available: number;
+  /** The logo as a `data:` URI, or null. */
+  logoUrl: string | null;
+}
+
+export interface MeShare {
+  id: string;
+  name: string;
+  ownerName: string;
+  recipient: string;
+  label: string;
+  /** `active`, `paused`, `expired` or `revoked`. */
+  status: string;
+  mode: string;
+  endsAt: string | null;
+}
+
+/** A service's usage guide. */
+export interface Guide {
+  markdown: string;
+  /** True when nobody wrote the guide and it was built from the provider spec. */
+  generated: boolean;
+  /** The structured guide, as plain JSON. */
+  guide: unknown;
+}
+
+/** One call served by whichever provider can. */
+export interface Capability {
+  slug: string;
+  name: string;
+  description: string;
+  strategy: string;
+  /** The params, as plain JSON. */
+  params: unknown;
+  routes: Array<{ service: string; mapped: boolean }>;
+  url: string;
+}
+
+export interface CapabilityOptions {
+  /** Use only that provider's route (`?_service=`). */
+  service?: string;
+  /** Return the provider's own body, unmapped (`?_raw=1`). */
+  raw?: boolean;
+  /** Sent as `Idempotency-Key`. */
+  idempotencyKey?: string;
+  /** Send `Cache-Control: no-cache`. */
+  noCache?: boolean;
+  /** Bound the call. */
+  signal?: AbortSignal;
+}
+
+export interface ForwardHost {
+  host: string;
+  service: string;
+  name: string;
+  /** Base path under the host, when the service has one. */
+  path?: string;
+}
+
+/**
+ * How to use the forward proxy, from `GET /api/v1/proxy`. It never holds the token:
+ * `proxyUrlWithToken` and `env` carry an `<app token>` placeholder.
+ */
+export interface ForwardProxy {
+  proxyUrl: string;
+  proxyUrlWithToken: string;
+  caUrl: string;
+  caFingerprint: string;
+  passthrough: boolean;
+  hosts: ForwardHost[];
+  env: Record<string, string>;
+  serviceHeader: string;
+}
+
+/** Per call options for proxy requests, on top of `RequestInit`. */
+export interface ProxyOptions {
+  query?: QueryInit;
+  /** Sent as `Idempotency-Key`, so a retried POST is answered from the first result. */
+  idempotencyKey?: string;
+  /** Send `Cache-Control: no-cache`, so the server skips its response cache. */
+  noCache?: boolean;
+}
+
+export type ProxyRequestInit = RequestInit & ProxyOptions;
+
+/** What Acnologia says about a proxied answer in its headers. */
+export interface ProxyInfo {
+  /** `X-Acnologia-Key-Id`; null when absent, as for a share's token. */
+  keyId: number | null;
+  /** `X-Acnologia-Attempts`. */
+  attempts: number | null;
+  /** `X-Acnologia-Service`: who answered. */
+  service: string | null;
+  /** `X-Acnologia-Cache`: `hit`, `miss` and so on, when caching applies. */
+  cache: string | null;
+  /** True on `Idempotent-Replayed: true`. */
+  replayed: boolean;
+  /** `X-Acnologia-Capability`. */
+  capability: string | null;
+  /** `X-Acnologia-Tried`, parsed: every route a capability call tried. */
+  tried: Array<{ service: string; status: number }>;
 }
 
 export interface LeaseOptions {
@@ -75,6 +217,8 @@ export interface AcnologiaOptions {
    * `signal` to bound those.
    */
   timeoutMs?: number;
+  /** Sent as `X-Acnologia-Access` on every request, for a deploy behind the access password. */
+  accessPassword?: string;
 }
 
 /** Raw lease JSON as returned by the server. */

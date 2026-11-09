@@ -5,6 +5,11 @@
 --   { code = "no_key_available", status = 503, message = "...",
 --     retry_after = 5, limit = nil, reset_at = nil, busy = false, body = {...} }
 --
+-- Kinds with their own flags: busy (all_keys_busy), no_key
+-- (no_key_available or all_keys_busy), app_limit (app_limit_reached, with
+-- limit and reset_at) and share_unavailable (share_revoked, share_paused,
+-- share_expired, with share_status "revoked", "paused" or "expired").
+--
 -- code is the server's error code (such as "lease_not_found"), or
 -- "transport", "timeout", "bad_response" or "http_<status>" when the server
 -- sent none. tostring(err) gives a one line summary. No error ever carries
@@ -85,6 +90,12 @@ function errors.new(fields)
     response = fields.response,
   }
   e.busy = e.code == "all_keys_busy"
+  e.app_limit = e.code == "app_limit_reached"
+  -- share_status is "revoked", "paused" or "expired" for a share's token
+  -- whose share stopped (codes share_revoked, share_paused, share_expired).
+  local share = string.match(e.code, "^share_(%a+)$")
+  if share == "revoked" or share == "paused" or share == "expired" then e.share_status = share end
+  e.share_unavailable = e.share_status ~= nil
   -- no_key is true for both 503 codes that mean "no key right now".
   e.no_key = e.code == "no_key_available" or e.code == "all_keys_busy"
   return setmetatable(e, Error)
@@ -122,6 +133,10 @@ function errors.from_response(status, headers, body, secrets)
     elseif type(err) == "string" and err ~= "" then
       message = err
     end
+  end
+  if not code and status == 403 and headers then
+    local share = headers["x-acnologia-share"]
+    if share == "revoked" or share == "paused" or share == "expired" then code = "share_" .. share end
   end
   if not code then
     code = status == 503 and "no_key_available" or ("http_" .. tostring(status))

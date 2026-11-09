@@ -132,4 +132,70 @@ std::string HttpResponse::header(const std::string& name) const {
     return {};
 }
 
+namespace {
+
+std::string trim(const std::string& s) {
+    std::size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(b, e - b);
+}
+
+// A whole decimal number, or nullopt.
+std::optional<std::int64_t> parse_int(const std::string& s) {
+    std::string t = trim(s);
+    if (t.empty() || t.size() > 18) return std::nullopt;
+    std::size_t i = t[0] == '-' ? 1 : 0;
+    if (i == t.size()) return std::nullopt;
+    std::int64_t n = 0;
+    for (; i < t.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(t[i]))) return std::nullopt;
+        n = n * 10 + (t[i] - '0');
+    }
+    return t[0] == '-' ? -n : n;
+}
+
+}  // namespace
+
+std::optional<std::int64_t> HttpResponse::key_id() const { return parse_int(header("X-Acnologia-Key-Id")); }
+
+int HttpResponse::attempts() const { return static_cast<int>(parse_int(header("X-Acnologia-Attempts")).value_or(0)); }
+
+std::vector<Tried> parse_tried(const std::string& value) {
+    std::vector<Tried> out;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        std::size_t comma = value.find(',', start);
+        if (comma == std::string::npos) comma = value.size();
+        std::string part = trim(value.substr(start, comma - start));
+        if (!part.empty()) {
+            Tried t;
+            std::size_t eq = part.rfind('=');
+            if (eq == std::string::npos) {
+                t.service = part;
+            } else {
+                t.service = trim(part.substr(0, eq));
+                t.status = static_cast<int>(parse_int(part.substr(eq + 1)).value_or(0));
+            }
+            out.push_back(std::move(t));
+        }
+        start = comma + 1;
+    }
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& os, const ForwardProxy& fp) {
+    // Every field is safe to print: the server never puts the token in it.
+    os << "acnologia::ForwardProxy{proxy_url=" << fp.proxy_url << ", ca_url=" << fp.ca_url
+       << ", ca_fingerprint=" << fp.ca_fingerprint << ", passthrough=" << (fp.passthrough ? "true" : "false")
+       << ", hosts=" << fp.hosts.size() << "}";
+    return os;
+}
+
+std::string to_string(const ForwardProxy& fp) {
+    std::ostringstream os;
+    os << fp;
+    return os.str();
+}
+
 }  // namespace acnologia

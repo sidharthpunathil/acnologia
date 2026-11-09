@@ -8,6 +8,10 @@
 //!   rotates keys for you.
 //! - **Proxy mode**: send requests through [`Client::proxy`]. Acnologia injects
 //!   a key and rotates on rate limits without ever exposing the secret.
+//!   [`Client::capability`] calls one job that several providers can do.
+//! - **Forward proxy**: [`Client::forward_proxy_env`] gives the environment
+//!   that makes any HTTP client send provider calls through Acnologia, and
+//!   [`Client::forward_proxy_client`] a reqwest client set up for it.
 //!
 //! The client is async (reqwest with rustls, on Tokio). Enable the `blocking`
 //! feature for a synchronous client in [`blocking`].
@@ -45,18 +49,25 @@ mod core;
 mod error;
 mod lease_info;
 mod proxy;
+mod response;
 mod types;
 
 #[cfg(feature = "blocking")]
 #[cfg_attr(docsrs, doc(cfg(feature = "blocking")))]
 pub mod blocking;
 
-pub use client::{check_status, Client, ClientBuilder, Lease, DEFAULT_TIMEOUT, ENV_TOKEN, ENV_URL};
+pub use client::{
+    check_status, Client, ClientBuilder, Lease, DEFAULT_CA_PATH, DEFAULT_TIMEOUT,
+    ENV_ACCESS_PASSWORD, ENV_TOKEN, ENV_URL,
+};
 pub use error::{BoxError, Error};
 pub use lease_info::LeaseInfo;
 pub use proxy::Proxy;
+pub use response::ProxyResponseExt;
 pub use types::{
-    Auth, AuthType, Credential, LeaseOptions, Outcome, Report, Service, WithKeyOptions, MAX_WAIT,
+    Auth, AuthType, Capability, CapabilityOptions, CapabilityRoute, Credential, ForwardProxy,
+    ForwardProxyHost, Guide, LeaseOptions, LimitHit, Me, MeApp, MeLimits, MeService, MeShare,
+    MeUsage, Outcome, Report, Service, Tried, WithKeyOptions, MAX_WAIT,
 };
 
 /// The SDK version.

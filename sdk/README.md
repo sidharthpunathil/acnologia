@@ -1,6 +1,6 @@
 # SDKs
 
-Client libraries for seventeen languages. Each one calls Acnologia with an app token (`acn_...`), so your code gets a working key, or a proxied response, without holding the key pool itself. They all speak the same consumer API (`/api/v1/...` and `/proxy/...`) and share one shape, so moving between them is mostly a matter of naming.
+Client libraries for seventeen languages. Each one calls Acnologia with an app token (`acn_...`), so your code gets a working key, or a proxied response, without holding the key pool itself. They all speak the same consumer API (`/api/v1/...` and `/proxy/...`) and, at version 0.2.0, share one surface, written down in [SPEC.md](SPEC.md), so moving between them is mostly a matter of naming.
 
 None is on a package registry yet. The package column is the name each one will publish under, and the install column says how to get it today.
 
@@ -26,17 +26,34 @@ None is on a package registry yet. The package column is the name each one will 
 
 ## What every SDK does
 
-**A client from a URL and a token.** Every SDK takes the server's base URL and an app token in its constructor. All except Go, PHP and TypeScript also fall back to the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables; in those three, read the variables yourself and pass them in.
+Every SDK follows the contract in [SPEC.md](SPEC.md). Names follow each language's idiom (`forwardProxy` in TypeScript, `forward_proxy` in Python and Ruby, `ForwardProxy` in Go and C#); each README has the exact ones.
 
-**Proxy mode.** A request goes to `/proxy/{service}/{path}`. Acnologia attaches a key, rotates on rate limits and hands back the provider's raw response, so the secret never reaches your process.
+**A client from a URL and a token.** Every SDK takes the server's base URL and an app token in its constructor. All except Go, PHP and TypeScript also fall back to the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables; in those three, read the variables yourself and pass them in. An `accessPassword` option (`access_password`, `AccessPassword` and so on) sends `X-Acnologia-Access` on every request, for a deploy behind the access password; where the SDK reads the environment it falls back to `ACNOLOGIA_ACCESS_PASSWORD`.
+
+**Proxy mode.** A request goes to `/proxy/{service}/{path}`. Acnologia attaches a key, rotates on rate limits and hands back the provider's raw response, so the secret never reaches your process. `{service}` may also be a service group or a capability slug. Per call options `idempotencyKey` (sent as `Idempotency-Key`) and `noCache` (`Cache-Control: no-cache`) are in every SDK.
+
+**Response metadata.** Every SDK reads Acnologia's answer headers into `keyId`, `attempts`, `service`, `cache`, `replayed`, `capability` and `tried` (the routes a capability or group call tried, as `{service, status}`). Some put them on the response itself; others use a helper: `ProxyInfo(resp)` in Go, `proxy_info(resp)` in Python, `proxyInfo(res)` in TypeScript, `ProxyResponse.of(res)` in Java, `res.acnologia` in Kotlin, `res.GetProxyInfo()` in C# and the `ProxyResponseExt` trait in Rust.
+
+**Discovery.** `me` reads `GET /api/v1/me` (the app, its limits and usage, its services, and the share behind a share's token). `services` lists the services with their `guide_url`. `guide` and `guideMarkdown` return a service's usage guide, structured or as Markdown (in Ruby `guide` returns the Markdown and `guide_doc` the structured guide; in C++ `guide` returns the Markdown and `guide_details` the structured one). `capabilities` lists the capabilities and `capability` calls one with its params.
+
+**The forward proxy.** `forwardProxy` reads `GET /api/v1/proxy`; `forwardProxyCA` fetches the CA (public, no token), with a variant that saves it to a file where there is a file system; `forwardProxyURL` builds the proxy URL with the token in it; `forwardProxyEnv` returns the variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`, ...) to hand to any program. Java and Kotlin spell two of them `forwardProxyUrl` and (Java) `forwardProxyCa`. Some SDKs also build a ready HTTP client that goes through the proxy and trusts the Acnologia CA:
+
+| SDK | Forward proxy client |
+|---|---|
+| Go | `ForwardProxyTransport(ctx)`, an `*http.Transport` |
+| Python | `forward_proxy_client()`, an `httpx.Client` (`httpx.AsyncClient` on `AsyncAcnologia`) |
+| Rust | `forward_proxy_client()`, a `reqwest::Client` |
+| Kotlin | `forwardProxyClient()`, an OkHttp client |
+| C# | `CreateForwardProxyHandlerAsync()`, an `HttpClientHandler` |
+| Ruby | `forward_proxy_http(host)`, a `Net::HTTP` |
+
+`forwardProxyURL`, `forwardProxyEnv` and these clients carry the token, so keep them out of logs.
 
 **Lease mode.** `lease` borrows a key, with optional excluded keys, a TTL, a wait of up to 60 seconds for a free slot, and `exclusive` to keep the key from every other caller. The lease puts the secret where the provider expects it: a query parameter, a header or a bearer token. You then `report` the outcome, optionally with `rotate` to get the next key in the same call, and `renew` a lease that a long job still needs.
 
 **A retry loop.** `withKey` (`with_key` in Python, Ruby, Rust and C++) leases a key, calls your function, reports every lease it takes, and rotates when your function signals a rate limit, used up quota or invalid key.
 
-**Typed errors.** Every SDK has distinct errors for no key available, all keys busy (a kind of no key available) and service unavailable when the provider's circuit breaker is open, each carrying the server's retry after. Anything else is a generic API error with the HTTP status and the error code, such as `lease_not_found`. The C++, C#, Dart, Java, Kotlin, Ruby, Rust and Swift SDKs also have their own unauthenticated (401) and forbidden (403) errors; the others report those as the generic API error. Ruby also has typed errors for `app_limit_reached`, the share errors (`share_revoked`, `share_paused`, `share_expired`), `lease_not_allowed`, `upstream_blocked` and `loop_detected`.
-
-**More in Ruby.** The Ruby SDK also reads `GET /api/v1/me` (`acn.me`), sends an `Idempotency-Key` on proxied POSTs when asked, can retry after the server's `Retry-After`, takes separate open and read timeouts, and sends `X-Acnologia-Access` for a deploy behind the access password when you set one. See its [README](ruby/README.md).
+**Typed errors.** Every SDK has distinct errors for no key available, all keys busy (a kind of no key available) and service unavailable when the provider's circuit breaker is open, each carrying the server's retry after. Every SDK also has app limit reached (429 `app_limit_reached`, with the `limit`, `reset_at` and retry after) and share unavailable (403 `share_revoked`, `share_paused` or `share_expired`, with the status). Each models them the way it models other errors: C has error codes (`ACN_ERR_APP_LIMIT_REACHED`, `ACN_ERR_SHARE_REVOKED` and so on, with `acn_is_share_unavailable`), Elixir has reasons with the helpers `Acnologia.Error.app_limit_reached?/1` and `share_unavailable?/1`, Zig has error values with `isShareUnavailable`, and Lua sets `app_limit` and `share_unavailable` on the error. Anything else is a generic API error with the HTTP status and the error code, such as `lease_not_found`. The C++, C#, Dart, Java, Kotlin, Ruby, Rust and Swift SDKs also have their own unauthenticated (401) and forbidden (403) errors; the others report those as the generic API error. Ruby can also retry after the server's `Retry-After` when you set `max_retries:`.
 
 **Redacted secrets.** String forms, debug output and report messages never print the key or the app token.
 
@@ -88,13 +105,13 @@ acnologia = { git = "https://github.com/sidharthpunathil/acnologia", package = "
 **Java**
 
 ```sh
-cd sdk/java && mvn install   # then depend on dev.acnologia:acnologia:0.1.0
+cd sdk/java && mvn install   # then depend on dev.acnologia:acnologia:0.2.0
 ```
 
 **Kotlin**
 
 ```sh
-cd sdk/kotlin && gradle publishToMavenLocal   # then mavenLocal() and dev.acnologia:acnologia-kotlin:0.1.0
+cd sdk/kotlin && gradle publishToMavenLocal   # then mavenLocal() and dev.acnologia:acnologia-kotlin:0.2.0
 ```
 
 **C#**
@@ -158,7 +175,7 @@ Without a local toolchain, the Java, Kotlin, C#, Dart and PHP READMEs show how t
 
 ### Windows
 
-The SDKs read no files and keep no config of their own: the base URL and the token come from the constructor or the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables, so they behave the same on Windows. CI runs the Go, Python, Ruby and TypeScript suites on `windows-latest` as well as Linux and macOS. Set the variables for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only). The Python venv lives in `.venv\Scripts` on Windows, so the Python line becomes:
+The SDKs keep no config of their own (the only file one writes is the forward proxy CA, when you ask it to): the base URL and the token come from the constructor or the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables, so they behave the same on Windows. CI runs the Go, Python, Ruby and TypeScript suites on `windows-latest` as well as Linux and macOS. Set the variables for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only). The Python venv lives in `.venv\Scripts` on Windows, so the Python line becomes:
 
 ```powershell
 cd sdk\python

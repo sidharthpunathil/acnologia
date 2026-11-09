@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -135,6 +136,10 @@ public:
     HttpResponse request(const std::string& method, const std::string& path,
                          const std::string& body = {}, const Headers& headers = {},
                          const Query& query = {}) const;
+    /// Same, with per call options: an Idempotency-Key and Cache-Control:
+    /// no-cache.
+    HttpResponse request(const std::string& method, const std::string& path, const std::string& body,
+                         const Headers& headers, const Query& query, const RequestOptions& options) const;
     HttpResponse get(const std::string& path, const Query& query = {},
                      const Headers& headers = {}) const;
     /// POST with a Content-Type (application/json by default).
@@ -224,6 +229,48 @@ public:
     /// service. Throws Forbidden (service_not_allowed) for a service the
     /// token may not use.
     std::string guide(const std::string& service) const;
+
+    /// Same as guide(service): the usage guide as Markdown (Accept:
+    /// text/markdown).
+    std::string guide_markdown(const std::string& service) const;
+
+    /// GET /api/v1/services/{service}/guide as JSON: the Markdown, whether it
+    /// was generated, and the structured guide as raw JSON. (guide() keeps
+    /// returning the Markdown, as it did before 0.2.0.)
+    Guide guide_details(const std::string& service) const;
+
+    /// GET /api/v1/capabilities: the capabilities this token may call. Empty
+    /// for a share's token.
+    std::vector<Capability> capabilities() const;
+
+    /// POST /proxy/{slug} with params_json (a JSON object, "" means {}) as the
+    /// body. options.service adds ?_service=, options.raw adds ?_raw=1. The
+    /// answer comes back like a Proxy call's, with capability(), service()
+    /// and tried() set.
+    HttpResponse capability(const std::string& slug, const std::string& params_json = "{}",
+                            const CapabilityOptions& options = {}) const;
+
+    /// GET /api/v1/proxy: how to use Acnologia as an HTTP(S) proxy.
+    ForwardProxy forward_proxy() const;
+
+    /// GET /api/v1/proxy/ca.pem: the forward proxy's CA certificate (PEM).
+    /// Public: sent without the token.
+    std::string forward_proxy_ca() const;
+
+    /// Fetches the CA and writes it to path. Throws Error when the file
+    /// cannot be written.
+    void save_forward_proxy_ca(const std::string& path = "acnologia-ca.pem") const;
+
+    /// The proxy URL with user "app" and this client's token as the password,
+    /// percent escaped: http://app:acn_...@host:8888. It holds the token: do
+    /// not log it.
+    std::string forward_proxy_url() const;
+
+    /// The environment that sends an app through the forward proxy:
+    /// HTTPS_PROXY and HTTP_PROXY (forward_proxy_url()), NODE_USE_ENV_PROXY=1,
+    /// and NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to
+    /// ca_path. The proxy values hold the token: do not log them.
+    std::map<std::string, std::string> forward_proxy_env(const std::string& ca_path = "acnologia-ca.pem") const;
 
     /// POST /api/v1/lease. Throws NoKeyAvailable when the pool is empty or
     /// every key is cooling down, and AllKeysBusy (a subclass) when every

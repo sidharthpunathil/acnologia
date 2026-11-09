@@ -28,12 +28,21 @@ public sealed class AcnologiaClientOptions
     public TimeSpan Timeout { get; set; } = AcnologiaClient.DefaultTimeout;
 
     /// <summary>
-    /// Reads <c>ACNOLOGIA_URL</c> and <c>ACNOLOGIA_TOKEN</c>. Values that are not set stay null.
+    /// The deploy's access password, for a server behind one. Sent as <c>X-Acnologia-Access</c>
+    /// on every request when set.
+    /// </summary>
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    public string? AccessPassword { get; set; }
+
+    /// <summary>
+    /// Reads <c>ACNOLOGIA_URL</c>, <c>ACNOLOGIA_TOKEN</c> and <c>ACNOLOGIA_ACCESS_PASSWORD</c>.
+    /// Values that are not set stay null.
     /// </summary>
     public static AcnologiaClientOptions FromEnvironment() => new()
     {
         BaseUrl = Environment.GetEnvironmentVariable(AcnologiaClient.UrlVariable),
         Token = Environment.GetEnvironmentVariable(AcnologiaClient.TokenVariable),
+        AccessPassword = Environment.GetEnvironmentVariable(AcnologiaClient.AccessPasswordVariable),
     };
 
     /// <summary>A description with the token redacted.</summary>
@@ -43,14 +52,14 @@ public sealed class AcnologiaClientOptions
 /// <summary>
 /// Client for an Acnologia key pool, authenticated with an app token. Two ways to use pooled keys:
 /// lease mode (<see cref="LeaseAsync"/>, <see cref="WithKeyAsync{T}"/>) hands you a key and you
-/// report how it went; proxy mode (<see cref="Proxy"/>, <see cref="AcnologiaProxyHandler"/>) sends
+/// report how it went; proxy mode (<see cref="Proxy(string)"/>, <see cref="AcnologiaProxyHandler"/>) sends
 /// requests through Acnologia, which injects a key and never exposes it. Thread safe.
 /// </summary>
 [DebuggerDisplay("{ToString(),nq}")]
 public sealed partial class AcnologiaClient : IDisposable
 {
     /// <summary>The SDK version.</summary>
-    public const string Version = "0.1.0";
+    public const string Version = "0.2.0";
 
     /// <summary>The default User-Agent, <c>acnologia-csharp/{Version}</c>.</summary>
     public const string DefaultUserAgent = "acnologia-csharp/" + Version;
@@ -60,6 +69,12 @@ public sealed partial class AcnologiaClient : IDisposable
 
     /// <summary>Environment variable read for the app token.</summary>
     public const string TokenVariable = "ACNOLOGIA_TOKEN";
+
+    /// <summary>Environment variable read for the access password.</summary>
+    public const string AccessPasswordVariable = "ACNOLOGIA_ACCESS_PASSWORD";
+
+    /// <summary>The header that carries the access password.</summary>
+    public const string AccessHeader = "X-Acnologia-Access";
 
     /// <summary>Default bound on API calls, longer than <see cref="MaxWait"/>.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(75);
@@ -98,7 +113,7 @@ public sealed partial class AcnologiaClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(options);
-        Endpoint = new Endpoint(options.BaseUrl, options.Token, options.UserAgent);
+        Endpoint = new Endpoint(options);
         _http = httpClient;
         _ownsHttp = ownsHttp;
         _timeout = options.Timeout;
@@ -134,7 +149,7 @@ public sealed partial class AcnologiaClient : IDisposable
             Timeout = System.Threading.Timeout.InfiniteTimeSpan,
         };
 
-    /// <summary>Lists the services this app token may use.</summary>
+    /// <summary>Lists the services this app token may use, each with its <see cref="Service.GuideUrl"/>.</summary>
     public async Task<IReadOnlyList<Service>> ServicesAsync(CancellationToken cancellationToken = default)
     {
         var res = await SendJsonAsync<ServicesResponse>(HttpMethod.Get, "/api/v1/services", null, cancellationToken).ConfigureAwait(false);
@@ -206,6 +221,12 @@ public sealed partial class AcnologiaClient : IDisposable
     public AcnologiaProxy Proxy(string service) => new(this, service);
 
     /// <summary>
+    /// A proxy helper for <paramref name="service"/> that applies <paramref name="options"/>
+    /// (<see cref="ProxyRequestOptions.IdempotencyKey"/>, <see cref="ProxyRequestOptions.NoCache"/>) to every request.
+    /// </summary>
+    public AcnologiaProxy Proxy(string service, ProxyRequestOptions? options) => new(this, service, options);
+
+    /// <summary>
     /// Creates an <see cref="HttpClient"/> whose requests go through the Acnologia proxy for
     /// <paramref name="service"/>. Its <see cref="HttpClient.BaseAddress"/> is
     /// <c>{baseUrl}/proxy/{service}/</c>, so relative paths such as <c>search.json?q=x</c> work;
@@ -230,13 +251,29 @@ public sealed partial class AcnologiaClient : IDisposable
     internal async Task<T?> SendJsonAsync<T>(HttpMethod method, string path, object? body, CancellationToken cancellationToken)
         where T : class
     {
+        var text = await SendTextAsync(method, path, body, "application/json", true, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<T>(text, Json);
+        }
+        catch (JsonException e)
+        {
+            throw new AcnologiaException("acnologia: decode response: " + e.Message, e);
+        }
+    }
+
+    /// <summary>Sends an API call bounded by the timeout and returns the body text, throwing on a non-2xx.</summary>
+    internal async Task<string> SendTextAsync(HttpMethod method, string path, object? body, string accept, bool withToken,
+        CancellationToken cancellationToken)
+    {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var bounded = _timeout > TimeSpan.Zero && _timeout != System.Threading.Timeout.InfiniteTimeSpan;
         if (bounded) cts.CancelAfter(_timeout);
 
         using var req = new HttpRequestMessage(method, Endpoint.BaseUrl + path);
-        Endpoint.ApplyHeaders(req);
-        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        Endpoint.ApplyHeaders(req, withToken);
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
         if (body is not null)
         {
             req.Content = new StringContent(JsonSerializer.Serialize(body, Json), Encoding.UTF8, "application/json");
@@ -248,17 +285,10 @@ public sealed partial class AcnologiaClient : IDisposable
             var text = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
-                throw AcnologiaApiException.FromResponse((int)resp.StatusCode, resp.ReasonPhrase, text, resp.Headers.RetryAfter?.Delta);
+                var share = resp.Headers.TryGetValues("X-Acnologia-Share", out var sv) ? sv.FirstOrDefault() : null;
+                throw AcnologiaApiException.FromResponse((int)resp.StatusCode, resp.ReasonPhrase, text, resp.Headers.RetryAfter?.Delta, share);
             }
-            if (string.IsNullOrWhiteSpace(text)) return null;
-            try
-            {
-                return JsonSerializer.Deserialize<T>(text, Json);
-            }
-            catch (JsonException e)
-            {
-                throw new AcnologiaException("acnologia: decode response: " + e.Message, e);
-            }
+            return text;
         }
         catch (OperationCanceledException e) when (bounded && cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {

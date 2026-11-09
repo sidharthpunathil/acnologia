@@ -5,7 +5,7 @@ import type { MCPSettings, MCPSettingsInput, MCPView } from "../lib/types";
 export function inputOf(s: MCPSettings): MCPSettingsInput {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { updated_at, ...rest } = s;
-  return { ...rest, disabled_tools: [...(rest.disabled_tools ?? [])] };
+  return { ...rest, disabled_tools: [...(rest.disabled_tools ?? [])], tool_mode: rest.tool_mode || "auto" };
 }
 
 export function sameInput(a: MCPSettingsInput, b: MCPSettingsInput): boolean {

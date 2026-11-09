@@ -340,6 +340,7 @@ static void test_me(void) {
         if (me->service_count == 1) {
             CHECK_STR(me->services[0].slug, "agi-labs");
             CHECK(me->services[0].available == 1);
+            CHECK(me->services[0].logo_url == NULL);
         }
         CHECK(me->share != NULL);
         if (me->share) {
@@ -388,7 +389,8 @@ static void test_services(void) {
     acn_error err;
     canned ok = {200,
                  "{\"services\":[{\"slug\":\"agi-labs\",\"name\":\"AGI Labs\",\"provider\":\"generic\",\"category\":\"LLM\","
-                 "\"available\":true,\"base_url\":\"https://api.agi-labs.test\",\"auth\":{\"type\":\"bearer\",\"name\":\"\",\"prefix\":\"Key \"}}]}",
+                 "\"available\":true,\"base_url\":\"https://api.agi-labs.test\",\"auth\":{\"type\":\"bearer\",\"name\":\"\",\"prefix\":\"Key \"},"
+                 "\"guide_url\":\"http://acn.test/api/v1/services/agi-labs/guide\"}]}",
                  NULL, NULL, NULL, NULL};
     fake_set_handler(srv, canned_handler, &ok);
     acn_service_list *list = NULL;
@@ -399,6 +401,7 @@ static void test_services(void) {
         CHECK(list->items[0].available == 1);
         CHECK_STR(list->items[0].auth.type, "bearer");
         CHECK_STR(list->items[0].auth.prefix, "Key ");
+        CHECK_STR(list->items[0].guide_url, "http://acn.test/api/v1/services/agi-labs/guide");
     }
     acn_service_list_free(list);
     acn_client_free(c);
@@ -665,8 +668,11 @@ static void test_proxy(void) {
     CHECK_STR(fake_header(q, "X-Trace"), "abc");
     CHECK_STR(fake_header(q, "Authorization"), "Bearer " TOKEN);
     CHECK(fake_header(q, "Idempotency-Key") == NULL);
+    CHECK(fake_header(q, "Cache-Control") == NULL);
     if (resp) {
         CHECK(resp->status == 201);
+        CHECK(resp->capability == NULL);
+        CHECK(resp->tried == NULL && resp->tried_count == 0);
         CHECK_STR(resp->body, "{\"ok\":true}");
         CHECK(resp->body_len == 11);
         CHECK(resp->key_id == 12);
@@ -688,8 +694,11 @@ static void test_proxy(void) {
     req.body = "raw";
     req.body_len = 3;
     req.idempotency_key = "order-42";
+    req.no_cache = 1;
     CHECK_CODE(acn_proxy(c, &req, &resp, &err), ACN_OK);
     q = fake_last(srv);
+    CHECK_STR(fake_header(q, "Cache-Control"), "no-cache");
+    req.no_cache = 0;
     CHECK_STR(q->method, "PUT");
     CHECK_STR(q->target, "/proxy/agi-labs/v1/items?id=7");
     CHECK_STR(fake_header(q, "Idempotency-Key"), "order-42");
@@ -1034,6 +1043,277 @@ static void test_names(void) {
     acn_free(NULL);
 }
 
+/* ---- 0.2.0: guides, capabilities, forward proxy ---- */
+
+#define PEM "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+
+static void v2_handler(const fake_req *req, fake_resp *resp, void *user) {
+    (void)user;
+    if (strcmp(req->path, "/api/v1/services/agi-labs/guide") == 0) {
+        const char *accept = fake_header(req, "Accept");
+        if (accept && strcmp(accept, "text/markdown") == 0) {
+            resp->status = 200;
+            snprintf(resp->body, sizeof resp->body, "# AGI Labs\n\nCall /v1/chat.\n");
+            fake_add_header(resp, "Content-Type", "text/markdown; charset=utf-8");
+            return;
+        }
+        fake_json(resp, 200,
+                  "{\"markdown\":\"# AGI Labs\\n\",\"generated\":true,"
+                  "\"guide\":{\"endpoints\":[{\"path\":\"/v1/chat\"}]}}");
+        return;
+    }
+    if (strcmp(req->path, "/api/v1/services/secret/guide") == 0) {
+        fake_json(resp, 403, "{\"error\":{\"code\":\"service_not_allowed\",\"message\":\"this app cannot use service secret\"}}");
+        return;
+    }
+    if (strcmp(req->path, "/api/v1/capabilities") == 0) {
+        fake_json(resp, 200,
+                  "{\"capabilities\":[{\"slug\":\"maps-search\",\"name\":\"Maps search\",\"description\":\"Find places\","
+                  "\"strategy\":\"priority\",\"params\":{\"query\":{\"type\":\"string\",\"required\":true}},"
+                  "\"routes\":[{\"service\":\"omkar-cloud\",\"mapped\":true},{\"service\":\"serpapi\",\"mapped\":false}],"
+                  "\"url\":\"http://acn.test/proxy/maps-search\"}]}");
+        return;
+    }
+    if (strcmp(req->path, "/proxy/maps-search") == 0) {
+        fake_json(resp, 200, "{\"items\":[],\"count\":0}");
+        fake_add_header(resp, "X-Acnologia-Capability", "maps-search");
+        fake_add_header(resp, "X-Acnologia-Service", "serpapi");
+        fake_add_header(resp, "X-Acnologia-Tried", "omkar-cloud=503, serpapi=200");
+        fake_add_header(resp, "X-Acnologia-Key-Id", "9");
+        fake_add_header(resp, "X-Acnologia-Attempts", "1");
+        if (fake_header(req, "Cache-Control")) fake_add_header(resp, "X-Acnologia-Cache", "miss");
+        return;
+    }
+    if (strcmp(req->path, "/proxy/no-route") == 0) {
+        fake_json(resp, 503, "{\"error\":{\"code\":\"no_route\",\"message\":\"no route\"}}");
+        return;
+    }
+    if (strcmp(req->path, "/api/v1/proxy") == 0) {
+        fake_json(resp, 200,
+                  "{\"proxy_url\":\"http://acn.test:8888\",\"proxy_url_with_token\":\"http://app:%3Capp%20token%3E@acn.test:8888\","
+                  "\"ca_url\":\"http://acn.test/api/v1/proxy/ca.pem\",\"ca_fingerprint\":\"AB:CD\",\"passthrough\":true,"
+                  "\"hosts\":[{\"host\":\"serpapi.com\",\"service\":\"serpapi\",\"name\":\"SerpAPI\",\"path\":\"\"}],"
+                  "\"env\":{\"HTTPS_PROXY\":\"http://app:%3Capp%20token%3E@acn.test:8888\",\"NODE_USE_ENV_PROXY\":\"1\"},"
+                  "\"service_header\":\"X-Acnologia-Service\"}");
+        return;
+    }
+    if (strcmp(req->path, "/api/v1/proxy/ca.pem") == 0) {
+        resp->status = 200;
+        snprintf(resp->body, sizeof resp->body, "%s", PEM);
+        fake_add_header(resp, "Content-Type", "application/x-pem-file");
+        return;
+    }
+    fake_json(resp, 404, "{\"error\":{\"code\":\"not_found\",\"message\":\"no route\"}}");
+}
+
+static void test_guide(void) {
+    acn_client *c = new_client();
+    acn_error err;
+    fake_set_handler(srv, v2_handler, NULL);
+    fake_reset(srv);
+    acn_guide *g = NULL;
+    CHECK_CODE(acn_guide_get(c, "agi-labs", &g, &err), ACN_OK);
+    const fake_req *q = fake_last(srv);
+    CHECK_STR(q->method, "GET");
+    CHECK_STR(q->path, "/api/v1/services/agi-labs/guide");
+    CHECK_STR(fake_header(q, "Authorization"), "Bearer " TOKEN);
+    CHECK_STR(fake_header(q, "Accept"), "application/json");
+    if (g) {
+        CHECK_STR(g->markdown, "# AGI Labs\n");
+        CHECK(g->generated == 1);
+        CHECK_STR(g->guide_json, "{\"endpoints\":[{\"path\":\"/v1/chat\"}]}");
+    }
+    acn_guide_free(g);
+
+    char *md = NULL;
+    CHECK_CODE(acn_guide_markdown(c, "agi-labs", &md, &err), ACN_OK);
+    CHECK_STR(fake_header(fake_last(srv), "Accept"), "text/markdown");
+    CHECK_STR(fake_header(fake_last(srv), "Authorization"), "Bearer " TOKEN);
+    CHECK_STR(md, "# AGI Labs\n\nCall /v1/chat.\n");
+    acn_free(md);
+
+    g = NULL;
+    CHECK_CODE(acn_guide_get(c, "secret", &g, &err), ACN_ERR_SERVICE_NOT_ALLOWED);
+    CHECK(g == NULL);
+    md = NULL;
+    CHECK_CODE(acn_guide_markdown(c, "secret", &md, &err), ACN_ERR_SERVICE_NOT_ALLOWED);
+    CHECK(md == NULL);
+    CHECK(err.status == 403);
+    CHECK_CODE(acn_guide_get(c, "", &g, &err), ACN_ERR_INVALID_ARGUMENT);
+    acn_client_free(c);
+}
+
+static void test_capabilities(void) {
+    acn_client *c = new_client();
+    acn_error err;
+    fake_set_handler(srv, v2_handler, NULL);
+    fake_reset(srv);
+    acn_capability_list *list = NULL;
+    CHECK_CODE(acn_capabilities(c, &list, &err), ACN_OK);
+    CHECK_STR(fake_last(srv)->method, "GET");
+    CHECK_STR(fake_last(srv)->path, "/api/v1/capabilities");
+    CHECK(list && list->count == 1);
+    if (list && list->count == 1) {
+        const acn_capability *k = &list->items[0];
+        CHECK_STR(k->slug, "maps-search");
+        CHECK_STR(k->name, "Maps search");
+        CHECK_STR(k->description, "Find places");
+        CHECK_STR(k->strategy, "priority");
+        CHECK_STR(k->params_json, "{\"query\":{\"type\":\"string\",\"required\":true}}");
+        CHECK_STR(k->url, "http://acn.test/proxy/maps-search");
+        CHECK(k->route_count == 2);
+        if (k->route_count == 2) {
+            CHECK_STR(k->routes[0].service, "omkar-cloud");
+            CHECK(k->routes[0].mapped == 1);
+            CHECK_STR(k->routes[1].service, "serpapi");
+            CHECK(k->routes[1].mapped == 0);
+        }
+    }
+    acn_capability_list_free(list);
+
+    /* A call: params as the body, steering in the query, the answer's headers. */
+    acn_capability_options o = {0};
+    o.service = "serpapi";
+    o.raw = 1;
+    o.idempotency_key = "cap-1";
+    o.no_cache = 1;
+    acn_response *resp = NULL;
+    CHECK_CODE(acn_capability_call(c, "maps-search", "{\"query\":\"cafes\"}", &o, &resp, &err), ACN_OK);
+    const fake_req *q = fake_last(srv);
+    CHECK_STR(q->method, "POST");
+    CHECK_STR(q->target, "/proxy/maps-search?_service=serpapi&_raw=1");
+    CHECK_STR(q->body, "{\"query\":\"cafes\"}");
+    CHECK_STR(fake_header(q, "Content-Type"), "application/json");
+    CHECK_STR(fake_header(q, "Idempotency-Key"), "cap-1");
+    CHECK_STR(fake_header(q, "Cache-Control"), "no-cache");
+    CHECK_STR(fake_header(q, "Authorization"), "Bearer " TOKEN);
+    if (resp) {
+        CHECK(resp->status == 200);
+        CHECK_STR(resp->capability, "maps-search");
+        CHECK_STR(resp->service, "serpapi");
+        CHECK_STR(resp->cache, "miss");
+        CHECK(resp->key_id == 9 && resp->attempts == 1);
+        CHECK(resp->tried_count == 2);
+        if (resp->tried_count == 2) {
+            CHECK_STR(resp->tried[0].service, "omkar-cloud");
+            CHECK(resp->tried[0].status == 503);
+            CHECK_STR(resp->tried[1].service, "serpapi");
+            CHECK(resp->tried[1].status == 200);
+        }
+    }
+    acn_response_free(resp);
+
+    /* No options: an empty object body and no query. */
+    CHECK_CODE(acn_capability_call(c, "maps-search", NULL, NULL, &resp, &err), ACN_OK);
+    q = fake_last(srv);
+    CHECK_STR(q->target, "/proxy/maps-search");
+    CHECK_STR(q->body, "{}");
+    CHECK(fake_header(q, "Cache-Control") == NULL);
+    CHECK(fake_header(q, "Idempotency-Key") == NULL);
+    acn_response_free(resp);
+
+    resp = NULL;
+    CHECK_CODE(acn_capability_call(c, "no-route", "{}", NULL, &resp, &err), ACN_ERR_API);
+    CHECK(resp == NULL);
+    CHECK_STR(err.error_code, "no_route");
+    CHECK(err.status == 503);
+    acn_client_free(c);
+}
+
+static void test_forward_proxy(void) {
+    acn_client *c = new_client();
+    acn_error err;
+    fake_set_handler(srv, v2_handler, NULL);
+    fake_reset(srv);
+    acn_forward_proxy *fp = NULL;
+    CHECK_CODE(acn_forward_proxy_get(c, &fp, &err), ACN_OK);
+    CHECK_STR(fake_last(srv)->path, "/api/v1/proxy");
+    CHECK_STR(fake_header(fake_last(srv), "Authorization"), "Bearer " TOKEN);
+    if (fp) {
+        CHECK_STR(fp->proxy_url, "http://acn.test:8888");
+        CHECK_STR(fp->proxy_url_with_token, "http://app:%3Capp%20token%3E@acn.test:8888");
+        CHECK_STR(fp->ca_url, "http://acn.test/api/v1/proxy/ca.pem");
+        CHECK_STR(fp->ca_fingerprint, "AB:CD");
+        CHECK(fp->passthrough == 1);
+        CHECK(fp->host_count == 1);
+        if (fp->host_count == 1) {
+            CHECK_STR(fp->hosts[0].host, "serpapi.com");
+            CHECK_STR(fp->hosts[0].service, "serpapi");
+            CHECK_STR(fp->hosts[0].name, "SerpAPI");
+        }
+        CHECK(fp->env_count == 2);
+        CHECK_STR(fp->service_header, "X-Acnologia-Service");
+    }
+    acn_forward_proxy_free(fp);
+
+    /* The CA is public: no token. */
+    char *pem = NULL;
+    CHECK_CODE(acn_forward_proxy_ca(c, &pem, &err), ACN_OK);
+    CHECK_STR(fake_last(srv)->path, "/api/v1/proxy/ca.pem");
+    CHECK(fake_header(fake_last(srv), "Authorization") == NULL);
+    CHECK_STR(pem, PEM);
+    acn_free(pem);
+
+    char path[64];
+    snprintf(path, sizeof path, "acn-test-ca-%d.pem", fake_port(srv));
+    CHECK_CODE(acn_forward_proxy_save_ca(c, path, &err), ACN_OK);
+    FILE *f = fopen(path, "rb");
+    char buf[256] = {0};
+    if (f) {
+        size_t n = fread(buf, 1, sizeof buf - 1, f);
+        buf[n] = '\0';
+        fclose(f);
+    }
+    CHECK_STR(buf, PEM);
+    remove(path);
+
+    char *url = NULL;
+    CHECK_CODE(acn_forward_proxy_url(c, &url, &err), ACN_OK);
+    CHECK_STR(url, "http://app:" TOKEN_ENC "@acn.test:8888");
+    acn_free(url);
+
+    acn_env *env = NULL;
+    CHECK_CODE(acn_forward_proxy_env(c, NULL, &env, &err), ACN_OK);
+    CHECK(env && env->count == 6);
+    CHECK_STR(acn_env_get(env, "HTTPS_PROXY"), "http://app:" TOKEN_ENC "@acn.test:8888");
+    CHECK_STR(acn_env_get(env, "HTTP_PROXY"), "http://app:" TOKEN_ENC "@acn.test:8888");
+    CHECK_STR(acn_env_get(env, "NODE_USE_ENV_PROXY"), "1");
+    CHECK_STR(acn_env_get(env, "NODE_EXTRA_CA_CERTS"), "acnologia-ca.pem");
+    CHECK_STR(acn_env_get(env, "REQUESTS_CA_BUNDLE"), "acnologia-ca.pem");
+    CHECK_STR(acn_env_get(env, "SSL_CERT_FILE"), "acnologia-ca.pem");
+    CHECK(acn_env_get(env, "NOPE") == NULL);
+    acn_env_free(env);
+
+    CHECK_CODE(acn_forward_proxy_env(c, "/etc/acn.pem", &env, &err), ACN_OK);
+    CHECK_STR(acn_env_get(env, "SSL_CERT_FILE"), "/etc/acn.pem");
+    acn_env_free(env);
+    acn_client_free(c);
+}
+
+static void test_share_unavailable(void) {
+    CHECK(acn_is_share_unavailable(ACN_ERR_SHARE_REVOKED));
+    CHECK(acn_is_share_unavailable(ACN_ERR_SHARE_PAUSED));
+    CHECK(acn_is_share_unavailable(ACN_ERR_SHARE_EXPIRED));
+    CHECK(!acn_is_share_unavailable(ACN_ERR_APP_LIMIT_REACHED));
+    CHECK_STR(acn_share_status(ACN_ERR_SHARE_REVOKED), "revoked");
+    CHECK_STR(acn_share_status(ACN_ERR_SHARE_PAUSED), "paused");
+    CHECK_STR(acn_share_status(ACN_ERR_SHARE_EXPIRED), "expired");
+    CHECK(acn_share_status(ACN_OK) == NULL);
+
+    acn_client *c = new_client();
+    acn_error err;
+    canned paused = {403, "{\"error\":{\"code\":\"share_paused\",\"message\":\"paused\"}}", "X-Acnologia-Share", "paused",
+                     NULL, NULL};
+    fake_set_handler(srv, canned_handler, &paused);
+    acn_service_list *list = NULL;
+    acn_code rc = acn_services(c, &list, &err);
+    CHECK_CODE(rc, ACN_ERR_SHARE_PAUSED);
+    CHECK(acn_is_share_unavailable(rc));
+    CHECK_STR(acn_share_status(rc), "paused");
+    CHECK(err.status == 403);
+    acn_client_free(c);
+}
+
 int main(void) {
     if (acn_global_init() != ACN_OK) return 2;
     srv = fake_start(NULL, NULL);
@@ -1055,6 +1335,10 @@ int main(void) {
         {"scrubbing", test_scrubbing},
         {"apply", test_apply},
         {"names", test_names},
+        {"guide", test_guide},
+        {"capabilities", test_capabilities},
+        {"forward_proxy", test_forward_proxy},
+        {"share_unavailable", test_share_unavailable},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = failures;

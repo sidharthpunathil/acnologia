@@ -1,16 +1,30 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 
 class AcnologiaError(Exception):
-    """An error response from the Acnologia server (`{"error": {"code", "message"}}`)."""
+    """An error response from the Acnologia server (`{"error": {"code", "message"}}`).
 
-    def __init__(self, message: str, *, status_code: int = 0, code: str = "") -> None:
+    `retry_after` is seconds from `retry_after_sec` or the `Retry-After`
+    header, when the server gave one. Codes worth checking here include
+    `empty_group`, `bad_params`, `no_route`, `no_route_worked`,
+    `proxy_not_allowed`, `lease_not_allowed` and `loop_detected`."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 0,
+        code: str = "",
+        retry_after: Optional[float] = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.code = code
+        self.retry_after = retry_after
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(status_code={self.status_code!r}, code={self.code!r}, message={self.message!r})"
@@ -81,6 +95,47 @@ class ServiceUnavailable(AcnologiaError):
     ) -> None:
         super().__init__(message, status_code=status_code, code=code)
         self.retry_after = retry_after
+
+
+class AppLimitReached(AcnologiaError):
+    """The app used up a daily or monthly request or budget limit (HTTP 429 `app_limit_reached`).
+
+    `limit` is `daily_requests`, `monthly_requests`, `daily_budget` or
+    `monthly_budget`; `reset_at` is when it resets; `retry_after` is in seconds.
+    """
+
+    def __init__(
+        self,
+        message: str = "app limit reached",
+        *,
+        limit: str = "",
+        reset_at: Optional[datetime] = None,
+        retry_after: Optional[float] = None,
+        status_code: int = 429,
+        code: str = "app_limit_reached",
+    ) -> None:
+        super().__init__(message, status_code=status_code, code=code, retry_after=retry_after)
+        self.limit = limit
+        self.reset_at = reset_at
+
+
+class ShareUnavailable(AcnologiaError):
+    """The share behind this token was revoked, paused or expired (HTTP 403 `share_*`).
+
+    `status` is `revoked`, `paused` or `expired` (also sent as `X-Acnologia-Share`).
+    """
+
+    def __init__(
+        self,
+        message: str = "share unavailable",
+        *,
+        status: str = "",
+        status_code: int = 403,
+        code: str = "",
+        retry_after: Optional[float] = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code, code=code, retry_after=retry_after)
+        self.status = status
 
 
 class KeyProblem(Exception):

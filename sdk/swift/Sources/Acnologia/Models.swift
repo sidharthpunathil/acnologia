@@ -43,10 +43,14 @@ public struct Service: Codable, Sendable, Equatable {
     public var available: Bool
     public var baseURL: String
     public var auth: Auth
+    /// Where the service's usage guide lives (`GET /api/v1/services/{slug}/guide`), when the
+    /// server sent one. ``Acnologia/guide(_:)`` fetches it.
+    public var guideURL: String?
 
     enum CodingKeys: String, CodingKey {
         case slug, name, provider, category, available, auth
         case baseURL = "base_url"
+        case guideURL = "guide_url"
     }
 
     public init(from decoder: Decoder) throws {
@@ -58,6 +62,7 @@ public struct Service: Codable, Sendable, Equatable {
         available = try c.decodeIfPresent(Bool.self, forKey: .available) ?? false
         baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
         auth = try c.decodeIfPresent(Auth.self, forKey: .auth) ?? Auth(type: "header", name: "")
+        guideURL = try c.decodeIfPresent(String.self, forKey: .guideURL)
     }
 }
 

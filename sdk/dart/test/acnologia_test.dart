@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Directory, File;
 
 import 'package:acnologia/acnologia.dart';
 import 'package:http/http.dart' as http;
@@ -476,5 +477,338 @@ void main() {
           isA<ServiceUnavailableException>().having((e) => e.retryAfter, 'retryAfter', const Duration(seconds: 30)));
       expect(r2.throwIfAcnologiaError, throwsA(isA<ServiceUnavailableException>()));
     });
+  });
+
+  group('0.2.0 surface', () {
+    /// A client whose server answers every request with [answer] and records it.
+    (Acnologia, List<http.Request>) recording(http.Response Function(http.Request r) answer,
+        {String? accessPassword}) {
+      final seen = <http.Request>[];
+      final c = Acnologia(
+          baseUrl: base,
+          token: token,
+          accessPassword: accessPassword,
+          httpClient: MockClient((r) async {
+            seen.add(r);
+            return answer(r);
+          }));
+      return (c, seen);
+    }
+
+    final fpJson = {
+      'proxy_url': 'http://acn.test:8888',
+      'proxy_url_with_token': 'http://app:%3Capp%20token%3E@acn.test:8888',
+      'ca_url': '$base/api/v1/proxy/ca.pem',
+      'ca_fingerprint': 'SHA256:ab:cd',
+      'passthrough': true,
+      'hosts': [
+        {'host': 'serpapi.com', 'service': 'serpapi', 'name': 'SerpAPI', 'path': ''}
+      ],
+      'env': {'HTTPS_PROXY': 'http://app:%3Capp%20token%3E@acn.test:8888', 'NODE_USE_ENV_PROXY': '1'},
+      'service_header': 'X-Acnologia-Service',
+    };
+
+    test('version is 0.2.0', () {
+      expect(Acnologia.version, '0.2.0');
+      expect(Acnologia.defaultUserAgent, 'acnologia-dart/0.2.0');
+    });
+
+    test('me parses app, limits, usage, services and share', () async {
+      final (c, seen) = recording((_) => jsonResponse({
+            'app': {'id': 3, 'name': 'Website'},
+            'limits': {'daily_requests': 500, 'monthly_requests': null, 'daily_budget': null, 'monthly_budget': 20.5},
+            'usage': {
+              'today_requests': 12,
+              'today_cost': 0.5,
+              'month_requests': 40,
+              'month_cost': 2,
+              'last_used_at': '2026-11-04T09:00:00Z',
+              'limit_hit': null,
+            },
+            'limit_hit': {'limit': 'daily_requests', 'reset_at': '2026-11-05T00:00:00Z'},
+            'services': [
+              {'slug': 'serpapi', 'name': 'SerpAPI', 'provider': 'serpapi', 'category': 'search', 'available': 3, 'logo_url': null}
+            ],
+            'share': {
+              'id': 'shr_1',
+              'name': 'For Bob',
+              'owner_name': 'Alice',
+              'recipient': 'person',
+              'label': 'bob',
+              'status': 'paused',
+              'mode': 'proxy',
+              'ends_at': null,
+            },
+          }));
+      final me = await c.me();
+      expect(seen.single.method, 'GET');
+      expect(seen.single.url.toString(), '$base/api/v1/me');
+      expect(seen.single.headers['Authorization'], 'Bearer $token');
+      expect(me.app.id, 3);
+      expect(me.app.name, 'Website');
+      expect(me.limits.dailyRequests, 500);
+      expect(me.limits.monthlyRequests, isNull);
+      expect(me.limits.monthlyBudget, 20.5);
+      expect(me.usage.todayRequests, 12);
+      expect(me.usage.todayCost, 0.5);
+      expect(me.usage.lastUsedAt, DateTime.utc(2026, 11, 4, 9));
+      expect(me.limitHit?.limit, 'daily_requests');
+      expect(me.limitHit?.resetAt, DateTime.utc(2026, 11, 5));
+      expect(me.services.single.slug, 'serpapi');
+      expect(me.services.single.available, 3);
+      expect(me.services.single.logoUrl, isNull);
+      expect(me.share?.status, 'paused');
+      expect(me.share?.ownerName, 'Alice');
+      expect(me.raw['app'], isA<Map<String, dynamic>>());
+    });
+
+    test('services carry guide_url', () async {
+      final (c, _) = recording((_) => jsonResponse({
+            'services': [
+              {'slug': 'serpapi', 'guide_url': '$base/api/v1/services/serpapi/guide'}
+            ]
+          }));
+      expect((await c.services()).single.guideUrl, '$base/api/v1/services/serpapi/guide');
+    });
+
+    test('guide and guideMarkdown', () async {
+      final (c, seen) = recording((r) => r.headers['Accept'] == 'text/markdown'
+          ? http.Response.bytes(utf8.encode('# SerpAPI é'), 200, headers: {'content-type': 'text/markdown'})
+          : jsonResponse({
+              'markdown': '# SerpAPI',
+              'generated': true,
+              'guide': {'summary': 'search', 'endpoints': []}
+            }));
+      final g = await c.guide('serp api');
+      expect(seen[0].url.path, '/api/v1/services/serp%20api/guide');
+      expect(seen[0].headers['Accept'], 'application/json');
+      expect(g.markdown, '# SerpAPI');
+      expect(g.generated, isTrue);
+      expect((g.guide as Map)['summary'], 'search');
+
+      expect(await c.guideMarkdown('serpapi'), '# SerpAPI é');
+      expect(seen[1].method, 'GET');
+      expect(seen[1].url.path, '/api/v1/services/serpapi/guide');
+      expect(seen[1].headers['Accept'], 'text/markdown');
+      expect(seen[1].headers['Authorization'], 'Bearer $token');
+    });
+
+    test('guide of a service not allowed is forbidden', () async {
+      final (c, _) = recording((_) => jsonResponse({
+            'error': {'code': 'service_not_allowed', 'message': 'no'}
+          }, status: 403));
+      expect(await caught(() => c.guideMarkdown('x')),
+          isA<ForbiddenException>().having((e) => e.code, 'code', 'service_not_allowed'));
+    });
+
+    test('capabilities', () async {
+      final (c, seen) = recording((_) => jsonResponse({
+            'capabilities': [
+              {
+                'slug': 'places',
+                'name': 'Places',
+                'description': 'find places',
+                'strategy': 'priority',
+                'params': [
+                  {'name': 'q', 'type': 'string', 'required': true}
+                ],
+                'routes': [
+                  {'service': 'serpapi', 'mapped': true},
+                  {'service': 'gmaps', 'mapped': false}
+                ],
+                'url': '$base/proxy/places',
+              }
+            ]
+          }));
+      final caps = await c.capabilities();
+      expect(seen.single.url.path, '/api/v1/capabilities');
+      expect(caps.single.slug, 'places');
+      expect(caps.single.strategy, 'priority');
+      expect((caps.single.params as List).single['name'], 'q');
+      expect(caps.single.routes,
+          [const CapabilityRoute(service: 'serpapi', mapped: true), const CapabilityRoute(service: 'gmaps', mapped: false)]);
+      expect(caps.single.url, '$base/proxy/places');
+    });
+
+    test('capability posts params and reads the answer headers', () async {
+      final (c, seen) = recording((_) => http.Response('{"items":[],"count":0}', 200, headers: {
+            'x-acnologia-service': 'gmaps',
+            'x-acnologia-capability': 'places',
+            'x-acnologia-tried': 'serpapi=429, gmaps=200',
+            'x-acnologia-key-id': '4',
+          }));
+      final resp = await c.capability('places', {'q': 'coffee'},
+          service: 'gmaps', raw: true, idempotencyKey: 'k1', noCache: true, headers: {'X-Trace': 't'});
+      final r = seen.single;
+      expect(r.method, 'POST');
+      expect(r.url.path, '/proxy/places');
+      expect(r.url.queryParameters, {'_service': 'gmaps', '_raw': '1'});
+      expect(r.headers['Authorization'], 'Bearer $token');
+      expect(r.headers['Content-Type'], startsWith('application/json'));
+      expect(r.headers['Idempotency-Key'], 'k1');
+      expect(r.headers['Cache-Control'], 'no-cache');
+      expect(r.headers['X-Trace'], 't');
+      expect(jsonDecode(r.body), {'q': 'coffee'});
+      expect(resp.acnologiaService, 'gmaps');
+      expect(resp.acnologiaCapability, 'places');
+      expect(resp.acnologiaTried,
+          [const TriedRoute(service: 'serpapi', status: 429), const TriedRoute(service: 'gmaps', status: 200)]);
+
+      await c.capability('places', {});
+      expect(seen[1].url.toString(), '$base/proxy/places');
+      expect(seen[1].headers.containsKey('Idempotency-Key'), isFalse);
+      expect(seen[1].headers.containsKey('Cache-Control'), isFalse);
+    });
+
+    test('capability bad_params is an Acnologia error', () async {
+      final (c, _) = recording((_) => jsonResponse({
+            'error': {'code': 'bad_params', 'message': 'q is required'}
+          }, status: 400));
+      final resp = await c.capability('places', {});
+      expect(resp.acnologiaError,
+          isA<AcnologiaApiException>().having((e) => e.code, 'code', 'bad_params').having((e) => e.statusCode, 's', 400));
+    });
+
+    test('proxy idempotencyKey, noCache and the new accessors', () async {
+      final (c, seen) = recording((_) => http.Response('{}', 200, headers: {
+            'x-acnologia-key-id': '7',
+            'x-acnologia-attempts': '1',
+            'x-acnologia-service': 'serpapi',
+            'x-acnologia-cache': 'hit',
+            'idempotent-replayed': 'true',
+          }));
+      final resp = await c.proxy('serpapi').post('/x', body: {'a': 1}, idempotencyKey: 'order-42', noCache: true);
+      expect(seen.single.headers['Idempotency-Key'], 'order-42');
+      expect(seen.single.headers['Cache-Control'], 'no-cache');
+      expect(resp.acnologiaKeyId, 7);
+      expect(resp.acnologiaCache, 'hit');
+      expect(resp.acnologiaReplayed, isTrue);
+      expect(resp.acnologiaCapability, isNull);
+      expect(resp.acnologiaTried, isEmpty);
+
+      await c.proxy('serpapi').get('/y');
+      expect(seen[1].headers.containsKey('Idempotency-Key'), isFalse);
+      expect(seen[1].headers.containsKey('Cache-Control'), isFalse);
+      expect((await c.proxy('serpapi').get('/z')).acnologiaKeyId, 7);
+    });
+
+    test('accessPassword is sent on every request, also from the environment', () async {
+      final (c, seen) = recording((_) => jsonResponse({'services': []}), accessPassword: 'gatepw');
+      await c.services();
+      await c.proxy('serpapi').get('/x');
+      expect(seen.map((r) => r.headers['X-Acnologia-Access']), ['gatepw', 'gatepw']);
+      expect('$c', isNot(contains('gatepw')));
+
+      final (plain, seen2) = recording((_) => jsonResponse({'services': []}));
+      await plain.services();
+      expect(seen2.single.headers.containsKey('X-Acnologia-Access'), isFalse);
+
+      final env = <http.Request>[];
+      await Acnologia.fromEnvironment(
+          environment: {'ACNOLOGIA_URL': base, 'ACNOLOGIA_TOKEN': token, 'ACNOLOGIA_ACCESS_PASSWORD': 'envpw'},
+          httpClient: MockClient((r) async {
+            env.add(r);
+            return jsonResponse({'services': []});
+          })).services();
+      expect(env.single.headers['X-Acnologia-Access'], 'envpw');
+    });
+
+    test('forwardProxy parses the setup and hides nothing secret', () async {
+      final (c, seen) = recording((_) => jsonResponse(fpJson));
+      final fp = await c.forwardProxy();
+      expect(seen.single.method, 'GET');
+      expect(seen.single.url.path, '/api/v1/proxy');
+      expect(seen.single.headers['Authorization'], 'Bearer $token');
+      expect(fp.proxyUrl, 'http://acn.test:8888');
+      expect(fp.caUrl, '$base/api/v1/proxy/ca.pem');
+      expect(fp.caFingerprint, 'SHA256:ab:cd');
+      expect(fp.passthrough, isTrue);
+      expect(fp.hosts.single.host, 'serpapi.com');
+      expect(fp.hosts.single.service, 'serpapi');
+      expect(fp.env['NODE_USE_ENV_PROXY'], '1');
+      expect(fp.serviceHeader, 'X-Acnologia-Service');
+      expect('$fp', isNot(contains(token)));
+    });
+
+    test('forwardProxyCA sends no token', () async {
+      final (c, seen) = recording((_) =>
+          http.Response('-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n', 200,
+              headers: {'content-type': 'application/x-pem-file'}),
+          accessPassword: 'gatepw');
+      final pem = await c.forwardProxyCA();
+      expect(pem, startsWith('-----BEGIN CERTIFICATE-----'));
+      expect(seen.single.method, 'GET');
+      expect(seen.single.url.path, '/api/v1/proxy/ca.pem');
+      expect(seen.single.headers.containsKey('Authorization'), isFalse);
+      expect(seen.single.headers['X-Acnologia-Access'], 'gatepw');
+    });
+
+    test('forwardProxyURL and forwardProxyEnv put the token in the proxy URL', () async {
+      final seen = <http.Request>[];
+      final c = Acnologia(
+          baseUrl: base,
+          token: 'acn_a/b+c',
+          httpClient: MockClient((r) async {
+            seen.add(r);
+            return jsonResponse(fpJson);
+          }));
+      expect(await c.forwardProxyURL(), 'http://app:acn_a%2Fb%2Bc@acn.test:8888');
+      expect(await c.forwardProxyEnv(), {
+        'HTTPS_PROXY': 'http://app:acn_a%2Fb%2Bc@acn.test:8888',
+        'HTTP_PROXY': 'http://app:acn_a%2Fb%2Bc@acn.test:8888',
+        'NODE_USE_ENV_PROXY': '1',
+        'NODE_EXTRA_CA_CERTS': 'acnologia-ca.pem',
+        'REQUESTS_CA_BUNDLE': 'acnologia-ca.pem',
+        'SSL_CERT_FILE': 'acnologia-ca.pem',
+      });
+      final env = await c.forwardProxyEnv('/etc/acn.pem');
+      expect(env['SSL_CERT_FILE'], '/etc/acn.pem');
+      expect(seen.every((r) => r.url.path == '/api/v1/proxy'), isTrue);
+    });
+
+    test('app_limit_reached is AppLimitReachedException', () async {
+      final (c, _) = recording((_) => jsonResponse({
+            'error': {'code': 'app_limit_reached', 'message': 'daily limit'},
+            'limit': 'daily_requests',
+            'reset_at': '2026-11-05T00:00:00Z',
+            'retry_after_sec': 4210,
+          }, status: 429));
+      final e = await caught(() => c.me());
+      expect(
+          e,
+          isA<AppLimitReachedException>()
+              .having((e) => e.limit, 'limit', 'daily_requests')
+              .having((e) => e.resetAt, 'resetAt', DateTime.utc(2026, 11, 5))
+              .having((e) => e.retryAfter, 'retryAfter', const Duration(seconds: 4210))
+              .having((e) => e.statusCode, 'statusCode', 429));
+      expect(e, isA<AcnologiaApiException>());
+      expect('$e', contains('daily_requests'));
+    });
+
+    test('share errors are ShareUnavailableException', () async {
+      for (final st in ['revoked', 'paused', 'expired']) {
+        final (c, _) = recording((_) => jsonResponse({
+              'error': {'code': 'share_$st', 'message': 'share $st'}
+            }, status: 403, headers: {'x-acnologia-share': st}));
+        final e = await caught(() => c.services());
+        expect(e, isA<ShareUnavailableException>().having((e) => e.status, 'status', st).having((e) => e.code, 'code', 'share_$st'));
+        expect(e, isA<ForbiddenException>());
+        final resp = await c.proxy('serpapi').get('/x');
+        expect(resp.acnologiaError, isA<ShareUnavailableException>().having((e) => e.status, 'status', st));
+      }
+      final (c, _) = recording((_) => http.Response('forbidden', 403, headers: {'x-acnologia-share': 'revoked'}));
+      expect(await caught(() => c.services()), isA<ShareUnavailableException>().having((e) => e.status, 'status', 'revoked'));
+    });
+
+    test('saveForwardProxyCA writes the PEM on dart:io', () async {
+      final (c, _) = recording((_) => http.Response('PEM', 200));
+      final dir = Directory.systemTemp.createTempSync('acn');
+      try {
+        final path = await c.saveForwardProxyCA('${dir.path}/ca.pem');
+        expect(File(path).readAsStringSync(), 'PEM');
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    }, testOn: 'vm');
   });
 }

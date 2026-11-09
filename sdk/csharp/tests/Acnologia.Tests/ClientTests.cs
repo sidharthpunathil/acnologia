@@ -289,7 +289,7 @@ public class ClientTests
         Assert.Throws<ArgumentException>(() => new AcnologiaClient("not a url", "acn_x"));
         using var c = new AcnologiaClient("http://localhost:9/base/", "acn_x");
         Assert.Equal("http://localhost:9/base", c.BaseUrl);
-        Assert.Equal("acnologia-csharp/0.1.0", c.UserAgent);
+        Assert.Equal("acnologia-csharp/0.2.0", c.UserAgent);
     }
 
     [Fact]

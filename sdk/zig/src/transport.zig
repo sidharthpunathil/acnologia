@@ -14,6 +14,7 @@ const Allocator = std.mem.Allocator;
 pub const Request = struct {
     method: http.Method,
     url: []const u8,
+    /// Empty sends no Authorization header.
     authorization: []const u8,
     user_agent: []const u8,
     content_type: ?[]const u8 = null,
@@ -126,7 +127,7 @@ fn exchangeInner(client: *http.Client, arena: Allocator, req: *const Request) !R
         .redirect_behavior = .unhandled,
         .keep_alive = true,
         .headers = .{
-            .authorization = .{ .override = req.authorization },
+            .authorization = if (req.authorization.len > 0) .{ .override = req.authorization } else .omit,
             .user_agent = .{ .override = req.user_agent },
             .content_type = if (req.content_type) |ct| .{ .override = ct } else .default,
         },

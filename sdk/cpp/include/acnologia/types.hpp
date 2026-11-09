@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iosfwd>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -12,7 +13,7 @@
 namespace acnologia {
 
 /// The SDK version, sent in the User-Agent header as acnologia-cpp/<version>.
-inline constexpr const char* version = "0.1.0";
+inline constexpr const char* version = "0.2.0";
 
 /// Ordered name and value pairs, used for query parameters and headers.
 using Query = std::vector<std::pair<std::string, std::string>>;
@@ -191,6 +192,97 @@ struct AppliedAuth {
 /// Redacted: prints the location and name, never the value.
 std::ostream& operator<<(std::ostream& os, const AppliedAuth& auth);
 std::string to_string(const AppliedAuth& auth);
+
+/// The usage guide of a service, from GET /api/v1/services/{slug}/guide.
+struct Guide {
+    /// The guide as Markdown.
+    std::string markdown;
+    /// True when no guide was written for the provider and this one was
+    /// generated from its spec.
+    bool generated = false;
+    /// The structured guide as raw JSON ("null" when there is none).
+    std::string guide_json = "null";
+};
+
+/// One route of a capability: a service that can do the job.
+struct CapabilityRoute {
+    std::string service;
+    /// True when the route maps the provider's answer to the capability's
+    /// own fields.
+    bool mapped = false;
+};
+
+/// One job several providers can do, behind one slug, from
+/// GET /api/v1/capabilities.
+struct Capability {
+    std::string slug;
+    std::string name;
+    std::string description;
+    std::string strategy;
+    /// The params the capability takes, as raw JSON ("null" when none).
+    std::string params_json = "null";
+    std::vector<CapabilityRoute> routes;
+    /// Where to call it: {base}/proxy/{slug}.
+    std::string url;
+};
+
+/// Per call options for a proxied request.
+struct RequestOptions {
+    /// Sent as Idempotency-Key when not empty.
+    std::string idempotency_key;
+    /// Sends Cache-Control: no-cache, so the answer never comes from the
+    /// proxy's cache.
+    bool no_cache = false;
+};
+
+/// Options for Client::capability.
+struct CapabilityOptions {
+    /// Adds ?_service=<slug>: use only that service's route.
+    std::string service;
+    /// Adds ?_raw=1: the provider's own body, not mapped.
+    bool raw = false;
+    /// Sent as Idempotency-Key when not empty.
+    std::string idempotency_key;
+    /// Sends Cache-Control: no-cache.
+    bool no_cache = false;
+};
+
+/// One route a capability call tried, from X-Acnologia-Tried.
+struct Tried {
+    std::string service;
+    /// The route's status, 0 when it failed before an answer.
+    int status = 0;
+};
+
+/// Parses an X-Acnologia-Tried value ("svc=200, other=503").
+std::vector<Tried> parse_tried(const std::string& value);
+
+/// A host the forward proxy sends to a service.
+struct ForwardHost {
+    std::string host;
+    std::string service;
+    std::string name;
+    std::string path;
+};
+
+/// How to use Acnologia as an HTTP(S) proxy, from GET /api/v1/proxy. It never
+/// holds the token: proxy_url_with_token has an "<app token>" placeholder.
+struct ForwardProxy {
+    std::string proxy_url;
+    std::string proxy_url_with_token;
+    std::string ca_url;
+    std::string ca_fingerprint;
+    /// True when HTTPS to hosts that are no service is tunneled as is.
+    bool passthrough = false;
+    std::vector<ForwardHost> hosts;
+    /// The server's suggested environment.
+    std::map<std::string, std::string> env;
+    /// The request header that picks a service (X-Acnologia-Service).
+    std::string service_header;
+};
+
+std::ostream& operator<<(std::ostream& os, const ForwardProxy& fp);
+std::string to_string(const ForwardProxy& fp);
 
 /// The longest Idempotency-Key the proxy accepts.
 inline constexpr std::size_t max_idempotency_key = 200;

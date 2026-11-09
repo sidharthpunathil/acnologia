@@ -6,7 +6,7 @@ defmodule Acnologia.HTTP do
 
   alias Acnologia.{Client, Error}
 
-  @user_agent "acnologia-elixir/0.1.0"
+  @user_agent "acnologia-elixir/0.2.0"
 
   @type headers :: [{String.t(), String.t()}]
 
@@ -17,7 +17,14 @@ defmodule Acnologia.HTTP do
   # The headers Acnologia needs on every call.
   @spec auth_headers(Client.t()) :: headers()
   def auth_headers(%Client{} = c) do
-    base = [{"authorization", "Bearer " <> c.token}, {"user-agent", @user_agent}]
+    [{"authorization", "Bearer " <> c.token} | public_headers(c)]
+  end
+
+  @doc false
+  # The headers for a public route: no app token.
+  @spec public_headers(Client.t()) :: headers()
+  def public_headers(%Client{} = c) do
+    base = [{"user-agent", @user_agent}]
 
     if c.access_password in [nil, ""],
       do: base,
