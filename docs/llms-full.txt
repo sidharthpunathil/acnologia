@@ -746,6 +746,10 @@ Authorization: Bearer acn_...
 
 The group's strategy picks which member goes first: `priority` (the listed order, the default), `round_robin` (each request starts at the next member), `random`, `cheapest` (lowest price per request from the providers' offers) or `most_keys` (the member with the most keys free right now). A member whose breaker is open or that has no free key goes last whatever the strategy. Acnologia moves to the next member when one has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Acnologia-Service` names the member that answered. An app allowed to use the group may use its members through it.
 
+## Shared keys
+
+One provider account's key often works for several services, such as each Omkar Cloud API on its own host. A service can use the keys of another service of the same account (same site, same auth header or param) as well as its own: its own keys go first and the shared ones back them up. Nothing changes for apps: `/proxy/{service}` simply has keys. Only keys that are neither hidden nor limited to some apps are shared.
+
 ## Capabilities
 
 A capability is one job that several providers can do with APIs of their own, behind one slug. Searching Google Maps, for example, through Omkar Cloud and SerpAPI:

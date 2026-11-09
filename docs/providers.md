@@ -372,6 +372,12 @@ docs URL, color, status or any part of its spec (a JSON merge patch) as a
 new version. Changes to `base_url`, `auth`, the health check or `hosts`, and
 disabling a provider, wait for your Confirm.
 
+When an account's APIs are separate services instead (one service per
+Omkar scraper, say), they share keys: a service on the same site with the
+same auth placement as a service that has keys is linked to it when it is
+created, and uses those keys behind its own. The catalog offers to link any
+older ones in one click, and keys stored twice say where their twin is.
+
 A key's state is still tracked per key, not per API. When quota or plans
 are per API (as with Omkar), write the rules so an error about one API does
 not park the key for all of them: a used up API quota as `busy` (rotate to

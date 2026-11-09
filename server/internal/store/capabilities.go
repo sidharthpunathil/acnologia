@@ -162,5 +162,27 @@ func (s *Store) AvailableKeyCounts(ctx context.Context) (map[int64]int, error) {
 		}
 		out[id] = n
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// A service linked to a key source can use the source's free keys too.
+	// Counted roughly (a secret in both is counted twice): routing only needs
+	// to know a provider has keys at all.
+	links, err := s.r.QueryContext(ctx, `SELECT id, key_source_id FROM services WHERE key_source_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer links.Close()
+	add := map[int64]int{}
+	for links.Next() {
+		var id, src int64
+		if err := links.Scan(&id, &src); err != nil {
+			return nil, err
+		}
+		add[id] += out[src]
+	}
+	for id, n := range add {
+		out[id] += n
+	}
+	return out, links.Err()
 }

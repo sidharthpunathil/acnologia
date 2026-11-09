@@ -5,6 +5,8 @@ import { useInsights } from "./insights";
 
 interface KeysStore {
   byService: Record<number, Key[]>;
+  /** Keys a service uses from its key source (another service of the same account). */
+  sharedByService: Record<number, Key[]>;
   loading: Record<number, boolean>;
   fetch: (serviceId: number) => Promise<void>;
   add: (serviceId: number, keys: NewKeyInput[]) => Promise<number>;
@@ -27,13 +29,17 @@ export const useKeys = create<KeysStore>((set, get) => {
 
   return {
     byService: {},
+    sharedByService: {},
     loading: {},
 
     fetch: async (serviceId) => {
       set({ loading: { ...get().loading, [serviceId]: true } });
       try {
         const res = await api.listKeys(serviceId);
-        set({ byService: { ...get().byService, [serviceId]: res.keys ?? [] } });
+        set({
+          byService: { ...get().byService, [serviceId]: res.keys ?? [] },
+          sharedByService: { ...get().sharedByService, [serviceId]: res.shared ?? [] },
+        });
       } finally {
         set({ loading: { ...get().loading, [serviceId]: false } });
       }

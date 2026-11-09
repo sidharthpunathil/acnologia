@@ -42,7 +42,7 @@ import type {
   GuideResponse,
   GenerateGuideResult,
 } from "./types";
-import type { ControlMcpView, MCPSettingsInput, MCPView } from "./types";
+import type { ControlMcpView, MCPSettingsInput, MCPView, SharedKeysReport } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -177,6 +177,10 @@ export const api = {
 
   // Services
   listServices: () => request<{ services: Service[] }>("GET", "/api/admin/services"),
+  sharedKeys: () => request<SharedKeysReport>("GET", "/api/admin/keys/shared"),
+  linkSharedKeys: () => request<{ linked: SharedKeysReport["suggestions"] }>("POST", "/api/admin/keys/shared/link"),
+  setKeySource: (serviceId: number, source: string | null) =>
+    request<Service>("PUT", `/api/admin/services/${serviceId}/key-source`, { source }),
   getService: (id: number) => request<Service>("GET", `/api/admin/services/${id}`),
   createService: (body: ServiceInput) => request<Service>("POST", "/api/admin/services", body),
   updateService: (id: number, body: Partial<ServiceInput>) =>
@@ -228,7 +232,8 @@ export const api = {
   publishRun: (id: number) => request<AgentRun | unknown>("POST", `/api/admin/ai/runs/${id}/publish`),
 
   // Keys
-  listKeys: (serviceId: number) => request<{ keys: Key[] }>("GET", `/api/admin/services/${serviceId}/keys`),
+  listKeys: (serviceId: number) =>
+    request<{ keys: Key[]; shared?: Key[]; key_source?: string }>("GET", `/api/admin/services/${serviceId}/keys`),
   addKeys: (serviceId: number, keys: NewKeyInput[]) =>
     request<{ keys: Key[] }>("POST", `/api/admin/services/${serviceId}/keys`, { keys }),
   updateKey: (id: number, body: KeyPatch) => request<Key>("PATCH", `/api/admin/keys/${id}`, body),

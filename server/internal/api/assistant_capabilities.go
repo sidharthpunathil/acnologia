@@ -52,6 +52,45 @@ func capabilityTools() []*chatTool {
 			Run:  tryCapabilityTool,
 		},
 		{
+			Name: "shared_keys", Role: store.RoleMember, Props: map[string]any{},
+			Desc: "Read only. Keys whose secret is stored in more than one service (duplicates), and services with no keys that could use the keys of another service of the same account (suggestions): same site and the same auth header or param.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				return cs.simple("GET", "/api/admin/keys/shared", nil, "Read shared keys", nil)
+			},
+		},
+		{
+			Name: "link_service_keys", Role: store.RoleAdmin, Required: []string{"service"},
+			Props: map[string]any{
+				"service": map[string]any{"type": "string", "description": "the service that should use another's keys"},
+				"source":  map[string]any{"type": "string", "description": "the service whose keys it uses; empty to go back to its own keys only"},
+			},
+			Desc: "Let a service use the keys of another service of the same account, as well as its own: for several APIs of one provider that take the same key. Both must send the key to the same site in the same place. Hidden and app restricted keys are never shared.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				sv, err := cs.resolveService(argStr(in, "service"))
+				if err != nil {
+					return toolFail(err.Error())
+				}
+				var src any
+				if v := argStr(in, "source"); v != "" {
+					src = v
+				}
+				summary := "Linked " + sv.Slug + " to the keys of " + argStr(in, "source")
+				if src == nil {
+					summary = sv.Slug + " now uses only its own keys"
+				}
+				return cs.simple("PUT", fmt.Sprintf("/api/admin/services/%d/key-source", sv.ID), map[string]any{"source": src}, summary, func(m map[string]any) any {
+					return pick(m, "slug", "key_source_slug", "key_counts")
+				})
+			},
+		},
+		{
+			Name: "link_all_shared_keys", Role: store.RoleAdmin, Props: map[string]any{},
+			Desc: "Link every service that shared_keys suggests to the keys of its account's service, so they all have keys at once.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				return cs.simple("POST", "/api/admin/keys/shared/link", nil, "Linked services to their account's keys", nil)
+			},
+		},
+		{
 			Name: "delete_capability", Role: store.RoleAdmin, Confirm: true, Required: []string{"slug"},
 			Props: map[string]any{"slug": map[string]any{"type": "string"}},
 			Desc:  "Delete a capability. Apps calling it get 404 afterwards.",

@@ -52,6 +52,7 @@ func (s *Server) listAllKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.fillInFlight(keys...)
+		_ = s.Store.FillTwins(ctx, keys, isSuper(r))
 		maskAccounts(r, keys...)
 		hc := providers.Get(sv.Provider).Health != nil
 		for _, k := range keys {

@@ -275,6 +275,13 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.create", created.Slug, "")
+	// A new service of an account already in the pool uses its keys at once.
+	if src, err := catalog.AutoLinkKeys(r.Context(), s.Store, created); err == nil && src != nil {
+		if again, err := s.Store.GetService(r.Context(), created.ID); err == nil {
+			created = again
+		}
+	}
+	_ = s.Store.FillStats(r.Context(), []*store.Service{created}, isSuper(r), s.Pool.InFlight())
 	s.fillLogos(r.Context(), created)
 	writeJSON(w, 201, created)
 }
@@ -364,6 +371,8 @@ func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
 	}
 	// SQLite may hand the id to the next service: its cached answers go now.
 	s.Cache.PurgePrefix(servicePrefix(sv.ID))
+	// Services that used its keys go back to their own.
+	_ = s.Store.ClearKeySourcesOf(r.Context(), sv.ID)
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.delete", sv.Slug, "")
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -381,8 +390,12 @@ func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillInFlight(keys...)
+	_ = s.Store.FillTwins(r.Context(), keys, isSuper(r))
 	maskAccounts(r, keys...)
-	writeJSON(w, 200, map[string]any{"keys": keys})
+	shared := s.sharedKeysOf(r.Context(), sv, keys)
+	s.fillInFlight(shared...)
+	maskAccounts(r, shared...)
+	writeJSON(w, 200, map[string]any{"keys": keys, "shared": shared, "key_source": sv.KeySourceSlug})
 }
 
 func (s *Server) fillInFlight(keys ...*store.Key) {

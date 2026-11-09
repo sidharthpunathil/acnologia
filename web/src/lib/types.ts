@@ -25,6 +25,8 @@ export interface KeyCounts {
   backup: number;
   /** Keys currently at their concurrency limit. */
   busy?: number;
+  /** Of the keys above, how many come from the key source service. */
+  shared?: number;
 }
 
 /** Provider slug. Built-ins are serpapi, elevenlabs and generic; AI or manual providers add more. */
@@ -63,6 +65,10 @@ export interface Service {
   cache_ttl_sec?: number | null;
   /** USD per request override; null uses the provider default. */
   cost_per_request?: number | null;
+  /** Another service of the same account whose keys this one uses as well as its own. */
+  key_source_id?: number | null;
+  key_source_slug?: string;
+  key_source_name?: string;
   /** Set when another Acnologia shares this service; it proxies through that server. */
   peer_link_id?: number | null;
   /** The name of the server that shares it. */
@@ -92,7 +98,24 @@ export type KeyStatus = "active" | "disabled" | "exhausted" | "invalid" | "banne
 export type EffectiveStatus = KeyStatus | "cooling";
 export type Tier = "primary" | "backup";
 
+/** A key in another service with the same secret. */
+export interface KeyTwin {
+  key_id: number;
+  label: string;
+  service_id: number;
+  service_slug: string;
+  service_name: string;
+}
+
+/** GET /api/admin/keys/shared. */
+export interface SharedKeysReport {
+  duplicates: KeyTwin[][];
+  suggestions: { service: string; service_name: string; source: string; source_name: string; source_keys: number }[];
+}
+
 export interface Key {
+  /** Keys with the same secret in other services. */
+  twins?: KeyTwin[];
   id: number;
   service_id: number;
   label: string;

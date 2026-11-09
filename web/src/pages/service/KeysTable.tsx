@@ -277,6 +277,19 @@ export function KeyHealth({ k, now, serviceMax, clamp = true }: { k: Key; now: n
 /** Rows per page. Every row re-renders each second for its live times, so long pools page. */
 const PAGE_SIZE = 50;
 
+/** Says which other services hold the same secret, so one key added twice is easy to spot. */
+export function TwinsLine({ k, className }: { k: Key; className?: string }) {
+  if (!k.twins?.length) return null;
+  return (
+    <div
+      className={cx("truncate text-caption-1-regular text-status-purple-text", className)}
+      title={k.twins.map((t) => `${t.label || "Untitled"} in ${t.service_name}`).join(", ")}
+    >
+      Same key as in {[...new Set(k.twins.map((t) => t.service_name))].join(", ")}
+    </div>
+  );
+}
+
 export function KeysTable({
   keys,
   apps,
@@ -375,6 +388,7 @@ export function KeysTable({
                     {fillFirst && k.tier === "primary" ? ` · priority ${k.priority}` : ""}
                     {k.weight && k.weight !== 1 ? <span title={`Weight ${k.weight}`}>{` · w${k.weight}`}</span> : ""}
                   </div>
+                  <TwinsLine k={k} className="mt-0.5" />
                 </TableCell>
                 <TableCell className="py-3 align-top">
                   <KeyHealth k={k} now={now} serviceMax={serviceMax} />
@@ -416,6 +430,7 @@ export function KeysTable({
                 </div>
                 <ExposureChips k={k} className="mt-1" />
                 <AccountLine k={k} wrap className="mt-0.5" />
+                <TwinsLine k={k} className="mt-0.5" />
                 <div className="mt-0.5 font-mono text-caption-1-regular text-text-secondary">
                   {k.hint}
                   {fillFirst && k.tier === "primary" ? ` · priority ${k.priority}` : ""}

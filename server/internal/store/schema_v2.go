@@ -87,6 +87,7 @@ func migrateV2(db *sql.DB) error {
 		{"apps", "daily_budget", "REAL"},
 		{"apps", "monthly_budget", "REAL"},
 		{"service_groups", "strategy", "TEXT NOT NULL DEFAULT 'priority'"},
+		{"services", "key_source_id", "INTEGER"},
 	}
 	for _, c := range cols {
 		if _, err := addColumn(db, c.table, c.col, c.def); err != nil {
