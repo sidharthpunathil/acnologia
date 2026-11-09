@@ -362,8 +362,9 @@ jobs:
       fail-fast: false
       matrix:
         # The oldest supported pair uses the SDK's own HTTP client (inets
-        # before 9.6). Windows only in a full run.
-        include: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"os":"ubuntu-latest","elixir":"1.18","otp":"25"},{"os":"ubuntu-latest","elixir":"1.20","otp":"29"},{"os":"windows-latest","elixir":"1.20","otp":"29"}]' || '[{"os":"ubuntu-latest","elixir":"1.18","otp":"25"},{"os":"ubuntu-latest","elixir":"1.20","otp":"29"}]') }}
+        # before 9.6). It runs on ubuntu-24.04: hex.pm builds no OTP 25 for
+        # the newer image ubuntu-latest points at. Windows only in a full run.
+        include: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"os":"ubuntu-24.04","elixir":"1.18","otp":"25"},{"os":"ubuntu-latest","elixir":"1.20","otp":"29"},{"os":"windows-latest","elixir":"1.20","otp":"29"}]' || '[{"os":"ubuntu-24.04","elixir":"1.18","otp":"25"},{"os":"ubuntu-latest","elixir":"1.20","otp":"29"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
