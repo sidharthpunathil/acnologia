@@ -887,10 +887,10 @@ Tools by role:
 
 | Role | Tools |
 |---|---|
-| member and up | ask_user, search_providers, provider_offers, provider_guide, get_provider_spec, list_capabilities, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
+| member and up | ask_user, search_providers, provider_offers, provider_guide, get_provider_spec, get_catalog, find_missing_catalog, list_capabilities, wait_for_build, overview, list_providers, get_provider, list_services, list_keys, key_details, list_apps, app_usage, list_events, list_webhooks, list_egress_proxies, list_groups, service_breaker, cache_stats, app_mcp_settings, get_ai_run |
 | admin and up | create_service, update_service, add_keys, update_key, check_keys, reset_key, create_app, update_app (including limits), test_webhook, test_egress_proxy, create_group, update_group, reset_breaker, purge_cache, update_app_mcp, start_provider_build, write_provider_guide, update_provider (base URL, auth, health, hosts or disabling after Confirm), improve_provider, find_logo, set_provider_logo, set_service_logo, save_capability, try_capability |
-| admin and up, after Confirm | delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, delete_capability, enable_app_mcp_manage, create_webhook, update_webhook, create_egress_proxy, update_egress_proxy |
-| admin and up, after Confirm for some inputs | update_app with mode or allowed_services, update_service with base_url, auth, provider or egress_id, update_key with egress_id |
+| admin and up, after Confirm | update_catalog, delete_key, delete_service, delete_app, rotate_app_token, delete_webhook, delete_egress_proxy, delete_group, delete_capability, enable_app_mcp_manage, create_webhook, update_webhook, create_egress_proxy, update_egress_proxy |
+| admin and up, after Confirm for some inputs | verify_catalog with live, update_app with mode or allowed_services, update_service with base_url, auth, provider or egress_id, update_key with egress_id |
 
 `ask_user` shows a small form in the chat (name the pasted keys, pick one
 of 2 to 8 choices, or pick a logo); the answer goes to `POST /threads/{id}/answer`.

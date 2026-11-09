@@ -373,6 +373,29 @@ docs URL, color, status or any part of its spec (a JSON merge patch) as a
 new version. Changes to `base_url`, `auth`, the health check or `hosts`, and
 disabling a provider, wait for your Confirm.
 
+The Assistant also runs a catalog entry by entry:
+
+- `get_catalog` lists the entries by category, with each one's URL, docs,
+  logo, how many endpoints it documents and its last check.
+- `update_catalog` adds, changes or removes entries after your Confirm. A
+  provider without a catalog gets one. Endpoints given with an entry
+  (paths relative to the entry, such as `/search`) are stored as
+  `/~name/search` guide endpoints, so they become MCP tools at once.
+  Removing an entry also removes its endpoints, examples and offers.
+- `find_missing_catalog` reads the provider's website, docs page, sitemap
+  and any pages you name, and lists product hosts on the provider's site
+  that the catalog lacks, plus entries those pages no longer mention.
+- `verify_catalog` checks entries. Without `live` it checks each host
+  answers over HTTPS. With `live` (after your Confirm, since it uses
+  quota) it makes one GET per entry through the proxy with a pooled key,
+  from an example or an endpoint that needs no parameters, through the
+  Assistant app, and reports `ok`, `rate_limited`, `key_rejected`,
+  `plan_or_quota`, `not_found`, `no_key`, `provider_error`, `unreachable`
+  or `no_test_call`. Results are kept per entry and shown by `get_catalog`.
+
+Ask in plain words: "what Omkar APIs are we missing?", "add them",
+"verify the Omkar catalog live", "remove the ones that are dead".
+
 A service on a host with a `logo_url` shows that logo (the site the API
 reads, such as TikTok), with the provider's logo as a small badge on it.
 
