@@ -29,6 +29,11 @@ type GuideContext struct {
 	PublicURL string
 	// Admin is true for a dashboard user, false for an app with a token.
 	Admin bool
+	// ForwardProxy is the forward proxy URL apps may set as HTTPS_PROXY,
+	// and DirectBase the service's own base URL they then call. Empty
+	// leaves the forward proxy out.
+	ForwardProxy string
+	DirectBase   string
 }
 
 // GuideInput is everything RenderGuide needs.
@@ -47,10 +52,14 @@ type GuideDoc struct {
 	Summary   string `json:"summary"`
 	Generated bool   `json:"generated"`
 	// ProxyBase is where requests go; append a path from Endpoints.
-	ProxyBase string          `json:"proxy_base"`
-	DocsURL   string          `json:"docs_url,omitempty"`
-	Website   string          `json:"website,omitempty"`
-	Endpoints []GuideEndpoint `json:"endpoints"`
+	ProxyBase string `json:"proxy_base"`
+	// ForwardProxy and DirectBase: set ForwardProxy as HTTPS_PROXY (with
+	// the app token as its password) and call DirectBase directly.
+	ForwardProxy string          `json:"forward_proxy,omitempty"`
+	DirectBase   string          `json:"direct_base,omitempty"`
+	DocsURL      string          `json:"docs_url,omitempty"`
+	Website      string          `json:"website,omitempty"`
+	Endpoints    []GuideEndpoint `json:"endpoints"`
 	// Hosts are the provider's products on hosts of their own, each picked
 	// with a "/~name" path prefix. Empty for most providers.
 	Hosts    []GuideHost    `json:"hosts,omitempty"`
@@ -103,8 +112,9 @@ func BuildGuide(in GuideInput) GuideDoc {
 	}
 	d := GuideDoc{
 		Provider: m.Slug, Name: name, Service: in.Ctx.Service,
-		ProxyBase: strings.TrimRight(in.Ctx.PublicURL, "/") + "/proxy/" + svc,
-		DocsURL:   httpsOnly(m.DocsURL), Website: httpsOnly(m.Website),
+		ProxyBase:    strings.TrimRight(in.Ctx.PublicURL, "/") + "/proxy/" + svc,
+		ForwardProxy: in.Ctx.ForwardProxy, DirectBase: strings.TrimRight(in.Ctx.DirectBase, "/"),
+		DocsURL: httpsOnly(m.DocsURL), Website: httpsOnly(m.Website),
 		Endpoints: []GuideEndpoint{}, Examples: []GuideExample{},
 		Limits: guideLimits(spec), Errors: guideErrors(spec), Notes: []string{},
 	}
@@ -167,6 +177,10 @@ func (d GuideDoc) Render(admin bool) string {
 	slug := d.Service
 	if slug == "" {
 		slug = ServicePlaceholder
+	}
+	if d.ForwardProxy != "" && d.DirectBase != "" {
+		p("- Forward proxy: or keep calling `%s` itself and set `HTTPS_PROXY=%s` with your app token as the password (`http://app:acn_...@host:port`). Trust the proxy's CA from `%s/api/v1/proxy/ca.pem` (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `curl --cacert`); Node needs `--use-env-proxy`. The key is added the same way.\n",
+			d.DirectBase, d.ForwardProxy, strings.TrimSuffix(strings.SplitN(d.ProxyBase, "/proxy/", 2)[0], "/"))
 	}
 	p("- MCP: with the app MCP server at `/mcp`, call `proxy_request` with `service=%s`, a `method` and a `path`. From the control MCP at `/mcp/control`, use `call_service`.\n", slug)
 	if admin {

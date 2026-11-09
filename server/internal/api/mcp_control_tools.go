@@ -536,6 +536,14 @@ func buildCtlTools() []ctlTool {
 		{Name: "check_provider_offers", Title: "Check a provider's offers", Group: "providers", Kind: ctlWrite, Role: sa, Method: post, Path: "/api/admin/providers/{slug}/refresh", OpenWorld: true,
 			Desc: "Re-check one provider's offers (free tiers, prices, limits) against its pricing pages now, with AI. Returns the refresh run.", Props: map[string]any{"slug": sProp("Provider slug")}, Required: []string{"slug"}},
 
+		{Name: "forward_proxy_setup", Title: "Forward proxy setup", Group: "call", Kind: ctlRead, Role: a, Method: get, Path: "/api/admin/forward-proxy",
+			Desc: "How apps use Acnologia as their HTTPS_PROXY: the proxy URL (the app token goes in it as the password), the CA certificate URL and fingerprint apps must trust, whether other HTTPS hosts are tunneled, and every host whose requests get pool keys with its service."},
+		{Name: "rotate_forward_proxy_ca", Title: "Rotate the forward proxy CA", Group: "call", Kind: ctlDestructive, Role: a, Method: post, Path: "/api/admin/forward-proxy/ca/rotate",
+			Desc: "Replace the forward proxy's CA certificate. Every app using the forward proxy must download and trust the new one from /api/v1/proxy/ca.pem, or its HTTPS calls fail.",
+			Describe: func(*ctlCtx, map[string]any) (string, error) {
+				return "rotate the forward proxy CA (apps must trust the new certificate)", nil
+			}},
+
 		// ---- call ----
 		{Name: "call_service", Title: "Call a service", Group: "call", Kind: ctlWrite, Role: a, OpenWorld: true,
 			Desc: "Call a provider API (search, LLM, voice and the rest) through Acnologia's proxy: it picks a pooled key, injects it, rotates on rate limits and records usage. The key is never shown. Calls run as the app \"Control MCP\", made on first use, so its limits and usage apply. Read service_guide first for the endpoints and params; list_service_examples shows ready to use arguments.",

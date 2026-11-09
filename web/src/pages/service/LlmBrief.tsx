@@ -14,6 +14,7 @@ import { RadioGroup } from "@/components/base/radio/radio";
 import { RadioCard } from "@/components/base/radio/radio-card";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { buildBrief } from "./brief-markdown";
+import { useForwardProxy } from "../../lib/forwardProxy";
 import { ActionIcon } from "./parts";
 
 type TokenChoice = "placeholder" | "create";
@@ -61,9 +62,13 @@ function LlmBriefModal({ service, onClose }: { service: Service; onClose: () => 
     };
   }, [service.id]);
 
+  // A shared service is not on the forward proxy; elsewhere the admin view knows its real address.
+  const peer = !!service.peer_link_id;
+  const fwd = useForwardProxy(manage && !peer);
+  const forwardProxy = peer ? null : (fwd.setup?.proxy_url ?? null) || undefined;
   const md = useMemo(
-    () => buildBrief({ service, provider, host: window.location.origin, token: choice === "create" ? token : null, guide }),
-    [service, provider, choice, token, guide],
+    () => buildBrief({ service, provider, host: window.location.origin, token: choice === "create" ? token : null, guide, forwardProxy }),
+    [service, provider, choice, token, guide, forwardProxy],
   );
   const ready = choice === "placeholder" || token !== null;
 

@@ -72,6 +72,14 @@ type Server struct {
 	// routerOnce builds the router used by the assistant's in-process calls.
 	routerOnce sync.Once
 	routerH    http.Handler
+	// The forward proxy (forward.go, forward_ca.go).
+	caMu         sync.Mutex
+	fwdCA        *forwardCA
+	fwdMu        sync.Mutex
+	fwdSvcs      []*store.Service
+	fwdAt        time.Time
+	fwdInnerOnce sync.Once
+	fwdInnerLn   *chanListener
 	// chatModel replaces the Claude call in tests.
 	chatModel func(ctx context.Context, system string, msgs []anthropic.BetaMessageParam, tools []anthropic.BetaToolUnionParam) (*anthropic.BetaMessage, error)
 	// chatSummary replaces the compaction summary call in tests.
@@ -350,6 +358,8 @@ func (s *Server) Router() http.Handler {
 			r.Put("/services/{id}/key-source", s.setKeySource)
 			r.Post("/services/{id}/logo/fetch", s.fetchServiceLogo)
 			r.Post("/services/logos/fill", s.fillServiceLogos)
+			r.Get("/forward-proxy", s.adminForwardProxy)
+			r.Post("/forward-proxy/ca/rotate", s.rotateForwardCA)
 			r.Post("/services/families/link", s.linkFamily)
 			r.Post("/keys/shared/link", s.linkAllKeySources)
 			r.Patch("/capabilities/{id}", s.updateCapability)
@@ -404,8 +414,12 @@ func (s *Server) Router() http.Handler {
 		// me checks the token itself, so a share token whose share stopped
 		// still learns why.
 		r.Get("/me", s.v1Me)
+		// The forward proxy's CA certificate is public: apps download it to
+		// trust the proxy.
+		r.Get("/proxy/ca.pem", s.v1ProxyCA)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireApp)
+			r.Get("/proxy", s.v1ProxySetup)
 			r.Get("/services", s.v1Services)
 			r.Get("/services/{slug}/guide", s.v1ServiceGuide)
 			r.Get("/capabilities", s.v1Capabilities)

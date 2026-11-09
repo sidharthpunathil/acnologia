@@ -56,6 +56,40 @@ Details in [Access password](#access-password) below.
 | `ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE` | `false` | Let webhooks reach private, loopback and link-local addresses, for a receiver on your own network. |
 | `ACNOLOGIA_EGRESS_ECHO_URL` | `https://www.cloudflare.com/cdn-cgi/trace` | URL the egress proxy test calls to learn the proxy's public IP. |
 
+### Forward proxy
+
+Apps can set Acnologia as their `HTTPS_PROXY` / `HTTP_PROXY` and call provider
+URLs as they are; see [API](api.md#forward-proxy). Not to be confused with
+two other things: an egress proxy (Settings, Egress) and the server's own
+`HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` environment both carry
+Acnologia's outbound calls to providers, while the forward proxy takes
+calls in from apps. Proxy mode is the `/proxy/{service}` route.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ACNOLOGIA_FORWARD_PROXY_ADDR` | empty | A second listener for the forward proxy, such as `:8888`. It speaks plain HTTP and TLS on the same port, so both `http://` and `https://` proxy URLs work (TLS uses a certificate from the proxy CA for the proxy's name or IP). Empty: the main port still answers `CONNECT` and absolute URL requests, which is enough when nothing sits in front of Acnologia (local, a VPS). Behind an HTTPS edge such as Railway's, `CONNECT` does not pass, so set this and expose the port (a Railway TCP proxy). |
+| `ACNOLOGIA_FORWARD_PROXY_URL` | empty | The proxy address apps should use, shown in the dashboard, `GET /api/v1/proxy` and `acn proxy env`, such as `http://x.proxy.rlwy.net:12345`. Empty: the host of `ACNOLOGIA_PUBLIC_URL` on the `ACNOLOGIA_FORWARD_PROXY_ADDR` port, else `ACNOLOGIA_PUBLIC_URL` itself. |
+| `ACNOLOGIA_FORWARD_PASSTHROUGH` | `true` | Let the forward proxy carry HTTPS to hosts that are no service as a blind tunnel (no key, not opened), to public addresses on port 443 or 8443, so an app can send all its traffic through it. A share's token never gets it. `false`: other hosts get 403 `not_a_service`, and apps list them in `NO_PROXY`. |
+
+The forward proxy's CA is made on first use and stored encrypted with the
+master key, so it survives restarts and is the same on every boot. Apps
+download it from `GET /api/v1/proxy/ca.pem`; rotate it with
+`POST /api/admin/forward-proxy/ca/rotate` (see
+[security](security.md#the-forward-proxy)).
+
+On Railway, for example:
+
+```bash
+ACNOLOGIA_FORWARD_PROXY_ADDR=:8888
+# after adding a TCP proxy for port 8888 in the service's networking settings
+ACNOLOGIA_FORWARD_PROXY_URL=https://x.proxy.rlwy.net:12345
+```
+
+Over the internet, prefer an `https://` proxy URL so the app token in it is
+not sent in clear. Node, curl and Python `requests` support HTTPS proxies;
+the client must trust the Acnologia CA for that connection too (curl:
+`--proxy-cacert`).
+
 ### AI features
 
 | Variable | Default | What it does |

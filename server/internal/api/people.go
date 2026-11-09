@@ -508,6 +508,7 @@ func (s *Server) claimRedeem(w http.ResponseWriter, r *http.Request) {
 			Guide: s.serviceGuide(ctx, sv, base, false).Render(false)})
 	}
 	writeJSON(w, 200, map[string]any{"token": tok, "base_url": base + "/proxy", "services": out, "mcp_url": base + "/mcp",
+		"forward_proxy_url": s.forwardProxyURL(authorityOf(base)), "ca_url": base + "/api/v1/proxy/ca.pem",
 		"limits": claimed.Limits, "ends_at": claimed.ExpiresAt})
 }
 

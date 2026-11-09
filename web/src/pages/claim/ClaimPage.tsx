@@ -1,5 +1,6 @@
 // The claim link a person opens: what is shared and by whom, then, after
 // "Get my access", their token (or the keys) shown once.
+import { proxyWithToken } from "@/lib/forwardProxy";
 import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Key as AriaKey } from "react-aria-components";
@@ -266,6 +267,22 @@ function ProxyResult({ r, owner }: { r: RedeemProxy; owner: string }) {
             <h2 className="text-body-medium text-text-primary">Base URL</h2>
             <SecretBox value={host} />
           </div>
+          {r.forward_proxy_url && (
+            <div className="flex flex-col gap-1.5">
+              <h2 className="text-body-medium text-text-primary">Forward proxy</h2>
+              <p className="text-body-2-regular text-text-secondary">Set HTTPS_PROXY and call the provider's own URL. HTTPS needs the CA trusted.</p>
+              <SecretBox value={`HTTPS_PROXY=${proxyWithToken(r.forward_proxy_url, r.token)}`} />
+              {r.ca_url && (
+                <a
+                  href={r.ca_url}
+                  download="acnologia-ca.pem"
+                  className="w-fit rounded-sm text-body-2-medium text-text-primary underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+                >
+                  Download CA certificate
+                </a>
+              )}
+            </div>
+          )}
           <Facts
             rows={[
               { label: "Ends", value: <EndsLine endsAt={r.ends_at} /> },

@@ -31,6 +31,9 @@ func (s *Server) serviceGuide(ctx context.Context, sv *store.Service, publicURL 
 	}
 	in := providers.GuideInput{Meta: meta, Spec: docSpec(sv),
 		Ctx: providers.GuideContext{Service: sv.Slug, ServiceName: sv.Name, PublicURL: publicURL, Admin: admin}}
+	if sv.PeerLinkID == nil && sv.Provider != providers.PeerSlug {
+		in.Ctx.ForwardProxy, in.Ctx.DirectBase = s.forwardProxyURL(authorityOf(publicURL)), sv.BaseURL
+	}
 	return providers.BuildGuide(in)
 }
 

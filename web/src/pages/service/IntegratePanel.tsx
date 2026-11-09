@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { AcnKeyLease, AcnProxy } from "@/components/foundations/icons/acn";
+import { RiDownload2Line, RiGlobalLine } from "@remixicon/react";
 import { moreSnippets, type MoreLang } from "./snippets-more";
+import { forwardSnippets } from "./snippets-forward";
 import { Link } from "react-router-dom";
 import type { Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
@@ -12,8 +14,12 @@ import { RadioGroup } from "@/components/base/radio/radio";
 import { RadioCard } from "@/components/base/radio/radio-card";
 import { Select, SelectItem } from "@/components/base/select/select";
 import { cx } from "@/utils/cx";
+import type { IconComponent } from "@/components/acn/types";
+import { can } from "@/lib/perms";
+import { useAuth } from "@/stores/auth";
+import { CA_PATH, fallbackProxyUrl, proxyWithToken, useForwardProxy } from "@/lib/forwardProxy";
 
-type Mode = "proxy" | "lease";
+type Mode = "proxy" | "lease" | "forward";
 type Lang = "curl" | "python" | "typescript" | "go" | MoreLang;
 
 const LANGS: { id: Lang; label: string }[] = [
@@ -114,7 +120,7 @@ function authFor(s: SnippetService) {
   };
 }
 
-function snippets(s: SnippetService, host: string, spec?: SpecExamples, TOKEN = PLACEHOLDER): Record<Mode, Record<Lang, string>> {
+function snippets(s: SnippetService, host: string, spec?: SpecExamples, TOKEN = PLACEHOLDER): Record<"proxy" | "lease", Record<Lang, string>> {
   const ex = example(spec);
   const slug = s.slug;
   const a = authFor(s);
@@ -280,6 +286,13 @@ export function proxySnippets(
   return { curl: all.curl, python: all.python, typescript: all.typescript };
 }
 
+/** Forward proxy snippets: the provider's own URL, through `proxyUrl` with the token as its password. */
+function forwardCode(s: SnippetService, host: string, proxyUrl: string, spec: SpecExamples | undefined, lang: Lang): string {
+  const ex = example(spec);
+  const base = `${s.base_url.replace(/\/$/, "")}${ex.path}`;
+  return forwardSnippets({ host, proxy: proxyWithToken(proxyUrl, TOKEN), url: `${base}${qsOf(ex.params)}`, base, params: ex.params })[lang];
+}
+
 export function IntegratePanel({ service }: { service: Service }) {
   const [picked, setMode] = useState<Mode>("proxy");
   const [lang, setLangState] = useState<Lang>(savedLang);
@@ -297,9 +310,13 @@ export function IntegratePanel({ service }: { service: Service }) {
   // A shared service is proxy only: a lease would hand out the share token.
   const proxyOnly = !!service.peer_link_id;
   const mode: Mode = proxyOnly ? "proxy" : picked;
-  const code = snippets(service, host, spec)[mode][lang];
+  // The forward proxy's address comes from the server (admins); anyone else gets this page's origin.
+  const isAdmin = can.manage(useAuth((st) => st.user?.role));
+  const fwd = useForwardProxy(mode === "forward" && isAdmin);
+  const fwdUrl = fwd.setup?.proxy_url ?? fallbackProxyUrl();
+  const code = mode === "forward" ? forwardCode(service, host, fwdUrl, spec, lang) : snippets(service, host, spec)[mode][lang];
 
-  const allModes: { id: Mode; title: string; icon: typeof AcnProxy; body: string }[] = [
+  const allModes: { id: Mode; title: string; icon: IconComponent; body: string }[] = [
     {
       id: "proxy",
       title: "Proxy mode",
@@ -312,6 +329,12 @@ export function IntegratePanel({ service }: { service: Service }) {
       icon: AcnKeyLease,
       body: "Lease a key, call the provider yourself, then report how it went so Acnologia can rest the key and rotate.",
     },
+    {
+      id: "forward",
+      title: "Forward proxy",
+      icon: RiGlobalLine,
+      body: "Set HTTPS_PROXY and call the provider's own URL. Acnologia adds a key to every call to this service's host.",
+    },
   ];
   const modes = proxyOnly ? allModes.filter((m) => m.id === "proxy") : allModes;
 
@@ -322,7 +345,7 @@ export function IntegratePanel({ service }: { service: Service }) {
         aria-label={`How your app calls ${service.name}`}
         value={mode}
         onChange={(v) => setMode(v as Mode)}
-        className={cx("grid grid-cols-1 gap-3", !proxyOnly && "sm:grid-cols-2")}
+        className={cx("grid grid-cols-1 gap-3", !proxyOnly && "sm:grid-cols-2 lg:grid-cols-3")}
       >
         {modes.map((m) => (
           <RadioCard
@@ -359,6 +382,8 @@ export function IntegratePanel({ service }: { service: Service }) {
 
       <CodeBlock code={code} label={`${mode} · ${LANGS.find((l) => l.id === lang)?.label}`} />
 
+      {mode === "forward" && <ForwardNote service={service} proxyUrl={fwdUrl} known={!!fwd.setup} />}
+
       <p className="wrap-anywhere font-mono text-caption-1-regular text-text-secondary">
         Replace {TOKEN} with an app token from{" "}
         <Link
@@ -367,7 +392,7 @@ export function IntegratePanel({ service }: { service: Service }) {
         >
           Apps
         </Link>
-        . The app must allow {mode} mode and the {service.slug} service.
+        . The app must allow {mode === "forward" ? "proxy" : mode} mode and the {service.slug} service.
         {proxyOnly &&
           ` ${service.peer_name || "Another server"} shares this service, so it is proxy only: requests go through that server, which adds its own key.`}
       </p>
@@ -377,6 +402,39 @@ export function IntegratePanel({ service }: { service: Service }) {
         fetcher={() => api.serviceGuide(service.id)}
         fetchKey={`${service.id}:${service.slug}`}
       />
+    </div>
+  );
+}
+
+const LINK = "rounded-sm text-text-primary underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring";
+
+/** What the forward proxy does with a call, where the CA comes from, and how to pick a service on a shared host. */
+function ForwardNote({ service, proxyUrl, known }: { service: Service; proxyUrl: string; known: boolean }) {
+  let host = "";
+  try {
+    host = new URL(service.base_url).host;
+  } catch {
+    // A base URL that does not parse has no host to name.
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-2xl border border-border-button-default bg-background-secondary-default p-4 text-body-2-regular text-text-secondary">
+      <p className="text-pretty">
+        Calls to {host ? <code className="font-mono wrap-anywhere text-text-primary">{host}</code> : "this service's host"} get a key from the pool, with the
+        same rotation, limits and logs as Proxy mode. Any key the app sends is replaced. HTTPS needs the Acnologia CA trusted: Node takes{" "}
+        <code className="font-mono">NODE_EXTRA_CA_CERTS</code> and <code className="font-mono">--use-env-proxy</code>, Python{" "}
+        <code className="font-mono">REQUESTS_CA_BUNDLE</code>, curl <code className="font-mono">--cacert</code>.
+      </p>
+      <p className="text-pretty">
+        When several services share a host, send <code className="font-mono wrap-anywhere">X-Acnologia-Service: {service.slug}</code> to pick this one (or a group).
+      </p>
+      <p className="wrap-anywhere">
+        Proxy: <code className="font-mono text-text-primary">{proxyUrl}</code>
+        {!known && " (this page's address; an admin can see the forward proxy's own address in Settings)"}
+      </p>
+      <a href={CA_PATH} download="acnologia-ca.pem" className={cx(LINK, "inline-flex w-fit items-center gap-1.5 text-body-2-medium")}>
+        <RiDownload2Line className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
+        Download CA certificate
+      </a>
     </div>
   );
 }

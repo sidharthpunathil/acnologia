@@ -53,6 +53,12 @@ Commands:
   cache purge <service>          drop cached responses of a service
   usage <app-id>                 an app's requests, spend and limits
 
+Forward proxy (apps set Acnologia as HTTPS_PROXY and call provider URLs):
+  proxy                          proxy URL, CA fingerprint and the hosts that get keys
+  proxy ca [--out file|-]        save the CA certificate apps must trust (acnologia-ca.pem)
+  proxy env [--token acn_...] [--ca file]
+                                 export lines: HTTPS_PROXY, NODE_EXTRA_CA_CERTS and friends
+
 Connect Claude (MCP):
   mcp [--context name] [--groups g1,g2] [--exclude t1,t2] [--read-only] [--confirm on|off]
                                  stdio MCP server that runs this server as you
@@ -245,6 +251,8 @@ func (c *cli) run(args []string) error {
 		return c.usage(args[1:])
 	case "mcp":
 		return c.mcp(args[1:])
+	case "proxy":
+		return c.proxy(args[1:])
 	}
 	return fmt.Errorf("unknown command %q; run %s help", args[0], c.name())
 }

@@ -1,5 +1,6 @@
 import type { GuideDoc, Provider, Service, SpecExample } from "../../lib/types";
 import { limitText, matchText, offersOf, priceText } from "../../lib/offers";
+import { CA_PATH, proxyWithToken } from "../../lib/forwardProxy";
 
 /*
  * A Markdown brief an LLM can act on with no other context: where to send
@@ -17,6 +18,8 @@ export interface BriefInput {
   token: string | null;
   /** The provider's written guide, from the server. Generated guides add nothing the brief lacks. */
   guide?: Pick<GuideDoc, "summary" | "endpoints" | "notes" | "generated"> | null;
+  /** The forward proxy's address without a token; defaults to `host`. Null leaves the forward proxy out (a shared service). */
+  forwardProxy?: string | null;
 }
 
 export const TOKEN_PLACEHOLDER = "ACNOLOGIA_TOKEN";
@@ -42,7 +45,7 @@ function curlFor(base: string, ex: SpecExample, auth: string): string {
   return lines.join(" \\\n");
 }
 
-export function buildBrief({ service, provider, host, token, guide }: BriefInput): string {
+export function buildBrief({ service, provider, host, token, guide, forwardProxy }: BriefInput): string {
   const base = `${host.replace(/\/$/, "")}/proxy/${service.slug}`;
   const auth = token ?? `$${TOKEN_PLACEHOLDER}`;
   const name = service.name;
@@ -72,6 +75,15 @@ export function buildBrief({ service, provider, host, token, guide }: BriefInput
   out.push(`- Do not send ${name}'s own auth header or key parameter. Acnologia sets it.`);
   if (provider?.docs_url) out.push(`- ${name} API reference: ${provider.docs_url}`);
   out.push("");
+
+  if (forwardProxy !== null) {
+    const fwd = proxyWithToken(forwardProxy || host, auth);
+    out.push("### Forward proxy", "");
+    out.push(
+    `Code that already calls ${ic(service.base_url)} can keep that URL and use Acnologia as its HTTPS proxy instead: set ${ic(`HTTPS_PROXY=${fwd}`)} and trust the Acnologia CA from ${ic(`${host.replace(/\/$/, "")}${CA_PATH}`)} (Node: ${ic("NODE_EXTRA_CA_CERTS=acnologia-ca.pem")} and ${ic("node --use-env-proxy")}; Python: ${ic("REQUESTS_CA_BUNDLE=acnologia-ca.pem")}; curl: ${ic("--cacert acnologia-ca.pem")}). Acnologia adds the key and replaces any key the request carries. Send ${ic(`X-Acnologia-Service: ${service.slug}`)} if another service shares the host.`,
+    );
+    out.push("");
+  }
 
   if (written?.endpoints?.length) {
     out.push("## Endpoints", "");

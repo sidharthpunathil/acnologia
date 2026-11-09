@@ -36,6 +36,8 @@ import { cx } from "@/utils/cx";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Callout, EmptyState, PageHeader, PageSkeleton } from "@/components/acn";
 import { TokenCardArt } from "@/components/foundations/illustrations";
+import { RiDownload2Line } from "@remixicon/react";
+import { CA_PATH, fallbackProxyUrl, proxyWithToken, useForwardProxy } from "../lib/forwardProxy";
 
 type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
 
@@ -55,9 +57,9 @@ function TipButton({ icon, label, onClick, disabled }: { icon: IconComponent; la
 const MODE_COLOR: Record<AppMode, ChipColor> = { proxy: "purple", lease: "blue", both: "neutral" };
 
 const MODE_HELP: Record<AppMode, string> = {
-  proxy: "Calls go through /proxy. The app never sees a raw key.",
+  proxy: "Calls go through /proxy, or through the forward proxy (set HTTPS_PROXY and call the provider's own URL). The app never sees a raw key.",
   lease: "The app leases raw keys and calls the provider itself.",
-  both: "Allows both proxy calls and leases.",
+  both: "Allows proxy calls (through /proxy or the forward proxy) and leases.",
 };
 
 const blank: AppInput = { name: "", description: "", mode: "proxy", allowed_services: [] };
@@ -329,6 +331,10 @@ function AppFormModal({
 }
 
 function TokenModal({ result, onClose }: { result: AppWithToken | null; onClose: () => void }) {
+  const admin = can.manage(useAuth((s) => s.user?.role));
+  const forward = !!result && result.app.mode !== "lease";
+  const fwd = useForwardProxy(forward && admin);
+  const proxyUrl = fwd.setup?.proxy_url ?? fallbackProxyUrl();
   return (
     <Modal
       open={!!result}
@@ -347,6 +353,22 @@ function TokenModal({ result, onClose }: { result: AppWithToken | null; onClose:
           </Callout>
           <SecretBox value={result.token} />
           <div className="font-mono text-caption-1-regular text-text-secondary wrap-anywhere text-text-tertiary">Send it as Authorization: Bearer {result.app.token_prefix}...</div>
+          {forward && (
+            <div className="mt-1 flex flex-col gap-2">
+              <div className="text-caption-1-regular text-text-secondary">
+                Or use Acnologia as a forward proxy: set HTTPS_PROXY and call the provider's own URL. HTTPS needs the Acnologia CA trusted.
+              </div>
+              <SecretBox value={`HTTPS_PROXY=${proxyWithToken(proxyUrl, result.token)}`} />
+              <a
+                href={CA_PATH}
+                download="acnologia-ca.pem"
+                className="inline-flex w-fit items-center gap-1.5 rounded-sm text-caption-1-medium text-text-primary underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+              >
+                <RiDownload2Line className="size-3.5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+                Download CA certificate
+              </a>
+            </div>
+          )}
         </div>
       )}
     </Modal>

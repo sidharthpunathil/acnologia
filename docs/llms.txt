@@ -1,12 +1,13 @@
 # Acnologia
 
-> Acnologia is a self-hosted API key pool. It stores many API keys per provider (SerpAPI, ElevenLabs, Brave Search, Gemini, or any API key based HTTP service), hands out a working key on demand, detects rate limits, quota exhaustion and suspended accounts, cools keys down and rotates to the next one. Agents use it either as a proxy (Acnologia injects the key and the secret is never exposed) or by leasing a key and reporting the outcome.
+> Acnologia is a self-hosted API key pool. It stores many API keys per provider (SerpAPI, ElevenLabs, Brave Search, Gemini, or any API key based HTTP service), hands out a working key on demand, detects rate limits, quota exhaustion and suspended accounts, cools keys down and rotates to the next one. Agents use it either as a proxy (Acnologia injects the key and the secret is never exposed), as a forward proxy (set `HTTPS_PROXY` and call provider URLs unchanged), or by leasing a key and reporting the outcome.
 
 Base URL is wherever Acnologia is deployed, for example `http://localhost:8080`. All consumer calls need an app token (`acn_...`) created in the dashboard. All bodies are JSON. Errors look like `{"error": {"code": "string", "message": "string"}}`.
 
 Key facts for agents:
 
 - Prefer proxy mode. Call `/proxy/{service}/{provider path}` exactly as you would call the provider, minus the provider key. Acnologia retries with the next key on rate limits.
+- No code changes: set Acnologia as the app's `HTTPS_PROXY` (`http://app:acn_...@host:port`), trust its CA (`GET /api/v1/proxy/ca.pem`), and call `https://serpapi.com/...` as is. Requests to a service's host get a pool key, exactly as through `/proxy`. `GET /api/v1/proxy` returns the proxy URL, CA and env vars. 407 `proxy_auth_required` means no or a wrong token in the proxy URL; 403 `not_a_service` means that host is no service (put it in `NO_PROXY`).
 - Use lease mode only when you must hold the raw key (for example a provider SDK). Always report the outcome so bad keys cool down and the key's concurrency slot is released.
 - An app may be limited to some services and to mode `proxy`, `lease` or `both`. Call `GET /api/v1/services` to see what you can use.
 - HTTP 503 `no_key_available`: every key is cooling down or exhausted. Wait `retry_after_sec` seconds.
@@ -24,6 +25,7 @@ Key facts for agents:
 
 - `Authorization: Bearer acn_...` (preferred), or `X-Acnologia-Token: acn_...`.
 - Proxy only: query parameter `?acn_token=acn_...` for tools that only accept a URL.
+- Forward proxy: the token goes in the proxy URL, `http://app:acn_...@host:port` (sent as `Proxy-Authorization`).
 - Acnologia strips these before forwarding upstream.
 
 ## Consumer API
@@ -34,6 +36,8 @@ Key facts for agents:
 - [POST /api/v1/leases/{lease_id}/report](/llms-full.txt): body `{"outcome", "status_code", "retry_after_sec", "message", "rotate"}`, returns `{"ok": true, "next": <lease or null>}`. With `rotate: true`, `next` is a fresh lease on another key.
 - [POST /api/v1/leases/{lease_id}/renew](/llms-full.txt): body `{"ttl_sec"}`, returns `{"ok": true, "expires_at"}`.
 - [ANY /proxy/{service}/{path}](/llms-full.txt): forwards to `base_url/{path}` with query string and body, injecting a key. Response headers add `X-Acnologia-Key-Id`, `X-Acnologia-Attempts`, `X-Acnologia-Service` and, with caching, `X-Acnologia-Cache`. Redirects are returned, not followed. Send `Cache-Control: no-cache` to skip the cache and `Idempotency-Key: <id>` to make retries safe for 10 minutes.
+- [GET /api/v1/proxy](/llms-full.txt): forward proxy setup: `{proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts, env, service_header}`. `GET /api/v1/proxy/ca.pem` is the CA certificate, no auth.
+- [Forward proxy](/llms-full.txt): `CONNECT host:443` or an absolute URL request through Acnologia as `HTTPS_PROXY`. Routed to the service by host and path; `X-Acnologia-Service: <slug>` picks one service or a group.
 - [GET /healthz](/llms-full.txt): `{"ok": true, "version": "..."}`, no auth.
 
 ## Outcomes
@@ -50,6 +54,7 @@ Key facts for agents:
 
 - SerpAPI search: `GET /proxy/serpapi/search.json?engine=google&q=coffee` with `Authorization: Bearer acn_...`. Do not send `api_key`.
 - ElevenLabs text to speech: `POST /proxy/elevenlabs/v1/text-to-speech/{voice_id}` with JSON `{"text": "Hello", "model_id": "eleven_multilingual_v2"}` and `Accept: audio/mpeg`. Do not send `xi-api-key`.
+- Forward proxy (Node 24+): `curl -o acnologia-ca.pem <base>/api/v1/proxy/ca.pem`, then `HTTPS_PROXY=http://app:acn_...@host:8888 NODE_EXTRA_CA_CERTS=acnologia-ca.pem node --use-env-proxy app.js`. Python `requests`: `HTTPS_PROXY` plus `REQUESTS_CA_BUNDLE=acnologia-ca.pem`. curl: `curl -x http://app:acn_...@host:8888 --cacert acnologia-ca.pem "https://serpapi.com/search.json?q=coffee"`.
 - The dashboard's Integrate tab has the same calls in curl, Python, TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 
 ## MCP
@@ -76,14 +81,14 @@ Twelve SDKs share one surface: proxy, lease, report with rotate, renew, an `excl
 
 ## Admin API and CLI
 
-Operators can script the admin API with a token from Account, API tokens (`Authorization: Bearer acnadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The `acn` CLI (`curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.sh | sh`, on Windows `irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex`, also built in as `acnologia ctl`) signs in through the browser with `acn login`, or takes a token with `acn login https://keys.example.com --token acnadm_...`; then `acn status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`.
+Operators can script the admin API with a token from Account, API tokens (`Authorization: Bearer acnadm_...`, scope `read`, `write` or `admin`, never above the creator's role). The `acn` CLI (`curl -fsSL https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.sh | sh`, on Windows `irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex`, also built in as `acnologia ctl`) signs in through the browser with `acn login`, or takes a token with `acn login https://keys.example.com --token acnadm_...`; then `acn status`, `services`, `keys <service>`, `keys add <service> < keys.txt`, `keys check <service>`, `events`, `breaker <service> [--reset]`, `cache purge <service>`, `usage <app-id>`, `proxy ca`, `proxy env`.
 
 ## Docs
 
 Every page of the docs is also served as raw Markdown. Fetch these when you need detail beyond the consumer API.
 
 - [Overview](/docs/overview.md): what Acnologia does, quick start and features.
-- [HTTP API](/docs/api.md): consumer error codes and every dashboard route with its required role.
+- [HTTP API](/docs/api.md): consumer error codes, the forward proxy and every dashboard route with its required role.
 - [Command line](/docs/cli.md): install the acn CLI, sign in through the browser, commands and CI variables.
 - [SDKs](/docs/sdks.md): the seventeen client libraries, how to install each today, the shared surface and running their tests.
 - [Configuration](/docs/configuration.md): environment variables, per service settings, self-hosting, Windows, the access password, backups and upgrading.

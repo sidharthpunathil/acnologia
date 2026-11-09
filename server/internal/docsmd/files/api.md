@@ -9,10 +9,11 @@ Each surface takes its own kind of credential:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate`, `/api/public/github` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` and `/api/public/github` stay open) |
+| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate`, `/api/public/github`, `/api/v1/proxy/ca.pem` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` and `/api/public/github` stay open) |
 | Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`), a share token (`manifest`, `leave`, `providers/{slug}/logo`, `keys`, `report`) or the owner's signature (`revoke`); see [Sharing between servers](#sharing-between-servers) |
 | Claim links | `/api/claim/v1` | a claim code (`acnclaim_...`) from a share with a person; see [Sharing with people](#sharing-with-people) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
+| Forward proxy | `CONNECT host:443`, or a request line with an absolute URL (`GET https://serpapi.com/...`) | app token in the proxy URL: `Proxy-Authorization: Basic` with the token as password (or user name), or `Proxy-Authorization: Bearer acn_...`; see [Forward proxy](#forward-proxy) |
 | Dashboard | `/api/auth`, `/api/admin`, `/api/logos`, `/api/cli/device` | `acnologia_session` cookie, or an admin API token `Authorization: Bearer acnadm_...` for `/api/admin` |
 | Control MCP | `/mcp/control` | admin API token only: `Authorization: Bearer acnadm_...`; see [Control MCP](#control-mcp-mcpcontrol) |
 
@@ -37,6 +38,9 @@ limited time.
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. 403 `lease_revoked` ends the lease when the app may no longer hold the key: lease mode or the service was taken away, its hidden key grant or share scope no longer covers the key, or the key was disabled. |
 | `GET /api/v1/capabilities` | The capabilities the app may call: `{capabilities: [{slug, name, description, strategy, params, routes: [{service, mapped}], url}]}`. Empty for a share's token. |
 | `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group or a capability (see llms-full.txt, Capabilities). Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` (not for a share's or a person's token), `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. A caller that may not lease the key gets bodies with the key replaced by `[key]`. A share's token reaches only the services it was made with: a slug that now names another service or a group answers 403 `service_not_allowed`. |
+| `GET /api/v1/proxy` | How to use the [forward proxy](#forward-proxy): `{proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts: [{host, service, name, path}], env: {HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE}, service_header}`. `hosts` lists the hosts of the services the token may use; `proxy_url_with_token` has `<app token>` where the token goes. |
+| `GET /api/v1/proxy/ca.pem` | The forward proxy's CA certificate (PEM, `acnologia-ca.pem`). Public: no token, and open behind the access password. |
+| `CONNECT`, or any method with an absolute URL | The forward proxy itself: the app sets Acnologia as its `HTTPS_PROXY` / `HTTP_PROXY` and calls provider URLs as they are. A request to a service's host runs exactly as `/proxy/{service}/...`. Apps in mode `proxy` or `both`. |
 | `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Tools depend on the app's tool sets: core (`list_services`, `pool_status`, `service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`), service tools generated from provider examples, insights (`list_keys`, `key_details`, `service_stats`) and manage (`check_keys`, `set_key_status`, `add_keys`). Also resources (including `acnologia://services/{slug}/guide`, the usage guide as Markdown) and prompts. |
 
 Status codes an app should handle:
@@ -45,6 +49,9 @@ Status codes an app should handle:
 |---|---|---|
 | 401 | `unauthenticated` | Token missing or wrong. |
 | 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
+| 407 | `proxy_auth_required` | Forward proxy only: the proxy URL has no app token, or a wrong one. Carries `Proxy-Authenticate: Basic realm="Acnologia"`. |
+| 403 | `not_a_service` | Forward proxy only: plain HTTP to a host that is no service, or HTTPS to one when passthrough is off (or the token is a share's). Call that host directly or list it in `NO_PROXY`. |
+| 403 | `port_not_allowed` | Forward proxy only: a passthrough tunnel to a port other than 443 or 8443. |
 | 400 | `bad_path` | Proxy path with a literal `?`, `#`, or a `.` / `..` segment. |
 | 400 | `bad_body` | The proxy could not read the request body. |
 | 405 | `method_not_allowed` | Proxy method other than GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. |
@@ -69,6 +76,52 @@ Status codes an app should handle:
 Hidden keys serve only apps a superadmin marked `lease_hidden`. Other apps
 never see them, so on a service with only hidden keys those apps get 503
 `no_key_available`.
+
+### Forward proxy
+
+An app can set Acnologia as its HTTP(S) proxy and call provider URLs as they
+are, with no SDK and no change to its code:
+
+```bash
+curl -o acnologia-ca.pem https://acnologia.example.com/api/v1/proxy/ca.pem
+HTTPS_PROXY=http://app:acn_...@acnologia.example.com:8888 \
+NODE_EXTRA_CA_CERTS=acnologia-ca.pem node --use-env-proxy app.js
+```
+
+- **Routing.** Acnologia finds the service by the request's host and path:
+  the service whose base URL, or a provider host from its spec's `hosts`
+  list (such as `tiktok-scraper.omkar.cloud`, which becomes the `/~name`
+  path), matches with the longest base path. The request then runs exactly
+  as `/proxy/{service}/...`: the pool key is injected (a key the app sent in
+  the service's auth header or query param is replaced), with rotation, app
+  limits, caching, groups, breakers, events and the `X-Acnologia-*` answer
+  headers. When several services match (two accounts of one provider), the
+  first one the app may use wins; `X-Acnologia-Service: <service or group
+  slug>` on the request picks one, or a group to spread across providers.
+- **HTTPS.** The client sends `CONNECT host:443`. For a service's host,
+  Acnologia answers the TLS handshake itself with a certificate for that
+  host signed by the server's own CA, so the app must trust
+  `GET /api/v1/proxy/ca.pem` (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`,
+  `SSL_CERT_FILE`, `curl --cacert`).
+- **Plain HTTP.** An absolute URL in the request line is routed the same
+  way, and an `http://` URL on port 80 also matches a service whose base
+  URL is `https://` on the same host. The upstream call always uses the
+  service's own base URL, so it still goes out over TLS.
+- **Other hosts.** Plain HTTP to a host that is no service is refused (403
+  `not_a_service`), so the proxy is never open and a key only goes to its
+  service's base URL. HTTPS to another host is a blind tunnel (no keys, no
+  interception) to public addresses on port 443 or 8443, when
+  `ACNOLOGIA_FORWARD_PASSTHROUGH` is on (the default). A share's token never
+  gets passthrough. Without it, list other hosts in `NO_PROXY`.
+- **Where it listens.** The main port answers `CONNECT` and absolute URL
+  requests. Behind an HTTPS edge (Railway, most PaaS) `CONNECT` does not
+  pass, so set `ACNOLOGIA_FORWARD_PROXY_ADDR` and expose that port; see
+  [configuration](configuration.md#forward-proxy).
+
+The control MCP has `forward_proxy_setup` (admin, read) with the same answer
+as `GET /forward-proxy` and `rotate_forward_proxy_ca` (admin, confirmed), and
+`acn proxy ca` / `acn proxy env` save the CA and print the environment for an
+app.
 
 ## Dashboard API
 
@@ -132,6 +185,8 @@ lower of its owner's role and its scope.
 | `GET /egress` | m | Egress proxies with how many services and keys use each. |
 | `POST /egress`, `PATCH /egress/{id}`, `DELETE /egress/{id}` | a | `{name, url, region, notes}`; `http`, `https`, `socks5` or `socks5h` URLs. Changing or deleting a proxy used by a trusted service or a hidden key needs a superadmin. |
 | `POST /egress/{id}/test` | a | Request the echo URL through the proxy and report the public IP. |
+| `GET /forward-proxy` | a | The [forward proxy](#forward-proxy) setup for every service: what `GET /api/v1/proxy` returns, plus `listen_addr` (`ACNOLOGIA_FORWARD_PROXY_ADDR`), `main_port` and `configured_url` (whether `ACNOLOGIA_FORWARD_PROXY_URL` is set). |
+| `POST /forward-proxy/ca/rotate` | a | Replace the forward proxy CA with a new one. Returns `{ca_fingerprint}`. Every app must download and trust the new certificate. |
 | `GET /groups`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}` | m / a | Service groups `{slug, name, description, members, strategy}` with 2 to 20 member slugs. `strategy` is `priority` (the member order, default), `round_robin`, `random`, `cheapest` or `most_keys`. Slugs share the namespace with services and capabilities. |
 | `PUT /services/{id}/key-source` | a | `{source: "<slug or id>"}` lets the service use another service's keys as well as its own (behind its own keys, as backup); `{source: null}` stops it. Both must send the key to the same site (the base URL host without its first label, such as `omkar.cloud`; the exact host and port for an IP or a name without a dot) with the same auth type and name, and the source must not have a source itself. Hidden and app restricted keys are never shared. A service created with no keys is linked on its own to the service of that site and placement with the most keys. |
 | `POST /services/families/link` | a | `{key}`: every service of a family uses the keys of the family's main service (the source most members already use, else the one with the most keys of its own). `GET /services` also returns `families: [{key, name, main_id, service_ids, keys, available, unlinked}]`: services on one site with one auth placement, two or more, with `keys` and `available` counting each secret once. |
@@ -309,7 +364,7 @@ both are set:
 | `keys` | `list_keys`, `key_details`, `add_keys`, `update_key`, `delete_key`, `check_key`, `check_all_keys`, `reset_key` |
 | `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp` |
 | `providers` | `list_providers`, `get_provider`, `provider_guide`, `write_provider_guide`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `check_provider_offers` |
-| `call` | `call_service`, `service_guide`, `list_service_examples` |
+| `call` | `call_service`, `service_guide`, `list_service_examples`, `forward_proxy_setup`, `rotate_forward_proxy_ca` |
 | `ai` | `ai_status`, `ai_models`, `ai_assist`, `start_provider_build`, `list_ai_runs`, `get_ai_run`, `cancel_ai_run`, `publish_ai_run`, `delete_ai_run` |
 | `routing` | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `test_webhook`, `list_egress`, `create_egress`, `update_egress`, `delete_egress`, `test_egress`, `list_groups`, `create_group`, `update_group`, `delete_group` |
 | `sharing` | `get_identity`, `update_identity`, `list_shares`, `get_share`, `create_share`, `update_share`, `pause_share`, `resume_share`, `revoke_share`, `extend_share`, `share_invite`, `share_claim_link`, `list_peers`, `preview_peer`, `connect_peer`, `sync_peer`, `disconnect_peer`, `list_peer_providers`, `pull_peer_provider` |

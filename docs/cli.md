@@ -155,6 +155,9 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 | `acn breaker <service> [--reset]` | The service's circuit breaker, or close it. |
 | `acn cache purge <service>` | Drop the service's cached responses. |
 | `acn usage <app-id>` | An app's requests, spend and limits today and this month. |
+| `acn proxy` | The [forward proxy](api.md#forward-proxy): its URL, the CA fingerprint and the hosts that get keys. |
+| `acn proxy ca [--out file\|-]` | Save the CA certificate apps must trust (`acnologia-ca.pem` by default; `-` prints it). |
+| `acn proxy env [--token acn_...] [--ca file]` | Print `export` lines (`HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS` and the like) for an app to use the forward proxy, with a placeholder where the app token goes unless you pass `--token`. |
 | `acn mcp` | A stdio MCP server for Claude and other MCP clients. See [Connect Claude](#connect-claude). |
 | `acn mcp config` | Print the snippet that adds `acn mcp` to Claude Code, Claude Desktop or Cursor. |
 | `acn version` | The client's version. |

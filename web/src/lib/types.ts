@@ -128,6 +128,36 @@ export interface SharedKeysReport {
   suggestions: { service: string; service_name: string; source: string; source_name: string; source_keys: number }[];
 }
 
+/** One host the forward proxy opens and puts a key on. */
+export interface ForwardProxyHost {
+  host: string;
+  service: string;
+  name: string;
+  /** The base path under the host, when the service has one. */
+  path?: string;
+}
+
+/** GET /api/admin/forward-proxy: how apps use Acnologia as their HTTPS_PROXY. */
+export interface ForwardProxySetup {
+  /** The proxy address without a token, such as http://keys.example.com:8888. */
+  proxy_url: string;
+  proxy_url_with_token: string;
+  /** Where apps download the CA certificate to trust. */
+  ca_url: string;
+  ca_fingerprint: string;
+  /** HTTPS to hosts that are not services is tunneled untouched. */
+  passthrough: boolean;
+  hosts: ForwardProxyHost[];
+  env: Record<string, string>;
+  /** The header that names a service or group, X-Acnologia-Service. */
+  service_header: string;
+  /** The dedicated listener, such as :8888, or empty for the main port only. */
+  listen_addr?: string;
+  main_port?: boolean;
+  /** ACNOLOGIA_FORWARD_PROXY_URL is set. */
+  configured_url?: boolean;
+}
+
 export interface Key {
   /** Keys with the same secret in other services. */
   twins?: KeyTwin[];

@@ -135,7 +135,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if st.Prompts {
 			caps["prompts"] = map[string]any{"listChanged": false}
 		}
-		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself. Read service_guide before calling a service you have not used: it lists the endpoints, parameters, limits and errors."
+		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself. Read service_guide before calling a service you have not used: it lists the endpoints, parameters, limits and errors. Code you write can also call a provider's own URL with Acnologia as its HTTPS_PROXY (the app token as the proxy password, the proxy CA from /api/v1/proxy/ca.pem trusted): the guide shows the proxy URL."
 		if strings.TrimSpace(st.Instructions) != "" {
 			instr += "\n\n" + strings.TrimSpace(st.Instructions)
 		}
