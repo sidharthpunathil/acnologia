@@ -61,6 +61,7 @@ func (a *Agent) tools(s *runState) []anthropic.BetaToolUnionParam {
 			}, "provider", "summary"),
 		},
 	}
+	custom = append(custom, stageTool)
 	if s.testKey != "" {
 		custom = append(custom, anthropic.BetaToolParam{
 			Name:        "live_check",
@@ -100,6 +101,9 @@ func (a *Agent) runTool(ctx context.Context, s *runState, name string, raw []byt
 		return "INVALID_JSON: " + err.Error(), true, false
 	}
 	switch name {
+	case "stage_parts":
+		out, isErr := a.stage(ctx, s, raw)
+		return out, isErr, false
 	case "github_read":
 		a.logf(ctx, id, "fetch", "GitHub: "+strings.TrimSpace(in.Repo+" "+in.Path), in.Ref)
 		out, err := a.githubRead(ctx, in.Repo, in.Path, in.Ref)
@@ -211,6 +215,7 @@ func (a *Agent) decodeDraft(ctx context.Context, s *runState, raw json.RawMessag
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return nil, fmt.Errorf("provider is not valid JSON: %v", err)
 	}
+	d.Spec = withStaged(d.Spec, s.staged)
 	// Normalize exactly as catalog.Check does, so " serpapi" cannot slip past
 	// the existing-slug check and then overwrite serpapi on publish.
 	d.Slug = strings.TrimSpace(strings.ToLower(d.Slug))

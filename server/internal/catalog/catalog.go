@@ -190,6 +190,9 @@ func keyTargetChanges(oldRaw json.RawMessage, next *providers.Spec) []string {
 	if old.Auth != next.Auth {
 		out = append(out, "auth")
 	}
+	if providers.HostSetChanged(old, next) {
+		out = append(out, "hosts")
+	}
 	oh, nh := old.Health, next.Health
 	if (oh == nil) != (nh == nil) {
 		return append(out, "health")

@@ -42,6 +42,8 @@ type runState struct {
 	// unpinned is set when a draft was accepted with test keys but no URL
 	// vouched for its base_url host. Such a run always waits for review.
 	unpinned bool
+	// staged holds the parts stage_parts collected (stage.go).
+	staged *staged
 }
 
 const (

@@ -51,7 +51,10 @@ type GuideDoc struct {
 	DocsURL   string          `json:"docs_url,omitempty"`
 	Website   string          `json:"website,omitempty"`
 	Endpoints []GuideEndpoint `json:"endpoints"`
-	Examples  []GuideExample  `json:"examples"`
+	// Hosts are the provider's products on hosts of their own, each picked
+	// with a "/~name" path prefix. Empty for most providers.
+	Hosts    []GuideHost    `json:"hosts,omitempty"`
+	Examples []GuideExample `json:"examples"`
 	Limits    []string        `json:"limits"`
 	Errors    []string        `json:"errors"`
 	Notes     []string        `json:"notes"`
@@ -66,6 +69,17 @@ type GuideExample struct {
 	Query  map[string]string `json:"query,omitempty"`
 	Body   any               `json:"body,omitempty"`
 	Curl   string            `json:"curl"`
+}
+
+// GuideHost is one of the provider's hosts as the guide shows it.
+type GuideHost struct {
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Group       string `json:"group,omitempty"`
+	Description string `json:"description,omitempty"`
+	DocsURL     string `json:"docs_url,omitempty"`
+	// Prefix is the path prefix that picks it, such as "/~tiktok-scraper".
+	Prefix string `json:"prefix"`
 }
 
 // ServicePlaceholder stands in for the service slug when no service is known.
@@ -106,6 +120,10 @@ func BuildGuide(in GuideInput) GuideDoc {
 	}
 	if d.Summary == "" {
 		d.Summary = m.Name + " through Acnologia."
+	}
+	for _, h := range spec.Hosts {
+		d.Hosts = append(d.Hosts, GuideHost{Name: h.Name, Title: h.Title, Group: h.Group, Description: h.Description,
+			DocsURL: httpsOnly(h.DocsURL), Prefix: HostPath(h.Name)})
 	}
 	for _, ex := range spec.Examples {
 		method := strings.ToUpper(orElse(ex.Method, "GET"))
@@ -156,11 +174,46 @@ func (d GuideDoc) Render(admin bool) string {
 	}
 	p("\n")
 
+	if len(d.Hosts) > 0 {
+		p("## APIs\n\n")
+		p("This provider serves %d APIs, each on its own host, and one key works on all of them. Start the path with an API's prefix to call it, for example `%s%s/...`. A path without a prefix goes to the main host.\n\n",
+			len(d.Hosts), d.ProxyBase, d.Hosts[0].Prefix)
+		for _, g := range hostGroups(d.Hosts) {
+			if g.name != "" {
+				p("### %s\n\n", g.name)
+			}
+			p("| API | Prefix | About |\n|---|---|---|\n")
+			for _, h := range g.hosts {
+				title := orElse(h.Title, h.Name)
+				if h.DocsURL != "" {
+					title = "[" + cell(title) + "](" + h.DocsURL + ")"
+				} else {
+					title = cell(title)
+				}
+				p("| %s | `%s` | %s |\n", title, h.Prefix, orElse(cell(h.Description), "-"))
+			}
+			p("\n")
+		}
+	}
+
 	if len(d.Endpoints) > 0 {
 		p("## Endpoints\n\n")
+		grouped := false
 		for _, e := range d.Endpoints {
+			grouped = grouped || strings.TrimSpace(e.Group) != ""
+		}
+		group := "\x00"
+		for _, e := range endpointOrder(d.Endpoints, grouped) {
 			method := strings.ToUpper(orElse(e.Method, "GET"))
-			p("### %s\n\n", e.Name)
+			if grouped {
+				if g := orElse(strings.TrimSpace(e.Group), "General"); g != group {
+					group = g
+					p("### %s\n\n", g)
+				}
+				p("#### %s\n\n", e.Name)
+			} else {
+				p("### %s\n\n", e.Name)
+			}
 			p("`%s %s%s`\n\n", method, d.ProxyBase, e.Path)
 			if s := strings.TrimSpace(e.Description); s != "" {
 				p("%s\n\n", s)
@@ -230,6 +283,53 @@ func (d GuideDoc) Render(admin bool) string {
 		p("\n")
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
+type hostGroup struct {
+	name  string
+	hosts []GuideHost
+}
+
+// hostGroups groups hosts by Group in first seen order.
+func hostGroups(hs []GuideHost) []hostGroup {
+	idx := map[string]int{}
+	out := []hostGroup{}
+	for _, h := range hs {
+		g := strings.TrimSpace(h.Group)
+		i, ok := idx[g]
+		if !ok {
+			i = len(out)
+			idx[g] = i
+			out = append(out, hostGroup{name: g})
+		}
+		out[i].hosts = append(out[i].hosts, h)
+	}
+	return out
+}
+
+// endpointOrder keeps endpoints of one group together, groups in first seen
+// order, and leaves an ungrouped list as it is.
+func endpointOrder(es []GuideEndpoint, grouped bool) []GuideEndpoint {
+	if !grouped {
+		return es
+	}
+	idx := map[string]int{}
+	buckets := [][]GuideEndpoint{}
+	for _, e := range es {
+		g := strings.TrimSpace(e.Group)
+		i, ok := idx[g]
+		if !ok {
+			i = len(buckets)
+			idx[g] = i
+			buckets = append(buckets, nil)
+		}
+		buckets[i] = append(buckets[i], e)
+	}
+	out := make([]GuideEndpoint, 0, len(es))
+	for _, b := range buckets {
+		out = append(out, b...)
+	}
+	return out
 }
 
 var guidePathParam = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)

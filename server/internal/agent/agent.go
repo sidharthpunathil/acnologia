@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	MaxTurns       = 40
+	MaxTurns       = 60
 	MaxSubmits     = 3
 	MaxWebSearches = 15
 	MaxWebFetches  = 30

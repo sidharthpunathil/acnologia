@@ -86,6 +86,20 @@ func upstreamURL(base, rawPath string, q url.Values) (string, error) {
 	return u.String(), nil
 }
 
+// serviceURL is the upstream URL of a proxied path on a service. A first
+// segment of "~name" picks one of the provider's hosts (providers.Host);
+// anything else goes to the service's base URL.
+func serviceURL(sv *store.Service, path string, q url.Values) (string, error) {
+	h, rest, ok, err := providers.Get(sv.Provider).ResolveHost(path)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return upstreamURL(h.URL, rest, q)
+	}
+	return upstreamURL(sv.BaseURL, path, q)
+}
+
 // authPrefix is the provider's credential prefix when the service still
 // places the key the way the provider spec says.
 func authPrefix(sv *store.Service) string {
@@ -151,7 +165,7 @@ func buildUpstream(ctx context.Context, r *http.Request, sv *store.Service, path
 	if sv.AuthType == "query" {
 		q.Set(sv.AuthName, prefix+secret)
 	}
-	target, err := upstreamURL(sv.BaseURL, path, q)
+	target, err := serviceURL(sv, path, q)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +243,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		path = chi.URLParam(r, "*")
 	}
 	for _, sv := range targets {
-		if _, err := upstreamURL(sv.BaseURL, path, nil); err != nil {
+		if _, err := serviceURL(sv, path, nil); err != nil {
 			writeErr(w, 400, "bad_path", err.Error())
 			return
 		}

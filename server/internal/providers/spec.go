@@ -25,6 +25,10 @@ type Spec struct {
 	// Guide teaches an app or AI agent how to call the provider through
 	// Acnologia. Optional; rendered as Markdown with RenderGuide.
 	Guide *Guide `json:"guide,omitempty"`
+	// Hosts are the provider's other API hosts, for a provider that serves
+	// each product on its own host with one key (see hosts.go). Callers
+	// pick one with a "/~name" first path segment.
+	Hosts []Host `json:"hosts,omitempty"`
 }
 
 // Guide is a provider's usage guide, written for AI agents and developers.
@@ -44,6 +48,9 @@ type Guide struct {
 }
 
 type GuideEndpoint struct {
+	// Group names the product or API the endpoint belongs to, such as
+	// "TikTok Scraper", for providers with many. Optional.
+	Group       string       `json:"group,omitempty"`
 	Name        string       `json:"name"`
 	Method      string       `json:"method"`
 	Path        string       `json:"path"`
@@ -268,6 +275,7 @@ func (s *Spec) Validate() []string {
 	}
 	s.validateOffers(add)
 	s.validateGuide(add)
+	s.validateHosts(add)
 	if qh := s.Quota.Headers; qh != nil {
 		if qh.Limit == "" && qh.Remaining == "" && qh.Reset == "" {
 			add("quota.headers needs at least one of limit, remaining or reset")
@@ -387,8 +395,8 @@ func (s *Spec) validateGuide(add func(string, ...any)) {
 	if len(g.Summary) > 1000 {
 		add("guide.summary must be at most 1,000 characters")
 	}
-	if len(g.Endpoints) > 40 {
-		add("guide.endpoints must be at most 40")
+	if max := maxGuideEndpoints(s); len(g.Endpoints) > max {
+		add("guide.endpoints must be at most %d", max)
 	}
 	for i, e := range g.Endpoints {
 		if strings.TrimSpace(e.Name) == "" || !strings.HasPrefix(e.Path, "/") {

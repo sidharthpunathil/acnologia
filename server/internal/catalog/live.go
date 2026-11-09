@@ -80,6 +80,11 @@ func liveCheck(ctx context.Context, c *http.Client, spec *providers.Spec, secret
 		if !ex.Safe || !LiveSafeMethod(ex.Method) || !strings.HasPrefix(ex.Path, "/") {
 			continue
 		}
+		// The key stays pinned to base_url's host, so an example on another
+		// of the provider's hosts is not run here.
+		if _, _, onHost, _ := spec.ResolveHost(ex.Path); onHost || strings.HasPrefix(ex.Path, providers.HostPath("")) {
+			continue
+		}
 		rep.Example.Ran = true
 		status, outcome, detail := runExample(ctx, c, spec, ex, secret)
 		rep.Example.Status, rep.Example.Outcome, rep.Example.Detail = status, outcome, detail
