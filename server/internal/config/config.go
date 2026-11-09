@@ -52,6 +52,22 @@ type Config struct {
 	// AccessTTL is how long an unlocked browser stays unlocked before the
 	// lock screen asks again. ACNOLOGIA_ACCESS_TTL, 30 days by default.
 	AccessTTL time.Duration
+	// ForwardProxyAddr is ACNOLOGIA_FORWARD_PROXY_ADDR: a second listener
+	// for apps that use Acnologia as their HTTP(S)_PROXY (forward.go). It
+	// speaks plain HTTP and TLS on the same port. Empty: the main port
+	// still answers proxy requests, which is enough without a reverse
+	// proxy in front.
+	ForwardProxyAddr string
+	// ForwardProxyURL is ACNOLOGIA_FORWARD_PROXY_URL: the proxy address
+	// apps should use, shown in the dashboard and docs (a Railway TCP
+	// proxy such as http://x.proxy.rlwy.net:12345). Empty: derived from
+	// PublicURL.
+	ForwardProxyURL string
+	// ForwardPassthrough lets an app's proxy carry HTTPS to hosts that are
+	// no service, as a plain tunnel to public addresses, so an app can set
+	// HTTPS_PROXY for everything. ACNOLOGIA_FORWARD_PASSTHROUGH, on by
+	// default.
+	ForwardPassthrough bool
 }
 
 // MinAccessPasswordLen is the shortest ACNOLOGIA_ACCESS_PASSWORD accepted.
@@ -107,6 +123,9 @@ func Load(version string) Config {
 		RequireAccessPassword: envBool("ACNOLOGIA_REQUIRE_ACCESS_PASSWORD", false),
 		AccessSignsIn:         envBool("ACNOLOGIA_ACCESS_SIGNS_IN", true),
 		AccessTTL:             envDays("ACNOLOGIA_ACCESS_TTL", DefaultAccessTTL),
+		ForwardProxyAddr:      strings.TrimSpace(Getenv("ACNOLOGIA_FORWARD_PROXY_ADDR")),
+		ForwardProxyURL:       strings.TrimRight(strings.TrimSpace(Getenv("ACNOLOGIA_FORWARD_PROXY_URL")), "/"),
+		ForwardPassthrough:    envBool("ACNOLOGIA_FORWARD_PASSTHROUGH", true),
 	}
 }
 

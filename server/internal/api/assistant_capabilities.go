@@ -19,6 +19,13 @@ func capabilityTools() []*chatTool {
 	paramItem := map[string]any{"type": "object", "description": "{name, type: string | integer | number | boolean, required, description, default}"}
 	return []*chatTool{
 		{
+			Name: "forward_proxy_setup", Role: store.RoleAdmin, Props: map[string]any{},
+			Desc: "How an app uses Acnologia as its HTTPS_PROXY to call provider URLs directly: the proxy URL (app token as the password), the CA certificate URL and fingerprint to trust, passthrough of other HTTPS hosts, and which hosts get pool keys for which service.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				return cs.simple("GET", "/api/admin/forward-proxy", nil, "Read the forward proxy setup", nil)
+			},
+		},
+		{
 			Name: "list_capabilities", Role: store.RoleMember, Props: map[string]any{},
 			Desc: "Read only. Capabilities: one job (such as search places) that several providers can do, behind one name apps call at /proxy/<slug>, with their params, strategy and routes.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {

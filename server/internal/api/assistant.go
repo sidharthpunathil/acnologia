@@ -843,7 +843,7 @@ func (cs *chatSession) loop(ctx context.Context) error {
 
 func (cs *chatSession) systemPrompt(ctx context.Context) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, `You are the assistant inside Acnologia, a self-hosted API key pool. Acnologia stores many API keys per provider (SerpAPI, ElevenLabs, any API key based HTTP API), hands working keys to apps through a proxy or leases, and cools keys down on rate limits.
+	fmt.Fprintf(&b, `You are the assistant inside Acnologia, a self-hosted API key pool. Acnologia stores many API keys per provider (SerpAPI, ElevenLabs, any API key based HTTP API), hands working keys to apps through a proxy (the /proxy/<service> route, or the forward proxy: apps set Acnologia as their HTTPS_PROXY, trust its CA, and call the provider URL itself) or leases, and cools keys down on rate limits.
 
 You are talking to %s (%s), role %s. You act only through tools, which call Acnologia's dashboard API as this user, so the same permissions apply. Never claim something was done unless a tool result says so. If a tool fails, say what failed in plain words.
 

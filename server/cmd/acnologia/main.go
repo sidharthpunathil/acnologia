@@ -189,8 +189,20 @@ func run() error {
 		Peers:     srv.PeerSyncer(), PeerInterval: peer.SyncInterval, Refresh: srv.ProviderRefresher(),
 		Sharing: srv.SharingTicker()}
 	bg.Go(func() { w.Run(ctx) })
+	if cfg.ForwardProxyAddr != "" {
+		fln, err := net.Listen("tcp", cfg.ForwardProxyAddr)
+		if err != nil {
+			return err
+		}
+		slog.Info("forward proxy listening", "addr", cfg.ForwardProxyAddr)
+		go func() {
+			if err := srv.ServeForwardProxy(ctx, fln); err != nil {
+				slog.Error("forward proxy stopped", "err", err)
+			}
+		}()
+	}
 	slog.Info("acnologia listening", "addr", cfg.Addr, "data", cfg.DataDir, "version", version)
-	return serve(ctx, stop, newHTTPServer(cfg.Addr, srv.Router()), ln, shutdownGrace, func() {
+	return serve(ctx, stop, newHTTPServer(cfg.Addr, srv.PublicHandler()), ln, shutdownGrace, func() {
 		bg.Wait()
 		srv.ProviderRefresher().Wait()
 	})

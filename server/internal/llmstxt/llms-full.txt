@@ -1,8 +1,8 @@
 # Acnologia: full reference
 
-> Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
+> Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed), through the forward proxy (set `HTTPS_PROXY` to Acnologia and call provider URLs as they are), or by leasing a key and reporting the outcome.
 
-Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
+Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), the forward proxy (HTTPS_PROXY), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
 
 Before calling a service you have not used, fetch its usage guide: `GET /api/v1/services/{slug}/guide` (or the `service_guide` MCP tool). It lists the endpoints worth knowing with their parameters, ready curl examples through the proxy, limits and pricing, and how errors are handled. Every entry of `GET /api/v1/services` carries its `guide_url`.
 
@@ -16,6 +16,7 @@ Every consumer and MCP call carries an app token (`acn_...`) created on the dash
 Authorization: Bearer acn_xxx
 X-Acnologia-Token: acn_xxx            (alternative)
 ?acn_token=acn_xxx                    (proxy only, for URL-only tools)
+http://app:acn_xxx@host:port          (forward proxy URL: Proxy-Authorization)
 ```
 
 Acnologia strips all of them before forwarding to the provider. An app can be restricted to some services (empty list means all) and to mode `proxy`, `lease` or `both`. A token that is missing, wrong, revoked or expired gets 401 (`app token revoked`, `app token expired`); a paused app gets 403; a service or mode the app may not use gets 403.
@@ -30,13 +31,14 @@ GET /docs/{slug}.md      -> one doc as Markdown (see Docs as Markdown)
 GET /docs/assets/{name}  -> an image the docs show
 GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
+GET /api/v1/proxy/ca.pem -> the forward proxy's CA certificate (PEM)
 GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url, box_public_key}, for sharing between servers
 GET /api/gate            -> {required, locked, password_only, unlock_ttl_sec}: whether the site has an access password and this caller is past it
 POST /api/claim/v1/preview {code} -> what a claim link shares (no secret); see Access shared with you by link
 POST /api/claim/v1/redeem  {code} -> the token (or, for a reveal share, the keys), once
 ```
 
-When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia, the server to server routes under /api/peer/v1, the claim link routes under /api/claim/v1 and the /claim/<code> and /me pages stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp) are not affected.
+When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia, the server to server routes under /api/peer/v1, the claim link routes under /api/claim/v1 and the /claim/<code> and /me pages stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp, the forward proxy) and /api/v1/proxy/ca.pem are not affected.
 
 ## GET /api/v1/services
 
@@ -303,6 +305,136 @@ curl -s -X POST "http://localhost:8080/proxy/anthropic/v1/messages" \
   -d '{"model": "claude-haiku-5-5", "max_tokens": 64, "messages": [{"role": "user", "content": "Say hello"}]}'
 ```
 
+## Forward proxy (HTTPS_PROXY)
+
+Instead of rewriting URLs to `/proxy/{service}/...`, an app can set Acnologia as its HTTP(S) proxy and call provider URLs as they are. A request to a service's host goes through exactly the same pipeline as `/proxy/{service}/...`: a pool key is injected (any key you send in the service's auth header or query parameter is replaced), keys rotate on rate limits, and app limits, caching, groups, circuit breakers, events and the `X-Acnologia-*` response headers all apply. Only for apps in mode `proxy` or `both` (a lease only app gets 403 `proxy_not_allowed`). The key never reaches your process.
+
+This is not the same as an egress proxy (Acnologia's own outbound route to providers, set by operators). Here your app sends its calls in through Acnologia.
+
+### Setup
+
+1. Ask the server how to reach it, with your app token:
+
+```bash
+curl -s http://localhost:8080/api/v1/proxy -H "Authorization: Bearer acn_xxx"
+```
+
+```json
+{
+  "proxy_url": "http://acnologia.example.com:8888",
+  "proxy_url_with_token": "http://app:<app token>@acnologia.example.com:8888",
+  "ca_url": "https://acnologia.example.com/api/v1/proxy/ca.pem",
+  "ca_fingerprint": "3F:A1:...:9C",
+  "passthrough": true,
+  "hosts": [
+    {"host": "serpapi.com", "service": "serpapi", "name": "SerpAPI"},
+    {"host": "tiktok-scraper.omkar.cloud", "service": "omkar", "name": "Omkar"}
+  ],
+  "env": {
+    "HTTPS_PROXY": "http://app:<app token>@acnologia.example.com:8888",
+    "HTTP_PROXY": "http://app:<app token>@acnologia.example.com:8888",
+    "NODE_USE_ENV_PROXY": "1",
+    "NODE_EXTRA_CA_CERTS": "acnologia-ca.pem",
+    "REQUESTS_CA_BUNDLE": "acnologia-ca.pem",
+    "SSL_CERT_FILE": "acnologia-ca.pem"
+  },
+  "service_header": "X-Acnologia-Service"
+}
+```
+
+`ca_fingerprint` is the SHA-256 of the CA certificate, as colon separated hex. `hosts` lists every host the proxy puts your keys on (a row has `path` when the service sits under a base path). Put your token where `<app token>` is.
+
+2. Download the CA certificate. It is public, needs no token, and stays open behind the access password:
+
+```bash
+curl -o acnologia-ca.pem http://localhost:8080/api/v1/proxy/ca.pem
+```
+
+Acnologia opens HTTPS to a service's host with a certificate for that host signed by this CA, so your client must trust it. Trust it in the app's own environment, not system wide. Check it against `ca_fingerprint` if you fetched it over plain HTTP.
+
+3. Set the proxy, with the token in the proxy URL. `http://app:acn_xxx@host:port` sends `Proxy-Authorization: Basic` with the token as the password; the token as the user name, or `Proxy-Authorization: Bearer acn_xxx`, also work.
+
+With the `acn` CLI, `acn proxy ca` saves the CA file (`acnologia-ca.pem`) and `acn proxy env [--token acn_...]` prints the `export` lines.
+
+### Node.js (24 and later)
+
+```bash
+HTTPS_PROXY=http://app:acn_xxx@acnologia.example.com:8888 \
+NODE_EXTRA_CA_CERTS=acnologia-ca.pem \
+node --use-env-proxy app.js          # or NODE_USE_ENV_PROXY=1
+```
+
+```js
+// app.js: unchanged code, no key
+const r = await fetch("https://serpapi.com/search.json?engine=google&q=coffee");
+console.log(r.status, r.headers.get("x-acnologia-service"), await r.json());
+```
+
+`NODE_EXTRA_CA_CERTS` adds the CA to Node's built in roots, so other HTTPS hosts keep working.
+
+### Python (requests)
+
+```bash
+export HTTPS_PROXY=http://app:acn_xxx@acnologia.example.com:8888
+# REQUESTS_CA_BUNDLE replaces the default roots, so combine them when the app
+# also calls other HTTPS hosts through the proxy:
+cat "$(python -m certifi)" acnologia-ca.pem > ca-bundle.pem
+export REQUESTS_CA_BUNDLE=$PWD/ca-bundle.pem
+```
+
+```python
+import requests
+r = requests.get("https://serpapi.com/search.json", params={"engine": "google", "q": "coffee"})
+print(r.status_code, r.headers.get("X-Acnologia-Key-Id"))
+```
+
+`httpx` reads `HTTPS_PROXY` and `SSL_CERT_FILE` the same way. Go reads `HTTPS_PROXY` and, on Linux, `SSL_CERT_FILE` (which also replaces the system roots, so use a combined bundle there too).
+
+### curl
+
+```bash
+curl -x http://app:acn_xxx@acnologia.example.com:8888 --cacert acnologia-ca.pem \
+  "https://serpapi.com/search.json?engine=google&q=coffee"
+```
+
+With an `https://` proxy URL, also pass `--proxy-cacert acnologia-ca.pem`.
+
+### Which service answers
+
+- The proxy matches the request's host, port and path against every service: its base URL, and the provider hosts listed in its spec (such as `tiktok-scraper.omkar.cloud`, which becomes the service's `/~name` path). The longest matching base path wins.
+- When two services match equally (two accounts of one provider), the first one your app may use answers. Pick one with `X-Acnologia-Service: <service slug>`, or name a service group to spread the call across providers. The header is removed before the call goes upstream.
+- `X-Acnologia-Service` on the response says which service answered.
+
+```bash
+curl -x http://app:acn_xxx@acnologia.example.com:8888 --cacert acnologia-ca.pem \
+  -H "X-Acnologia-Service: serpapi-team" "https://serpapi.com/search.json?q=coffee"
+```
+
+### Other hosts and NO_PROXY
+
+- HTTPS (`CONNECT`) to a host that is no service is a blind tunnel when the server allows passthrough (`passthrough: true` in the setup): no key, no interception, public addresses only, ports 443 and 8443 only. A share's token never gets passthrough.
+- With passthrough off, `CONNECT` to another host gets 403 `not_a_service`. Plain HTTP to another host is always refused, so Acnologia is never an open proxy and a key only ever goes to its own service's base URL.
+- Either way, it is simplest to send only provider traffic through Acnologia: `NO_PROXY=localhost,127.0.0.1,.internal,your-db-host`.
+- A plain `http://` URL is routed the same way, and `http://host/...` also matches a service on `https://host`. The upstream call always uses the service's own base URL, so it goes out over TLS; the hop from the app to Acnologia is then unencrypted, so prefer `https://` URLs.
+
+### Where the proxy listens
+
+The main port answers `CONNECT` and absolute URL requests, which works when nothing sits in front of Acnologia (local, a VPS). Behind an HTTPS edge such as Railway's, `CONNECT` does not pass, so operators set `ACNOLOGIA_FORWARD_PROXY_ADDR` (for example `:8888`), expose that port (a Railway TCP proxy) and set `ACNOLOGIA_FORWARD_PROXY_URL` to the public address; `proxy_url` then shows it. That port speaks plain HTTP and TLS, so `http://` and `https://` proxy URLs both work. Over the internet prefer `https://` so your token is not sent in clear (Node, curl and Python `requests` support HTTPS proxies; the client must trust the Acnologia CA for that hop too).
+
+If the operator rotates the CA (`POST /api/admin/forward-proxy/ca/rotate`), download `ca.pem` again; `ca_fingerprint` changes.
+
+### Errors
+
+| Status | Code | Meaning |
+|---|---|---|
+| 407 | `proxy_auth_required` | No app token in the proxy URL, or a wrong, revoked or expired one. Comes with `Proxy-Authenticate: Basic realm="Acnologia"`. |
+| 403 | `proxy_not_allowed` | The app is lease only. |
+| 403 | `not_a_service` | Plain HTTP to a host that is no service, or HTTPS to one with passthrough off (or with a share's token). Call it directly or add it to `NO_PROXY`. |
+| 403 | `port_not_allowed` | A passthrough tunnel to a port other than 443 or 8443. |
+| 502 | (no body) | A passthrough tunnel could not reach the host. |
+
+Everything else (`no_key_available`, `app_limit_reached`, `service_not_allowed` and the rest) comes back exactly as from `/proxy`. A TLS error such as "unable to get local issuer certificate" means the client does not trust `acnologia-ca.pem`.
+
 ## Concurrency limits
 
 Some providers cap simultaneous requests per key (ElevenLabs returns 429 `too_many_concurrent_requests`). Acnologia enforces a per key limit so that never happens:
@@ -379,7 +511,7 @@ Example call:
                           "query": {"engine": "google", "q": "coffee"}}}}
 ```
 
-Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
+Code you write can also call a provider's own URL with Acnologia as its `HTTPS_PROXY` (see Forward proxy); the MCP instructions say so. Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
 
 ### Control MCP
 
@@ -390,7 +522,7 @@ claude mcp add --transport http acnologia-control http://localhost:8080/mcp/cont
   --header "Authorization: Bearer acnadm_xxx"
 ```
 
-Each tool calls the matching `/api/admin` route as you, so roles, validation and the audit log apply. Services are named by id, slug or name. Destructive tools (deletes, revokes, rotate, disconnect) do nothing at first and say what would happen; call again with `confirm: true` to do it (add `?confirm=off` to the URL when your client asks the user itself). `call_service` `{service, method, path, query, body}` calls a provider through the proxy as an app named `Control MCP` (made on first use, admin role needed), so keys rotate and never reach you. Read `service_guide` (or `provider_guide`) first: endpoints, params, example bodies and limits; `list_service_examples` gives ready arguments. `write_provider_guide` has the AI write a missing guide.
+Each tool calls the matching `/api/admin` route as you, so roles, validation and the audit log apply. Services are named by id, slug or name. Destructive tools (deletes, revokes, rotate, disconnect) do nothing at first and say what would happen; call again with `confirm: true` to do it (add `?confirm=off` to the URL when your client asks the user itself). `call_service` `{service, method, path, query, body}` calls a provider through the proxy as an app named `Control MCP` (made on first use, admin role needed), so keys rotate and never reach you. Read `service_guide` (or `provider_guide`) first: endpoints, params, example bodies and limits; `list_service_examples` gives ready arguments. `write_provider_guide` has the AI write a missing guide. `forward_proxy_setup` (admin, read) returns the forward proxy setup for every service, as `GET /api/admin/forward-proxy` does; `rotate_forward_proxy_ca` replaces its CA.
 
 Groups: `overview`, `services`, `keys`, `apps`, `providers`, `call`, `ai`, `routing`, `sharing`, `refresh` (on by default), and `admin`, `secrets`, `raw` (off). Pick with `?groups=services,keys` or `all`, drop tools with `exclude=`, and list only reads with `read_only=1`. The same choices work as headers `X-Acnologia-MCP-Groups`, `X-Acnologia-MCP-Exclude`, `X-Acnologia-MCP-Read-Only` and `X-Acnologia-MCP-Confirm`. Results are capped at 512 KB. Resources: `acnologia://overview`, `acnologia://services`, `acnologia://docs/{slug}`, `acnologia://llms-full.txt`.
 
@@ -810,7 +942,7 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 
 ## Key secrecy and redaction
 
-- Proxy mode and MCP `proxy_request` never show a key to the caller. Response headers are scrubbed of the key, and redirects are returned, not followed.
+- Proxy mode, the forward proxy and MCP `proxy_request` never show a key to the caller. Response headers are scrubbed of the key, and redirects are returned, not followed.
 - Leasing (`/api/v1/lease`, MCP `get_key`) returns the secret by design. Use proxy mode for any client you would not hand a key to.
 - Every request Acnologia sends to Claude (the Assistant, the provider builder, Fill with AI, run naming) passes a redactor first. Known secrets (every pool key, webhook URLs and secrets, egress proxy URLs, `GITHUB_TOKEN`, a builder run's test keys, keys pasted in a chat) become `[key ...c21e]`. Unknown secrets found by pattern (prefixes such as `sk-`, `AIza`, `ghp_`, `tvly-`, `AKIA`, `acn_`, JWTs, `Bearer` and `Basic` values, `key=` and `token=` fields, long random tokens) become `[secret ...c21e]`.
 - Keys pasted into the Assistant go to an encrypted per thread vault; the model sees placeholders such as `[key k3 ...c21e]` and tools resolve them on the server. The stored user message keeps only the prose and a list of label plus last four characters.
@@ -825,6 +957,8 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 | 400 | `bad_path` | Proxy path with a literal `?`, `#`, or a `.` / `..` segment. |
 | 400 | `bad_body` | The proxy could not read the request body. |
 | 401 | `unauthenticated` | Token missing or wrong. |
+| 407 | `proxy_auth_required` | Forward proxy: no or a wrong token in the proxy URL. |
+| 403 | `not_a_service`, `port_not_allowed` | Forward proxy: the host is no service (and passthrough does not apply), or a passthrough tunnel to a port other than 443 or 8443. |
 | 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
 | 404 | `unknown_service` | No service, service group or capability has that slug. |
 | 404 | `lease_not_found` | Renewing a lease that is not open. |

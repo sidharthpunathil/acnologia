@@ -6,7 +6,7 @@ render on GitHub.
 
 - [Dashboard sign in](#dashboard-sign-in)
 - [Adding keys](#adding-keys)
-- [Proxy request](#proxy-request)
+- [Proxy request](#proxy-request) and the [forward proxy](#forward-proxy-request)
 - [Picking a key](#picking-a-key)
 - [Lease and report](#lease-and-report)
 - [Key states](#key-states)
@@ -165,7 +165,8 @@ Details worth knowing:
 - The upstream URL is built from the parsed `base_url`, so an encoded `?` or
   `#` in the path stays in the path. Literal dot segments (`.`, `..`) are
   refused with 400 `bad_path`.
-- `TRACE` and `CONNECT` are refused with 405.
+- `TRACE` is refused with 405. `CONNECT` never reaches this route: the
+  [forward proxy](#forward-proxy-request) answers it first.
 - Redirects go back to the app and are never followed with the key. Any copy
   of the key in a response header (a `Location` that kept the query string,
   for example) is replaced with `[key]`.
@@ -173,6 +174,76 @@ Details worth knowing:
   sent twice after the provider may have acted on it.
 - If the network fails on a later attempt, the app gets the earlier
   provider answer instead of a bare 502.
+
+## Forward proxy request
+
+Who: an app that sets Acnologia as its `HTTPS_PROXY` (or `HTTP_PROXY`), with
+its `acn_` token in the proxy URL (`http://app:acn_...@host:8888`). The app
+calls provider URLs as they are, such as
+`https://serpapi.com/search.json?q=coffee`, and needs no SDK.
+
+1. The client sends `CONNECT serpapi.com:443` with
+   `Proxy-Authorization`. Acnologia checks the token as `/proxy` does: no
+   token or a wrong one gets 407 `proxy_auth_required`, a lease only app 403
+   `proxy_not_allowed`.
+2. When the host belongs to a service (its base URL, or a provider host from
+   the spec's `hosts` list), Acnologia answers `200 Connection Established`
+   and completes the TLS handshake itself, with a certificate for that host
+   signed by the server's own CA. The app trusts that CA from
+   `GET /api/v1/proxy/ca.pem`.
+3. Each request inside the tunnel is matched to a service by host and path:
+   the longest matching base path wins, `X-Acnologia-Service` overrides, and
+   a provider host becomes the `/~name` path.
+4. The request is handed to `/proxy/{service}/{path}` with the app's token,
+   and runs the [proxy request](#proxy-request) flow unchanged: key picked
+   and injected (replacing any key the app sent), rotation, app limits,
+   cache, events and `X-Acnologia-*` headers.
+5. For a host that is no service, Acnologia opens a blind tunnel to it
+   instead: no TLS interception, no key, public addresses only, port 443 or
+   8443, and only when `ACNOLOGIA_FORWARD_PASSTHROUGH` is on and the token is
+   not a share's. Otherwise the app gets 403 `not_a_service`.
+
+A plain `http://` URL skips `CONNECT`: the absolute URL in the request line
+is routed the same way, and plain HTTP to a host that is no service is
+always refused, so the proxy is never an open relay.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as App
+    participant F as Forward proxy
+    participant CA as Proxy CA
+    participant P as /proxy pipeline
+    participant U as Provider API
+    participant O as Other host
+
+    A->>F: CONNECT serpapi.com:443<br/>Proxy-Authorization: Basic app:acn_...
+    F->>F: token valid? mode allows proxy?
+    alt no token or wrong token
+        F-->>A: 407 proxy_auth_required + Proxy-Authenticate
+    end
+    alt host belongs to a service
+        F-->>A: 200 Connection Established
+        A->>F: TLS ClientHello (SNI serpapi.com)
+        F->>CA: leaf certificate for serpapi.com (minted once, cached)
+        CA-->>F: cert signed by the Acnologia CA
+        F-->>A: TLS handshake (app trusts acnologia-ca.pem)
+        A->>F: GET /search.json?q=coffee&api_key=dummy
+        F->>F: route by host and path (longest base path,<br/>X-Acnologia-Service overrides)
+        F->>P: GET /proxy/serpapi/search.json?q=coffee&api_key=dummy<br/>X-Acnologia-Token: acn_...
+        P->>P: pick key, replace api_key with the pool key
+        P->>U: GET https://serpapi.com/search.json?q=coffee&api_key=<pool key>
+        U-->>P: response
+        P-->>F: response + X-Acnologia-* headers
+        F-->>A: response over the tunnel
+    else other host, passthrough on, port 443 or 8443
+        F->>O: TCP connect (public addresses only)
+        F-->>A: 200 Connection Established
+        A->>O: end to end TLS, no key, not opened
+    else other host, passthrough off or share token
+        F-->>A: 403 not_a_service
+    end
+```
 
 ## Picking a key
 

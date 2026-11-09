@@ -42,6 +42,7 @@ import type {
   GuideResponse,
   GenerateGuideResult,
 } from "./types";
+import type { ForwardProxySetup } from "./types";
 import type { ControlMcpView, MCPSettingsInput, MCPView, ServiceFamily, SharedKeysReport } from "./types";
 
 export class ApiError extends Error {
@@ -205,6 +206,10 @@ export const api = {
       `/api/admin/providers/${encodeURIComponent(slug)}/guide${service ? `?service=${encodeURIComponent(service)}` : ""}`,
     ),
   serviceGuide: (id: number) => request<GuideResponse>("GET", `/api/admin/services/${id}/guide`),
+
+  // Forward proxy: apps set Acnologia as HTTPS_PROXY and call provider URLs as they are.
+  forwardProxy: () => request<ForwardProxySetup>("GET", "/api/admin/forward-proxy"),
+  rotateForwardCA: () => request<{ ca_fingerprint: string }>("POST", "/api/admin/forward-proxy/ca/rotate"),
   generateGuide: (slug: string) =>
     request<GenerateGuideResult>("POST", `/api/admin/providers/${encodeURIComponent(slug)}/guide/generate`, {}),
   validateProvider: (body: ProviderInput) => request<ValidateResult>("POST", "/api/admin/providers/validate", body),

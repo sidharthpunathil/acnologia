@@ -161,6 +161,21 @@ curl "http://localhost:8080/proxy/weather/v1/forecast?city=Lisbon" \
   -H "Authorization: Bearer acn_your_app_token"
 ```
 
+**Forward proxy.** Point an app's `HTTPS_PROXY` at Acnologia and keep calling
+provider URLs as they are. Requests to a service's host get a pool key, with
+the same rotation, limits and logs as the proxy; the app trusts the server's
+CA once.
+
+```sh
+curl -o acnologia-ca.pem http://localhost:8080/api/v1/proxy/ca.pem
+HTTPS_PROXY=http://app:acn_your_app_token@localhost:8080 \
+NODE_EXTRA_CA_CERTS=acnologia-ca.pem node --use-env-proxy app.js
+# or: curl -x http://app:acn_...@localhost:8080 --cacert acnologia-ca.pem "https://serpapi.com/search.json?q=coffee"
+```
+
+Behind an HTTPS edge such as Railway's, give it its own port with
+`ACNOLOGIA_FORWARD_PROXY_ADDR` (see [configuration](docs/configuration.md#forward-proxy)).
+
 **Share with a person.** In Sharing, choose New share, then A person. Pick
 the services, keys, limits and end time, and send them the one time link.
 They open it, get a personal token with copy and paste snippets and an MCP

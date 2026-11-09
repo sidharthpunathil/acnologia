@@ -38,6 +38,8 @@ Each README opens with a quick start, then covers install, the full API, errors 
 - **Typed errors** for no key available, all keys busy (a kind of no key available) and service unavailable when the provider's circuit breaker is open, each with the server's retry after. Other failures are an API error carrying the HTTP status and the error code, such as `lease_not_found`.
 - **Redaction.** String forms, debug output and report messages hide the token and the secret.
 
+You may not need an SDK at all. With the [forward proxy](api.md#forward-proxy), any plain HTTP client calls provider URLs as they are and Acnologia puts the key on: set `HTTPS_PROXY` to `http://app:acn_...@your-server:8888`, trust the server's CA (`GET /api/v1/proxy/ca.pem`), and keep your code unchanged. The SDKs add leases, typed errors and the helpers above.
+
 A service that another Acnologia server shares with yours is proxy only. A lease on it fails with a 403 and the code `lease_not_allowed`, so call it in proxy mode.
 
 ## Where they differ

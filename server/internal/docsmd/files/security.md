@@ -27,6 +27,9 @@ tokens that reach them.
 - A share in proxy mode gives the other side a token, never a key. Revoke,
   pause and expiry are checked on every request.
 - Roles are re-read on every request, so a demotion takes effect at once.
+- The [forward proxy](#the-forward-proxy) puts a key only on a request to
+  that service's own base URL (or its provider's listed hosts), and is never
+  an open proxy: plain HTTP to any other host is refused.
 
 **Where a key does leave the server, by design:**
 
@@ -45,7 +48,9 @@ the master key can decrypt every stored key. Provider responses, text that
 apps report, web pages the AI features read, and other servers are treated
 as untrusted input.
 
-**Where it stops:** upstreams on loopback and private addresses are allowed,
+**Where it stops:** apps that use the forward proxy trust a CA whose private
+key sits on the server (see [The forward proxy](#the-forward-proxy)),
+upstreams on loopback and private addresses are allowed,
 an egress proxy resolves host names itself, the redactor can miss a short
 secret that is neither stored nor shaped like a credential, and the items
 under
@@ -72,6 +77,7 @@ flowchart LR
 
     Net -->|"login, setup (rate limited)"| Server
     AppT -->|"proxy, lease (scoped by app)"| Server
+    AppT -->|"forward proxy: CONNECT / absolute URL,<br/>token in Proxy-Authorization"| Server
     Mem -->|"read the dashboard"| Server
     Adm -->|"operate services, keys, apps"| Server
     Sup -->|"hidden keys, reveal, users, audit"| Server
@@ -188,6 +194,7 @@ the service's own base URL.
 | Session and app tokens | SHA-256 of 32 random bytes. An app can hold several tokens in `app_tokens`, each revocable and optionally expiring; a revoked or expired token gets 401. |
 | Share tokens | On the owner, the SHA-256 like any app token. On the receiver, encrypted like a provider key. |
 | Server identity | Ed25519 private key, encrypted with the master key in `meta` |
+| Forward proxy CA | ECDSA P-256 private key, encrypted with the master key in `meta`; made on first use, never leaves the server. The certificate is public. |
 | Master key | `ACNOLOGIA_MASTER_KEY`, else `data/master.key` (0600, generated on first boot) |
 
 The server refuses to start when the master key does not match the database
@@ -259,6 +266,47 @@ caller's:
   clears the suspicion. Providers without a health check therefore need two
   apps to agree before a key is marked dead; check such keys from the
   dashboard if a single app reports trouble.
+
+### The forward proxy
+
+An app that sets Acnologia as its `HTTPS_PROXY` (see
+[API](api.md#forward-proxy)) is a proxied caller like any other: each request
+to a service's host is handed to `/proxy/{service}/...` with the app's token,
+so everything above holds, including app limits, key scrubbing and the
+cache. This is a different thing from an egress proxy, which carries
+Acnologia's own upstream calls out (see [Outbound requests](#outbound-requests)).
+What is particular to it:
+
+- **The CA key is a high value secret.** To open HTTPS to a service's host,
+  Acnologia presents a certificate for that host signed by its own CA, and
+  the app trusts that CA. Anyone holding the CA's private key could
+  intercept TLS, for any domain, from every app that trusts it. The key is
+  ECDSA P-256, made per server on first use, stored encrypted with the
+  master key in `meta`, and never sent anywhere. Rotate it with
+  `POST /api/admin/forward-proxy/ca/rotate` if the database and master key
+  may have leaked; apps must then download the new certificate. Host
+  certificates last 30 days and are cached in memory.
+- **Trust the CA per process, not system wide.** Give it to the app's own
+  environment (`NODE_EXTRA_CA_CERTS`, which adds to the system roots rather
+  than replacing them, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`,
+  `curl --cacert`) instead of the machine's trust store, so a leaked CA
+  key reaches only those apps.
+- **Keys go only to their service.** The proxy picks a service by matching
+  the request's host, port and path against service base URLs and the
+  provider's listed hosts; a key the app sent is replaced by the pool key.
+  Plain HTTP to any other host is refused with 403 `not_a_service`, so the
+  proxy is never an open relay.
+- **Passthrough is a blind tunnel.** HTTPS to a host that is no service is,
+  when `ACNOLOGIA_FORWARD_PASSTHROUGH` is on (the default), joined to that
+  host without opening it and without a key. It needs a valid app token,
+  reaches public addresses only (the same checks as `SafeClient`) on port
+  443 or 8443, and is never offered to a share's token. Turn it off to keep
+  app traffic other than service calls off the server.
+- **The token rides in the proxy URL.** `http://app:acn_...@host:port` sits in
+  the app's environment, where process listings, crash dumps and some
+  client logs can show it. Over the internet, prefer an `https://` proxy URL
+  (the dedicated listener speaks TLS on the same port), so the token and the
+  `CONNECT` line are not sent in clear.
 
 ### The response cache
 
@@ -569,6 +617,10 @@ confirm clears `target_trusted`, so hidden keys stop flowing until a
 superadmin confirms.
 Proxy URLs are encrypted at rest and shown without credentials.
 
+Egress proxies and the server's own `HTTPS_PROXY` are about Acnologia's
+outbound calls. The [forward proxy](#the-forward-proxy) is the other
+direction: apps send their calls in through Acnologia.
+
 ## Sharing between servers
 
 A share lets another Acnologia use some services through this server's proxy.
@@ -818,6 +870,10 @@ token, like a receiving server; in reveal mode they get the raw keys.
    key a reveal share showed once it ends.
 9. On Windows with a data directory outside your profile, restrict it with
    `icacls`.
+10. For the forward proxy, give apps an `https://` proxy URL when they reach
+    it over the internet, trust its CA only in each app's environment, and
+    set `ACNOLOGIA_FORWARD_PASSTHROUGH=false` unless apps need to send other
+    HTTPS through it.
 
 ## Known limitations
 
@@ -825,5 +881,10 @@ token, like a receiving server; in reveal mode they get the raw keys.
 - Ciphertexts are not bound to their row, so someone with write access to the
   database could swap secrets between keys.
 - Proxy request bodies are buffered in memory up to the body limit.
+- Apps that use the forward proxy for HTTPS trust a CA whose key is on the
+  server. There is no name constraint on it, so a leaked CA key can
+  impersonate any site to those apps until they drop it.
+- Forward proxy passthrough tunnels are not logged per request and do not
+  count toward app limits, since they carry no key.
 - The per account login limit means ten wrong passwords lock that account for
   10 minutes.

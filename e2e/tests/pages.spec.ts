@@ -32,7 +32,13 @@ for (const [name, path] of ROUTES) {
     await page.goto(path);
     if (!SHOWS_VERSION.has(name)) return snap(name);
     const { version } = (await (await page.request.get("/api/admin/identity")).json()) as { version: string };
-    await snap(name, { mask: [page.getByText(version, { exact: true })] });
+    const mask = [page.getByText(version, { exact: true })];
+    if (name === "settings") {
+      // The forward proxy's CA is made fresh for each run's data directory.
+      const fwd = (await (await page.request.get("/api/admin/forward-proxy")).json()) as { ca_fingerprint: string };
+      mask.push(page.getByText(fwd.ca_fingerprint, { exact: true }));
+    }
+    await snap(name, { mask });
   });
 }
 

@@ -17,7 +17,12 @@ docker compose up -d --build
 open http://localhost:8080    # the first visit creates the superadmin`;
 
 const CALL = `curl "http://localhost:8080/proxy/serpapi/search.json?q=coffee" \\
-  -H "Authorization: Bearer acn_your_app_token"`;
+  -H "Authorization: Bearer acn_your_app_token"
+
+# Or keep the provider's own URL and use Acnologia as the HTTPS proxy
+curl -o acnologia-ca.pem http://localhost:8080/api/v1/proxy/ca.pem
+curl -x "http://app:acn_your_app_token@localhost:8080" --cacert acnologia-ca.pem \\
+  "https://serpapi.com/search.json?q=coffee"`;
 
 const CARD = "rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs";
 const CARD_LINK = cx(
@@ -178,7 +183,9 @@ function DocsHome({ signedIn }: { signedIn: boolean }) {
             <Step n={3} title="Call through Acnologia">
               <p>
                 Call <Code>{"/proxy/{service}/..."}</Code> as you would call the provider. Acnologia attaches a key with quota
-                left. To hold the raw key yourself, see <TextLink to="/docs/flows#lease-and-report">lease and report</TextLink>.
+                left. Or keep the provider's own URL: set <Code>HTTPS_PROXY</Code> to Acnologia with the token as the proxy password and
+                trust its CA, and every call to a service's host gets a key. To hold the raw key yourself, see{" "}
+                <TextLink to="/docs/flows#lease-and-report">lease and report</TextLink>.
               </p>
               <CodeBlock label="curl" code={CALL} className="mt-3" />
             </Step>

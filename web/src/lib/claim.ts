@@ -60,6 +60,10 @@ export interface RedeemProxy {
   base_url?: string;
   services?: ClaimService[] | null;
   mcp_url?: string;
+  /** The forward proxy address without a token, when the server sends it. */
+  forward_proxy_url?: string;
+  /** Where to download the forward proxy's CA certificate. */
+  ca_url?: string;
   limits?: Partial<AppLimits> | null;
   ends_at?: string | null;
 }

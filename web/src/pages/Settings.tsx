@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { RiCalendarScheduleLine, RiClaudeLine, RiEqualizerLine, RiPaletteLine, RiPlugLine, RiServerLine, RiShieldKeyholeLine, RiSparklingLine } from "@remixicon/react";
+import { RiCalendarScheduleLine, RiClaudeLine, RiEqualizerLine, RiGlobalLine, RiPaletteLine, RiPlugLine, RiServerLine, RiShieldKeyholeLine, RiSparklingLine } from "@remixicon/react";
 import { can } from "@/lib/perms";
 import { settingsApi } from "@/lib/settings";
 import { useAuth } from "@/stores/auth";
@@ -7,6 +7,7 @@ import { useTitle } from "@/hooks/useTitle";
 import { PageHeader } from "@/components/acn/page-header";
 import { AiSection } from "./settings/AiSection";
 import { ConnectClaudeSection } from "./settings/ConnectClaudeSection";
+import { ForwardProxySection } from "./settings/ForwardProxySection";
 import { RefreshSection } from "./settings/RefreshSection";
 import { useLoad, useUnsavedWarning } from "./settings/hooks";
 import { AdvancedSection, AppearanceSection, IntegrationsSection } from "./settings/MoreSections";
@@ -49,10 +50,12 @@ export function SettingsPage() {
       { id: "provider-refresh", label: "Provider refresh", icon: RiCalendarScheduleLine, dirty: refreshDirty },
       { id: "security", label: "Security and access", icon: RiShieldKeyholeLine },
       { id: "integrations", label: "Integrations", icon: RiPlugLine },
+      // Admins only: members cannot load the forward proxy setup.
+      ...(isAdmin ? [{ id: "forward-proxy", label: "Forward proxy", icon: RiGlobalLine }] : []),
       { id: "connect-claude", label: "Connect Claude", icon: RiClaudeLine },
       { id: "advanced", label: "Advanced", icon: RiEqualizerLine },
     ],
-    [serverDirty, rulesDirty, modelsDirty, refreshDirty],
+    [serverDirty, rulesDirty, modelsDirty, refreshDirty, isAdmin],
   );
   const ids = items.map((i) => i.id);
   const active = useActiveSection(ids);
@@ -70,6 +73,7 @@ export function SettingsPage() {
           <RefreshSection isAdmin={isAdmin} onDirty={onRefreshDirty} />
           <SecuritySection isAdmin={isAdmin} isSuper={isSuper} summary={summary} />
           <IntegrationsSection isAdmin={isAdmin} />
+          {isAdmin && <ForwardProxySection />}
           <ConnectClaudeSection />
           <AdvancedSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} />
         </div>

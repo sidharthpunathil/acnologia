@@ -117,6 +117,7 @@ file in the next section.
 | Sharing with people (claim links) | `people.go` |
 | Consumer API | `consumer.go` |
 | Proxy, and scrubbing keys an upstream echoes back | `proxy.go`, `proxy_extras.go`, `proxy_scrub.go` |
+| Forward proxy (apps set Acnologia as `HTTPS_PROXY`): routing by host, its CA, setup routes | `forward.go`, `forward_ca.go`, `forward_api.go` |
 | App MCP | `mcp.go`, `mcp_v2.go`, `mcp_admin.go` |
 | Control MCP for admin tokens | `mcp_control.go`, `mcp_control_tools.go` (tool table), `mcp_control_flex.go` (search, batch, result shaping) |
 | Per client and global rate limits | `ratelimit.go` |
@@ -154,6 +155,17 @@ flowchart TD
 The request log records the path only, and replaces a claim link's code with
 `/claim/[code]`.
 
+Forward proxy requests (`CONNECT`, or an absolute URL in the request line)
+are caught before all of this, by `forwardEntry` in `forward.go`, on the main
+port and on the `ACNOLOGIA_FORWARD_PROXY_ADDR` listener. The entry checks the
+app token in `Proxy-Authorization`, matches the host and path to a service,
+and replays the request into the router as `/proxy/{service}/{path}` with the
+token in `X-Acnologia-Token`. From there it takes the `/proxy` path above, so
+it is logged, limited and keyed like any proxy call. For `CONNECT` to a
+service's host, the entry ends TLS with a certificate from the server's CA
+and serves the tunnel's requests the same way; a `CONNECT` to another host is
+a plain TCP tunnel (see [flows](flows.md#forward-proxy-request)).
+
 ### Who authenticates where
 
 | Routes | Credential | Open while locked |
@@ -161,6 +173,8 @@ The request log records the path only, and replaces a claim link's code with
 | `/api/admin/*`, `/api/auth/*` | Session cookie, or an admin API token (`acnadm_`) on `/api/admin` | No (an admin token passes the lock on its own) |
 | `/api/v1/*`, `/proxy/{service}/*` | App token (`acn_`), including a share token | Yes |
 | `/mcp` | App token, checked by the handler | Yes |
+| Forward proxy (`CONNECT`, absolute URL requests) | App token in `Proxy-Authorization`, checked before the router | Yes (never reaches the gate) |
+| `/api/v1/proxy/ca.pem` | None: the forward proxy's public CA certificate | Yes |
 | `/mcp/control` | Admin API token, checked by the handler | No |
 | `/api/peer/v1/*` | An invite, a share token, or a signed message from the owner | Yes |
 | `/api/claim/v1/*` | A claim code | Yes |
@@ -456,6 +470,7 @@ sequenceDiagram
     M->>P: restore slots for open leases
     M->>W: start housekeeping, health, peer sync, sharing and refresh loops
     M->>H: listen on ACNOLOGIA_ADDR
+    M->>H: and on ACNOLOGIA_FORWARD_PROXY_ADDR, when set
 ```
 
 Two checks stop the boot before anything opens: an access password shorter

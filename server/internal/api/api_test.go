@@ -110,7 +110,7 @@ func newEnv(t *testing.T) *env {
 	ag := agent.New(agent.Config{}, st, cat, box)
 	s := New(config.Config{Version: "test", MaxBodyBytes: 1 << 20}, st, testPool(st, box), cat, ag,
 		fstest.MapFS{"index.html": {Data: []byte("ui")}}, []byte("# Acnologia {{BASE_URL}}"))
-	srv := httptest.NewServer(s.Router())
+	srv := httptest.NewServer(s.PublicHandler())
 	t.Cleanup(srv.Close)
 	e := &env{t: t, srv: srv, up: up, upURL: ups.URL, super: client(), st: st, api: s}
 	e.do(e.super, "POST", "/api/auth/setup", map[string]any{"email": "root@x.io", "password": "supersecret1"}, 200, nil)
