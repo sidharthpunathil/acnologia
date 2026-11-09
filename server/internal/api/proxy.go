@@ -215,7 +215,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 508, "loop_detected", "this request already passed through too many Acnologia servers")
 		return
 	}
-	targets, ok := s.proxyTargets(w, r, slug)
+	targets, group, ok := s.proxyTargets(w, r, slug)
 	if !ok {
 		return
 	}
@@ -241,6 +241,9 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		path = strings.TrimPrefix(path[i+len("/proxy/"+slug):], "/")
 	} else {
 		path = chi.URLParam(r, "*")
+	}
+	if group != nil {
+		targets = s.orderGroup(r.Context(), group.Slug, group.Strategy, targets, r.Method, path)
 	}
 	for _, sv := range targets {
 		if _, err := serviceURL(sv, path, nil); err != nil {

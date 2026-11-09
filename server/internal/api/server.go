@@ -92,6 +92,8 @@ type Server struct {
 	Refresh *refresh.Refresher
 	// ctlAppMu makes the control MCP create its app once (mcp_control.go).
 	ctlAppMu sync.Mutex
+	// keyCounts caches free keys per service for routing (routing.go).
+	keyCounts keyCounts
 	// static serves WebFS (serveWeb); Router builds it.
 	static atomic.Pointer[staticSite]
 }
@@ -238,6 +240,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/webhooks", s.listWebhooks)
 		r.Get("/egress", s.listEgress)
 		r.Get("/groups", s.listGroups)
+		r.Get("/capabilities", s.listCapabilities)
+		r.Get("/capabilities/{id}", s.getCapability)
 		r.Get("/apps/{id}/usage", s.appUsage)
 		r.Get("/services/{id}/breaker", s.serviceBreaker)
 		r.Get("/cache", s.cacheStats)
@@ -339,6 +343,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/groups", s.createGroup)
 			r.Patch("/groups/{id}", s.updateGroup)
 			r.Delete("/groups/{id}", s.deleteGroup)
+			r.Post("/capabilities", s.createCapability)
+			r.Patch("/capabilities/{id}", s.updateCapability)
+			r.Delete("/capabilities/{id}", s.deleteCapability)
 			r.Post("/services/{id}/breaker/reset", s.resetServiceBreaker)
 			r.Post("/services/{id}/cache/purge", s.purgeServiceCache)
 		})
@@ -393,6 +400,7 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.requireApp)
 			r.Get("/services", s.v1Services)
 			r.Get("/services/{slug}/guide", s.v1ServiceGuide)
+			r.Get("/capabilities", s.v1Capabilities)
 			r.Post("/lease", s.v1Lease)
 			r.Post("/leases/{id}/report", s.v1Report)
 			r.Post("/leases/{id}/renew", s.v1Renew)

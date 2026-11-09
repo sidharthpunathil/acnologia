@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS service_groups(
   members TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS capabilities(
+  id INTEGER PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  strategy TEXT NOT NULL DEFAULT 'priority',
+  params TEXT NOT NULL DEFAULT '[]',
+  routes TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_tokens(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -75,6 +86,7 @@ func migrateV2(db *sql.DB) error {
 		{"apps", "monthly_requests", "INTEGER"},
 		{"apps", "daily_budget", "REAL"},
 		{"apps", "monthly_budget", "REAL"},
+		{"service_groups", "strategy", "TEXT NOT NULL DEFAULT 'priority'"},
 	}
 	for _, c := range cols {
 		if _, err := addColumn(db, c.table, c.col, c.def); err != nil {

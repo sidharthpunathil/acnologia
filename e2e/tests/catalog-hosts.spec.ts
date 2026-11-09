@@ -4,30 +4,22 @@ import { expect, test } from "../support/fixtures";
 // scrapers, say) and the Assistant queueing messages while a turn runs.
 // Behaviour only, no screenshots.
 
-const HEADERS = { "X-Requested-With": "e2e" };
-
 test("a service lists its provider's APIs, grouped and searchable", async ({ page, run, errors }) => {
-  const api = page.request;
-  const base = await (await api.get(`${run.baseURL}/api/admin/providers/serpapi`, { headers: HEADERS })).json();
-  const spec = { ...base.spec };
-  spec.base_url = "https://google-maps-scraper.omkar.cloud";
-  spec.health = null;
-  spec.hosts = [
-    { name: "google-maps-scraper", url: "https://google-maps-scraper.omkar.cloud", title: "Google Maps Scraper", group: "Local & Maps", description: "Places and reviews." },
-    { name: "tiktok-scraper", url: "https://tiktok-scraper.omkar.cloud", title: "TikTok Scraper", group: "Social & Video", description: "Videos and users.", docs_url: "https://www.omkar.cloud/tools/tiktok-scraper" },
-    { name: "amazon-scraper", url: "https://amazon-scraper.omkar.cloud", title: "Amazon Scraper", group: "E-commerce", description: "Products and prices." },
+  // The provider list is answered with SerpAPI's spec carrying hosts, so
+  // nothing on the shared server changes for the screenshot suites.
+  const hosts = [
+    { name: "google-maps-scraper", url: "https://google-maps-scraper.serpapi.com", title: "Google Maps Scraper", group: "Local & Maps", description: "Places and reviews." },
+    { name: "tiktok-scraper", url: "https://tiktok-scraper.serpapi.com", title: "TikTok Scraper", group: "Social & Video", description: "Videos and users.", docs_url: "https://www.omkar.cloud/tools/tiktok-scraper" },
+    { name: "amazon-scraper", url: "https://amazon-scraper.serpapi.com", title: "Amazon Scraper", group: "E-commerce", description: "Products and prices." },
   ];
-  const slug = `catalog-e2e-${test.info().project.name}`;
-  const made = await api.post(`${run.baseURL}/api/admin/providers`, {
-    headers: HEADERS,
-    data: { slug, name: "Catalog E2E", category: "Scraping", description: "Many APIs, one key.", website: "https://www.omkar.cloud", docs_url: "", color: "#f59e0b", spec },
+  await page.route(/\/api\/admin\/providers(\?.*)?$/, async (route) => {
+    const res = await route.fetch();
+    const json = await res.json();
+    for (const p of json.providers ?? []) if (p.slug === "serpapi") p.spec = { ...p.spec, hosts };
+    await route.fulfill({ response: res, json });
   });
-  expect(made.status(), await made.text()).toBe(201);
-  const svc = await api.post(`${run.baseURL}/api/admin/services`, { headers: HEADERS, data: { provider: slug, slug } });
-  expect(svc.status(), await svc.text()).toBe(201);
-  const id = ((await svc.json()).service ?? (await svc.json())).id;
 
-  await page.goto(`/services/${id}`);
+  await page.goto(`/services/${run.serviceIds.serpapi}`);
   const card = page.getByRole("region", { name: /APIs/ });
   await expect(card).toBeVisible();
   await expect(card.getByRole("heading", { name: "Social & Video" })).toBeVisible();

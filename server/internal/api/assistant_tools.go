@@ -251,7 +251,7 @@ func (cs *chatSession) simple(method, path string, body any, summary string, sha
 func init() {
 	none := map[string]any{}
 	defer func() {
-		chatTools = append(append(append(chatTools, opsTools()...), guideTools()...), providerTools()...)
+		chatTools = append(append(append(append(chatTools, opsTools()...), guideTools()...), providerTools()...), capabilityTools()...)
 	}()
 	chatTools = []*chatTool{
 		{

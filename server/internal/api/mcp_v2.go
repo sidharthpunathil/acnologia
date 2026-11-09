@@ -43,6 +43,9 @@ type mcpTool struct {
 	service string
 	example *providers.Example
 	params  []string
+	// capability is set on a capability's tool: its arguments are the
+	// capability's params, sent to /proxy/{capability}.
+	capability string
 }
 
 func readOnly(title string) map[string]any {
@@ -191,6 +194,67 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 				service:     sv.Slug, example: &exCopy, params: params,
 			})
 		}
+	}
+	return append(out, s.capabilityTools(ctx, a, out)...)
+}
+
+// capabilityTools makes one tool per capability the app may call, with the
+// capability's params as its input. A name a service tool already took gets
+// a "_any" suffix.
+func (s *Server) capabilityTools(ctx context.Context, a *store.App, taken []mcpTool) []mcpTool {
+	if a.ShareID != nil {
+		return nil
+	}
+	cs, err := s.Store.ListCapabilities(ctx)
+	if err != nil {
+		return nil
+	}
+	used := map[string]bool{}
+	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, taken} {
+		for _, t := range set {
+			used[t.Name] = true
+		}
+	}
+	out := []mcpTool{}
+	for _, c := range cs {
+		if !a.CanUse(c.Slug) {
+			continue
+		}
+		name := toolName(c.Slug)
+		for used[name] {
+			name = toolName(name + "_any")
+		}
+		used[name] = true
+		props := map[string]any{}
+		required := []string{}
+		for _, p := range c.Params {
+			typ := orDefault(p.Type, "string")
+			prop := map[string]any{"type": typ}
+			if p.Description != "" {
+				prop["description"] = p.Description
+			}
+			if p.Default != nil {
+				prop["default"] = p.Default
+			}
+			props[p.Name] = prop
+			if p.Required && p.Default == nil {
+				required = append(required, p.Name)
+			}
+		}
+		routes := []string{}
+		for _, rt := range c.Routes {
+			if !rt.Disabled {
+				routes = append(routes, rt.Service)
+			}
+		}
+		desc := strings.TrimSpace(c.Description + " Served by " + strings.Join(routes, ", ") +
+			": Acnologia picks one (" + c.Strategy + "), rotates keys, and moves to the next provider when one cannot serve the request.")
+		out = append(out, mcpTool{
+			Name: name, Title: c.Name, Description: desc, Set: setService,
+			InputSchema: obj(props, required...),
+			Annotations: map[string]any{"title": c.Name, "openWorldHint": true},
+			capability:  c.Slug,
+		})
 	}
 	return out
 }
@@ -341,6 +405,13 @@ func findTool(tools []mcpTool, name string) *mcpTool {
 
 // callServiceTool fills the example's path and query from the arguments and proxies it.
 func (s *Server) callServiceTool(ctx context.Context, r *http.Request, t *mcpTool, raw json.RawMessage) (map[string]any, error) {
+	if t.capability != "" {
+		body := raw
+		if len(body) == 0 {
+			body = json.RawMessage(`{}`)
+		}
+		return s.mcpProxy(ctx, r, t.capability, http.MethodPost, "", nil, body)
+	}
 	var args map[string]any
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {

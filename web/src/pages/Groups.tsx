@@ -16,7 +16,8 @@ import { toast } from "../stores/toast";
 import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
 import { plural, slugify } from "../lib/format";
-import { ops, type ServiceGroup } from "../lib/ops";
+import { ops, STRATEGIES, type RoutingStrategy, type ServiceGroup } from "../lib/ops";
+import { Select, SelectItem } from "@/components/base/select/select";
 import { Modal } from "../components/Modal";
 import { CopyButton } from "../components/CopyButton";
 import { ConfirmButton } from "../components/ConfirmButton";
@@ -80,9 +81,13 @@ interface FormState {
   name: string;
   description: string;
   members: string[];
+  strategy: RoutingStrategy;
 }
 
-const blank: FormState = { slug: "", name: "", description: "", members: [] };
+const blank: FormState = { slug: "", name: "", description: "", members: [], strategy: "priority" };
+
+/** Groups take every strategy but weighted: their members carry no weights. */
+const GROUP_STRATEGIES = (Object.keys(STRATEGIES) as RoutingStrategy[]).filter((k) => k !== "weighted");
 
 function MemberPicker({
   value,
@@ -230,7 +235,7 @@ function MemberPicker({
         </span>
       ) : (
         <span id="group-members-hint" className={hintTextClassName(false)}>
-          Tried top to bottom. {MIN_MEMBERS} to {MAX_MEMBERS} services that accept the same request shape.
+          The order for Priority, and the fallback order. {MIN_MEMBERS} to {MAX_MEMBERS} services that accept the same request shape.
         </span>
       )}
     </div>
@@ -258,7 +263,11 @@ function GroupFormModal({
     if (!open) return;
     setErrs({});
     setSlugTouched(false);
-    setForm(initial ? { slug: initial.slug, name: initial.name, description: initial.description, members: initial.members ?? [] } : blank);
+    setForm(
+      initial
+        ? { slug: initial.slug, name: initial.name, description: initial.description, members: initial.members ?? [], strategy: initial.strategy ?? "priority" }
+        : blank,
+    );
   }, [open, initial]);
 
   const options = useMemo(() => {
@@ -285,10 +294,10 @@ function GroupFormModal({
     setBusy(true);
     try {
       if (initial) {
-        await ops.updateGroup(initial.id, { name, description: form.description.trim(), members: form.members });
+        await ops.updateGroup(initial.id, { name, description: form.description.trim(), members: form.members, strategy: form.strategy });
         toast.success(`Saved ${name}`);
       } else {
-        await ops.createGroup({ slug, name, description: form.description.trim(), members: form.members });
+        await ops.createGroup({ slug, name, description: form.description.trim(), members: form.members, strategy: form.strategy });
         toast.success(`Created ${name}. Call it at /proxy/${slug}/`);
       }
       onClose();
@@ -306,7 +315,7 @@ function GroupFormModal({
       onClose={onClose}
       wide
       title={initial ? `Edit ${initial.name}` : "Create service group"}
-      description={initial ? `/proxy/${initial.slug}/` : "One proxy path that falls through a list of services in order."}
+      description={initial ? `/proxy/${initial.slug}/` : "One proxy path that spreads requests across services with the same API and falls back between them."}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -355,6 +364,18 @@ function GroupFormModal({
           />
         )}
         <Textarea label="Description" rows={2} value={form.description} onChange={(description) => setForm({ ...form, description })} />
+        <Select
+          label="Strategy"
+          selectedKey={form.strategy}
+          onSelectionChange={(k) => setForm({ ...form, strategy: k as RoutingStrategy })}
+          hint={STRATEGIES[form.strategy].hint}
+        >
+          {GROUP_STRATEGIES.map((k) => (
+            <SelectItem key={k} id={k} textValue={STRATEGIES[k].label}>
+              {STRATEGIES[k].label}
+            </SelectItem>
+          ))}
+        </Select>
         <MemberPicker
           value={form.members}
           options={options}
@@ -420,8 +441,9 @@ export function GroupsPage() {
         }
       />
       <Callout tone="neutral" className="mb-6">
-        A request tries the first service in the group. If that service has no working key or does not answer, the next one gets the same request. Client
-        errors (400, 422) come back as they are, so every member should accept the same request.
+        A group puts services with the same API behind one path, such as several accounts of one provider. Its strategy picks which member goes first, and
+        a member with no working key, or one that does not answer, hands the same request to the next. Client errors (400, 422) come back as they are. For
+        providers with different APIs, use a capability.
       </Callout>
 
       {error && groups.length === 0 ? (
@@ -450,6 +472,9 @@ export function GroupsPage() {
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span className="min-w-0 wrap-anywhere text-headline-medium text-text-primary">{g.name}</span>
                     <span className="wrap-anywhere font-mono text-caption-1-regular text-text-secondary">{g.slug}</span>
+                    <span className="rounded-md bg-background-tertiary-default px-1.5 py-0.5 text-caption-1-medium text-text-secondary">
+                      {STRATEGIES[g.strategy ?? "priority"].label}
+                    </span>
                   </div>
                   {g.description && <div className="mt-0.5 wrap-anywhere text-body-2-regular text-text-secondary">{g.description}</div>}
                   <ol aria-label="Members, in order" className="mt-3 flex flex-wrap items-center gap-1 font-mono text-caption-1-regular">

@@ -328,6 +328,56 @@ built in guide once on boot (as a version noted "built-in guide added"), even
 when the spec was edited since, because a guide never changes how requests
 are handled. If you remove it afterwards, it stays removed.
 
+## Providers with many APIs
+
+Some providers are a catalog of APIs behind one key, each on its own host.
+Omkar Cloud, for example, serves about 185 scrapers at
+`<api>.omkar.cloud` and accepts the same `API-Key` on all of them. Such a
+provider lists those hosts in `spec.hosts` instead of being split into one
+provider per API:
+
+```json
+"base_url": "https://google-maps-scraper.omkar.cloud",
+"hosts": [
+  {"name": "tiktok-scraper", "url": "https://tiktok-scraper.omkar.cloud",
+   "title": "TikTok Scraper", "group": "Social & Video",
+   "description": "Videos, users, hashtags and ads.",
+   "docs_url": "https://www.omkar.cloud/tools/tiktok-scraper"}
+]
+```
+
+A caller picks a host with a first path segment of `~` plus its name:
+`/proxy/omkar/~tiktok-scraper/videos/details?video=...` goes to
+`https://tiktok-scraper.omkar.cloud/videos/details`. A path without the
+prefix goes to the service's base URL as before, and a `~name` the spec does
+not list is refused with 400. Offers, examples and guide endpoints keep the
+`/~name` prefix in their paths, so each API can carry its own offer, limits,
+examples and docs; guide endpoints take an optional `group` (the API's
+title) and the guide lists every host grouped by `group`. The service page
+shows them as a searchable **APIs** card.
+
+Every host must be on the same site as `base_url` (its host without the
+first label, `omkar.cloud` here), so a spec can never send a key to another
+company's domain. Changing the set of hosts or their URLs counts as a key
+target change, like `auth`. The live check runs only examples on the main
+host. A spec with hosts may have up to 400 hosts, 400 guide endpoints and
+400 offers.
+
+The AI builder looks for a provider's full catalog and fills `hosts` (in
+batches with its `stage_parts` tool when the list is long). From the
+Assistant, `improve_provider` runs the builder on an existing provider with
+your instruction, such as "add every Omkar API, grouped by category", and
+`update_provider` edits a provider's name, description, category, website,
+docs URL, color, status or any part of its spec (a JSON merge patch) as a
+new version. Changes to `base_url`, `auth`, the health check or `hosts`, and
+disabling a provider, wait for your Confirm.
+
+A key's state is still tracked per key, not per API. When quota or plans
+are per API (as with Omkar), write the rules so an error about one API does
+not park the key for all of them: a used up API quota as `busy` (rotate to
+the next key without a long cooldown) and a missing or inactive plan as `ok`
+(the error is relayed and the key kept). The AI builder writes them that way.
+
 ## Validation rules
 
 - `slug`: lowercase letters, digits and hyphens.
@@ -345,8 +395,11 @@ are handled. If you remove it afterwards, it stays removed.
   examples, paths start with `/`, example names must exist, price units come
   from the list above, limits need a count of at least 1 and a known window,
   `checked_at` is a date and `source_url` is http(s).
+- Hosts: names are lowercase letters, digits and hyphens and unique, URLs
+  are http(s) on the site of `base_url` with no credentials, query or IP
+  address.
 - Guide: `summary` is required (at most 1,000 characters), at most 40
-  endpoints each with a name, a path starting with `/` and a method of GET,
+  endpoints (400 with hosts) each with a name, a path starting with `/` and a method of GET,
   POST, PUT, PATCH or DELETE, params `in` query, path, body or header, at
   most 30 notes and 20,000 characters of Markdown.
 - Rule regexes are RE2, so they cannot backtrack catastrophically. JSON paths

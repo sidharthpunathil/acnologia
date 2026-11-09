@@ -40,7 +40,7 @@ func withResolvedService(ctx context.Context, sv *store.Service) context.Context
 
 // proxyTargets resolves /proxy/{slug} to the services that may serve it: one
 // service, or the members of a service group in fallback order.
-func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug string) ([]*store.Service, bool) {
+func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug string) ([]*store.Service, *store.ServiceGroup, bool) {
 	a := appFrom(r)
 	// A service looked up earlier in this request saves a second query; the
 	// access checks below run on it all the same.
@@ -50,31 +50,39 @@ func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug strin
 		sv, err = s.Store.GetServiceBySlug(r.Context(), slug)
 	}
 	if err == nil {
-		if !a.CanUse(slug) || !s.sharedAs(r.Context(), a, sv) {
+		if !(a.CanUse(slug) || capabilityGrants(r, slug)) || !s.sharedAs(r.Context(), a, sv) {
 			writeErr(w, 403, "service_not_allowed", "this app cannot use service "+slug)
-			return nil, false
+			return nil, nil, false
 		}
-		return []*store.Service{sv}, true
+		return []*store.Service{sv}, nil, true
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		writeStoreErr(w, err)
-		return nil, false
+		return nil, nil, false
 	}
 	g, err := s.Store.GetGroupBySlug(r.Context(), slug)
+	if errors.Is(err, store.ErrNotFound) {
+		// A capability is the third kind of name under /proxy: it runs here
+		// and answers the request itself.
+		if c, cerr := s.Store.GetCapabilityBySlug(r.Context(), slug); cerr == nil {
+			s.serveCapability(w, r, c)
+			return nil, nil, false
+		}
+	}
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, 404, "unknown_service", "no service or group named "+slug)
+			writeErr(w, 404, "unknown_service", "no service, group or capability named "+slug)
 		} else {
 			writeStoreErr(w, err)
 		}
-		return nil, false
+		return nil, nil, false
 	}
 	// Access to a group grants its members for requests made through it.
 	// A share lists only services, so a group under a shared slug is never
 	// what was shared.
 	if !a.CanUse(slug) || a.ShareID != nil {
 		writeErr(w, 403, "service_not_allowed", "this app cannot use group "+slug)
-		return nil, false
+		return nil, nil, false
 	}
 	var out []*store.Service
 	for _, m := range g.Members {
@@ -84,9 +92,9 @@ func (s *Server) proxyTargets(w http.ResponseWriter, r *http.Request, slug strin
 	}
 	if len(out) == 0 {
 		writeErr(w, 503, "empty_group", "group "+slug+" has no services")
-		return nil, false
+		return nil, nil, false
 	}
-	return out, true
+	return out, g, true
 }
 
 // sharedAs reports whether a share app may use sv: the slug it asked for must

@@ -35,7 +35,8 @@ limited time.
 | `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec, exclusive}`. Apps in mode `lease` or `both`. `exclusive: true` keeps the key from every other caller until you report or the lease expires. |
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. With `rotate`, `next` is null once the app reached a request or budget limit. A report never changes a key an admin disabled or a suspended (banned) key. |
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. 403 `lease_revoked` ends the lease when the app may no longer hold the key: lease mode or the service was taken away, its hidden key grant or share scope no longer covers the key, or the key was disabled. |
-| `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group. Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` (not for a share's or a person's token), `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. A caller that may not lease the key gets bodies with the key replaced by `[key]`. A share's token reaches only the services it was made with: a slug that now names another service or a group answers 403 `service_not_allowed`. |
+| `GET /api/v1/capabilities` | The capabilities the app may call: `{capabilities: [{slug, name, description, strategy, params, routes: [{service, mapped}], url}]}`. Empty for a share's token. |
+| `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group or a capability (see llms-full.txt, Capabilities). Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` (not for a share's or a person's token), `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. A caller that may not lease the key gets bodies with the key replaced by `[key]`. A share's token reaches only the services it was made with: a slug that now names another service or a group answers 403 `service_not_allowed`. |
 | `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Tools depend on the app's tool sets: core (`list_services`, `pool_status`, `service_guide`, `get_key`, `renew_key`, `report_key`, `proxy_request`), service tools generated from provider examples, insights (`list_keys`, `key_details`, `service_stats`) and manage (`check_keys`, `set_key_status`, `add_keys`). Also resources (including `acnologia://services/{slug}/guide`, the usage guide as Markdown) and prompts. |
 
 Status codes an app should handle:
@@ -52,8 +53,11 @@ Status codes an app should handle:
 | 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit or at a rate limit their provider publishes in `offers`. Retry after `retry_after_sec` or lease with `wait_sec`. |
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
+| 400 | `bad_params` | A capability call is missing a required param, or one has the wrong type. |
+| 503 | `no_route` | No route of the capability can take these params (or `_service` names none). |
+| 503 | `no_route_worked` | Every route of the capability failed before reaching a provider. |
 | 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
-| 404 | `unknown_service` | No service (or, for the proxy, service group) has that slug. |
+| 404 | `unknown_service` | No service (or, for the proxy, service group or capability) has that slug. |
 | 404 | `lease_not_found` | Renewing a lease that is not open. |
 | 409 | `report_failed` | Lease already reported. |
 | 410 | `report_failed` | Lease expired more than 10 minutes ago. |
@@ -128,7 +132,8 @@ lower of its owner's role and its scope.
 | `GET /egress` | m | Egress proxies with how many services and keys use each. |
 | `POST /egress`, `PATCH /egress/{id}`, `DELETE /egress/{id}` | a | `{name, url, region, notes}`; `http`, `https`, `socks5` or `socks5h` URLs. Changing or deleting a proxy used by a trusted service or a hidden key needs a superadmin. |
 | `POST /egress/{id}/test` | a | Request the echo URL through the proxy and report the public IP. |
-| `GET /groups`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}` | m / a | Service groups `{slug, name, description, members}` with 2 to 20 member slugs in fallback order. Slugs share the namespace with services. |
+| `GET /groups`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}` | m / a | Service groups `{slug, name, description, members, strategy}` with 2 to 20 member slugs. `strategy` is `priority` (the member order, default), `round_robin`, `random`, `cheapest` or `most_keys`. Slugs share the namespace with services and capabilities. |
+| `GET /capabilities`, `GET /capabilities/{id}`, `POST /capabilities`, `PATCH /capabilities/{id}`, `DELETE /capabilities/{id}` | m / a | Capabilities `{slug, name, description, strategy, params: [{name, type, required, description, default}], routes: [{service, method, path, query, body, weight, disabled, output: {items, fields}}]}`, up to 30 params and 20 routes. `strategy` adds `weighted` to the group strategies. Placeholders `{{param}}` must name a declared param. The slug cannot change. |
 | `GET /services/{id}/breaker`, `POST /services/{id}/breaker/reset` | m / a | Circuit breaker state and settings; close it by hand. |
 | `POST /services/{id}/cache/purge`, `GET /cache` | a / m | Drop a service's cached responses; cache totals. |
 | `GET /usage?days=30` | m | The Usage page: requests, provider spend and cache hits, plus Claude calls, tokens, web searches and cost, for today, 7 and 30 days and the requested range (1 to 366 days). Hidden key traffic only for superadmins. Also `ai_enabled`, `ai_model`, `ai_price` and `event_retention_days`. |

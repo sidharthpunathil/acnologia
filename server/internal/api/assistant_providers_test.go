@@ -56,3 +56,43 @@ func TestMergePatch(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// The Assistant builds a capability and tests it for real, as its own app.
+func TestAssistantBuildsAndTriesACapability(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "capkey01"})
+	f := &fakeClaude{replies: []string{
+		toolUse("tu_1", "save_capability", `{"slug":"web-search","name":"Web search","strategy":"cheapest",
+			"params":[{"name":"query","type":"string","required":true}],
+			"routes":[{"service":"serpapi","path":"/search.json","query":{"q":"{{query}}"},"output":{"fields":{"query":"q"}}}]}`),
+		toolUse("tu_2", "try_capability", `{"slug":"web-search","params":{"query":"coffee"}}`),
+		text("It works."),
+	}}
+	e.api.chatModel = f.converse
+	id := e.newChat(e.super)
+	var out chatResp
+	e.do(e.super, "POST", "/api/admin/chat/threads/"+itoa(int(id))+"/messages", map[string]any{"text": "one web search name for my apps"}, 200, &out)
+
+	c, err := e.st.GetCapabilityBySlug(context.Background(), "web-search")
+	if err != nil || c.Strategy != "cheapest" || len(c.Routes) != 1 {
+		t.Fatalf("capability not saved: %+v %v", c, err)
+	}
+	var tried *chatItem
+	for i, it := range out.Items {
+		if it.Kind == "tool" && it.Tool == "try_capability" {
+			tried = &out.Items[i]
+		}
+	}
+	if tried == nil || !tried.OK || !strings.Contains(tried.Summary, "200 from serpapi") {
+		t.Fatalf("try_capability: %+v", out.Items)
+	}
+	// It ran as the Assistant app, which now shows on the Apps page.
+	apps, _ := e.st.ListApps(context.Background())
+	found := false
+	for _, a := range apps {
+		found = found || a.Name == "Assistant"
+	}
+	if !found {
+		t.Fatal("no Assistant app")
+	}
+}

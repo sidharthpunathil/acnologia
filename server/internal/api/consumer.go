@@ -65,6 +65,27 @@ func (s *Server) v1Services(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"services": out})
 }
 
+// v1Capabilities lists the capabilities the app may call, with their params:
+// one call each, served by whichever provider can.
+func (s *Server) v1Capabilities(w http.ResponseWriter, r *http.Request) {
+	a := appFrom(r)
+	out := []map[string]any{}
+	if a.ShareID == nil {
+		cs, err := s.Store.ListCapabilities(r.Context())
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		base := s.publicURL(r)
+		for _, c := range cs {
+			if a.CanUse(c.Slug) {
+				out = append(out, capabilityDoc(c, base))
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{"capabilities": out})
+}
+
 func (s *Server) serviceForApp(w http.ResponseWriter, r *http.Request, slug string) (*store.Service, bool) {
 	a := appFrom(r)
 	if !a.CanUse(slug) {

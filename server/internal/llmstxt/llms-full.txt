@@ -2,7 +2,7 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed) or by leasing a key and reporting the outcome.
 
-Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
+Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
 
 Before calling a service you have not used, fetch its usage guide: `GET /api/v1/services/{slug}/guide` (or the `service_guide` MCP tool). It lists the endpoints worth knowing with their parameters, ready curl examples through the proxy, limits and pricing, and how errors are handled. Every entry of `GET /api/v1/services` carries its `guide_url`.
 
@@ -744,7 +744,28 @@ GET /proxy/search/search.json?q=coffee
 Authorization: Bearer acn_...
 ```
 
-Acnologia tries the first member. It moves to the next when the member has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Acnologia-Service` names the member that answered. An app allowed to use the group may use its members through it.
+The group's strategy picks which member goes first: `priority` (the listed order, the default), `round_robin` (each request starts at the next member), `random`, `cheapest` (lowest price per request from the providers' offers) or `most_keys` (the member with the most keys free right now). A member whose breaker is open or that has no free key goes last whatever the strategy. Acnologia moves to the next member when one has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Acnologia-Service` names the member that answered. An app allowed to use the group may use its members through it.
+
+## Capabilities
+
+A capability is one job that several providers can do with APIs of their own, behind one slug. Searching Google Maps, for example, through Omkar Cloud and SerpAPI:
+
+```http
+GET /proxy/maps-search?query=cafes+in+Kochi&limit=5
+Authorization: Bearer acn_...
+```
+
+or the same params as a JSON object body on POST. Acnologia orders the capability's routes by its strategy (the group strategies plus `weighted`, random in proportion to each route's weight), fills the chosen route's request from the params, and sends it through that service's proxy, so its keys rotate as for any request. It moves to the next route when a provider answers 401, 402, 403, 408, 425, 429 or 5xx, or has no key that works. Any other answer, such as 400 or 404, is the answer.
+
+A route maps the params into one provider's request: `{service, method, path, query: {name: "{{param}}"}, body}`. A query field or body field whose param has no value is left out, and a body string that is exactly one placeholder keeps the value's type. Its optional `output` maps the provider's JSON to the capability's own fields, `{items: "results", fields: {name: "name", rating: "rating.average"}}`, so a mapped answer looks the same whichever provider served it:
+
+```json
+{"items": [{"name": "Cafe A", "rating": 4.5}], "count": 1, "capability": "maps-search", "service": "omkar-cloud", "provider": "omkar-cloud"}
+```
+
+A route without `output`, or a call with `_raw=1`, returns the provider's own body. `_service=<slug>` uses only that provider's route. Answers carry `X-Acnologia-Capability`, `X-Acnologia-Service` (who answered) and `X-Acnologia-Tried` (`service=status` for every route tried). A required param left out answers 400 `bad_params`; when every route fails, the last answer is relayed, or 503 `no_route_worked`.
+
+`GET /api/v1/capabilities` lists the capabilities your app may call with their params and URL. On `/mcp`, each one is a tool named after its slug (`maps_search`) whose arguments are its params. Access to a capability grants its routes' services for calls made through it, not directly. A share's token cannot call capabilities.
 
 ## App limits and spend
 
@@ -801,7 +822,7 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 | 400 | `bad_body` | The proxy could not read the request body. |
 | 401 | `unauthenticated` | Token missing or wrong. |
 | 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
-| 404 | `unknown_service` | No service or service group has that slug. |
+| 404 | `unknown_service` | No service, service group or capability has that slug. |
 | 404 | `lease_not_found` | Renewing a lease that is not open. |
 | 405 | `method_not_allowed` | Proxy method other than GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. |
 | 409 | `report_failed` | Lease already reported. |
@@ -813,6 +834,9 @@ Provider offers are kept fresh by the provider refresh (Settings, Provider refre
 | 503 | `all_keys_busy` | Usable keys exist but all are at their concurrency limit or at a rate limit their provider publishes. Retry after `retry_after_sec` or lease with `wait_sec`. |
 | 503 | `service_unavailable` | The provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`. |
 | 503 | `empty_group` | The group has no services left. |
+| 400 | `bad_params` | A capability call is missing a required param, or one has the wrong type. |
+| 503 | `no_route` | No route of the capability can take these params (or `_service` names none). |
+| 503 | `no_route_worked` | Every route of the capability failed before reaching a provider. |
 | 403 | `share_revoked`, `share_paused`, `share_expired` | A service another Acnologia shares with this one, or the share behind your claimed token, was revoked, paused or expired by its owner. Also sent as `X-Acnologia-Share`. Revoked is final; paused may come back. |
 | 403 | `lease_not_allowed` | Leasing a service another Acnologia shares with this one, or one holding keys another Acnologia handed over. Use the proxy. |
 | 508 | `loop_detected` | The request passed through more than 3 Acnologia servers. |

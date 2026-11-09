@@ -29,6 +29,8 @@ func opsTools() []*chatTool {
 		"name":        map[string]any{"type": "string"},
 		"description": map[string]any{"type": "string"},
 		"members":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "service slugs in fallback order"},
+		"strategy": map[string]any{"type": "string", "enum": []string{"priority", "round_robin", "random", "cheapest", "most_keys"},
+			"description": "which member goes first: priority (the order of members), round_robin, random, cheapest, or most_keys (most free keys); the rest follow as fallbacks"},
 	}
 	svcPath := func(cs *chatSession, in map[string]any, suffix string) (string, *store.Service, error) {
 		sv, err := cs.resolveService(argStr(in, "service"))
@@ -172,18 +174,18 @@ func opsTools() []*chatTool {
 		},
 		{
 			Name: "create_group", Role: store.RoleAdmin, Required: []string{"slug", "name", "members"}, Props: groupProps,
-			Desc: "Create a service group: one name apps can call that falls back across several services in order.",
+			Desc: "Create a service group: one name apps can call that spreads requests across several services with the same API (several accounts or regions) and falls back between them. For providers with different APIs, use a capability.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
-				return cs.simple("POST", "/api/admin/groups", pick(in, "slug", "name", "description", "members"), "Created group "+argStr(in, "slug"), nil)
+				return cs.simple("POST", "/api/admin/groups", pick(in, "slug", "name", "description", "members", "strategy"), "Created group "+argStr(in, "slug"), nil)
 			},
 		},
 		{
 			Name: "update_group", Role: store.RoleAdmin, Required: []string{"group_id"},
 			Props: withProps(groupProps, map[string]any{"group_id": idProp("")}),
-			Desc:  "Change a service group's name, description or members.",
+			Desc:  "Change a service group's name, description, members or strategy.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "group_id")
-				return cs.simple("PATCH", fmt.Sprintf("/api/admin/groups/%d", id), pick(in, "slug", "name", "description", "members"), fmt.Sprintf("Updated group %d", id), nil)
+				return cs.simple("PATCH", fmt.Sprintf("/api/admin/groups/%d", id), pick(in, "slug", "name", "description", "members", "strategy"), fmt.Sprintf("Updated group %d", id), nil)
 			},
 		},
 		{

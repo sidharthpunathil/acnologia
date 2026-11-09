@@ -62,8 +62,57 @@ export interface ServiceGroup {
   description: string;
   /** Service slugs in fallback order. */
   members: string[];
+  /** Which member goes first; the rest follow as fallbacks. */
+  strategy?: RoutingStrategy;
   created_at: string;
 }
+
+export type RoutingStrategy = "priority" | "round_robin" | "random" | "weighted" | "cheapest" | "most_keys";
+
+/** How each strategy picks, for selects and cards. */
+export const STRATEGIES: Record<RoutingStrategy, { label: string; hint: string }> = {
+  priority: { label: "Priority", hint: "In the listed order; the next one only when the one before cannot serve." },
+  round_robin: { label: "Round robin", hint: "Each request starts at the next one, spreading load evenly." },
+  random: { label: "Random", hint: "A fresh shuffle for every request." },
+  weighted: { label: "Weighted", hint: "Random, in proportion to each route's weight." },
+  cheapest: { label: "Cheapest", hint: "Lowest price per request first, from the providers' offers." },
+  most_keys: { label: "Most free keys", hint: "The provider with the most keys free right now first." },
+};
+
+export interface CapabilityParam {
+  name: string;
+  type?: "string" | "integer" | "number" | "boolean";
+  required?: boolean;
+  description?: string;
+  default?: unknown;
+}
+
+export interface CapabilityRoute {
+  service: string;
+  method?: string;
+  path: string;
+  query?: Record<string, string>;
+  body?: unknown;
+  weight?: number;
+  disabled?: boolean;
+  output?: { items?: string; fields?: Record<string, string> };
+  note?: string;
+}
+
+/** One job several providers can do, behind /proxy/{slug}. */
+export interface Capability {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  strategy: RoutingStrategy;
+  params: CapabilityParam[];
+  routes: CapabilityRoute[];
+  created_at: string;
+  updated_at: string;
+}
+
+export type CapabilityInput = Partial<Omit<Capability, "id" | "created_at" | "updated_at">>;
 
 export type TokenScope = "read" | "write" | "admin";
 
@@ -163,9 +212,15 @@ export const ops = {
   // Service groups
   listGroups: () => request<{ groups: ServiceGroup[] }>("GET", "/api/admin/groups"),
   createGroup: (body: Omit<ServiceGroup, "id" | "created_at">) => request<ServiceGroup>("POST", "/api/admin/groups", body),
-  updateGroup: (id: number, body: Partial<Pick<ServiceGroup, "name" | "description" | "members">>) =>
+  updateGroup: (id: number, body: Partial<Pick<ServiceGroup, "name" | "description" | "members" | "strategy">>) =>
     request<ServiceGroup>("PATCH", `/api/admin/groups/${id}`, body),
   deleteGroup: (id: number) => request<unknown>("DELETE", `/api/admin/groups/${id}`),
+
+  // Capabilities
+  listCapabilities: () => request<{ capabilities: Capability[] }>("GET", "/api/admin/capabilities"),
+  createCapability: (body: CapabilityInput) => request<Capability>("POST", "/api/admin/capabilities", body),
+  updateCapability: (id: number, body: CapabilityInput) => request<Capability>("PATCH", `/api/admin/capabilities/${id}`, body),
+  deleteCapability: (id: number) => request<unknown>("DELETE", `/api/admin/capabilities/${id}`),
 
   // Admin API tokens
   listTokens: (all = false) => request<{ tokens: AdminToken[] }>("GET", `/api/admin/tokens${all ? "?all=1" : ""}`),
