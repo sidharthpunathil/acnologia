@@ -34,6 +34,10 @@ type Host struct {
 	Description string `json:"description,omitempty"`
 	// DocsURL is the product's own reference or playground page.
 	DocsURL string `json:"docs_url,omitempty"`
+	// LogoURL is an image of the product or the site it serves (the TikTok
+	// logo for a TikTok scraper). A service on this host takes it as its
+	// logo, with the provider's logo beside it.
+	LogoURL string `json:"logo_url,omitempty"`
 }
 
 // MaxHosts caps the hosts of one spec.
@@ -131,9 +135,12 @@ func (s *Spec) validateHosts(add func(string, ...any)) {
 		if len(h.Description) > 400 {
 			add("%s: description must be at most 400 characters", label)
 		}
-		if h.DocsURL != "" {
-			if du, err := url.Parse(h.DocsURL); err != nil || (du.Scheme != "http" && du.Scheme != "https") || du.Host == "" {
-				add("%s: docs_url must be an http(s) URL", label)
+		for name, v := range map[string]string{"docs_url": h.DocsURL, "logo_url": h.LogoURL} {
+			if v == "" {
+				continue
+			}
+			if du, err := url.Parse(v); err != nil || (du.Scheme != "http" && du.Scheme != "https") || du.Host == "" {
+				add("%s: %s must be an http(s) URL", label, name)
 			}
 		}
 	}

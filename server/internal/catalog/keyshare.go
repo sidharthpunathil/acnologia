@@ -27,14 +27,14 @@ func CanShareKeys(svc, source *store.Service) bool {
 	if svc.AuthType != source.AuthType || svc.AuthName != source.AuthName {
 		return false
 	}
-	site := shareSite(svc.BaseURL)
-	return site != "" && site == shareSite(source.BaseURL)
+	site := ShareSite(svc.BaseURL)
+	return site != "" && site == ShareSite(source.BaseURL)
 }
 
-// shareSite is the site keys may be shared within: providers.HostSite for a
+// ShareSite is the site keys may be shared within: providers.HostSite for a
 // named host, or the exact host and port for an IP address or a name with
 // no dot, where nothing ties two ports to one owner.
-func shareSite(base string) string {
+func ShareSite(base string) string {
 	u, err := url.Parse(base)
 	if err != nil || u.Hostname() == "" {
 		return ""
@@ -44,6 +44,19 @@ func shareSite(base string) string {
 		return strings.ToLower(u.Host)
 	}
 	return providers.HostSite(base)
+}
+
+// FamilyKey groups services that one account's key serves: the same site
+// and the same auth placement. Empty for a service shared by another server.
+func FamilyKey(sv *store.Service) string {
+	if sv.PeerLinkID != nil || sv.Provider == providers.PeerSlug {
+		return ""
+	}
+	site := ShareSite(sv.BaseURL)
+	if site == "" {
+		return ""
+	}
+	return site + "|" + sv.AuthType + "|" + sv.AuthName
 }
 
 // KeySourceProblem says why svc cannot use source's keys, or "" when it can.
@@ -58,9 +71,9 @@ func KeySourceProblem(svc, source *store.Service) string {
 	case svc.AuthType != source.AuthType || svc.AuthName != source.AuthName:
 		return fmt.Sprintf("%s sends its key as %s %s and %s as %s %s, so one key would not fit both",
 			svc.Slug, svc.AuthType, svc.AuthName, source.Slug, source.AuthType, source.AuthName)
-	case shareSite(svc.BaseURL) == "" || shareSite(svc.BaseURL) != shareSite(source.BaseURL):
+	case ShareSite(svc.BaseURL) == "" || ShareSite(svc.BaseURL) != ShareSite(source.BaseURL):
 		return fmt.Sprintf("%s goes to %s and %s to %s; keys are shared only within one site",
-			svc.Slug, shareSite(svc.BaseURL), source.Slug, shareSite(source.BaseURL))
+			svc.Slug, ShareSite(svc.BaseURL), source.Slug, ShareSite(source.BaseURL))
 	}
 	return ""
 }
@@ -110,4 +123,48 @@ func AutoLinkKeys(ctx context.Context, st *store.Store, svc *store.Service) (*st
 	}
 	st.AddAudit(ctx, nil, "service.key_source", svc.Slug, "uses the keys of "+src.Slug+" (same account, linked automatically)")
 	return src, nil
+}
+
+// HostLogoFor is the logo URL of the provider host a service calls: the
+// spec's host whose URL has the service's base URL host, when it names one.
+func HostLogoFor(sv *store.Service) string {
+	spec := providers.Get(sv.Provider)
+	bu, err := url.Parse(sv.BaseURL)
+	if err != nil || bu.Hostname() == "" {
+		return ""
+	}
+	for _, h := range spec.Hosts {
+		hu, err := url.Parse(h.URL)
+		if err == nil && h.LogoURL != "" && strings.EqualFold(hu.Hostname(), bu.Hostname()) {
+			return h.LogoURL
+		}
+	}
+	return ""
+}
+
+// LogoFrom downloads a logo from an image URL, or finds the icon of a
+// website.
+func LogoFrom(ctx context.Context, src string) ([]byte, string, error) {
+	if SniffImageURL(src) {
+		return DownloadImage(ctx, nil, src)
+	}
+	data, mime, _, err := FetchLogo(ctx, src)
+	return data, mime, err
+}
+
+// FillServiceLogo gives a service without a logo of its own its provider
+// host's logo. It reports whether it set one.
+func FillServiceLogo(ctx context.Context, st *store.Store, sv *store.Service) (bool, error) {
+	if sv.HasLogo {
+		return false, nil
+	}
+	src := HostLogoFor(sv)
+	if src == "" {
+		return false, nil
+	}
+	data, mime, err := LogoFrom(ctx, src)
+	if err != nil {
+		return false, err
+	}
+	return true, st.SetServiceLogo(ctx, sv.ID, data, mime)
 }

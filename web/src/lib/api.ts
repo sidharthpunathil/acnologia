@@ -42,7 +42,7 @@ import type {
   GuideResponse,
   GenerateGuideResult,
 } from "./types";
-import type { ControlMcpView, MCPSettingsInput, MCPView, SharedKeysReport } from "./types";
+import type { ControlMcpView, MCPSettingsInput, MCPView, ServiceFamily, SharedKeysReport } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -176,7 +176,9 @@ export const api = {
   overview: () => request<Overview>("GET", "/api/admin/overview"),
 
   // Services
-  listServices: () => request<{ services: Service[] }>("GET", "/api/admin/services"),
+  listServices: () => request<{ services: Service[]; families?: ServiceFamily[] }>("GET", "/api/admin/services"),
+  linkFamily: (key: string) => request<{ main: string; linked: string[] }>("POST", "/api/admin/services/families/link", { key }),
+  fillServiceLogos: () => request<{ filled: string[] }>("POST", "/api/admin/services/logos/fill"),
   sharedKeys: () => request<SharedKeysReport>("GET", "/api/admin/keys/shared"),
   linkSharedKeys: () => request<{ linked: SharedKeysReport["suggestions"] }>("POST", "/api/admin/keys/shared/link"),
   setKeySource: (serviceId: number, source: string | null) =>

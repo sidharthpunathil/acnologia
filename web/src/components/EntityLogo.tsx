@@ -112,11 +112,26 @@ export function ServiceLogo({
   size,
   className,
 }: {
-  service: Pick<Service, "name" | "provider" | "peer_provider" | "logo_url">;
+  service: Pick<Service, "name" | "provider" | "peer_provider" | "logo_url" | "provider_logo_url">;
   size?: LogoSize;
   className?: string;
 }) {
   const slug = docProviderSlug(service);
   const p = useProviders((s) => s.providers.find((x) => x.slug === slug) ?? s.providers.find((x) => x.slug === service.provider));
-  return <EntityLogo src={service.logo_url ?? p?.logo_url} name={service.name} color={p?.color} size={size} className={className} />;
+  const logo = <EntityLogo src={service.logo_url ?? p?.logo_url} name={service.name} color={p?.color} size={size} className={className} />;
+  // A service with a logo of its own (the site a scraper reads) wears its
+  // provider's logo as a small badge, so both are clear at a glance.
+  const badge = service.provider_logo_url && service.provider_logo_url !== service.logo_url ? service.provider_logo_url : null;
+  if (!badge || size === "xs" || size === "sm") return logo;
+  return (
+    <span className="relative inline-flex shrink-0">
+      {logo}
+      <span
+        className="absolute -end-1 -bottom-1 flex size-[18px] items-center justify-center overflow-hidden rounded-[6px] border-2 border-background-primary-default bg-background-primary-default"
+        title={p?.name ? `via ${p.name}` : undefined}
+      >
+        <img src={badge} alt={p?.name ? `via ${p.name}` : ""} className="size-full object-contain" loading="lazy" />
+      </span>
+    </span>
+  );
 }

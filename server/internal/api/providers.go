@@ -62,6 +62,12 @@ func (s *Server) fillLogos(ctx context.Context, svcs ...*store.Service) {
 		case sv.HasLogo:
 			u := fmt.Sprintf("/api/logos/services/%d?v=%d", sv.ID, sv.LogoRev)
 			sv.LogoURL = &u
+			for _, slug := range []string{sv.DocProvider(), sv.Provider} {
+				if rev, ok := revs[slug]; ok {
+					sv.ProviderLogoURL = providerLogoURL(slug, rev)
+					break
+				}
+			}
 		default:
 			// A peer service shows the owner's provider's logo when this
 			// server has it, else the peer provider's.
@@ -460,6 +466,66 @@ func (s *Server) putServiceLogo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.logo", sv.Slug, mime)
 	s.getService(w, r)
+}
+
+// fetchServiceLogo is POST /services/{id}/logo/fetch with {url}: an image
+// URL, or a website to find the icon on. With no url, the logo of the
+// provider host the service calls, when its spec names one.
+func (s *Server) fetchServiceLogo(w http.ResponseWriter, r *http.Request) {
+	sv, ok := s.loadService(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	src := strings.TrimSpace(body.URL)
+	if src == "" {
+		src = catalog.HostLogoFor(sv)
+	}
+	if src == "" {
+		writeErr(w, 400, "no_url", "pass the image or website to take the logo from")
+		return
+	}
+	data, mime, err := catalog.LogoFrom(ctx, src)
+	if err != nil {
+		writeErr(w, 422, "logo_not_found", err.Error())
+		return
+	}
+	if err := s.Store.SetServiceLogo(r.Context(), sv.ID, data, mime); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "service.logo_fetch", sv.Slug, src)
+	s.getService(w, r)
+}
+
+// fillServiceLogos is POST /services/logos/fill: every service without a
+// logo of its own takes its provider host's logo, when the spec names one.
+func (s *Server) fillServiceLogos(w http.ResponseWriter, r *http.Request) {
+	svcs, err := s.Store.ListServices(r.Context())
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	filled := []string{}
+	for _, sv := range svcs {
+		if sv.HasLogo {
+			continue
+		}
+		if ok, _ := catalog.FillServiceLogo(r.Context(), s.Store, sv); ok {
+			filled = append(filled, sv.Slug)
+		}
+	}
+	if len(filled) > 0 {
+		s.Store.AddAudit(r.Context(), userFrom(r), "service.logo_fill", strings.Join(filled, ","), "")
+	}
+	writeJSON(w, 200, map[string]any{"filled": filled})
 }
 
 func (s *Server) deleteServiceLogo(w http.ResponseWriter, r *http.Request) {

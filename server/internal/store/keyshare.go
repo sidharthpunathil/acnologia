@@ -1,6 +1,10 @@
 package store
 
-import "context"
+import (
+	"context"
+	"database/sql"
+	"time"
+)
 
 // Shared keys: one account's key often works for several services (Omkar
 // Cloud runs each API on its own host with one key). A service can name a
@@ -103,4 +107,42 @@ func (s *Store) DuplicateKeyGroups(ctx context.Context) ([][]KeyTwin, error) {
 		out[len(out)-1] = append(out[len(out)-1], t)
 	}
 	return out, rows.Err()
+}
+
+// DistinctKeyStats counts the distinct secrets across services, and how many
+// of them could take a request now, so one key stored in two services of an
+// account counts once. Hidden keys count only when includeHidden is set.
+func (s *Store) DistinctKeyStats(ctx context.Context, serviceIDs []int64, includeHidden bool) (total, available int, err error) {
+	if len(serviceIDs) == 0 {
+		return 0, 0, nil
+	}
+	args := make([]any, 0, len(serviceIDs))
+	for _, id := range serviceIDs {
+		args = append(args, id)
+	}
+	q := `SELECT secret_fp, status, cooldown_until, quota_remaining FROM keys WHERE service_id IN (` + placeholders(len(args)) + `)`
+	if !includeHidden {
+		q += ` AND hidden=0`
+	}
+	rows, err := s.r.QueryContext(ctx, q, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	seen, free := map[string]bool{}, map[string]bool{}
+	t := time.Now()
+	for rows.Next() {
+		var fp string
+		var k Key
+		var cd, qr sql.NullInt64
+		if err := rows.Scan(&fp, &k.Status, &cd, &qr); err != nil {
+			return 0, 0, err
+		}
+		k.CooldownUntil, k.QuotaRemaining = toTime(cd), toInt(qr)
+		seen[fp] = true
+		if k.Available(t) {
+			free[fp] = true
+		}
+	}
+	return len(seen), len(free), rows.Err()
 }

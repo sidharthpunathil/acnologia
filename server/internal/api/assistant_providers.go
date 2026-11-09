@@ -63,6 +63,45 @@ func providerTools() []*chatTool {
 			Run: improveProviderTool,
 		},
 		{
+			Name: "set_service_logo", Role: store.RoleAdmin, Required: []string{"service"},
+			Props: map[string]any{
+				"service": map[string]any{"type": "string"},
+				"url":     map[string]any{"type": "string", "description": "a direct image URL or a website to find the icon on; empty uses the logo of the provider host the service calls"},
+			},
+			Desc: "Set a service's own logo: for a scraper or an API that reads another site, that site's logo (LinkedIn for a LinkedIn Jobs scraper). The provider's logo then shows small beside it.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				sv, err := cs.resolveService(argStr(in, "service"))
+				if err != nil {
+					return toolFail(err.Error())
+				}
+				return cs.simple("POST", fmt.Sprintf("/api/admin/services/%d/logo/fetch", sv.ID), map[string]any{"url": argStr(in, "url")},
+					"Set the "+sv.Name+" logo", func(m map[string]any) any { return pick(m, "slug", "logo_url") })
+			},
+		},
+		{
+			Name: "fill_service_logos", Role: store.RoleAdmin, Props: map[string]any{},
+			Desc: "Give every service without a logo of its own the logo of the provider host it calls, where the provider's hosts name one (logo_url).",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				return cs.simple("POST", "/api/admin/services/logos/fill", nil, "Filled service logos", nil)
+			},
+		},
+		{
+			Name: "link_service_family", Role: store.RoleAdmin, Required: []string{"service"},
+			Props: map[string]any{"service": map[string]any{"type": "string", "description": "any service of the family"}},
+			Desc:  "Link every service of one account (same site, same auth placement, shown as one family card in the catalog) to the family's main service, so they all use its keys as backup to their own.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				sv, err := cs.resolveService(argStr(in, "service"))
+				if err != nil {
+					return toolFail(err.Error())
+				}
+				key := catalog.FamilyKey(sv)
+				if key == "" {
+					return toolFail(sv.Slug + " is not in a family")
+				}
+				return cs.simple("POST", "/api/admin/services/families/link", map[string]any{"key": key}, "Linked the "+sv.Name+" family", nil)
+			},
+		},
+		{
 			Name: "fetch_provider_logo", Role: store.RoleAdmin, Required: []string{"slug"},
 			Props: map[string]any{
 				"slug": slugProp,

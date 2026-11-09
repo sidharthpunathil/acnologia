@@ -79,8 +79,11 @@ type Service struct {
 	InFlight        int `json:"in_flight"`
 	// LogoURL is the service's own logo, else its provider's, else null.
 	LogoURL *string `json:"logo_url"`
-	HasLogo bool    `json:"-"`
-	LogoRev int     `json:"-"`
+	// ProviderLogoURL is the provider's logo when the service shows its own,
+	// such as the site a scraper reads, so both can be shown.
+	ProviderLogoURL *string `json:"provider_logo_url,omitempty"`
+	HasLogo         bool    `json:"-"`
+	LogoRev         int     `json:"-"`
 	// TargetTrusted is false after someone other than a superadmin set the
 	// base URL or auth placement. Hidden keys are never sent to such a target.
 	TargetTrusted bool `json:"target_trusted"`

@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
-import type { LogoUpload, Service, ServiceInput } from "../lib/types";
+import type { LogoUpload, Service, ServiceFamily, ServiceInput } from "../lib/types";
 import { bumpLogos } from "./providers";
 
 interface ServicesStore {
   services: Service[];
+  /** Services one account's key serves, grouped for the catalog. */
+  families: ServiceFamily[];
   loaded: boolean;
   loading: boolean;
   error: string | null;
@@ -27,6 +29,7 @@ function upsert(list: Service[], s: Service): Service[] {
 
 export const useServices = create<ServicesStore>((set, get) => ({
   services: [],
+  families: [],
   loaded: false,
   loading: false,
   error: null,
@@ -35,7 +38,7 @@ export const useServices = create<ServicesStore>((set, get) => ({
     set({ loading: true });
     try {
       const res = await api.listServices();
-      set({ services: res.services ?? [], loaded: true, error: null });
+      set({ services: res.services ?? [], families: res.families ?? [], loaded: true, error: null });
     } catch (e) {
       set({ loaded: true, error: e instanceof Error ? e.message : "Failed to load services" });
       throw e;

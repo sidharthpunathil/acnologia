@@ -53,6 +53,8 @@ export interface Service {
   requests_24h: number;
   /** Own logo, or the provider logo when the service has none. Null means lettermark. */
   logo_url: string | null;
+  /** The provider's logo when the service shows its own, for a small badge. */
+  provider_logo_url?: string | null;
   /** 0 means unlimited concurrent requests per key. */
   max_concurrency: number;
   queue_timeout_sec: number;
@@ -97,6 +99,19 @@ export type ServiceInput = Pick<
 export type KeyStatus = "active" | "disabled" | "exhausted" | "invalid" | "banned";
 export type EffectiveStatus = KeyStatus | "cooling";
 export type Tier = "primary" | "backup";
+
+/** Services one account's key serves (same site, same auth placement), shown as one card. */
+export interface ServiceFamily {
+  key: string;
+  name: string;
+  main_id: number;
+  service_ids: number[];
+  /** Distinct secrets across the family. */
+  keys: number;
+  available: number;
+  /** Members that could use the main service's keys but do not yet. */
+  unlinked: number;
+}
 
 /** A key in another service with the same secret. */
 export interface KeyTwin {

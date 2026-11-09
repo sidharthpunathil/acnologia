@@ -342,7 +342,8 @@ provider per API:
   {"name": "tiktok-scraper", "url": "https://tiktok-scraper.omkar.cloud",
    "title": "TikTok Scraper", "group": "Social & Video",
    "description": "Videos, users, hashtags and ads.",
-   "docs_url": "https://www.omkar.cloud/tools/tiktok-scraper"}
+   "docs_url": "https://www.omkar.cloud/tools/tiktok-scraper",
+   "logo_url": "https://www.omkar.cloud/images/tools/tiktok-scraper/logo.png"}
 ]
 ```
 
@@ -372,11 +373,16 @@ docs URL, color, status or any part of its spec (a JSON merge patch) as a
 new version. Changes to `base_url`, `auth`, the health check or `hosts`, and
 disabling a provider, wait for your Confirm.
 
+A service on a host with a `logo_url` shows that logo (the site the API
+reads, such as TikTok), with the provider's logo as a small badge on it.
+
 When an account's APIs are separate services instead (one service per
 Omkar scraper, say), they share keys: a service on the same site with the
 same auth placement as a service that has keys is linked to it when it is
 created, and uses those keys behind its own. The catalog offers to link any
-older ones in one click, and keys stored twice say where their twin is.
+older ones in one click, and keys stored twice say where their twin is. The
+catalog shows such services as one family card, with each key counted once,
+that opens to list them.
 
 A key's state is still tracked per key, not per API. When quota or plans
 are per API (as with Omkar), write the rules so an error about one API does
