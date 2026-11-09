@@ -24,6 +24,15 @@ export interface ChatDraft {
   attachment: DraftAttachment | null;
 }
 
+/** A message waiting to be sent after the running turn ends. */
+export interface QueuedMessage {
+  id: string;
+  /** What you typed, keys and all. Memory only, never stored or shown. */
+  text: string;
+  /** The same text with keys masked, for the queue row. */
+  shown: string;
+}
+
 /** The draft slot for a chat not created yet. */
 export const NEW_DRAFT = "new";
 
@@ -62,6 +71,14 @@ interface AssistantStore {
    */
   drafts: Record<string, ChatDraft>;
   setDraftText: (key: string, text: Update<string>) => void;
+  /**
+   * Messages queued by thread while a turn runs, sent one at a time as each
+   * turn ends. Memory only, like drafts: a queued message can hold keys.
+   */
+  queues: Record<number, QueuedMessage[]>;
+  enqueue: (threadId: number, text: string) => void;
+  /** Takes a queued message out, for Remove or Edit; returns it. */
+  unqueue: (threadId: number, id: string) => QueuedMessage | undefined;
   setDraftAttachment: (key: string, attachment: Update<DraftAttachment | null>) => void;
   fetch: () => Promise<void>;
   open: (id: number | null) => Promise<void>;
@@ -195,6 +212,20 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     secrets: {},
     lastSent: {},
     drafts: {},
+    queues: {},
+
+    enqueue: (threadId, text) => {
+      const q = get().queues[threadId] ?? [];
+      const item = { id: `queued-${++localSeq}`, text, shown: maskMessage(text).text };
+      set({ queues: { ...get().queues, [threadId]: [...q, item] } });
+    },
+
+    unqueue: (threadId, id) => {
+      const q = get().queues[threadId] ?? [];
+      const hit = q.find((m) => m.id === id);
+      if (hit) set({ queues: { ...get().queues, [threadId]: q.filter((m) => m.id !== id) } });
+      return hit;
+    },
 
     setDraftText: (key, text) => {
       const cur = get().drafts[key] ?? { text: "", attachment: null };
@@ -267,7 +298,8 @@ export const useAssistant = create<AssistantStore>((set, get) => {
       await api.deleteChatThread(id);
       const { [id]: _, ...rest } = get().lastSent;
       const { [String(id)]: _draft, ...drafts } = get().drafts;
-      set({ threads: get().threads.filter((t) => t.id !== id), lastSent: rest, drafts });
+      const { [id]: _queue, ...queues } = get().queues;
+      set({ threads: get().threads.filter((t) => t.id !== id), lastSent: rest, drafts, queues });
       if (get().currentId === id) set({ currentId: null, items: [], turn: null });
     },
 

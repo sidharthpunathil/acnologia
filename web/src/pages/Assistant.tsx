@@ -50,6 +50,7 @@ import {
   Shortcuts,
   ThreadList,
   mergeAttachments,
+  QueuedList,
   toAttachment,
   type Attachment,
 } from "./assistant/parts";
@@ -186,6 +187,9 @@ export function AssistantPage() {
     drafts,
     setDraftText,
     setDraftAttachment,
+    queues,
+    enqueue,
+    unqueue,
   } = useAssistant();
   // The draft lives in the store by thread, so it survives leaving the page.
   // Setters write to the thread open at call time: a failed first send
@@ -369,7 +373,17 @@ export function AssistantPage() {
     const typed = override ?? text.trim();
     const att = override === undefined ? attachment : null;
     const msg = [typed, att?.text.trim()].filter(Boolean).join("\n\n");
-    if (!msg || busy || off) return;
+    if (!msg || off) return;
+    if (busy) {
+      // A turn is running: typed messages wait in line and go out one at a
+      // time as each turn ends. Suggestions and Retry are not queued.
+      if (override !== undefined || currentId === null) return;
+      setVaultNote(false);
+      setText("");
+      setAttachment(null);
+      enqueue(currentId, msg);
+      return;
+    }
     setVaultNote(false);
     if (override === undefined) {
       setText("");
@@ -398,6 +412,39 @@ export function AssistantPage() {
     } finally {
       window.setTimeout(() => box.current?.focus({ preventScroll: true }), 0);
     }
+  };
+
+  // The queue of the open chat. It waits while a Confirm or a question is
+  // open, since a new message would expire them; it moves on once you answer.
+  const queue = currentId !== null ? (queues[currentId] ?? []) : [];
+  const awaitingYou = items.some(
+    (it) =>
+      (it.kind === "confirm" && it.pending?.status === "waiting") ||
+      (it.kind === "ask" && it.ask?.status === "waiting"),
+  );
+  const queueHead = queue[0]?.id;
+  useEffect(() => {
+    if (currentId === null || busy || off || loadingThread || awaitingYou || !queueHead) return;
+    const next = unqueue(currentId, queueHead);
+    if (!next) return;
+    send(next.text).catch((err) => {
+      // Put it back at the front so nothing typed is lost.
+      useAssistant.setState((st) => ({
+        queues: { ...st.queues, [currentId]: [next, ...(st.queues[currentId] ?? [])] },
+      }));
+      if (!(err instanceof ApiError && err.code === "busy")) toast.error(errorMessage(err));
+    });
+  }, [currentId, busy, off, loadingThread, awaitingYou, queueHead, unqueue, send]);
+
+  const removeQueued = (id: string) => {
+    if (currentId !== null) unqueue(currentId, id);
+  };
+  const editQueued = (id: string) => {
+    if (currentId === null) return;
+    const m = unqueue(currentId, id);
+    if (!m) return;
+    setText((cur) => (cur.trim() ? `${cur}\n\n${m.text}` : m.text));
+    window.setTimeout(() => box.current?.focus(), 0);
   };
 
   const answer = async (pendingId: string, approve: boolean) => {
@@ -842,13 +889,18 @@ export function AssistantPage() {
                 The Assistant needs an Anthropic API key. Set ANTHROPIC_API_KEY, then restart Acnologia.
               </Callout>
             )}
+            {queue.length > 0 && (
+              <QueuedList items={queue} paused={awaitingYou && !busy} onRemove={removeQueued} onEdit={editQueued} />
+            )}
             <Composer
               ref={box}
               value={text}
               onChange={setText}
               onSubmit={(e) => void submit(e)}
-              busy={busy}
+              busy={busy && currentId === null}
               working={working}
+              queued={queue.length}
+              queueNote={queue.length > 0 && awaitingYou && !busy ? "Queued messages wait until you answer above." : undefined}
               note={vaultNote ? "Keys stay in the vault; paste them again to replace them." : undefined}
               off={off}
               model={ai?.model}

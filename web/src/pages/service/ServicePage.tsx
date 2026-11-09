@@ -45,6 +45,7 @@ import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
 import { OffersBlock } from "../../components/OfferBits";
+import { ApisBlock } from "../../components/ApisBlock";
 import { OfferCheckButton, OfferCheckedLine } from "../../components/OfferCheck";
 import { docProviderSlug } from "../../lib/peerProviders";
 import { PeerProviderNote } from "./PeerProviderNote";
@@ -336,6 +337,8 @@ export function ServicePage() {
           ) : undefined
         }
       />
+
+      <ApisBlock spec={shown?.spec} service={service.slug} className="mt-4" />
 
       <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="mt-10 gap-6">
         <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">

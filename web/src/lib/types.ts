@@ -499,6 +499,8 @@ export interface GuideParam {
 
 /** A call worth knowing, with its parameters and an example body. */
 export interface GuideEndpoint {
+  /** The product the endpoint belongs to, for providers with many. */
+  group?: string;
   name: string;
   method: string;
   path: string;
@@ -587,6 +589,19 @@ export interface ProviderSpec {
   tests: SpecFixture[];
   /** Usage guide for apps and AI agents; optional. */
   guide?: Guide;
+  /** The provider's other API hosts, picked with a "/~name" path prefix. */
+  hosts?: SpecHost[];
+}
+
+/** One more API host of a provider that serves each product on its own host. */
+export interface SpecHost {
+  name: string;
+  url: string;
+  title?: string;
+  /** Category, such as "Social & Video". */
+  group?: string;
+  description?: string;
+  docs_url?: string;
 }
 
 export type ProviderStatus = "active" | "disabled";
