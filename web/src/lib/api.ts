@@ -42,7 +42,7 @@ import type {
   GuideResponse,
   GenerateGuideResult,
 } from "./types";
-import type { ControlMcpView, MCPSettingsInput, MCPView } from "./types";
+import type { ControlMcpView, MCPSettingsInput, MCPView, SharedKeysReport } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -177,6 +177,10 @@ export const api = {
 
   // Services
   listServices: () => request<{ services: Service[] }>("GET", "/api/admin/services"),
+  sharedKeys: () => request<SharedKeysReport>("GET", "/api/admin/keys/shared"),
+  linkSharedKeys: () => request<{ linked: SharedKeysReport["suggestions"] }>("POST", "/api/admin/keys/shared/link"),
+  setKeySource: (serviceId: number, source: string | null) =>
+    request<Service>("PUT", `/api/admin/services/${serviceId}/key-source`, { source }),
   getService: (id: number) => request<Service>("GET", `/api/admin/services/${id}`),
   createService: (body: ServiceInput) => request<Service>("POST", "/api/admin/services", body),
   updateService: (id: number, body: Partial<ServiceInput>) =>
@@ -228,7 +232,8 @@ export const api = {
   publishRun: (id: number) => request<AgentRun | unknown>("POST", `/api/admin/ai/runs/${id}/publish`),
 
   // Keys
-  listKeys: (serviceId: number) => request<{ keys: Key[] }>("GET", `/api/admin/services/${serviceId}/keys`),
+  listKeys: (serviceId: number) =>
+    request<{ keys: Key[]; shared?: Key[]; key_source?: string }>("GET", `/api/admin/services/${serviceId}/keys`),
   addKeys: (serviceId: number, keys: NewKeyInput[]) =>
     request<{ keys: Key[] }>("POST", `/api/admin/services/${serviceId}/keys`, { keys }),
   updateKey: (id: number, body: KeyPatch) => request<Key>("PATCH", `/api/admin/keys/${id}`, body),
@@ -273,7 +278,9 @@ export const api = {
   getChatThread: (id: number) =>
     request<{ thread: ChatThread; items: ChatItem[]; turn?: ChatTurn }>("GET", `/api/admin/chat/threads/${id}`),
   deleteChatThread: (id: number) => request<unknown>("DELETE", `/api/admin/chat/threads/${id}`),
-  sendChatMessage: (id: number, text: string) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/messages`, { text }),
+  sendChatMessage: (id: number, text: string, images: { media_type: string; data: string }[] = []) =>
+    request<ChatReply>("POST", `/api/admin/chat/threads/${id}/messages`, images.length ? { text, images } : { text }),
+  chatImageURL: (threadId: number, imageId: string) => `/api/admin/chat/threads/${threadId}/images/${encodeURIComponent(imageId)}`,
   confirmChat: (id: number, pendingId: string, approve: boolean) =>
     request<ChatReply>("POST", `/api/admin/chat/threads/${id}/confirm`, { pending_id: pendingId, approve }),
   answerChat: (id: number, body: ChatAnswer) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/answer`, body),

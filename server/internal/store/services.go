@@ -9,16 +9,18 @@ import (
 
 const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev, target_trusted, egress_id, cache_ttl_sec, cost_per_request,
 peer_link_id, peer_remote_slug, peer_provider, COALESCE((SELECT pl.peer_name FROM peer_links pl WHERE pl.id=services.peer_link_id),''),
-COALESCE((SELECT pl.trusted FROM peer_links pl WHERE pl.id=services.peer_link_id),0)`
+COALESCE((SELECT pl.trusted FROM peer_links pl WHERE pl.id=services.peer_link_id),0),
+key_source_id, COALESCE((SELECT k.slug FROM services k WHERE k.id=services.key_source_id),''), COALESCE((SELECT k.name FROM services k WHERE k.id=services.key_source_id),'')`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
 	var created int64
-	var egress, ttl, link sql.NullInt64
+	var egress, ttl, link, src sql.NullInt64
 	var cost sql.NullFloat64
 	err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.Provider, &s.Category, &s.Description, &s.BaseURL,
 		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev, &s.TargetTrusted,
-		&egress, &ttl, &cost, &link, &s.PeerRemoteSlug, &s.PeerProvider, &s.PeerName, &s.PeerTrusted)
+		&egress, &ttl, &cost, &link, &s.PeerRemoteSlug, &s.PeerProvider, &s.PeerName, &s.PeerTrusted,
+		&src, &s.KeySourceSlug, &s.KeySourceName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -26,7 +28,7 @@ func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 		return nil, err
 	}
 	s.CreatedAt = time.Unix(created, 0).UTC()
-	s.EgressID, s.CacheTTLSec, s.PeerLinkID = toInt(egress), toInt(ttl), toInt(link)
+	s.EgressID, s.CacheTTLSec, s.PeerLinkID, s.KeySourceID = toInt(egress), toInt(ttl), toInt(link), toInt(src)
 	if cost.Valid {
 		s.CostPerRequest = &cost.Float64
 	}
@@ -108,7 +110,7 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 		byID[sv.ID] = sv
 		sv.KeyCounts = KeyCounts{}
 	}
-	q := `SELECT id, service_id, status, tier, cooldown_until, quota_remaining, max_concurrency FROM keys`
+	q := `SELECT id, service_id, status, tier, cooldown_until, quota_remaining, max_concurrency, secret_fp, hidden, restricted FROM keys`
 	if !includeHidden {
 		q += ` WHERE hidden=0`
 	}
@@ -116,28 +118,57 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	t := time.Now()
+	type statKey struct {
+		k      Key
+		sid    int64
+		fp     string
+		hidden bool
+	}
+	all := []statKey{}
+	ownFP := map[int64]map[string]bool{}
 	for rows.Next() {
-		var sid int64
-		var k Key
+		var sk statKey
 		var cd, qr, mc sql.NullInt64
-		if err := rows.Scan(&k.ID, &sid, &k.Status, &k.Tier, &cd, &qr, &mc); err != nil {
+		var hidden, restricted int
+		if err := rows.Scan(&sk.k.ID, &sk.sid, &sk.k.Status, &sk.k.Tier, &cd, &qr, &mc, &sk.fp, &hidden, &restricted); err != nil {
+			rows.Close()
 			return err
 		}
-		k.MaxConcurrency = toInt(mc)
-		sv := byID[sid]
-		if sv == nil {
-			continue
+		sk.k.MaxConcurrency = toInt(mc)
+		sk.k.CooldownUntil, sk.k.QuotaRemaining = toTime(cd), toInt(qr)
+		sk.hidden, sk.k.Restricted = hidden != 0, restricted != 0
+		all = append(all, sk)
+		if ownFP[sk.sid] == nil {
+			ownFP[sk.sid] = map[string]bool{}
 		}
-		k.CooldownUntil, k.QuotaRemaining = toTime(cd), toInt(qr)
+		ownFP[sk.sid][sk.fp] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	// Services that use another's keys, by source.
+	borrowers := map[int64][]*Service{}
+	for _, sv := range svcs {
+		if sv.KeySourceID != nil && *sv.KeySourceID != sv.ID {
+			borrowers[*sv.KeySourceID] = append(borrowers[*sv.KeySourceID], sv)
+		}
+	}
+	t := time.Now()
+	count := func(sv *Service, k *Key, shared bool) {
 		c := &sv.KeyCounts
 		c.Total++
+		if shared {
+			c.Shared++
+		}
 		if k.Tier == "backup" {
 			c.Backup++
 		}
 		n := inflight[k.ID]
-		sv.InFlight += n
+		if !shared {
+			sv.InFlight += n
+		}
 		switch {
 		case k.Available(t):
 			c.Available++
@@ -156,8 +187,19 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 			c.Disabled++
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return err
+	for i := range all {
+		sk := &all[i]
+		if sv := byID[sk.sid]; sv != nil {
+			count(sv, &sk.k, false)
+		}
+		if sk.hidden || sk.k.Restricted {
+			continue
+		}
+		for _, b := range borrowers[sk.sid] {
+			if !ownFP[b.ID][sk.fp] {
+				count(b, &sk.k, true)
+			}
+		}
 	}
 	rq := `SELECT e.service_id, COUNT(*) FROM events e WHERE e.ts>? AND e.kind IN ('lease','proxy')`
 	if !includeHidden {

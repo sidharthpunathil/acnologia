@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
 import { cx } from "@/utils/cx";
-import { KeyHealth } from "./service/KeysTable";
+import { KeyHealth, TwinsLine } from "./service/KeysTable";
 import { KeyDrawer } from "./service/KeyDrawer";
 import { withLiveStatus } from "./service/keyUtil";
 import { ExposureChips, useLoadHandovers } from "../components/HandoverChip";
@@ -467,6 +467,7 @@ export function KeysPage() {
                               <div className="truncate font-mono text-caption-1-regular text-text-secondary">
                                 {k.hint} · {k.service_name}
                               </div>
+                              <TwinsLine k={k} />
                             </div>
                           </div>
                         </TableCell>

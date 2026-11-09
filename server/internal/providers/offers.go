@@ -76,8 +76,8 @@ var methods = map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": t
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 func (s *Spec) validateOffers(add func(string, ...any)) {
-	if len(s.Offers) > 50 {
-		add("offers: at most 50")
+	if max := maxOffers(s); len(s.Offers) > max {
+		add("offers: at most %d", max)
 	}
 	names := map[string]bool{}
 	examples := map[string]bool{}

@@ -250,7 +250,9 @@ func (cs *chatSession) simple(method, path string, body any, summary string, sha
 
 func init() {
 	none := map[string]any{}
-	defer func() { chatTools = append(append(chatTools, opsTools()...), guideTools()...) }()
+	defer func() {
+		chatTools = append(append(append(append(chatTools, opsTools()...), guideTools()...), providerTools()...), capabilityTools()...)
+	}()
 	chatTools = []*chatTool{
 		{
 			Name: "overview", Role: store.RoleMember, Props: none,
@@ -276,20 +278,32 @@ func init() {
 		{
 			Name: "get_provider", Role: store.RoleMember, Required: []string{"slug"},
 			Props: map[string]any{"slug": map[string]any{"type": "string"}},
-			Desc:  "One provider's details: website, docs, base URL, auth placement, defaults, and its offers (what is free, prices, published limits).",
+			Desc:  "One provider's details: website, docs, base URL, auth placement, defaults, its offers (what is free, prices, published limits), and for a provider with many APIs on their own hosts, how many and in which groups. get_provider_spec has the full spec.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				return cs.simple("GET", "/api/admin/providers/"+url.PathEscape(argStr(in, "slug")), nil, "Read provider "+argStr(in, "slug"), func(m map[string]any) any {
-					if p, ok := m["provider"].(map[string]any); ok {
-						if raw, err := json.Marshal(p["spec"]); err == nil {
-							if spec, err := providers.DecodeSpec(raw); err == nil && len(spec.Offers) > 0 {
+					// Older responses wrapped the provider; today it is flat.
+					p := m
+					if inner, ok := m["provider"].(map[string]any); ok {
+						p = inner
+					}
+					if raw, err := json.Marshal(p["spec"]); err == nil {
+						if spec, err := providers.DecodeSpec(raw); err == nil {
+							if len(spec.Offers) > 0 {
 								p["offers"] = offerRows(spec.Offers)
 							}
+							if len(spec.Hosts) > 0 {
+								groups := map[string]int{}
+								for _, h := range spec.Hosts {
+									groups[h.Group]++
+								}
+								p["apis"] = len(spec.Hosts)
+								p["api_groups"] = groups
+							}
 						}
-						delete(p, "spec")
-						return p
 					}
-					delete(m, "spec")
-					return m
+					delete(p, "spec")
+					delete(p, "versions")
+					return p
 				})
 			},
 		},

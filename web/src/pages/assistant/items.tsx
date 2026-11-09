@@ -310,15 +310,38 @@ function SecuredKeys({ keys, count, divided }: { keys: KeyRef[]; count?: number;
   );
 }
 
+/** The pictures of a user message: thumbnails that open full size in a new tab. */
+function MessageImages({ urls, spaced }: { urls: string[]; spaced: boolean }) {
+  return (
+    <ul aria-label="Images" className={cx("flex flex-wrap gap-2", spaced && "mb-2")}>
+      {urls.map((u, i) => (
+        <li key={u}>
+          <a
+            href={u}
+            target="_blank"
+            rel="noreferrer"
+            className="block overflow-hidden rounded-xl border border-border-button-default outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+          >
+            <img src={u} alt={`Image ${i + 1}`} loading="lazy" className="block max-h-48 max-w-[240px] object-cover" />
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function UserBubble({
   text,
   keys,
   keyList,
+  images,
   onEdit,
 }: {
   text: string;
   keys?: number;
   keyList?: KeyRef[];
+  /** URLs of the images the message carried. */
+  images?: string[];
   onEdit?: () => void;
 }) {
   // Older messages carry their keys inline as placeholder lines; newer ones list them in key_list.
@@ -335,6 +358,7 @@ export function UserBubble({
       role="user"
       actions={onEdit ? <MessageAction icon={RiPencilLine} label="Edit" aria-label="Edit your last message" onClick={onEdit} /> : null}
     >
+      {images && images.length > 0 && <MessageImages urls={images} spaced={!!prose} />}
       {prose && autolink(long && !open ? `${prose.slice(0, 600)}\u2026` : prose)}
       {long && (
         <button

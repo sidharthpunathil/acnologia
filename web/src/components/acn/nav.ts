@@ -13,6 +13,7 @@ import {
   RiTeamLine,
   RiUser3Line,
   RiWebhookLine,
+  RiRouteLine,
 } from "@remixicon/react";
 import { AcnApiKey, AcnAppToken, AcnEgress, AcnKeyPool, AcnProviderSpec, AcnServiceGroup } from "@/components/foundations/icons/acn";
 import type { KeyboardEvent } from "react";
@@ -61,6 +62,7 @@ export function navItems(role: Role | undefined): NavItem[] {
     { to: "/activity", label: "Activity", icon: RiPulseLine, show: true, group: "Workspace" },
     { to: "/usage", label: "Usage", icon: RiBarChartBoxLine, show: true, group: "Workspace" },
     { to: "/groups", label: "Service groups", icon: AcnServiceGroup, show: true, group: "Manage" },
+    { to: "/capabilities", label: "Capabilities", icon: RiRouteLine, show: true, group: "Manage" },
     { to: "/webhooks", label: "Webhooks", icon: RiWebhookLine, show: true, group: "Manage" },
     { to: "/egress", label: "Egress proxies", icon: AcnEgress, show: true, group: "Manage" },
     { to: "/sharing", label: "Sharing", icon: RiShareForwardLine, show: can.manage(role), group: "Manage" },

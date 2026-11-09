@@ -10,7 +10,9 @@ import { docProviderSlug } from "../lib/peerProviders";
 import { useAuth } from "../stores/auth";
 import { can } from "../lib/perms";
 import { STRATEGY_LABEL, compact, num, plural } from "../lib/format";
-import type { Service } from "../lib/types";
+import type { Service, SharedKeysReport } from "../lib/types";
+import { api, errorMessage } from "../lib/api";
+import { toast } from "../stores/toast";
 import { ServiceLogo } from "../components/EntityLogo";
 import { Button } from "@/components/base/buttons/button";
 import { SearchField } from "@/components/base/search-field/search-field";
@@ -42,6 +44,7 @@ function metaParts(s: Service): MetaPart[] {
     if (c.disabled) parts.push({ text: "paused or removed", tone: "amber" });
   } else if (c.total > 0) parts.push({ text: `${Math.max(0, c.available - (c.busy ?? 0))} of ${plural(c.total, "key")} available` });
   else parts.push({ text: "No keys yet" });
+  if (c.shared && s.key_source_name) parts.push({ text: c.shared === c.total ? `keys of ${s.key_source_name}` : `${c.shared} from ${s.key_source_name}` });
   return parts;
 }
 
@@ -149,6 +152,59 @@ function CatalogSkeleton() {
   );
 }
 
+/**
+ * Services with no keys that could use keys already in the pool: another
+ * service of the same account (same site, same auth placement) has them.
+ * One click links them all.
+ */
+function SharedKeysCallout({ services, onLinked }: { services: Service[]; onLinked: () => void }) {
+  const [report, setReport] = useState<SharedKeysReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Refetch when the services change (one was added or linked).
+  const sig = services.map((s) => `${s.id}:${s.key_counts.total}:${s.key_source_id ?? ""}`).join(",");
+  useEffect(() => {
+    let live = true;
+    api
+      .sharedKeys()
+      .then((r) => live && setReport(r))
+      .catch(() => live && setReport(null));
+    return () => {
+      live = false;
+    };
+  }, [sig]);
+  const sugg = report?.suggestions ?? [];
+  if (sugg.length === 0) return null;
+  const sources = [...new Set(sugg.map((x) => x.source_name))];
+  const names = sugg.map((x) => x.service_name);
+  const shown = names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.join(", ");
+  const link = async () => {
+    setBusy(true);
+    try {
+      const res = await api.linkSharedKeys();
+      toast.success(`${plural(res.linked.length, "service")} now use the keys you already have.`);
+      onLinked();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Callout
+      tone="neutral"
+      className="mt-6"
+      action={
+        <Button variant="primary" size="small" onClick={() => void link()} disabled={busy} aria-busy={busy || undefined}>
+          Use those keys
+        </Button>
+      }
+    >
+      {shown} {sugg.length === 1 ? "has" : "have"} no keys, but {sources.join(" and ")} {sources.length === 1 ? "is" : "are"} the same account with keys
+      that work there too. Link them and they share those keys.
+    </Callout>
+  );
+}
+
 export function CatalogPage() {
   useTitle("Catalog");
   const { services, loaded, error, fetch } = useServices();
@@ -184,7 +240,8 @@ export function CatalogPage() {
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtered]);
 
-  const totalKeys = services.reduce((n, s) => n + (s.key_counts?.total ?? 0), 0);
+  // A key shared between services of one account is counted once, where it is stored.
+  const totalKeys = services.reduce((n, s) => n + (s.key_counts?.total ?? 0) - (s.key_counts?.shared ?? 0), 0);
   const available = services.reduce((n, s) => n + (s.key_counts?.available ?? 0), 0);
   const req24 = services.reduce((n, s) => n + (s.requests_24h ?? 0), 0);
 
@@ -227,6 +284,8 @@ export function CatalogPage() {
         actions={addButton}
         className="mb-0"
       />
+
+      {can.manage(role) && <SharedKeysCallout services={services} onLinked={() => fetch().catch(() => undefined)} />}
 
       <SearchField
         value={q}
@@ -293,7 +352,7 @@ export function CatalogPage() {
               />
             ) : (
               shown.map(([cat, list]) => {
-                const keys = list.reduce((n, s) => n + s.key_counts.total, 0);
+                const keys = list.reduce((n, s) => n + s.key_counts.total - (s.key_counts.shared ?? 0), 0);
                 return (
                   <section key={cat} className="mt-10" aria-labelledby={`cat-${cat}`}>
                     <div className="flex items-baseline gap-2.5">

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "../lib/api";
 import { maskSecret, parseKeys } from "../lib/keyparse";
 import { toast } from "./toast";
+import type { DraftImage } from "../lib/chatImages";
 import type { ChatAi, ChatAnswer, ChatItem, ChatReply, ChatThread, ChatTurn } from "../lib/types";
 
 /** Keys pasted or dropped, held beside the composer instead of inside it. */
@@ -22,6 +23,18 @@ export interface DraftAttachment {
 export interface ChatDraft {
   text: string;
   attachment: DraftAttachment | null;
+  /** Pictures to send with the message. */
+  images?: DraftImage[];
+}
+
+/** A message waiting to be sent after the running turn ends. */
+export interface QueuedMessage {
+  id: string;
+  /** What you typed, keys and all. Memory only, never stored or shown. */
+  text: string;
+  /** The same text with keys masked, for the queue row. */
+  shown: string;
+  images?: DraftImage[];
 }
 
 /** The draft slot for a chat not created yet. */
@@ -62,12 +75,21 @@ interface AssistantStore {
    */
   drafts: Record<string, ChatDraft>;
   setDraftText: (key: string, text: Update<string>) => void;
+  /**
+   * Messages queued by thread while a turn runs, sent one at a time as each
+   * turn ends. Memory only, like drafts: a queued message can hold keys.
+   */
+  queues: Record<number, QueuedMessage[]>;
+  enqueue: (threadId: number, text: string, images?: DraftImage[]) => void;
+  /** Takes a queued message out, for Remove or Edit; returns it. */
+  unqueue: (threadId: number, id: string) => QueuedMessage | undefined;
   setDraftAttachment: (key: string, attachment: Update<DraftAttachment | null>) => void;
+  setDraftImages: (key: string, images: Update<DraftImage[]>) => void;
   fetch: () => Promise<void>;
   open: (id: number | null) => Promise<void>;
   create: () => Promise<ChatThread>;
   remove: (id: number) => Promise<void>;
-  send: (text: string) => Promise<void>;
+  send: (text: string, images?: DraftImage[]) => Promise<void>;
   confirm: (pendingId: string, approve: boolean) => Promise<void>;
   answer: (body: ChatAnswer) => Promise<void>;
   /** Thread id with a Compact now request in flight. */
@@ -195,11 +217,31 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     secrets: {},
     lastSent: {},
     drafts: {},
+    queues: {},
+
+    enqueue: (threadId, text, images) => {
+      const q = get().queues[threadId] ?? [];
+      const item = { id: `queued-${++localSeq}`, text, shown: maskMessage(text).text || "Image", images };
+      set({ queues: { ...get().queues, [threadId]: [...q, item] } });
+    },
+
+    unqueue: (threadId, id) => {
+      const q = get().queues[threadId] ?? [];
+      const hit = q.find((m) => m.id === id);
+      if (hit) set({ queues: { ...get().queues, [threadId]: q.filter((m) => m.id !== id) } });
+      return hit;
+    },
 
     setDraftText: (key, text) => {
       const cur = get().drafts[key] ?? { text: "", attachment: null };
       const next = typeof text === "function" ? text(cur.text) : text;
       set({ drafts: { ...get().drafts, [key]: { ...cur, text: next } } });
+    },
+
+    setDraftImages: (key, images) => {
+      const cur = get().drafts[key] ?? { text: "", attachment: null };
+      const next = typeof images === "function" ? images(cur.images ?? []) : images;
+      set({ drafts: { ...get().drafts, [key]: { ...cur, images: next } } });
     },
 
     setDraftAttachment: (key, attachment) => {
@@ -267,11 +309,12 @@ export const useAssistant = create<AssistantStore>((set, get) => {
       await api.deleteChatThread(id);
       const { [id]: _, ...rest } = get().lastSent;
       const { [String(id)]: _draft, ...drafts } = get().drafts;
-      set({ threads: get().threads.filter((t) => t.id !== id), lastSent: rest, drafts });
+      const { [id]: _queue, ...queues } = get().queues;
+      set({ threads: get().threads.filter((t) => t.id !== id), lastSent: rest, drafts, queues });
       if (get().currentId === id) set({ currentId: null, items: [], turn: null });
     },
 
-    send: async (text) => {
+    send: async (text, images = []) => {
       let id = get().currentId;
       if (id === null) id = (await get().create()).id;
       // Your own bubble shows keys masked from the first frame.
@@ -281,6 +324,7 @@ export const useAssistant = create<AssistantStore>((set, get) => {
         kind: "user",
         text: shown.text,
         keys: shown.keys || undefined,
+        local_images: images.length ? images.map((im) => im.url) : undefined,
         ok: true,
         ts: new Date().toISOString(),
       };
@@ -291,7 +335,11 @@ export const useAssistant = create<AssistantStore>((set, get) => {
         lastSent: { ...get().lastSent, [id]: text },
       });
       try {
-        const res = await api.sendChatMessage(id, text);
+        const res = await api.sendChatMessage(
+          id,
+          text,
+          images.map((im) => ({ media_type: im.mediaType, data: im.data })),
+        );
         apply(id, res);
       } catch (e) {
         if (get().currentId === id) set({ items: get().items.filter((it) => it.id !== local.id), turn: null });

@@ -42,6 +42,8 @@ type runState struct {
 	// unpinned is set when a draft was accepted with test keys but no URL
 	// vouched for its base_url host. Such a run always waits for review.
 	unpinned bool
+	// staged holds the parts stage_parts collected (stage.go).
+	staged *staged
 }
 
 const (
@@ -335,6 +337,10 @@ func (a *Agent) publish(ctx context.Context, run *store.AgentRun, d *draft, by s
 				a.logf(ctx, id, "done", "Added "+created.Name+" to the catalog", "Service /"+created.Slug+" is ready for keys.")
 				a.Store.AddAudit(ctx, nil, "service.create", created.Slug, "by AI run "+fmt.Sprint(id))
 				a.addTestKeys(ctx, run, created)
+				// Another API of an account already in the pool: use its keys.
+				if src, err := catalog.AutoLinkKeys(ctx, a.Store, created); err == nil && src != nil {
+					a.logf(ctx, id, "done", "Uses the keys of "+src.Name, "The same account's keys work here too, so "+created.Name+" uses the keys of /"+src.Slug+" and has keys at once.")
+				}
 			} else {
 				a.logf(ctx, id, "error", "Could not create the service", err.Error())
 			}

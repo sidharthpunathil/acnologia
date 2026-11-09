@@ -185,6 +185,16 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	if err != nil {
 		return nil, err
 	}
+	if shared, err := p.sharedKeys(ctx, svc); err != nil {
+		return nil, err
+	} else if len(shared) > 0 {
+		// A service's own keys go first; the account's shared keys back
+		// them up, as backup tier keys do.
+		for _, k := range shared {
+			k.Tier = "backup"
+		}
+		keys = append(keys, shared...)
+	}
 	now := time.Now()
 	p.slots.sweep(now)
 	spec := providers.Get(svc.Provider)
@@ -315,12 +325,30 @@ func (p *Pool) scopedKeys(ctx context.Context, svc *store.Service, appID int64, 
 	return res.IDs, nil
 }
 
+// sharedKeys is the key source's keys a linked service may use, empty when
+// it has no source or the two no longer send keys to the same site.
+func (p *Pool) sharedKeys(ctx context.Context, svc *store.Service) ([]*store.Key, error) {
+	if svc.KeySourceID == nil || !p.sourceFits(ctx, svc) {
+		return nil, nil
+	}
+	return p.Store.SharedCandidateKeys(ctx, *svc.KeySourceID, svc.ID)
+}
+
+// sourceFits checks the link on every use: a base URL or auth placement
+// changed after linking stops the sharing rather than moving keys.
+func (p *Pool) sourceFits(ctx context.Context, svc *store.Service) bool {
+	src, err := p.Store.GetService(ctx, *svc.KeySourceID)
+	return err == nil && catalog.CanShareKeys(svc, src)
+}
+
 // MayUse reports whether the app may still be handed the key on the
 // service, by the same rules Pick applies: the key's service, its app
 // restriction, hidden keys, and the app's share scope.
 func (p *Pool) MayUse(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, k *store.Key) bool {
 	allowHidden = allowHidden && svc.TargetTrusted
-	if k.ServiceID != svc.ID || !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || k.IsHandedOver() {
+	own := k.ServiceID == svc.ID
+	shared := !own && svc.KeySourceID != nil && *svc.KeySourceID == k.ServiceID && !k.Hidden && !k.Restricted && p.sourceFits(ctx, svc)
+	if (!own && !shared) || !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || k.IsHandedOver() {
 		return false
 	}
 	scoped, err := p.scopedKeys(ctx, svc, appID, allowHidden)

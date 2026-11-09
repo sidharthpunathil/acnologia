@@ -52,6 +52,8 @@ export interface AgentComposerProps {
   busy: boolean;
   /** The agent is working on this chat's turn: the rim lights up. Defaults to `busy`. */
   working?: boolean;
+  /** Names the send button when it does something other than send now, such as "Queue message". */
+  sendLabel?: string;
   /** The agent is unavailable: the field is disabled. */
   disabled?: boolean;
   /** Something other than text is ready to send, such as an attachment. */
@@ -59,6 +61,8 @@ export interface AgentComposerProps {
   placeholder?: string;
   /** Rendered above the text, inside the field. */
   attachment?: ReactNode;
+  /** Controls before the text, such as an attach button. */
+  leading?: ReactNode;
   /** The status row under the field. */
   status?: ReactNode;
   statusId?: string;
@@ -74,10 +78,12 @@ export function AgentComposer({
   onSubmit,
   busy,
   working = busy,
+  sendLabel,
   disabled = false,
   hasContent = false,
   placeholder = "Ask me anything",
   attachment,
+  leading,
   status,
   statusId,
   onPaste,
@@ -125,7 +131,8 @@ export function AgentComposer({
           )}
         >
           {attachment}
-          <div className="flex items-end gap-2 py-2 ps-4 pe-2">
+          <div className={cx("flex items-end gap-2 py-2 pe-2", leading ? "ps-2" : "ps-4")}>
+            {leading}
             <label htmlFor={id} className="sr-only">
               Message
             </label>
@@ -149,8 +156,8 @@ export function AgentComposer({
             />
             <button
               type="submit"
-              aria-label={busy ? "Working on your last message" : "Send"}
-              title={busy ? "Working" : "Send"}
+              aria-label={busy ? "Working on your last message" : (sendLabel ?? "Send")}
+              title={busy ? "Working" : (sendLabel ?? "Send")}
               disabled={!canSend}
               className={cx(
                 "button-press-motion flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full transition-[background-color,color,opacity] duration-150 ease-out",

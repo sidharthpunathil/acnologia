@@ -12,6 +12,7 @@ import { useTitle } from "../../hooks/useTitle";
 import { useServices } from "../../stores/services";
 import { useProviders } from "../../stores/providers";
 import { useKeys } from "../../stores/keys";
+import { KeySourcePanel } from "./KeySourcePanel";
 import { useApps } from "../../stores/apps";
 import { useEvents } from "../../stores/events";
 import { useInsights } from "../../stores/insights";
@@ -45,6 +46,7 @@ import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
 import { OffersBlock } from "../../components/OfferBits";
+import { ApisBlock } from "../../components/ApisBlock";
 import { OfferCheckButton, OfferCheckedLine } from "../../components/OfferCheck";
 import { docProviderSlug } from "../../lib/peerProviders";
 import { PeerProviderNote } from "./PeerProviderNote";
@@ -61,6 +63,7 @@ export function ServicePage() {
   const fetchOne = useServices((s) => s.fetchOne);
   const keys = useKeys((s) => s.byService[id]) ?? EMPTY_KEYS;
   const keysLoaded = useKeys((s) => s.byService[id] !== undefined);
+  const sharedKeys = useKeys((s) => s.sharedByService[id]) ?? EMPTY_KEYS;
   const fetchKeys = useKeys((s) => s.fetch);
   const { apps, fetch: fetchApps } = useApps();
   const events = useEvents((s) => s.byService[id]);
@@ -337,6 +340,8 @@ export function ServicePage() {
         }
       />
 
+      <ApisBlock spec={shown?.spec} service={service.slug} className="mt-4" />
+
       <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} className="mt-10 gap-6">
         <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
           <TabList aria-label="Service sections" className="min-w-max">
@@ -350,9 +355,19 @@ export function ServicePage() {
 
         {/* Only the selected panel mounts, so each switch settles in with fade-up instead of swapping in place. */}
         <TabPanel id="keys" className="fade-up">
+          <KeySourcePanel
+            service={service}
+            shared={sharedKeys}
+            manage={perms.manage}
+            className="mb-4"
+            onChange={() => {
+              void fetchOne(service.id).catch(() => undefined);
+              void fetchKeys(service.id).catch(() => undefined);
+            }}
+          />
           {!keysLoaded ? (
             rowSkeleton("Loading keys")
-          ) : keys.length === 0 ? (
+          ) : keys.length === 0 && service.key_source_id ? null : keys.length === 0 ? (
             <EmptyState
               art={KeyRingArt}
               as="h2"

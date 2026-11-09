@@ -123,7 +123,9 @@ func (p *Pool) corroborated(ctx context.Context, svc *store.Service, k *store.Ke
 	if p.suspects.note(k.ID, appID, o, now) {
 		return true
 	}
-	if providers.Get(svc.Provider).Health == nil || !p.suspects.mayCheck(k.ID, now) {
+	// A key borrowed from its key source is checked against its own service
+	// by the worker, never against the service that borrowed it.
+	if k.ServiceID != svc.ID || providers.Get(svc.Provider).Health == nil || !p.suspects.mayCheck(k.ID, now) {
 		return false
 	}
 	if err := p.Check(context.WithoutCancel(ctx), svc, k); err != nil {

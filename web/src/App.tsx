@@ -33,6 +33,7 @@ const DocPage = lazyPage(() => import("./pages/docs/DocPage").then((m) => m.DocP
 const WebhooksPage = lazyPage(() => import("./pages/Webhooks").then((m) => m.WebhooksPage));
 const EgressPage = lazyPage(() => import("./pages/Egress").then((m) => m.EgressPage));
 const GroupsPage = lazyPage(() => import("./pages/Groups").then((m) => m.GroupsPage));
+const CapabilitiesPage = lazyPage(() => import("./pages/Capabilities").then((m) => m.CapabilitiesPage));
 const SharingPage = lazyPage(() => import("./pages/Sharing").then((m) => m.SharingPage));
 const SharingAnalyticsPage = lazyPage(() => import("./pages/sharing/Analytics").then((m) => m.SharingAnalyticsPage));
 const UsagePage = lazyPage(() => import("./pages/Usage").then((m) => m.UsagePage));
@@ -61,6 +62,7 @@ const PAGES: readonly PageRoute[] = [
   ["/settings", SettingsPage],
   ["/apps", AppsPage],
   ["/groups", GroupsPage],
+  ["/capabilities", CapabilitiesPage],
   ["/sharing", SharingPage],
   ["/sharing/analytics", SharingAnalyticsPage],
   ["/usage", UsagePage],
@@ -154,6 +156,7 @@ export function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="apps" element={<AppsPage />} />
           <Route path="groups" element={<GroupsPage />} />
+          <Route path="capabilities" element={<CapabilitiesPage />} />
           <Route
             path="sharing"
             element={

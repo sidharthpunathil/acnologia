@@ -17,12 +17,17 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
-// checkServiceRefs rejects a service whose slug collides with a group or
-// whose egress proxy does not exist. oldSlug is the slug before an update.
+// checkServiceRefs rejects a service whose slug collides with a group or a
+// capability, or whose egress proxy does not exist. oldSlug is the slug
+// before an update.
 func (s *Server) checkServiceRefs(w http.ResponseWriter, r *http.Request, sv *store.Service, oldSlug string) bool {
 	if sv.Slug != oldSlug {
 		if _, err := s.Store.GetGroupBySlug(r.Context(), sv.Slug); err == nil {
 			writeErr(w, 409, "duplicate", "a service group already uses the slug "+sv.Slug)
+			return false
+		}
+		if _, err := s.Store.GetCapabilityBySlug(r.Context(), sv.Slug); err == nil {
+			writeErr(w, 409, "duplicate", "a capability already uses the slug "+sv.Slug)
 			return false
 		}
 	}
@@ -376,6 +381,7 @@ type groupInput struct {
 	Name        *string   `json:"name"`
 	Description *string   `json:"description"`
 	Members     *[]string `json:"members"`
+	Strategy    *string   `json:"strategy"`
 }
 
 func (s *Server) applyGroup(ctx context.Context, in groupInput, g *store.ServiceGroup) string {
@@ -403,11 +409,19 @@ func (s *Server) applyGroup(ctx context.Context, in groupInput, g *store.Service
 			g.Members = append(g.Members, m)
 		}
 	}
+	if in.Strategy != nil {
+		g.Strategy = strings.TrimSpace(*in.Strategy)
+	}
+	if g.Strategy == "" {
+		g.Strategy = StrategyPriority
+	}
 	switch {
 	case !slugRe.MatchString(g.Slug):
 		return "slug must be lowercase letters, digits and hyphens"
 	case g.Name == "" || len(g.Name) > 100:
 		return "name is required (at most 100 characters)"
+	case !routingStrategies[g.Strategy] || g.Strategy == StrategyWeighted:
+		return "strategy must be priority, round_robin, random, cheapest or most_keys"
 	case len(g.Members) < 2:
 		return "a group needs at least two services"
 	case len(g.Members) > 20:

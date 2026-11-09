@@ -51,6 +51,8 @@ type KeyCounts struct {
 	Disabled  int `json:"disabled"`
 	Backup    int `json:"backup"`
 	Busy      int `json:"busy"`
+	// Shared counts the keys above that come from the key source service.
+	Shared int `json:"shared"`
 }
 
 type Service struct {
@@ -101,6 +103,14 @@ type Service struct {
 	// controls where this service connects, so connections go to public
 	// addresses only (checked when dialing, not once at sync).
 	PeerTrusted bool `json:"-"`
+	// KeySourceID names a service whose keys this one may use as well as its
+	// own: two services of one account, such as several Omkar Cloud APIs
+	// that take the same key. Only keys that are neither hidden nor limited
+	// to some apps are shared, and only while both services send the key to
+	// the same site in the same place (catalog.CanShareKeys).
+	KeySourceID   *int64 `json:"key_source_id"`
+	KeySourceSlug string `json:"key_source_slug,omitempty"`
+	KeySourceName string `json:"key_source_name,omitempty"`
 }
 
 // PublicOnly reports whether connections for this service must go to public
@@ -185,6 +195,9 @@ type Key struct {
 	// on the owner. Filled by the key list handlers. Revoke cannot take a
 	// revealed key back.
 	RevealedTo []KeyReveal `json:"revealed_to,omitempty"`
+	// Twins are keys with the same secret in other services. Filled by the
+	// key list handlers.
+	Twins []KeyTwin `json:"twins,omitempty"`
 
 	SecretEnc []byte `json:"-"`
 }

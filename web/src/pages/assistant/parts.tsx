@@ -1,7 +1,11 @@
-import { useState, type ClipboardEvent, type FormEvent, type Ref } from "react";
+import { useRef, useState, type ClipboardEvent, type FormEvent, type Ref } from "react";
 import {
+  RiCloseLine,
   RiDashboard3Line,
+  RiEditLine,
   RiFlowChart,
+  RiImageAddLine,
+  RiTimeLine,
   RiKey2Line,
   RiSettings3Line,
   RiShieldCheckLine,
@@ -10,9 +14,11 @@ import {
 import { maskSecret, parseKeys } from "@/lib/keyparse";
 import { useNow } from "@/hooks/useNow";
 import type { ChatThread } from "@/lib/types";
-import type { DraftAttachment } from "@/stores/assistant";
+import type { DraftAttachment, QueuedMessage } from "@/stores/assistant";
+import { MAX_IMAGES, isImageFile, type DraftImage } from "@/lib/chatImages";
 import { Button } from "@/components/base/buttons/button";
 import { CloseButton } from "@/components/base/buttons/close-button";
+import { IconButton } from "@/components/base/buttons/icon-button";
 import { Kbd } from "@/components/base/kbd/kbd";
 import { AgentChatHistory, compactAge } from "@/components/application/agent-chat/agent-chat-history";
 import { AgentComposer, ComposerModel } from "@/components/application/agent-chat/agent-composer";
@@ -181,6 +187,29 @@ export function mergeAttachments(a: Attachment | null, b: Attachment): Attachmen
 }
 
 /** The attachment tile above the prompt: key count, source, masked hints and a remove control. */
+/** Images waiting in the composer, each with a remove button. */
+function ImageStrip({ images, onRemove }: { images: DraftImage[]; onRemove?: (id: string) => void }) {
+  return (
+    <ul aria-label="Images to send" className="chat-reveal mx-2 mt-2 flex flex-wrap gap-2">
+      {images.map((im) => (
+        <li key={im.id} className="relative">
+          <img src={im.url} alt={im.name} className="block size-16 rounded-xl border border-border-button-default object-cover" />
+          {onRemove && (
+            <button
+              type="button"
+              aria-label={`Remove ${im.name}`}
+              onClick={() => onRemove(im.id)}
+              className="absolute -end-1.5 -top-1.5 flex size-6 cursor-pointer items-center justify-center rounded-full border border-border-button-default bg-background-primary-default text-foreground-icon-secondary shadow-xs outline-none hover:text-foreground-icon-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+            >
+              <RiCloseLine className="size-3.5" aria-hidden />
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function AttachmentPreview({ att, onClear }: { att: Attachment; onClear: () => void }) {
   const [open, setOpen] = useState(false);
   return (
@@ -255,6 +284,11 @@ export function Composer({
   attachment,
   onAttach,
   onClearAttachment,
+  images = [],
+  onAddImages,
+  onRemoveImage,
+  queued = 0,
+  queueNote,
 }: {
   ref?: Ref<HTMLTextAreaElement>;
   value: string;
@@ -270,9 +304,25 @@ export function Composer({
   attachment: Attachment | null;
   onAttach: (a: Attachment) => void;
   onClearAttachment: () => void;
+  /** Images to send with the message. */
+  images?: DraftImage[];
+  onAddImages?: (files: File[]) => void;
+  onRemoveImage?: (id: string) => void;
+  /** Messages waiting to be sent after the running turn. */
+  queued?: number;
+  /** Why the queue is waiting, when it is. */
+  queueNote?: string;
 }) {
+  const picker = useRef<HTMLInputElement>(null);
   // Many keys, or a long block with keys, go to the attachment instead of the textarea.
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    // A pasted screenshot or copied image goes to Claude as an image.
+    const pics = Array.from(e.clipboardData.files ?? []).filter(isImageFile);
+    if (pics.length && onAddImages) {
+      e.preventDefault();
+      onAddImages(pics);
+      return;
+    }
     const text = e.clipboardData.getData("text/plain");
     if (!text) return;
     const att = toAttachment(text, "Pasted");
@@ -292,17 +342,53 @@ export function Composer({
       onSubmit={onSubmit}
       busy={busy}
       working={working}
+      sendLabel={working ? "Queue message" : undefined}
       disabled={off}
-      hasContent={!!attachment}
+      hasContent={!!attachment || images.length > 0}
       placeholder={
         off
           ? "The Assistant is off"
           : working
-            ? "Type your next message. It sends when this step finishes."
-            : "Ask anything, or paste or drop keys to add"
+            ? "Type your next message. It waits in line until this step finishes."
+            : "Ask anything, or paste or drop keys and images"
       }
       onPaste={onPaste}
-      attachment={attachment ? <AttachmentPreview att={attachment} onClear={onClearAttachment} /> : null}
+      attachment={
+        attachment || images.length ? (
+          <>
+            {images.length > 0 && <ImageStrip images={images} onRemove={onRemoveImage} />}
+            {attachment && <AttachmentPreview att={attachment} onClear={onClearAttachment} />}
+          </>
+        ) : null
+      }
+      leading={
+        onAddImages && !off ? (
+          <>
+            <input
+              ref={picker}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                if (files.length) onAddImages(files);
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Add images"
+              title={images.length >= MAX_IMAGES ? `At most ${MAX_IMAGES} images` : "Add images"}
+              disabled={images.length >= MAX_IMAGES}
+              onClick={() => picker.current?.click()}
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-foreground-icon-secondary outline-none transition-colors duration-150 hover:bg-background-secondary-default hover:text-foreground-icon-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RiImageAddLine className="size-5" aria-hidden />
+            </button>
+          </>
+        ) : null
+      }
       statusId="assistant-hint"
       status={
         off ? null : (
@@ -314,9 +400,15 @@ export function Composer({
             </span>
           ) : keyish ? (
             <span className="text-text-secondary">Claude sees keys only as placeholders. This chat keeps their last 4 characters.</span>
+          ) : queueNote ? (
+            <span className="text-text-secondary">{queueNote}</span>
           ) : working ? (
             <>
-              <span className="text-text-secondary">Working on it. You can keep typing.</span>
+              <span className="text-text-secondary">
+                {queued > 0
+                  ? `${queued} queued. Each one sends when the step before it finishes.`
+                  : "Working on it. Send more and they wait in line."}
+              </span>
               {model && (
                 <>
                   <span className="mx-2" aria-hidden>
@@ -343,6 +435,46 @@ export function Composer({
         )
       }
     />
+  );
+}
+
+/**
+ * Messages you sent while a turn was running, in the order they will go out.
+ * Edit moves one back into the composer; remove drops it.
+ */
+export function QueuedList({
+  items,
+  paused,
+  onRemove,
+  onEdit,
+}: {
+  items: QueuedMessage[];
+  paused: boolean;
+  onRemove: (id: string) => void;
+  onEdit: (id: string) => void;
+}) {
+  return (
+    <section aria-label="Queued messages" className="mb-2 flex flex-col gap-1">
+      <p className="flex items-center gap-1.5 px-1 text-caption-1-semibold text-text-tertiary">
+        <RiTimeLine className="size-3.5 shrink-0 text-foreground-icon-tertiary" aria-hidden />
+        {paused ? "Queued, waiting for your answer above" : `Queued (${items.length})`}
+      </p>
+      <ol className="flex flex-col gap-1">
+        {items.map((m, i) => (
+          <li
+            key={m.id}
+            className="flex items-center gap-2 rounded-xl border border-border-button-default bg-background-secondary-default py-1 ps-3 pe-1"
+          >
+            <span className="shrink-0 text-caption-1-semibold tabular-nums text-text-tertiary">{i + 1}</span>
+            <span className="min-w-0 flex-1 truncate text-body-2-regular text-text-secondary" title={m.shown}>
+              {m.shown.replace(/\s+/g, " ")}
+            </span>
+            <IconButton icon={RiEditLine} size="small" aria-label={`Edit queued message ${i + 1}`} onClick={() => onEdit(m.id)} />
+            <IconButton icon={RiCloseLine} size="small" aria-label={`Remove queued message ${i + 1}`} onClick={() => onRemove(m.id)} />
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
