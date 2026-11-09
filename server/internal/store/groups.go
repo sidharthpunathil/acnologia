@@ -13,11 +13,11 @@ import (
 // member has no usable key, is down, or runs out of keys to rotate through.
 // Members should share a request shape, for example two accounts of one API.
 type ServiceGroup struct {
-	ID          int64     `json:"id"`
-	Slug        string    `json:"slug"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Members     []string  `json:"members"` // service slugs, in fallback order
+	ID          int64    `json:"id"`
+	Slug        string   `json:"slug"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Members     []string `json:"members"` // service slugs, in fallback order
 	// Strategy picks which member goes first: priority (the order above),
 	// round_robin, random, cheapest or most_keys. The rest follow as fallbacks.
 	Strategy  string    `json:"strategy"`

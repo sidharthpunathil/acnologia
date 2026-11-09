@@ -273,6 +273,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/chat/threads", s.chatList)
 		r.Post("/chat/threads", s.chatCreate)
 		r.Get("/chat/threads/{id}", s.chatGet)
+		r.Get("/chat/threads/{id}/images/{image}", s.chatImageGet)
 		r.Delete("/chat/threads/{id}", s.chatDelete)
 		r.Post("/chat/threads/{id}/messages", s.chatSend)
 		r.Post("/chat/threads/{id}/confirm", s.chatConfirm)

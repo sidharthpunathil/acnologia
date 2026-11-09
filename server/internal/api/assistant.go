@@ -58,6 +58,11 @@ type chatBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	// An image the user sent (type image): its id, media type and base64
+	// bytes. Stored in the thread, which is encrypted at rest.
+	ImageID   string `json:"image_id,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
 }
 
 type chatMsg struct {
@@ -95,9 +100,17 @@ type chatItem struct {
 	// Entities are the services, keys, apps and providers a tool result
 	// names, with ids, so the UI can link them.
 	Entities []chatEntity `json:"entities,omitempty"`
+	// Images are the pictures a user message carried, served by
+	// GET /chat/threads/{id}/images/{image_id}.
+	Images []chatImage `json:"images,omitempty"`
 	// Suggestions are short follow ups the model proposes at the end of a turn.
 	Suggestions []string  `json:"suggestions,omitempty"`
 	TS          time.Time `json:"ts"`
+}
+
+type chatImage struct {
+	ID        string `json:"id"`
+	MediaType string `json:"media_type"`
 }
 
 type chatEntity struct {
@@ -155,6 +168,7 @@ type chatData struct {
 	Vault    []vaultEntry `json:"vault,omitempty"`
 	VaultSeq int          `json:"vault_seq,omitempty"`
 	BatchSeq int          `json:"batch_seq,omitempty"`
+	ImageSeq int          `json:"image_seq,omitempty"`
 	// Compact is the summary that replaces the older messages in what the
 	// model is sent (assistant_compact.go). Messages and Items stay whole.
 	Compact *chatCompact `json:"compact,omitempty"`
@@ -359,14 +373,20 @@ func (s *Server) chatDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text string `json:"text"`
+		Text   string        `json:"text"`
+		Images []chatImageIn `json:"images"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	text := strings.TrimSpace(body.Text)
-	if text == "" || len(text) > chatMaxMessage {
-		writeErr(w, 400, "invalid", fmt.Sprintf("send a message of 1 to %d characters", chatMaxMessage))
+	images, msg := checkChatImages(body.Images)
+	if msg != "" {
+		writeErr(w, 400, "invalid", msg)
+		return
+	}
+	if (text == "" && len(images) == 0) || len(text) > chatMaxMessage {
+		writeErr(w, 400, "invalid", fmt.Sprintf("send a message of 1 to %d characters, or an image", chatMaxMessage))
 		return
 	}
 	s.chatTurn(w, r, func(cs *chatSession) error {
@@ -385,8 +405,19 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 		// is scrubbed from both copies as a last line.
 		ctx := cs.ctx
 		model, shown = cs.s.Store.Scrub(ctx, model), cs.s.Store.Scrub(ctx, shown)
-		cs.addItem(chatItem{Kind: "user", Text: shown, Keys: n, KeyList: list, OK: true})
-		cs.appendUser(chatBlock{Type: "text", Text: model})
+		blocks := []chatBlock{}
+		refs := []chatImage{}
+		for _, im := range images {
+			cs.data.ImageSeq++
+			id := fmt.Sprintf("img%d", cs.data.ImageSeq)
+			blocks = append(blocks, chatBlock{Type: "image", ImageID: id, MediaType: im.MediaType, Data: im.Data})
+			refs = append(refs, chatImage{ID: id, MediaType: im.MediaType})
+		}
+		if model != "" {
+			blocks = append(blocks, chatBlock{Type: "text", Text: model})
+		}
+		cs.addItem(chatItem{Kind: "user", Text: shown, Keys: n, KeyList: list, OK: true, Images: refs})
+		cs.appendUser(blocks...)
 		return nil
 	})
 }
@@ -544,7 +575,11 @@ func (cs *chatSession) nameThread() {
 	}
 	for _, it := range cs.data.Items {
 		if it.Kind == "user" {
-			cs.title = crypto.Truncate(firstLineOf(cs.redact(it.Text)), 60)
+			t := crypto.Truncate(firstLineOf(cs.redact(it.Text)), 60)
+			if t == "" && len(it.Images) > 0 {
+				t = "Image"
+			}
+			cs.title = t
 			return
 		}
 	}
@@ -681,10 +716,18 @@ func (cs *chatSession) redactAll() {
 
 func toParams(msgs []chatMsg) []anthropic.BetaMessageParam {
 	out := make([]anthropic.BetaMessageParam, 0, len(msgs))
+	keep := recentImages(msgs, chatModelImages)
 	for _, m := range msgs {
 		blocks := make([]anthropic.BetaContentBlockParamUnion, 0, len(m.Blocks))
 		for _, b := range m.Blocks {
 			switch b.Type {
+			case "image":
+				if keep[b.ImageID] && b.Data != "" {
+					blocks = append(blocks, anthropic.NewBetaImageBlock(anthropic.BetaBase64ImageSourceParam{
+						Data: b.Data, MediaType: anthropic.BetaBase64ImageSourceMediaType(b.MediaType)}))
+				} else {
+					blocks = append(blocks, anthropic.NewBetaTextBlock("[An image the user sent earlier, no longer shown]"))
+				}
 			case "text":
 				if b.Text != "" {
 					blocks = append(blocks, anthropic.NewBetaTextBlock(b.Text))

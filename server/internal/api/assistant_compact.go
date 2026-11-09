@@ -105,6 +105,10 @@ func msgChars(ms []chatMsg) int {
 	for _, m := range ms {
 		for _, b := range m.Blocks {
 			n += 16 + len(b.Text) + len(b.Input) + len(b.Content) + len(b.Name)
+			if b.Type == "image" {
+				// An image costs about 1,600 tokens however large its base64 is.
+				n += 6400
+			}
 		}
 	}
 	return n
@@ -191,6 +195,8 @@ func summaryInput(prev string, ms []chatMsg) string {
 				if t := strings.TrimSpace(bl.Text); t != "" {
 					fmt.Fprintf(&b, "%s: %s\n", who, cutText(t, chatSummaryBlock))
 				}
+			case "image":
+				fmt.Fprintf(&b, "%s sent an image\n", who)
 			case "tool_use":
 				fmt.Fprintf(&b, "Assistant called %s %s\n", bl.Name, cutText(string(bl.Input), chatSummaryToolText))
 			case "tool_result":

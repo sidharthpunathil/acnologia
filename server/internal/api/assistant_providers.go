@@ -241,7 +241,7 @@ func updateProviderTool(cs *chatSession, in map[string]any) toolOut {
 	ent := chatEntity{Type: "provider", Slug: p.Slug, Name: name}
 	return toolOut{OK: true, Summary: fmt.Sprintf("Updated %s: %s (v%d)", name, strings.Join(changed, ", "), version),
 		Link: "/providers/" + p.Slug, Entities: []chatEntity{ent},
-		Card: &chatCard{Type: "provider", Provider: &chatCardProv{Slug: p.Slug, Name: name, Version: int(version), Passed: int(passed), Failed: int(failed)}},
+		Card:  &chatCard{Type: "provider", Provider: &chatCardProv{Slug: p.Slug, Name: name, Version: int(version), Passed: int(passed), Failed: int(failed)}},
 		Model: asJSON(map[string]any{"slug": p.Slug, "version": version, "changed": changed, "tests_passed": passed, "tests_failed": failed})}
 }
 

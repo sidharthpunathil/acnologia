@@ -95,7 +95,9 @@ func TestCapabilityTranslatesAndFallsBack(t *testing.T) {
 		t.Fatalf("direct route access: %d", r.StatusCode)
 	}
 	// An answer the provider understood (404) is the answer, not a reason to move on.
-	omkar.answer = func(string, *http.Request) (int, map[string]string, string) { return 404, nil, `{"error":"no such place"}` }
+	omkar.answer = func(string, *http.Request) (int, map[string]string, string) {
+		return 404, nil, `{"error":"no such place"}`
+	}
 	before := serp.total.Load()
 	if r, _ = call(t, e, "GET", "/proxy/maps-search?query=x", tok); r.StatusCode != 404 || serp.total.Load() != before {
 		t.Fatalf("404 should be relayed from omkar: %d", r.StatusCode)

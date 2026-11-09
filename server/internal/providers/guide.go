@@ -55,10 +55,10 @@ type GuideDoc struct {
 	// with a "/~name" path prefix. Empty for most providers.
 	Hosts    []GuideHost    `json:"hosts,omitempty"`
 	Examples []GuideExample `json:"examples"`
-	Limits    []string        `json:"limits"`
-	Errors    []string        `json:"errors"`
-	Notes     []string        `json:"notes"`
-	Markdown  string          `json:"markdown,omitempty"`
+	Limits   []string       `json:"limits"`
+	Errors   []string       `json:"errors"`
+	Notes    []string       `json:"notes"`
+	Markdown string         `json:"markdown,omitempty"`
 }
 
 // GuideExample is a spec example with a ready curl command through the proxy.

@@ -848,6 +848,10 @@ export interface ChatItem {
    * is just the prose: key lines removed and blank runs collapsed.
    */
   key_list?: { label: string; hint: string }[];
+  /** Images a user message carried; load them with api.chatImageURL. */
+  images?: { id: string; media_type: string }[];
+  /** Data URLs of the images on a message not yet saved, shown until the server copy arrives. */
+  local_images?: string[];
   /** A provider build the turn follows (kind build). */
   build?: ChatBuild;
   /** A structured question for the user (kind ask). */

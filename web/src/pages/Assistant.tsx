@@ -15,7 +15,8 @@ import {
   RiMore2Fill,
 } from "@remixicon/react";
 import { useTitle } from "@/hooks/useTitle";
-import { ApiError, errorMessage } from "@/lib/api";
+import { ApiError, api, errorMessage } from "@/lib/api";
+import { MAX_IMAGES, isImageFile, prepareImages, type DraftImage } from "@/lib/chatImages";
 import type { ChatItem, ChatThread } from "@/lib/types";
 import { NEW_DRAFT, useAssistant, type DraftAttachment } from "@/stores/assistant";
 import { useAuth } from "@/stores/auth";
@@ -89,6 +90,8 @@ function runSeconds(row: { items: ChatItem[]; since?: string }): number | null {
 
 const reducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const NO_IMAGES: DraftImage[] = [];
 
 /** Files the composer takes: plain text exports of keys. */
 const DROP_TYPES = /\.(txt|csv|env|json)$/i;
@@ -187,6 +190,7 @@ export function AssistantPage() {
     drafts,
     setDraftText,
     setDraftAttachment,
+    setDraftImages,
     queues,
     enqueue,
     unqueue,
@@ -197,6 +201,7 @@ export function AssistantPage() {
   const draftKey = currentId === null ? NEW_DRAFT : String(currentId);
   const text = drafts[draftKey]?.text ?? "";
   const attachment = drafts[draftKey]?.attachment ?? null;
+  const images = drafts[draftKey]?.images ?? NO_IMAGES;
   const keyNow = () => {
     const id = useAssistant.getState().currentId;
     return id === null ? NEW_DRAFT : String(id);
@@ -204,6 +209,14 @@ export function AssistantPage() {
   const setText = (v: string | ((cur: string) => string)) => setDraftText(keyNow(), v);
   const setAttachment = (v: DraftAttachment | null | ((cur: Attachment | null) => Attachment | null)) =>
     setDraftAttachment(keyNow(), v);
+  const setImages = (v: DraftImage[] | ((cur: DraftImage[]) => DraftImage[])) => setDraftImages(keyNow(), v);
+  /** Adds pasted, dropped or picked image files to the draft, scaled down. */
+  const addImages = async (files: File[]) => {
+    const room = MAX_IMAGES - (useAssistant.getState().drafts[keyNow()]?.images?.length ?? 0);
+    const { images: ready, errors } = await prepareImages(files, room);
+    for (const e of errors) toast.error(e);
+    if (ready.length) setImages((cur) => [...cur, ...ready].slice(0, MAX_IMAGES));
+  };
   const [dragging, setDragging] = useState(false);
   // After Edit on a message whose keys only the vault holds: say so under the composer.
   const [vaultNote, setVaultNote] = useState(false);
@@ -353,6 +366,7 @@ export function AssistantPage() {
     setSheet(false);
     setDraftText(NEW_DRAFT, "");
     setDraftAttachment(NEW_DRAFT, null);
+    setDraftImages(NEW_DRAFT, []);
     navigate("/assistant", { state: { fresh: true } });
     window.setTimeout(() => box.current?.focus(), 0);
   };
@@ -372,8 +386,9 @@ export function AssistantPage() {
     e?.preventDefault();
     const typed = override ?? text.trim();
     const att = override === undefined ? attachment : null;
+    const imgs = override === undefined ? images : NO_IMAGES;
     const msg = [typed, att?.text.trim()].filter(Boolean).join("\n\n");
-    if (!msg || off) return;
+    if ((!msg && !imgs.length) || off) return;
     if (busy) {
       // A turn is running: typed messages wait in line and go out one at a
       // time as each turn ends. Suggestions and Retry are not queued.
@@ -381,24 +396,27 @@ export function AssistantPage() {
       setVaultNote(false);
       setText("");
       setAttachment(null);
-      enqueue(currentId, msg);
+      setImages([]);
+      enqueue(currentId, msg, imgs.length ? imgs : undefined);
       return;
     }
     setVaultNote(false);
     if (override === undefined) {
       setText("");
       setAttachment(null);
+      setImages([]);
     }
     try {
       if (currentId === null) {
         const t = await create();
         navigate(`/assistant/${t.id}`, { replace: true });
       }
-      await send(msg);
+      await send(msg, imgs);
     } catch (err) {
       if (override === undefined) {
         setText((cur) => cur || typed);
         if (att) setAttachment((cur) => cur ?? att);
+        if (imgs.length) setImages((cur) => (cur.length ? cur : imgs));
       }
       if (err instanceof ApiError && err.code === "busy")
         toast.info(
@@ -427,7 +445,7 @@ export function AssistantPage() {
     if (currentId === null || busy || off || loadingThread || awaitingYou || !queueHead) return;
     const next = unqueue(currentId, queueHead);
     if (!next) return;
-    send(next.text).catch((err) => {
+    send(next.text, next.images).catch((err) => {
       // Put it back at the front so nothing typed is lost.
       useAssistant.setState((st) => ({
         queues: { ...st.queues, [currentId]: [next, ...(st.queues[currentId] ?? [])] },
@@ -552,9 +570,15 @@ export function AssistantPage() {
     e.preventDefault();
     dragDepth.current = 0;
     setDragging(false);
-    const { text: body, names, skipped } = await readDropped(Array.from(e.dataTransfer.files));
+    const dropped = Array.from(e.dataTransfer.files);
+    const pictures = dropped.filter(isImageFile);
+    if (pictures.length) await addImages(pictures);
+    const { text: body, names, skipped } = await readDropped(dropped.filter((f) => !isImageFile(f)));
     for (const s of skipped) toast.error(s);
-    if (!names.length) return;
+    if (!names.length) {
+      if (pictures.length) window.setTimeout(() => box.current?.focus({ preventScroll: true }), 0);
+      return;
+    }
     const att = toAttachment(body, names.join(", "));
     if (att) {
       setAttachment((cur) => mergeAttachments(cur, att));
@@ -635,6 +659,9 @@ export function AssistantPage() {
           text={it.text ?? ""}
           keys={it.keys}
           keyList={it.key_list}
+          images={
+            it.local_images ?? (currentId !== null ? (it.images ?? []).map((im) => api.chatImageURL(currentId, im.id)) : undefined)
+          }
           onEdit={it.id === lastUser?.id && !working ? edit : undefined}
         />
       );
@@ -727,9 +754,9 @@ export function AssistantPage() {
               <span className="flex size-11 items-center justify-center rounded-xl border border-border-button-default bg-background-primary-default text-status-purple-text shadow-xs">
                 <RiFileUploadLine className="size-5" aria-hidden />
               </span>
-              <div className="mt-3 text-headline-semibold text-text-primary">Drop a file of keys</div>
+              <div className="mt-3 text-headline-semibold text-text-primary">Drop images or a file of keys</div>
               <div className="mt-1 text-body-2-regular text-text-secondary">
-                .txt, .csv, .env or .json, up to 1 MB. Claude sees only placeholders.
+                Up to {MAX_IMAGES} images go to Claude as they are. Keys from .txt, .csv, .env or .json files reach it only as placeholders.
               </div>
             </div>
           </div>
@@ -905,6 +932,9 @@ export function AssistantPage() {
               off={off}
               model={ai?.model}
               attachment={attachment}
+              images={images}
+              onAddImages={(files) => void addImages(files)}
+              onRemoveImage={(id) => setImages((cur) => cur.filter((im) => im.id !== id))}
               onAttach={(a) => setAttachment((cur) => mergeAttachments(cur, a))}
               onClearAttachment={() => setAttachment(null)}
             />

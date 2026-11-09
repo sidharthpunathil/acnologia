@@ -61,6 +61,8 @@ export interface AgentComposerProps {
   placeholder?: string;
   /** Rendered above the text, inside the field. */
   attachment?: ReactNode;
+  /** Controls before the text, such as an attach button. */
+  leading?: ReactNode;
   /** The status row under the field. */
   status?: ReactNode;
   statusId?: string;
@@ -81,6 +83,7 @@ export function AgentComposer({
   hasContent = false,
   placeholder = "Ask me anything",
   attachment,
+  leading,
   status,
   statusId,
   onPaste,
@@ -128,7 +131,8 @@ export function AgentComposer({
           )}
         >
           {attachment}
-          <div className="flex items-end gap-2 py-2 ps-4 pe-2">
+          <div className={cx("flex items-end gap-2 py-2 pe-2", leading ? "ps-2" : "ps-4")}>
+            {leading}
             <label htmlFor={id} className="sr-only">
               Message
             </label>
