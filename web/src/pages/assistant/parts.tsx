@@ -289,6 +289,8 @@ export function Composer({
   onRemoveImage,
   queued = 0,
   queueNote,
+  onStop,
+  stopping = false,
 }: {
   ref?: Ref<HTMLTextAreaElement>;
   value: string;
@@ -312,6 +314,9 @@ export function Composer({
   queued?: number;
   /** Why the queue is waiting, when it is. */
   queueNote?: string;
+  /** Stops the running turn. */
+  onStop?: () => void;
+  stopping?: boolean;
 }) {
   const picker = useRef<HTMLInputElement>(null);
   // Many keys, or a long block with keys, go to the attachment instead of the textarea.
@@ -342,6 +347,8 @@ export function Composer({
       onSubmit={onSubmit}
       busy={busy}
       working={working}
+      onStop={onStop}
+      stopping={stopping}
       sendLabel={working ? "Queue message" : undefined}
       disabled={off}
       hasContent={!!attachment || images.length > 0}
@@ -407,7 +414,7 @@ export function Composer({
               <span className="text-text-secondary">
                 {queued > 0
                   ? `${queued} queued. Each one sends when the step before it finishes.`
-                  : "Working on it. Send more and they wait in line."}
+                  : "Working on it. Send more and they wait in line, or press Stop."}
               </span>
               {model && (
                 <>

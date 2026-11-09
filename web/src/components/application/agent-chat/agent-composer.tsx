@@ -1,4 +1,4 @@
-import { RiArrowUpLine, RiSparklingLine } from "@remixicon/react";
+import { RiArrowUpLine, RiSparklingLine, RiStopFill } from "@remixicon/react";
 import {
   useLayoutEffect,
   useRef,
@@ -54,6 +54,10 @@ export interface AgentComposerProps {
   working?: boolean;
   /** Names the send button when it does something other than send now, such as "Queue message". */
   sendLabel?: string;
+  /** Shown while `working`: a Stop button that ends the agent's work. */
+  onStop?: () => void;
+  /** The stop request is on its way. */
+  stopping?: boolean;
   /** The agent is unavailable: the field is disabled. */
   disabled?: boolean;
   /** Something other than text is ready to send, such as an attachment. */
@@ -79,6 +83,8 @@ export function AgentComposer({
   busy,
   working = busy,
   sendLabel,
+  onStop,
+  stopping = false,
   disabled = false,
   hasContent = false,
   placeholder = "Ask me anything",
@@ -111,7 +117,11 @@ export function AgentComposer({
       event.preventDefault();
       onSubmit();
     } else if (event.key === "Escape") {
-      event.currentTarget.blur();
+      // Esc with nothing typed stops the work; otherwise it leaves the box.
+      if (working && onStop && !stopping && !event.currentTarget.value) {
+        event.preventDefault();
+        onStop();
+      } else event.currentTarget.blur();
     }
   };
 
@@ -154,6 +164,22 @@ export function AgentComposer({
                 "outline-none disabled:cursor-not-allowed",
               )}
             />
+            {working && onStop ? (
+              <button
+                type="button"
+                onClick={onStop}
+                disabled={stopping}
+                aria-label={stopping ? "Stopping" : "Stop"}
+                title={stopping ? "Stopping" : "Stop (Esc)"}
+                className={cx(
+                  "button-press-motion flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full transition-[background-color,color,opacity] duration-150 ease-out",
+                  "outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-border-focus-ring",
+                  "bg-background-secondary-default text-foreground-icon-primary hover:bg-background-secondary-hover disabled:cursor-not-allowed disabled:opacity-60",
+                )}
+              >
+                {stopping ? <SpinnerGlyph size="sm" /> : <RiStopFill className="size-4" aria-hidden />}
+              </button>
+            ) : null}
             <button
               type="submit"
               aria-label={busy ? "Working on your last message" : (sendLabel ?? "Send")}

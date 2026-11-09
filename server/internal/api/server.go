@@ -297,6 +297,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/chat/threads/{id}/confirm", s.chatConfirm)
 		r.Post("/chat/threads/{id}/answer", s.chatAnswer)
 		r.Post("/chat/threads/{id}/compact", s.chatCompactNow)
+		r.Post("/chat/threads/{id}/stop", s.chatStop)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleAdmin))

@@ -866,7 +866,7 @@ export interface ChatAi {
   reason: string;
 }
 
-export type ChatItemKind = "user" | "assistant" | "tool" | "confirm" | "error" | "build" | "ask" | "compact";
+export type ChatItemKind = "user" | "assistant" | "tool" | "confirm" | "error" | "build" | "ask" | "compact" | "stopped";
 
 export type ChatPendingStatus = "waiting" | "approved" | "cancelled" | "expired";
 

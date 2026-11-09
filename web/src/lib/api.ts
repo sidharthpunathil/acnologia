@@ -293,6 +293,9 @@ export const api = {
     request<ChatReply>("POST", `/api/admin/chat/threads/${id}/confirm`, { pending_id: pendingId, approve }),
   answerChat: (id: number, body: ChatAnswer) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/answer`, body),
   compactChat: (id: number) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/compact`, {}),
+  /** Ends the running turn and the provider builds it started; answers like GET thread. */
+  stopChat: (id: number) =>
+    request<{ thread: ChatThread; items: ChatItem[]; turn?: ChatTurn }>("POST", `/api/admin/chat/threads/${id}/stop`, {}),
 
   // Audit
   listAudit: () => request<{ audit: AuditEntry[] }>("GET", "/api/admin/audit"),

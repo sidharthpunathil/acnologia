@@ -711,3 +711,14 @@ export function ErrorItem({ text, onRetry }: { text?: string; onRetry?: () => vo
     </Callout>
   );
 }
+
+/** A turn the user stopped: a quiet rule with what was cancelled. */
+export function StoppedLine({ item }: { item: ChatItem }) {
+  return (
+    <div className="flex items-center gap-3" role="status">
+      <span className="h-px flex-1 bg-separator-border" aria-hidden />
+      <span className="text-caption-1-medium text-text-tertiary">{item.text || "Stopped."}</span>
+      <span className="h-px flex-1 bg-separator-border" aria-hidden />
+    </div>
+  );
+}

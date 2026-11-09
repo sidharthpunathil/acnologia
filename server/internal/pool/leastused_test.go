@@ -68,9 +68,12 @@ func pickConcurrently(t *testing.T, p *Pool, sv *store.Service, n int) []*Picked
 }
 
 // checkLevelled asserts that every pick's usage committed and that the keys'
-// usage differs by at most one. A usage write that commits just before its
-// pending count drops can be counted twice by a concurrent pick, so the
-// spread may be off by one, never more.
+// usage stays level. A usage write that commits just before its pending
+// count drops is counted twice by a concurrent pick. That can make the least
+// used key look one higher for that pick, which then goes to a key already
+// one above the least, so the spread can reach 2 (27, 28, 28, 29 in CI). The
+// bug this guards against, a burst all going to one key, spreads by about
+// picks / keys (16 here).
 func checkLevelled(t *testing.T, p *Pool, st *store.Store, ids []int64, held []*Picked) {
 	t.Helper()
 	usage := map[int64]int64{}
@@ -87,8 +90,8 @@ func checkLevelled(t *testing.T, p *Pool, st *store.Store, ids []int64, held []*
 	if want := int64(len(held) + 48); total != want {
 		t.Errorf("usage_today sums to %d, want %d", total, want)
 	}
-	if hi-lo > 1 {
-		t.Errorf("usage %v: max minus min is %d, want at most 1", usage, hi-lo)
+	if hi-lo > 2 {
+		t.Errorf("usage %v: max minus min is %d, want at most 2", usage, hi-lo)
 	}
 	if n := len(p.slots.pendingSnapshot()); n != 0 {
 		t.Errorf("%d keys still have pending usage writes", n)
