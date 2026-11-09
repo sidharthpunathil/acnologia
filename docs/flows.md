@@ -969,6 +969,22 @@ flowchart TD
   now**, which calls `POST /chat/threads/{id}/compact` whatever the chat's
   size. Open the divider to read the summary.
 
+### Stopping a turn
+
+While the Assistant works, the composer shows **Stop** (or press Esc with
+nothing typed). It calls `POST /chat/threads/{id}/stop`, which:
+
+- cancels the model call in flight, and skips the tool calls of that reply
+  that have not started (each gets a "not run" result, so the history stays
+  valid);
+- cancels the provider builds that turn started (`start_provider_build`,
+  `improve_provider`); builds from earlier turns keep running;
+- leaves a "Stopped." line in the transcript, and a note in the history so
+  the next turn knows the work was cut short and does not resume it unasked.
+
+A tool already running when you press Stop finishes its own step: a change
+it already made stays made. Messages you queued still send, one at a time.
+
 ## Sharing between servers
 
 One Acnologia (the **owner**) can let another (the **receiver**) use some of

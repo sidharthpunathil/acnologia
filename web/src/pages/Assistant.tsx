@@ -36,6 +36,7 @@ import { QUIET_BUTTON } from "@/components/application/agent-chat/agent-chat-mes
 import {
   AssistantText,
   CompactDivider,
+  StoppedLine,
   ConfirmCard,
   collapseBlank,
   ErrorItem,
@@ -187,6 +188,8 @@ export function AssistantPage() {
     confirm,
     answer: answerAsk,
     compact,
+    stop,
+    stopping,
     drafts,
     setDraftText,
     setDraftAttachment,
@@ -504,6 +507,9 @@ export function AssistantPage() {
   // The last message you sent this session, as typed (keys and all), for Retry and Edit.
   const lastUser = [...items].reverse().find((it) => it.kind === "user");
   const lastRaw = currentId !== null ? lastSent[currentId] : undefined;
+  const onStop = () => {
+    stop().catch((err) => toast.error(errorMessage(err)));
+  };
   const retry = () => {
     if (!lastUser) return;
     void submit(undefined, lastRaw ?? lastUser.text ?? "");
@@ -712,6 +718,12 @@ export function AssistantPage() {
       body = (
         <div className={GUTTER}>
           <CompactDivider item={it} />
+        </div>
+      );
+    else if (it.kind === "stopped")
+      body = (
+        <div className={GUTTER}>
+          <StoppedLine item={it} />
         </div>
       );
     else if (it.kind === "error")
@@ -927,6 +939,8 @@ export function AssistantPage() {
               onSubmit={(e) => void submit(e)}
               busy={busy && currentId === null}
               working={working}
+              onStop={currentId !== null && !off ? onStop : undefined}
+              stopping={stopping !== null && stopping === currentId}
               queued={queue.length}
               queueNote={queue.length > 0 && awaitingYou && !busy ? "Queued messages wait until you answer above." : undefined}
               note={vaultNote ? "Keys stay in the vault; paste them again to replace them." : undefined}

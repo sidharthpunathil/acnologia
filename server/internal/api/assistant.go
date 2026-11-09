@@ -76,7 +76,7 @@ type chatMsg struct {
 // chatItem is one entry of the transcript the UI shows.
 type chatItem struct {
 	ID      string          `json:"id"`
-	Kind    string          `json:"kind"` // user, assistant, tool, confirm, error
+	Kind    string          `json:"kind"` // user, assistant, tool, confirm, error, stopped
 	Text    string          `json:"text,omitempty"`
 	Tool    string          `json:"tool,omitempty"`
 	Input   json.RawMessage `json:"input,omitempty"`
@@ -216,6 +216,36 @@ type turnState struct {
 	started time.Time
 	done    chan struct{}
 	cancel  context.CancelFunc
+	// stopped is set when the user pressed Stop; runs are the provider
+	// builds this turn started, cancelled with it.
+	stopped bool
+	runs    []int64
+}
+
+func (t *turnState) addRun(id int64) {
+	if t == nil || id <= 0 {
+		return
+	}
+	t.mu.Lock()
+	t.runs = append(t.runs, id)
+	t.mu.Unlock()
+}
+
+// stop ends the turn: no further model call or tool runs, and the provider
+// builds it started are cancelled. It returns those builds.
+func (t *turnState) stop() []int64 {
+	t.mu.Lock()
+	t.stopped = true
+	runs := append([]int64(nil), t.runs...)
+	t.mu.Unlock()
+	t.cancel()
+	return runs
+}
+
+func (t *turnState) wasStopped() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.stopped
 }
 
 func (t *turnState) setStep(s string) {
@@ -531,7 +561,11 @@ func (s *Server) chatTurn(w http.ResponseWriter, r *http.Request, apply func(cs 
 			unlock()
 			close(ts.done)
 		}()
-		if err := cs.loop(ctx); err != nil {
+		err := cs.loop(ctx)
+		switch {
+		case ts.wasStopped():
+			cs.noteStopped()
+		case err != nil:
 			msg := cs.s.Store.Scrub(cs.redactCtx(ctx), err.Error())
 			if ctx.Err() != nil {
 				msg = "The assistant stopped: this turn ran out of time or the chat was deleted."
@@ -632,6 +666,9 @@ func (cs *chatSession) addItem(it chatItem) string {
 		it.ID = crypto.RandomToken("itm_", 9)
 	}
 	it.TS = time.Now().UTC()
+	if it.Build != nil {
+		cs.turn.addRun(it.Build.RunID)
+	}
 	cs.data.Items = append(cs.data.Items, it)
 	cs.newIDs[it.ID] = true
 	return it.ID
@@ -808,7 +845,15 @@ func (cs *chatSession) loop(ctx context.Context) error {
 			case anthropic.BetaToolUseBlock:
 				raw := json.RawMessage(b.JSON.Input.Raw())
 				msg.Blocks = append(msg.Blocks, chatBlock{Type: "tool_use", ID: b.ID, Name: b.Name, Input: raw})
-				out := cs.call(b.Name, raw)
+				var out toolOut
+				if ctx.Err() != nil {
+					// Stopped, or out of time: the calls left in this reply
+					// do not run, but each still gets a result so the
+					// history stays valid.
+					out = toolOut{Model: "Not run: the turn was stopped before this call."}
+				} else {
+					out = cs.call(b.Name, raw)
+				}
 				results = append(results, chatBlock{Type: "tool_result", ToolUseID: b.ID, Content: out.Model, IsError: !out.OK, LogoIDs: out.Logos})
 			}
 		}
@@ -990,4 +1035,46 @@ func (cs *chatSession) api(method, path string, body any) (int, map[string]any, 
 		}
 	}
 	return rec.Code, out, msg
+}
+
+// noteStopped records a turn the user stopped: a transcript line, and a note
+// in the model's history so the next turn knows the work was cut short.
+func (cs *chatSession) noteStopped() {
+	text := "Stopped."
+	if n := len(cs.turn.runs); n == 1 {
+		text = "Stopped. The provider build it started was cancelled."
+	} else if n > 1 {
+		text = fmt.Sprintf("Stopped. The %d provider builds it started were cancelled.", n)
+	}
+	cs.addItem(chatItem{Kind: "stopped", Text: text, OK: true})
+	cs.appendUser(chatBlock{Type: "text", Text: "[The user pressed Stop. The turn was cut short: anything not finished above was not done, and builds started in it were cancelled. Do not resume that work unless the user asks.]"})
+}
+
+// chatStop is POST /chat/threads/{id}/stop: it ends the thread's running
+// turn, cancels the provider builds that turn started, waits for it to wrap
+// up, and answers like GET thread.
+func (s *Server) chatStop(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	if _, _, err := s.loadChat(r.Context(), id, userFrom(r).ID); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if v, ok := chatTurns.Load(id); ok {
+		ts := v.(*turnState)
+		for _, run := range ts.stop() {
+			if err := s.Agent.Cancel(r.Context(), run); err != nil {
+				slog.Info("cancelling a build on stop", "run", run, "err", err)
+			}
+		}
+		select {
+		case <-ts.done:
+		case <-time.After(15 * time.Second):
+		case <-r.Context().Done():
+			return
+		}
+	}
+	s.chatGet(w, r)
 }

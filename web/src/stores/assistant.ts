@@ -96,6 +96,10 @@ interface AssistantStore {
   compacting: number | null;
   /** Summarizes the open thread's older messages now, whatever its size. */
   compact: () => Promise<void>;
+  /** Thread id with a Stop request in flight. */
+  stopping: number | null;
+  /** Stops the open thread's running turn and the provider builds it started. */
+  stop: () => Promise<void>;
 }
 
 let localSeq = 0;
@@ -213,6 +217,7 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     sending: null,
     confirming: null,
     compacting: null,
+    stopping: null,
     turn: null,
     secrets: {},
     lastSent: {},
@@ -360,6 +365,20 @@ export const useAssistant = create<AssistantStore>((set, get) => {
 
     answer: async (body) => {
       await turnRequest((id) => api.answerChat(id, body));
+    },
+
+    stop: async () => {
+      const id = get().currentId;
+      if (id === null || get().stopping === id) return;
+      set({ stopping: id });
+      try {
+        const res = await api.stopChat(id);
+        keepSecrets(res.items ?? []);
+        putThread({ ...res.thread, updated_at: new Date().toISOString() });
+        if (get().currentId === id) set({ items: withSecrets(res.items ?? []), turn: res.turn ?? { active: false } });
+      } finally {
+        if (get().stopping === id) set({ stopping: null });
+      }
     },
 
     compact: async () => {
