@@ -63,6 +63,9 @@ type chatBlock struct {
 	ImageID   string `json:"image_id,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 	Data      string `json:"data,omitempty"`
+	// LogoIDs are the find_logo candidates a tool result shows the model
+	// as pictures (assistant_logos.go).
+	LogoIDs []string `json:"logo_ids,omitempty"`
 }
 
 type chatMsg struct {
@@ -103,6 +106,9 @@ type chatItem struct {
 	// Images are the pictures a user message carried, served by
 	// GET /chat/threads/{id}/images/{image_id}.
 	Images []chatImage `json:"images,omitempty"`
+	// Logos are the candidate logos a find_logo row found, served by
+	// GET /chat/threads/{id}/logos/{logo_id}.
+	Logos []chatAskLogo `json:"logos,omitempty"`
 	// Suggestions are short follow ups the model proposes at the end of a turn.
 	Suggestions []string  `json:"suggestions,omitempty"`
 	TS          time.Time `json:"ts"`
@@ -169,6 +175,9 @@ type chatData struct {
 	VaultSeq int          `json:"vault_seq,omitempty"`
 	BatchSeq int          `json:"batch_seq,omitempty"`
 	ImageSeq int          `json:"image_seq,omitempty"`
+	// Logos are the candidate logos find_logo found, newest last.
+	Logos   []chatLogo `json:"logos,omitempty"`
+	LogoSeq int        `json:"logo_seq,omitempty"`
 	// Compact is the summary that replaces the older messages in what the
 	// model is sent (assistant_compact.go). Messages and Items stay whole.
 	Compact *chatCompact `json:"compact,omitempty"`
@@ -714,15 +723,21 @@ func (cs *chatSession) redactAll() {
 
 // ---- model loop ----
 
-func toParams(msgs []chatMsg) []anthropic.BetaMessageParam {
+func toParams(msgs []chatMsg, logos []chatLogo) []anthropic.BetaMessageParam {
 	out := make([]anthropic.BetaMessageParam, 0, len(msgs))
 	keep := recentImages(msgs, chatModelImages)
+	keepLogo := recentLogos(msgs, chatModelLogos)
+	logoBy := map[string]*chatLogo{}
+	for i := range logos {
+		logoBy[logos[i].ID] = &logos[i]
+	}
 	for _, m := range msgs {
 		blocks := make([]anthropic.BetaContentBlockParamUnion, 0, len(m.Blocks))
 		for _, b := range m.Blocks {
 			switch b.Type {
 			case "image":
 				if keep[b.ImageID] && b.Data != "" {
+					blocks = append(blocks, anthropic.NewBetaTextBlock("[image "+b.ImageID+"]"))
 					blocks = append(blocks, anthropic.NewBetaImageBlock(anthropic.BetaBase64ImageSourceParam{
 						Data: b.Data, MediaType: anthropic.BetaBase64ImageSourceMediaType(b.MediaType)}))
 				} else {
@@ -739,7 +754,7 @@ func toParams(msgs []chatMsg) []anthropic.BetaMessageParam {
 				}
 				blocks = append(blocks, anthropic.NewBetaToolUseBlock(b.ID, in, b.Name))
 			case "tool_result":
-				blocks = append(blocks, anthropic.NewBetaToolResultBlock(b.ToolUseID, b.Content, b.IsError))
+				blocks = append(blocks, toolResultParam(b, keepLogo, logoBy))
 			}
 		}
 		if len(blocks) == 0 {
@@ -771,7 +786,7 @@ func (cs *chatSession) loop(ctx context.Context) error {
 		cs.turn.setStep("Thinking")
 		history, trimmed := cs.history(system)
 		sent := len(cs.data.Messages)
-		resp, err := converse(cs.redactCtx(ctx), system, toParams(history), tools)
+		resp, err := converse(cs.redactCtx(ctx), system, toParams(history, cs.data.Logos), tools)
 		if err != nil {
 			return fmt.Errorf("the assistant could not answer: %v", err)
 		}
@@ -794,7 +809,7 @@ func (cs *chatSession) loop(ctx context.Context) error {
 				raw := json.RawMessage(b.JSON.Input.Raw())
 				msg.Blocks = append(msg.Blocks, chatBlock{Type: "tool_use", ID: b.ID, Name: b.Name, Input: raw})
 				out := cs.call(b.Name, raw)
-				results = append(results, chatBlock{Type: "tool_result", ToolUseID: b.ID, Content: out.Model, IsError: !out.OK})
+				results = append(results, chatBlock{Type: "tool_result", ToolUseID: b.ID, Content: out.Model, IsError: !out.OK, LogoIDs: out.Logos})
 			}
 		}
 		cs.data.Messages = append(cs.data.Messages, msg)
@@ -838,7 +853,7 @@ Pasted keys: you never see key secrets. Before a message reaches you, Acnologia 
 
 Adding keys: when the user names a provider and gives keys, find where they go. Call list_services: if exactly one service uses that provider, add the keys there; if several do, ask which. If none does, call search_providers with the name and any URL the user gave (it matches name, slug, website and docs URL). If a provider fits, prefer it (built in ones above all): create_service from it, then add_keys. Only when nothing fits, call start_provider_build (pass test_key_ref with one pasted key so it can run a live check), then call wait_for_build right away and keep calling it until the build ends. When it is published, create the service if the build did not, add the pasted keys with add_keys, and tell the user what is set up. If it needs review or fails, say so plainly with the link and stop. Put any email, phone, name or other identifier the user mentions for a key into its account fields. Use the labels from the paste as they are; when keys have no labels, label them usefully (for example the account email), and use ask_user with kind names only when the user clearly wants to name them.
 
-Changing providers: when the user asks to rename a provider or change its description, category, website, docs URL, color, status or any part of its spec, do it with update_provider (read get_provider_spec first when you change a list such as offers, hosts or guide endpoints, and send the whole new list). When the change needs research in the provider's docs, such as adding the APIs or products a provider is missing, fixing its rules or quota, or filling its offers, start improve_provider with the user's instruction and wait for it with wait_for_build. Some providers are a catalog of many APIs under one key, each on its own host (Omkar Cloud has about 185 scrapers): such a provider lists them as hosts, grouped by category, and callers pick one with a "/~name" first path segment, such as /proxy/omkar/~tiktok-scraper/videos/details. When a new provider build or a user's request is about one product of such a catalog, build or improve the provider for the whole catalog, not one provider per product. Set a provider's logo with fetch_provider_logo. A service that reads another site (a LinkedIn or Moz scraper) shows that site's logo with the provider's logo small beside it: set it with set_service_logo, or fill_service_logos when the provider's hosts carry logo_url. Services of one account show as one family card in the catalog; link_service_family makes them all share the main service's keys.
+Changing providers: when the user asks to rename a provider or change its description, category, website, docs URL, color, status or any part of its spec, do it with update_provider (read get_provider_spec first when you change a list such as offers, hosts or guide endpoints, and send the whole new list). When the change needs research in the provider's docs, such as adding the APIs or products a provider is missing, fixing its rules or quota, or filling its offers, start improve_provider with the user's instruction and wait for it with wait_for_build. Some providers are a catalog of many APIs under one key, each on its own host (Omkar Cloud has about 185 scrapers): such a provider lists them as hosts, grouped by category, and callers pick one with a "/~name" first path segment, such as /proxy/omkar/~tiktok-scraper/videos/details. When a new provider build or a user's request is about one product of such a catalog, build or improve the provider for the whole catalog, not one provider per product. A service that reads another site (a LinkedIn or Moz scraper) shows that site's logo with the provider's logo small beside it; fill_service_logos sets them all when the provider's hosts carry logo_url. Logos: to give a service or a provider a logo, call find_logo with the site or brand it should show (linkedin.com for a LinkedIn scraper, the provider's own website for a provider) and look at the pictures it returns. When one is clearly the right brand and is vector or clear, set it with set_service_logo or set_provider_logo and its logo id, without asking. When you are not sure (only small or fair ones, blurry, cropped, a generic icon, a wide wordmark that will not read small, or maybe another brand), ask with ask_user kind logo and the candidate ids, and say in the question what worries you; the user can pick one, or send a link or an image instead. When the user gives a link to a logo, set it with url; when they send an image as the logo, set it with image_id. For many services at once, set the clear ones and ask only about the doubtful ones, one at a time. Services of one account show as one family card in the catalog; link_service_family makes them all share the main service's keys.
 
 Same account, several services: one provider account's key often works for several services (each Omkar Cloud API is its own host but takes the same key). A new service on the same site with the same auth placement as a service that has keys is linked to those keys automatically and has keys at once; link_service_keys does it by hand, shared_keys lists keys stored twice and services that could be linked, and link_all_shared_keys links every suggestion. When the user pastes a key that is already stored in another service (add_keys reports it as a duplicate or shared_keys shows a twin), say where it already is and link the services instead of storing it again. Before start_provider_build for one product of a company already in the catalog, prefer improve_provider on that company's provider (add the product as a host) or a linked service, so keys are reused.
 
@@ -905,7 +920,8 @@ func (cs *chatSession) runTool(t *chatTool, in map[string]any, raw json.RawMessa
 		return out
 	}
 	itemID := cs.addItem(chatItem{Kind: "tool", Tool: t.Name, Input: cs.redactRaw(raw), OK: out.OK,
-		Summary: out.Summary, Detail: crypto.Truncate(out.Model, 4000), Link: out.Link, Card: out.Card, Entities: out.Entities})
+		Summary: out.Summary, Detail: crypto.Truncate(out.Model, 4000), Link: out.Link, Card: out.Card, Entities: out.Entities,
+		Logos: cs.askLogos(out.Logos)})
 	if out.Secret != "" {
 		putToken(cs.thread, itemID, out.Secret)
 	}

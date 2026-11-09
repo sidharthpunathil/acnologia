@@ -492,6 +492,7 @@ export function AssistantPage() {
     }
   };
 
+  const logoURL = (logoId: string) => (currentId === null ? "" : api.chatLogoURL(currentId, logoId));
   const onAnswerAsk = async (body: Parameters<typeof answerAsk>[0]) => {
     try {
       await answerAsk(body);
@@ -644,7 +645,7 @@ export function AssistantPage() {
       return (
         <div key={row.key} className={cx(spacing, GUTTER)}>
           <Steps items={row.items} seconds={runSeconds(row)} fresh={delayFor} live={working && i === rows.length - 1} />
-          <ToolCards items={row.items} />
+          <ToolCards items={row.items} logoURL={logoURL} />
         </div>
       );
     const it = row.item;
@@ -692,7 +693,7 @@ export function AssistantPage() {
     else if (it.kind === "ask")
       body = (
         <div className={GUTTER}>
-          <AskCard item={it} busy={busy} onAnswer={onAnswerAsk} />
+          <AskCard item={it} busy={busy} onAnswer={onAnswerAsk} logoURL={logoURL} />
         </div>
       );
     else if (it.kind === "confirm")
