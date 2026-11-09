@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { Link } from "react-aria-components";
-import { RiAddLine } from "@remixicon/react";
+import { RiAddLine, RiArrowDownSLine } from "@remixicon/react";
 import { AcnAiBuilder, AcnKeyPool, categoryIcon } from "@/components/foundations/icons/acn";
 import { useTitle } from "../hooks/useTitle";
 import { useServices } from "../stores/services";
@@ -10,10 +10,10 @@ import { docProviderSlug } from "../lib/peerProviders";
 import { useAuth } from "../stores/auth";
 import { can } from "../lib/perms";
 import { STRATEGY_LABEL, compact, num, plural } from "../lib/format";
-import type { Service, SharedKeysReport } from "../lib/types";
+import type { Service, ServiceFamily, SharedKeysReport } from "../lib/types";
 import { api, errorMessage } from "../lib/api";
 import { toast } from "../stores/toast";
-import { ServiceLogo } from "../components/EntityLogo";
+import { EntityLogo, ServiceLogo } from "../components/EntityLogo";
 import { Button } from "@/components/base/buttons/button";
 import { SearchField } from "@/components/base/search-field/search-field";
 import { Skeleton } from "@/components/base/skeleton/skeleton";
@@ -131,6 +131,132 @@ function ServiceCard({ s }: { s: Service }) {
   );
 }
 
+type CatalogRow = { kind: "service"; s: Service } | { kind: "family"; f: ServiceFamily; members: Service[] };
+
+/** A category's cards: services of one account fold into one family card, where its first member would sit. */
+function catalogRows(list: Service[], familyOf: Map<number, ServiceFamily>): CatalogRow[] {
+  const rows: CatalogRow[] = [];
+  const at = new Map<string, Extract<CatalogRow, { kind: "family" }>>();
+  for (const s of list) {
+    const f = familyOf.get(s.id);
+    if (!f) {
+      rows.push({ kind: "service", s });
+      continue;
+    }
+    let row = at.get(f.key);
+    if (!row) {
+      row = { kind: "family", f, members: [] };
+      at.set(f.key, row);
+      rows.push(row);
+    }
+    row.members.push(s);
+  }
+  // A family with one member in this category is just that service.
+  return rows.map((r) => (r.kind === "family" && r.members.length === 1 ? { kind: "service", s: r.members[0] } : r));
+}
+
+/**
+ * Services one account's key serves, as one card: the provider's logo, how
+ * many APIs, and keys counted once. It opens in place to list its services,
+ * and offers to share the key with the members that do not use it yet.
+ */
+function FamilyCard({
+  f,
+  members,
+  main,
+  open,
+  onToggle,
+  manage,
+  onLinked,
+}: {
+  f: ServiceFamily;
+  members: Service[];
+  main: Service;
+  open: boolean;
+  onToggle: () => void;
+  manage: boolean;
+  onLinked: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const logo = main.provider_logo_url ?? main.logo_url;
+  const free = Math.min(f.available, f.keys);
+  const dot =
+    f.keys === 0
+      ? { cls: "bg-border-button-hover", label: "No keys yet" }
+      : free > 0
+        ? { cls: "bg-notification-success-foreground", label: "Keys available" }
+        : { cls: "bg-chart-8-active", label: "Keys resting, none free right now" };
+  const share = async () => {
+    setBusy(true);
+    try {
+      const res = await api.linkFamily(f.key);
+      toast.success(`${plural(res.linked.length, "service")} now use the keys of ${f.name}.`);
+      onLinked();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const panel = `family-${f.key.replace(/[^a-z0-9]+/gi, "-")}`;
+  return (
+    <>
+      <div className={cx(CARD, "flex flex-col")}>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panel}
+          onClick={onToggle}
+          className="group flex min-h-[76px] w-full cursor-pointer items-center gap-3.5 rounded-3xl px-4 py-4 text-start outline-none transition-colors duration-150 hover:bg-background-primary-hover focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+        >
+          <span className="relative shrink-0">
+            <EntityLogo src={logo} name={f.name} size="md" />
+            <span aria-hidden="true" className="absolute -end-1.5 -bottom-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-background-primary-default bg-background-tertiary-default px-1 font-mono text-[10px] text-text-primary">
+              {members.length}
+            </span>
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 truncate text-body-medium text-text-primary">{f.name}</span>
+              <span className={cx("size-1.5 shrink-0 rounded-full", dot.cls)} title={dot.label} aria-hidden="true" />
+              <span className="sr-only">{dot.label}</span>
+              <RiArrowDownSLine
+                className={cx("ms-auto size-5 shrink-0 text-foreground-icon-tertiary transition-transform duration-150", open && "rotate-180")}
+                aria-hidden
+              />
+            </div>
+            <div className="mt-1 font-mono text-caption-1-regular text-text-secondary">
+              {plural(members.length, "API")} · {f.keys === 0 ? "no keys yet" : `${free} of ${plural(f.keys, "key")} available`}
+            </div>
+          </div>
+        </button>
+        {manage && f.unlinked > 0 && f.keys > 0 && (
+          <div className="flex items-center gap-2 border-t border-separator-border px-4 py-2.5">
+            <span className="min-w-0 flex-1 text-caption-1-regular text-text-secondary">
+              {plural(f.unlinked, "API")} {f.unlinked === 1 ? "does" : "do"} not use the key yet
+            </span>
+            <Button variant="primary" size="small" disabled={busy} aria-busy={busy || undefined} onClick={() => void share()}>
+              Share keys
+            </Button>
+          </div>
+        )}
+      </div>
+      {open && (
+        <div
+          id={panel}
+          role="region"
+          aria-label={`${f.name} services`}
+          className="col-span-full grid grid-cols-1 gap-3 rounded-3xl border border-dashed border-border-button-default p-3 sm:grid-cols-2 lg:grid-cols-3"
+        >
+          {members.map((s) => (
+            <ServiceCard key={s.id} s={s} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function CatalogSkeleton() {
   return (
     <div role="status" aria-label="Loading services">
@@ -207,7 +333,13 @@ function SharedKeysCallout({ services, onLinked }: { services: Service[]; onLink
 
 export function CatalogPage() {
   useTitle("Catalog");
-  const { services, loaded, error, fetch } = useServices();
+  const { services, families, loaded, error, fetch } = useServices();
+  const [openFamilies, setOpenFamilies] = useState<Record<string, boolean>>({});
+  const familyOf = useMemo(() => {
+    const m = new Map<number, ServiceFamily>();
+    for (const f of families) for (const id of f.service_ids) m.set(id, f);
+    return m;
+  }, [families]);
   const ensureProviders = useProviders((s) => s.ensure);
   const role = useAuth((s) => s.user?.role);
   const [q, setQ] = useState("");
@@ -241,7 +373,11 @@ export function CatalogPage() {
   }, [filtered]);
 
   // A key shared between services of one account is counted once, where it is stored.
-  const totalKeys = services.reduce((n, s) => n + (s.key_counts?.total ?? 0) - (s.key_counts?.shared ?? 0), 0);
+  // A key shared between services of one account is counted once: a family
+  // counts its distinct secrets, other services their own keys.
+  const totalKeys =
+    services.reduce((n, s) => n + (familyOf.has(s.id) ? 0 : (s.key_counts?.total ?? 0) - (s.key_counts?.shared ?? 0)), 0) +
+    families.reduce((n, f) => n + f.keys, 0);
   const available = services.reduce((n, s) => n + (s.key_counts?.available ?? 0), 0);
   const req24 = services.reduce((n, s) => n + (s.requests_24h ?? 0), 0);
 
@@ -285,7 +421,9 @@ export function CatalogPage() {
         className="mb-0"
       />
 
-      {can.manage(role) && <SharedKeysCallout services={services} onLinked={() => fetch().catch(() => undefined)} />}
+      {can.manage(role) && families.length === 0 && (
+        <SharedKeysCallout services={services} onLinked={() => fetch().catch(() => undefined)} />
+      )}
 
       <SearchField
         value={q}
@@ -365,9 +503,22 @@ export function CatalogPage() {
                       {plural(keys, "key")} pooled across {plural(list.length, "service")}
                     </p>
                     <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {list.map((s) => (
-                        <ServiceCard key={s.id} s={s} />
-                      ))}
+                      {catalogRows(list, familyOf).map((row) =>
+                        row.kind === "service" ? (
+                          <ServiceCard key={row.s.id} s={row.s} />
+                        ) : (
+                          <FamilyCard
+                            key={row.f.key}
+                            f={row.f}
+                            members={row.members}
+                            main={services.find((x) => x.id === row.f.main_id) ?? row.members[0]}
+                            open={!!openFamilies[row.f.key] || !!q.trim()}
+                            onToggle={() => setOpenFamilies((o) => ({ ...o, [row.f.key]: !o[row.f.key] }))}
+                            manage={can.manage(role)}
+                            onLinked={() => fetch().catch(() => undefined)}
+                          />
+                        ),
+                      )}
                     </div>
                   </section>
                 );

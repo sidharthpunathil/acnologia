@@ -78,7 +78,7 @@ func (s *Server) listServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillLogos(r.Context(), svcs...)
-	writeJSON(w, 200, map[string]any{"services": svcs})
+	writeJSON(w, 200, map[string]any{"services": svcs, "families": s.serviceFamilies(r.Context(), svcs, isSuper(r))})
 }
 
 func (s *Server) loadService(w http.ResponseWriter, r *http.Request) (*store.Service, bool) {
@@ -277,6 +277,13 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.create", created.Slug, "")
 	// A new service of an account already in the pool uses its keys at once.
 	if src, err := catalog.AutoLinkKeys(r.Context(), s.Store, created); err == nil && src != nil {
+		if again, err := s.Store.GetService(r.Context(), created.ID); err == nil {
+			created = again
+		}
+	}
+	// A service on a provider host with a logo of its own (the site a
+	// scraper reads) shows that logo.
+	if ok, _ := catalog.FillServiceLogo(r.Context(), s.Store, created); ok {
 		if again, err := s.Store.GetService(r.Context(), created.ID); err == nil {
 			created = again
 		}

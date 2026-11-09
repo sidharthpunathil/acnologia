@@ -338,6 +338,7 @@ func (a *Agent) publish(ctx context.Context, run *store.AgentRun, d *draft, by s
 				a.Store.AddAudit(ctx, nil, "service.create", created.Slug, "by AI run "+fmt.Sprint(id))
 				a.addTestKeys(ctx, run, created)
 				// Another API of an account already in the pool: use its keys.
+				_, _ = catalog.FillServiceLogo(ctx, a.Store, created)
 				if src, err := catalog.AutoLinkKeys(ctx, a.Store, created); err == nil && src != nil {
 					a.logf(ctx, id, "done", "Uses the keys of "+src.Name, "The same account's keys work here too, so "+created.Name+" uses the keys of /"+src.Slug+" and has keys at once.")
 				}
