@@ -1006,6 +1006,13 @@ export interface ChatReply {
 /** Tool groups an app's MCP server can expose. */
 export type MCPToolSet = "core" | "service_tools" | "insights" | "manage";
 
+/**
+ * How tools/list shows the service tools. "all" lists every one, "search"
+ * lists the core tools plus search_tools and call_tool and leaves the service
+ * tools to be found, "auto" lists all while there are few and searches beyond that.
+ */
+export type MCPToolMode = "auto" | "all" | "search";
+
 /** Per app MCP settings, from GET /api/admin/apps/{id}/mcp. */
 export interface MCPSettings {
   core: boolean;
@@ -1022,6 +1029,8 @@ export interface MCPSettings {
   instructions: string;
   /** Tool names hidden one by one. */
   disabled_tools: string[];
+  /** How tools/list shows the service tools. Empty is saved as "auto". */
+  tool_mode: MCPToolMode;
   updated_at: string | null;
 }
 
@@ -1034,12 +1043,27 @@ export interface MCPTool {
   description: string;
   set: MCPToolSet;
   enabled: boolean;
+  /** Shown by tools/list. False for a tool that is on but only found with search_tools. */
+  listed: boolean;
+}
+
+/** What tools/list shows with the saved settings. */
+export interface MCPListing {
+  /** The effective mode: auto resolves to one of these. */
+  mode: "all" | "search";
+  /** Tools tools/list shows. */
+  listed: number;
+  /** Tools that are on, listed or not. */
+  total: number;
+  /** Auto lists everything while there are this many service tools or fewer. */
+  auto_max: number;
 }
 
 export interface MCPView {
   settings: MCPSettings;
   /** Every tool in the sets that are on, including ones switched off one by one. */
   tools: MCPTool[];
+  listing: MCPListing;
   /** Full URL of the HTTP MCP endpoint, ending in /mcp. */
   endpoint: string;
 }

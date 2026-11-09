@@ -30,15 +30,26 @@ func (s *Server) mcpView(ctx context.Context, a *store.App, st store.MCPSettings
 	for _, t := range tools {
 		enabled[t.Name] = true
 	}
+	listed := map[string]bool{}
+	for _, t := range s.mcpListedTools(ctx, a, st) {
+		listed[t.Name] = true
+	}
 	list := []map[string]any{}
 	for _, t := range all {
-		list = append(list, map[string]any{"name": t.Name, "title": t.Title, "description": t.Description, "set": t.Set, "enabled": enabled[t.Name]})
+		list = append(list, map[string]any{"name": t.Name, "title": t.Title, "description": t.Description, "set": t.Set, "enabled": enabled[t.Name], "listed": listed[t.Name]})
+	}
+	effective := toolModeAll
+	if s.searchModeFor(ctx, a, st) {
+		effective = toolModeSearch
 	}
 	base := s.Cfg.PublicURL
 	if base == "" {
 		base = "http://localhost" + s.Cfg.Addr
 	}
-	return map[string]any{"settings": st, "tools": list, "endpoint": strings.TrimRight(base, "/") + "/mcp"}
+	return map[string]any{"settings": st, "tools": list, "endpoint": strings.TrimRight(base, "/") + "/mcp",
+		// listing says what tools/list shows right now: in search mode only
+		// the tools marked listed, the rest found with search_tools.
+		"listing": map[string]any{"mode": effective, "listed": len(listed), "total": len(tools), "auto_max": mcpAutoListMax}}
 }
 
 func (s *Server) getAppMCP(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +88,14 @@ func (s *Server) putAppMCP(w http.ResponseWriter, r *http.Request) {
 	if in.DisabledTools == nil {
 		in.DisabledTools = []string{}
 	}
+	switch in.ToolMode {
+	case "":
+		in.ToolMode = toolModeAuto
+	case toolModeAuto, toolModeAll, toolModeSearch:
+	default:
+		writeErr(w, 400, "invalid", "tool_mode must be auto, all or search")
+		return
+	}
 	if err := s.Store.SetMCPSettings(r.Context(), a.ID, in); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -87,7 +106,7 @@ func (s *Server) putAppMCP(w http.ResponseWriter, r *http.Request) {
 			detail = append(detail, name)
 		}
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "app.mcp", a.Name, "tool sets: "+strings.Join(detail, ", "))
+	s.Store.AddAudit(r.Context(), userFrom(r), "app.mcp", a.Name, "tool sets: "+strings.Join(detail, ", ")+"; tool mode: "+in.ToolMode)
 	st, _ := s.Store.GetMCPSettings(r.Context(), a.ID)
 	writeJSON(w, 200, s.mcpView(r.Context(), a, st))
 }

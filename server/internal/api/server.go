@@ -80,6 +80,15 @@ type Server struct {
 	fwdAt        time.Time
 	fwdInnerOnce sync.Once
 	fwdInnerLn   *chanListener
+	// catMu and catCh wake the open MCP notification streams (mcp_notify.go).
+	catMu sync.Mutex
+	catCh chan struct{}
+	// catGen counts catalog changes; toolCat is the built MCP tool catalog
+	// (mcp_cache.go).
+	catGen      atomic.Int64
+	toolCatMu   sync.Mutex
+	toolCat     *toolCatalog
+	toolBuildMu sync.Mutex
 	// chatModel replaces the Claude call in tests.
 	chatModel func(ctx context.Context, system string, msgs []anthropic.BetaMessageParam, tools []anthropic.BetaToolUnionParam) (*anthropic.BetaMessage, error)
 	// chatSummary replaces the compaction summary call in tests.
@@ -237,7 +246,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Route("/api/admin", func(r chi.Router) {
-		r.Use(jsonOnly, s.requireUser)
+		r.Use(jsonOnly, s.requireUser, s.catalogNotify)
 		r.Get("/me", s.me)
 		// Account and token management need a real sign-in, not an API token.
 		r.With(s.sessionOnly).Patch("/me", s.updateMe)

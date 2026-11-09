@@ -454,8 +454,11 @@ An admin picks each app's tool sets in the dashboard (`GET`/`PUT
 
 - **core**: `list_services`, `pool_status`, `service_guide`, `get_key`,
   `renew_key`, `report_key`, `proxy_request`.
-- **service tools**: generated from each provider's examples and named
-  `<slug>_<example>`.
+- **service tools**: generated from each provider's examples, then from
+  every usage guide endpoint no example covers, typed from the guide's
+  params, and named `<slug>_<group>_<endpoint name>`. A new provider,
+  service or guide adds its tools without code or a restart. `search_tools`
+  and `call_tool` come with them.
 - **insights** (read only): `list_keys`, `key_details`, `service_stats`.
 - **manage**: `check_keys`, `set_key_status`, `add_keys`. `check_keys` needs a
   service and checks only that service's keys.
@@ -472,7 +475,15 @@ A typical session:
 1. The client initializes with `Authorization: Bearer acn_...`. The
    instructions tell the agent to read `service_guide` before calling a
    service it has not used.
-2. `tools/list` returns the tools this app's settings allow.
+2. `tools/list` returns the tools this app's settings allow. With the app's
+   `tool_mode` at `search`, or at `auto` (the default) with more than 30
+   service tools, it lists the other tools plus `search_tools` and
+   `call_tool`: the agent asks `search_tools` for what it needs ("linkedin
+   jobs") and gets matching tools with their input schemas, then calls one
+   by name or through `call_tool`. With `all` it lists every tool.
+   An agent that keeps `GET /mcp` open (`Accept: text/event-stream`) gets
+   `notifications/tools/list_changed` when the app's tools change, and lists
+   them again.
 3. `service_guide` returns the usage guide as Markdown: endpoints, params,
    limits and errors.
 4. `proxy_request` runs the proxy handler in process, with the response

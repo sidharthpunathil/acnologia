@@ -271,7 +271,7 @@ var (
 
 	mcpFields = map[string]any{
 		"core":              bProp("Lease, report, renew and proxy tools"),
-		"service_tools":     bProp("Tools generated from each provider's examples"),
+		"service_tools":     bProp("Tools generated from each provider's examples and guide endpoints"),
 		"insights":          bProp("Read only key insights"),
 		"manage":            bProp("Key management tools for anyone holding the app's token"),
 		"resources":         bProp("MCP resources"),
@@ -280,6 +280,7 @@ var (
 		"max_result_kb":     iProp("Cap on tool result size, 1 to 2048"),
 		"instructions":      sProp("Extra instructions sent to MCP clients"),
 		"disabled_tools":    aProp(map[string]any{"type": "string"}, "Tool names to hide; replaces the list"),
+		"tool_mode":         eProp("How tools/list shows service tools: all of them, only core tools plus search_tools and call_tool, or auto (all while 30 or fewer)", "auto", "all", "search"),
 	}
 )
 

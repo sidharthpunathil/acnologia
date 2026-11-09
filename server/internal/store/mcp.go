@@ -50,12 +50,16 @@ type MCPSettings struct {
 	// Instructions are appended to the server instructions sent on initialize.
 	Instructions string `json:"instructions"`
 	// DisabledTools hides individual tools by name.
-	DisabledTools []string   `json:"disabled_tools"`
-	UpdatedAt     *time.Time `json:"updated_at"`
+	DisabledTools []string `json:"disabled_tools"`
+	// ToolMode is how tools/list shows the service tools: "all", "search"
+	// (core tools plus search_tools and call_tool), or "auto" (all while
+	// there are few, search past that).
+	ToolMode  string     `json:"tool_mode"`
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 func DefaultMCPSettings() MCPSettings {
-	return MCPSettings{Core: true, ServiceTools: true, Resources: true, Prompts: true, MaxResultKB: 200, DisabledTools: []string{}}
+	return MCPSettings{Core: true, ServiceTools: true, Resources: true, Prompts: true, MaxResultKB: 200, DisabledTools: []string{}, ToolMode: "auto"}
 }
 
 func (s *Store) GetMCPSettings(ctx context.Context, appID int64) (MCPSettings, error) {

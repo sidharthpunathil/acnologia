@@ -460,7 +460,7 @@ Never log or persist `secret`.
 
 ## MCP
 
-`POST /mcp` is a Model Context Protocol endpoint (streamable HTTP transport, JSON responses, no SSE needed). Authenticate with the same app token header. Use `initialize`, then `tools/list` for the authoritative input schemas, then `tools/call`.
+`POST /mcp` is a Model Context Protocol endpoint (streamable HTTP transport, JSON responses). Authenticate with the same app token header. Use `initialize`, then `tools/list` for the authoritative input schemas, then `tools/call`. `GET /mcp` is optional: it opens the notification stream (see Staying current).
 
 ```sh
 # Claude Code, over HTTP
@@ -496,11 +496,14 @@ Each app chooses its tool sets on the dashboard Apps page. Core, service tools, 
 | core | `renew_key` | extend a lease for a long job | `lease_id`, optional `ttl_sec` |
 | core | `report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome` (`ok`, `rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned`, `error`), optional `retry_after_sec`, `message`, `rotate` |
 | core | `proxy_request` | make a provider call through the proxy without seeing a key | `service`, `path`, optional `method`, `query`, `body` |
-| service tools | one per provider example, named after the service and the example | ready to call endpoints, such as a SerpAPI search; the description names the matching offer, whether it is free and its per key limits | the example's path and query parameters, `extra_query`, `body` |
+| service tools | one per provider example and per usage guide endpoint that no example covers, named `<service slug>_<group>_<endpoint name>` (such as `serpapi_google_search`) | ready to call endpoints; the description names the matching offer, whether it is free and its per key limits | path parameters (required), query parameters from the example or the guide's params, `extra_query`, and `body` (the guide's body params) |
+| service tools | `search_tools`, `call_tool` | find service tools by words and call one by name; listed in every tool mode while service tools are on | `query`, optional `service`, `limit`; `name`, `arguments` |
 | insights | `list_keys`, `key_details`, `service_stats` | read only key health, quota and recent events, never a secret | `service`, `validity`, `key_id` |
 | manage | `check_keys`, `set_key_status`, `add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
 
-Resources: `acnologia://services`, `acnologia://services/{slug}`, `acnologia://services/{slug}/guide` (the usage guide, `text/markdown`) and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `get_key` exclusive by default, add instructions and hide single tools.
+Resources: `acnologia://services`, `acnologia://services/{slug}`, `acnologia://services/{slug}/guide` (the usage guide, `text/markdown`) and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `get_key` exclusive by default, add instructions, hide single tools and pick the tool mode.
+
+Service tools follow the provider data: every example in a provider's spec, then every endpoint of its usage guide (`Guide.Endpoints`) that no example covers, typed from the guide's params. Adding a provider or a service, or the provider builder writing a guide, adds its tools at once, with no code and no restart.
 
 Example call:
 
@@ -510,6 +513,43 @@ Example call:
             "arguments": {"service": "serpapi", "method": "GET", "path": "/search.json",
                           "query": {"engine": "google", "q": "coffee"}}}}
 ```
+
+### Finding tools
+
+An app can reach hundreds of service tools, more than a model's context should hold. The per app `tool_mode` decides what `tools/list` shows:
+
+| tool_mode | tools/list |
+|---|---|
+| `auto` (default) | every tool while the app has 30 or fewer service tools, else as `search` |
+| `all` | every tool |
+| `search` | the core (and insights, manage) tools plus `search_tools` and `call_tool` |
+
+Service tools that are not listed can still be called by name with `tools/call`. `search_tools` `{query, service?, limit?}` (limit default 8, max 25) ranks tools by the words in the service name, provider, product group, host, tool name, description and params, weighting rare words, tolerating one typo and plurals, and matching a few synonyms (search and find, scrape and extract, jobs and careers, maps and places, ...). It returns each tool with its input schema. An empty query returns the services with their tool counts. `call_tool` `{name, arguments}` runs a tool it found.
+
+```json
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+ "params": {"name": "search_tools", "arguments": {"query": "linkedin jobs", "limit": 1}}}
+```
+
+The result (as JSON text in the tool result) looks like:
+
+```json
+{"tools": [{"name": "omkar_cloud_linkedin_jobs_linkedin_jobs_scraper_host_search_jobs",
+            "title": "Omkar Cloud: LinkedIn Jobs (linkedin-jobs-scraper host): search jobs",
+            "description": "...", "inputSchema": {"type": "object", "properties": {"keywords": {"type": "string"}, "location": {"type": "string"}, "extra_query": {"type": "object"}}}}],
+ "matches": 3, "catalog_size": 42, "hint": "Call a tool with call_tool {name, arguments}, or by its name."}
+```
+
+```json
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+ "params": {"name": "call_tool",
+            "arguments": {"name": "omkar_cloud_linkedin_jobs_linkedin_jobs_scraper_host_search_jobs",
+                          "arguments": {"keywords": "golang", "location": "Berlin"}}}}
+```
+
+### Staying current
+
+`initialize` advertises `tools.listChanged: true` (and `resources.listChanged: true` when resources are on). A client that opens `GET /mcp` with `Accept: text/event-stream` and the app token gets a server sent events stream that sends `notifications/tools/list_changed` (and `notifications/resources/list_changed`) when what the app sees changes: a provider or service added, edited or removed, a capability or group saved, the app's access or MCP settings changed. The client then calls `tools/list` again, with no reconnect. Any admin write (dashboard, CLI, control MCP, Assistant) wakes the streams at once; a check every 60 seconds catches other changes, such as the provider refresh or another server's share. The stream sends a keepalive comment every 25 seconds, closes after an hour (clients reconnect), and closes when the token stops working. `GET /mcp` without that `Accept` answers 405. In search mode `tools/list` holds only the fixed tools, so a new provider changes nothing there: `search_tools` finds its tools at once.
 
 Code you write can also call a provider's own URL with Acnologia as its `HTTPS_PROXY` (see Forward proxy); the MCP instructions say so. Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
 
@@ -528,13 +568,13 @@ Groups: `overview`, `services`, `keys`, `apps`, `providers`, `call`, `ai`, `rout
 
 ## SDKs
 
-There are SDKs for Python, TypeScript, Go, PHP, Ruby, Rust, Java, Kotlin, C#, Swift, Dart and C++. None is on a package registry yet; [the SDK index](/docs/sdks.md) shows how to install each one today and how to run its tests.
+There are seventeen SDKs: Python, TypeScript, Go, PHP, Ruby, Rust, Java, Kotlin, C#, Swift, Dart, C++, C, Zig, Elixir, Haskell and Lua. All are at version 0.2.0 and follow one contract, `sdk/SPEC.md` in the repository. None is on a package registry yet; [the SDK index](/docs/sdks.md) shows how to install each one today and how to run its tests.
 
-All SDKs share the same shape: `services`, `lease` (returns a lease with `report`, `renew` and `apply`), `with_key` or `withKey` (calls your function, reports, and rotates when you raise a rate limit, quota or invalid key error), and `proxy(service)` returning raw responses. On the last allowed attempt `with_key` reports without rotating and re-raises. Every client also reads `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN`, and never prints a secret or token.
+All SDKs share the same shape: `services`, `lease` (returns a lease with `report`, `renew` and `apply`), `with_key` or `withKey` (calls your function, reports, and rotates when you raise a rate limit, quota or invalid key error), and `proxy(service)` returning raw responses. On the last allowed attempt `with_key` reports without rotating and re-raises. Every client except Go, TypeScript and PHP also reads `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN`, and none prints a secret or token.
 
 Every SDK also takes an `exclusive` lease option (sent as `exclusive: true`; `with_key` passes it to the leases it takes itself), renews an open lease (`POST /api/v1/leases/{id}/renew`, which updates the lease's expiry; 404 `lease_not_found` is the generic API error), and raises a dedicated error for 503 `service_unavailable` (the circuit breaker is open) that carries the retry after and is not a no key error.
 
-Concurrency support is the same everywhere: `lease` and `with_key` take a wait option that is sent as `wait_sec`, a 503 `all_keys_busy` raises a busy error that is a subtype of (or, in Go, the same type as) the no key error so existing handlers keep working, and `with_key` reports every lease it takes, whatever the callback does, so slots are released at once.
+Concurrency support is the same everywhere (the tables show twelve SDKs; the C, Zig, Elixir, Haskell and Lua READMEs have the same options under their own names): `lease` and `with_key` take a wait option that is sent as `wait_sec`, a 503 `all_keys_busy` raises a busy error that is a subtype of (or, in Go, the same type as) the no key error so existing handlers keep working, and `with_key` reports every lease it takes, whatever the callback does, so slots are released at once.
 
 | SDK | wait option | busy error |
 |---|---|---|
@@ -565,6 +605,57 @@ Concurrency support is the same everywhere: `lease` and `with_key` take a wait o
 | Swift | `try await lease.renew(ttl: 600)` | `LeaseOptions(exclusive: true)` | `AcnologiaError.serviceUnavailable` |
 | Dart | `await lease.renew(ttl: Duration(minutes: 10))` | `lease(s, exclusive: true)` | `ServiceUnavailableException` |
 | C++ | `lease.renew(std::chrono::minutes(10))` | `LeaseOptions::exclusive` | `acnologia::ServiceUnavailable` |
+
+### Shared surface (0.2.0)
+
+Every SDK has these calls, named in the language's idiom (`forwardProxyEnv` in TypeScript, `forward_proxy_env` in Python, `ForwardProxyEnv` in Go):
+
+- `me()`: `GET /api/v1/me`, the app, its limits and usage, its services and, for a share's token, the share (a stopped share still answers 200 here, with its `status`).
+- `services()`: each service with `slug, name, provider, category, available, base_url, auth, guide_url`.
+- `guide(slug)` and `guideMarkdown(slug)`: the usage guide, structured or as Markdown. Ruby and C++ kept older names: `guide` returns the Markdown, and the structured guide is `guide_doc` in Ruby and `guide_details` in C++.
+- `capabilities()` and `capability(slug, params, {service, raw})`: list capabilities, and call one (`POST /proxy/{slug}`, with `?_service=` and `?_raw=1`).
+- `forwardProxy()` (`GET /api/v1/proxy`), `forwardProxyCA()` (the CA, public, no token; SDKs with a file system also save it, default `acnologia-ca.pem`), `forwardProxyURL()` (`http://app:acn_...@host:8888`) and `forwardProxyEnv(caPath)` (`HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`). Java spells them `forwardProxyCa` and `forwardProxyUrl`, Kotlin `forwardProxyUrl`. The URL, the env map and the client helpers below contain the token: keep them out of logs.
+- Proxy options `idempotencyKey` (`Idempotency-Key`) and `noCache` (`Cache-Control: no-cache`).
+- Response metadata: `keyId` (absent for a share's token), `attempts`, `service`, `cache`, `replayed`, `capability`, `tried` (a list of `{service, status}`).
+- Client option `accessPassword`, sent as `X-Acnologia-Access` (falls back to `ACNOLOGIA_ACCESS_PASSWORD` where the SDK reads the environment).
+- Typed errors for 429 `app_limit_reached` (with `limit`, `reset_at`, retry after) and 403 `share_revoked`, `share_paused`, `share_expired` (with the status).
+
+| SDK | me, guide | forward proxy env | response metadata | limit and share errors |
+|---|---|---|---|---|
+| Python | `acn.me()`, `acn.guide_markdown(s)` | `acn.forward_proxy_env()` | `proxy_info(resp)` | `AppLimitReached`, `ShareUnavailable` |
+| TypeScript | `me()`, `guideMarkdown(s)` | `forwardProxyEnv()` | `proxyInfo(res)` | `AppLimitReachedError`, `ShareUnavailableError` |
+| Go | `c.Me(ctx)`, `c.GuideMarkdown(ctx, s)` | `c.ForwardProxyEnv(ctx, caPath)` | `acnologia.ProxyInfo(resp)` | `*ErrAppLimitReached`, `*ErrShareUnavailable` |
+| PHP | `$acn->me()`, `$acn->guideMarkdown($s)` | `$acn->forwardProxyEnv()` | `$res->keyId()`, `$res->attempts()`, ... | `Acnologia\Exception\AppLimitReached`, `ShareUnavailable` |
+| Ruby | `acn.me`, `acn.guide(s)` (Markdown), `acn.guide_doc(s)` | `acn.forward_proxy_env` | `resp.key_id`, `resp.attempts`, ... | `Acnologia::AppLimitReached`, `Acnologia::ShareUnavailable` |
+| Rust | `acn.me()`, `acn.guide_markdown(s)` | `acn.forward_proxy_env(..)` | trait `ProxyResponseExt`: `resp.key_id()`, ... | `Error::AppLimitReached`, `Error::ShareUnavailable` |
+| Java | `acn.me()`, `acn.guideMarkdown(s)` | `acn.forwardProxyEnv(..)` | `ProxyResponse.of(res)` | `AppLimitReachedException`, `ShareUnavailableException` |
+| Kotlin | `acn.me()`, `acn.guideMarkdown(s)` | `acn.forwardProxyEnv()` | `res.acnologia` | `AppLimitReachedException`, `ShareUnavailableException` |
+| C# | `MeAsync()`, `GuideMarkdownAsync(s)` | `ForwardProxyEnvAsync()` | `res.GetProxyInfo()` | `AppLimitReachedException`, `ShareUnavailableException` |
+| Swift | `acn.me()`, `acn.guideMarkdown(s)` | `acn.forwardProxyEnv()` | `resp.keyID`, `resp.attempts`, ... | `AcnologiaError.appLimitReached`, `.shareUnavailable` |
+| Dart | `acn.me()`, `acn.guideMarkdown(s)` | `acn.forwardProxyEnv()` | `resp.acnologiaKeyId`, `resp.acnologiaAttempts`, ... | `AppLimitReachedException`, `ShareUnavailableException` |
+| C++ | `client.me()`, `client.guide(s)` (Markdown), `client.guide_details(s)` | `client.forward_proxy_env()` | `resp.key_id()`, `resp.attempts()`, ... | `AppLimitReached`, `ShareUnavailable` (`ShareRevoked`, `SharePaused`, `ShareExpired`) |
+| C | `acn_me_get`, `acn_guide_markdown` | `acn_forward_proxy_env` | `resp->key_id`, `resp->attempts`, ... | `ACN_ERR_APP_LIMIT_REACHED`, `ACN_ERR_SHARE_REVOKED` (and `_PAUSED`, `_EXPIRED`), `acn_is_share_unavailable` |
+| Zig | `client.me`, `client.guideMarkdown` | `client.forwardProxyEnv` | `res.acnologia` | `error.AppLimitReached`, `acnologia.isShareUnavailable(err)` |
+| Elixir | `Acnologia.me/1`, `Acnologia.guide_markdown/2` | `Acnologia.forward_proxy_env/2` | `resp.key_id`, `resp.attempts`, ... | `Acnologia.Error.app_limit_reached?/1`, `share_unavailable?/1` |
+| Haskell | `me`, `guideMarkdown` | `forwardProxyEnv` | `responseAcnologia res` | `AppLimitReached`, `shareUnavailable err` |
+| Lua | `client:me()`, `client:guide_markdown(s)` | `client:forward_proxy_env()` | `resp.acnologia` | `err.app_limit`, `err.share_unavailable` |
+
+Ready made HTTP clients for the forward proxy (the token as proxy credentials, the system roots plus the Acnologia CA): Go `c.ForwardProxyTransport(ctx)` (`*http.Transport`), Python `acn.forward_proxy_client()` (`httpx.Client`), Rust `acn.forward_proxy_client()` (`reqwest::Client`), Kotlin `acn.forwardProxyClient()` (OkHttp), C# `acn.CreateForwardProxyHandlerAsync()` (`HttpClientHandler`), Ruby `acn.forward_proxy_http(host)` (`Net::HTTP`).
+
+```python
+from acnologia import Acnologia, proxy_info
+import subprocess, os
+
+acn = Acnologia("http://localhost:8080", "acn_xxx")
+acn.save_forward_proxy_ca("acnologia-ca.pem")
+subprocess.run(["node", "app.js"], env={**os.environ, **acn.forward_proxy_env()})  # any program, unchanged
+
+with acn.forward_proxy_client() as http:                     # or this process's own client
+    r = http.get("https://serpapi.com/search.json", params={"q": "coffee"})
+
+res = acn.proxy("serpapi").get("/search.json", params={"q": "coffee"}, no_cache=True)
+print(proxy_info(res).key_id, proxy_info(res).attempts)
+```
 
 ### Python
 
@@ -697,7 +788,7 @@ Errors: `acnologia::Error` with `NoKeyAvailable`, `AllKeysBusy`, `ServiceUnavail
 ### Java
 
 ```sh
-cd sdk/java && mvn install   # dev.acnologia:acnologia:0.1.0, Java 17+
+cd sdk/java && mvn install   # dev.acnologia:acnologia:0.2.0, Java 17+
 ```
 
 ```java
@@ -718,7 +809,7 @@ Exceptions: `NoKeyAvailableException`, `AllKeysBusyException`, `ServiceUnavailab
 ### Kotlin
 
 ```sh
-cd sdk/kotlin && gradle publishToMavenLocal   # dev.acnologia:acnologia-kotlin:0.1.0
+cd sdk/kotlin && gradle publishToMavenLocal   # dev.acnologia:acnologia-kotlin:0.2.0
 ```
 
 ```kotlin
@@ -827,9 +918,48 @@ std::string body = client.with_key("serpapi", [](acnologia::Lease& lease) {
 
 Exceptions derive from `acnologia::ApiError`: `NoKeyAvailable`, `AllKeysBusy`, `ServiceUnavailable`, plus the rotation exceptions `RateLimited`, `QuotaExhausted`, `InvalidKey`.
 
+### C, Zig, Elixir, Haskell and Lua
+
+```c
+/* C11 and libcurl; add_subdirectory(sdk/c) or FetchContent with SOURCE_SUBDIR sdk/c, link acnologia::acnologia */
+acn_client *client = NULL; acn_error err;
+acn_client_new(NULL, &client, &err);                 /* ACNOLOGIA_URL, ACNOLOGIA_TOKEN */
+acn_proxy_request req = {0}; req.service = "serpapi"; req.path = "/search.json";
+acn_response *resp = NULL;
+if (acn_proxy(client, &req, &resp, &err) == ACN_OK) acn_response_free(resp);
+```
+
+```zig
+// zig fetch --save=acnologia git+https://github.com/sidharthpunathil/acnologia#main, module sdk/zig/src/acnologia.zig
+var client = try acnologia.Client.init(init.gpa, init.io, .{ .environ = init.environ_map });
+var res = try client.proxy(init.gpa, .GET, "serpapi", "/search.json", .{ .query = &.{.{ .name = "q", .value = "coffee" }} });
+defer res.deinit();
+```
+
+```elixir
+# {:acnologia, git: "https://github.com/sidharthpunathil/acnologia.git", sparse: "sdk/elixir", branch: "main"}
+{:ok, acn} = Acnologia.new(base_url: "http://localhost:8080", token: "acn_xxx")
+{:ok, resp} = Acnologia.proxy(acn, :get, "serpapi", "/search.json", query: %{q: "coffee"})
+```
+
+```haskell
+-- cabal.project: source-repository-package, subdir: sdk/haskell
+client <- newClientOrThrow defaultConfig   -- ACNOLOGIA_URL, ACNOLOGIA_TOKEN
+res <- proxyOrThrow client "serpapi" ((proxyRequest "GET" "/search.json") { proxyQuery = [("q", "coffee")] })
+```
+
+```lua
+-- luarocks install --local https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/sdk/lua/acnologia-scm-1.rockspec
+local acnologia = require("acnologia")
+local client = acnologia.assert(acnologia.new({ base_url = "http://localhost:8080", token = "acn_xxx" }))
+local resp = acnologia.assert(client:get("serpapi", "/search.json", { query = { q = "coffee" } }))
+```
+
+Each README (`sdk/c`, `sdk/zig`, `sdk/elixir`, `sdk/haskell`, `sdk/lua`) has leases, `with_key` and the full error list.
+
 ### Other languages
 
-Each service's Integrate tab in the dashboard has copy ready snippets for curl and every SDK above, filled in with the service's slug, base URL and auth placement. For any other language, use the HTTP client your project already has: proxy mode is one call; lease mode leases, calls the provider with the key where the service expects it, and reports the outcome.
+Each service's Integrate tab in the dashboard has copy ready snippets for curl, Python, TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart, filled in with the service's slug, base URL and auth placement. For any other language, use the HTTP client your project already has: proxy mode is one call; lease mode leases, calls the provider with the key where the service expects it, and reports the outcome.
 
 ## Resilience
 

@@ -118,7 +118,7 @@ file in the next section.
 | Consumer API | `consumer.go` |
 | Proxy, and scrubbing keys an upstream echoes back | `proxy.go`, `proxy_extras.go`, `proxy_scrub.go` |
 | Forward proxy (apps set Acnologia as `HTTPS_PROXY`): routing by host, its CA, setup routes | `forward.go`, `forward_ca.go`, `forward_api.go` |
-| App MCP | `mcp.go`, `mcp_v2.go`, `mcp_admin.go` |
+| App MCP | `mcp.go`, `mcp_v2.go` (tools, resources, prompts), `mcp_catalog.go` (service tools from provider examples and guide endpoints, tool modes, `search_tools` and `call_tool`), `mcp_notify.go` (the `GET /mcp` list changed stream), `mcp_admin.go` |
 | Control MCP for admin tokens | `mcp_control.go`, `mcp_control_tools.go` (tool table), `mcp_control_flex.go` (search, batch, result shaping) |
 | Per client and global rate limits | `ratelimit.go` |
 | `COGITO_*` era compatibility | `compat.go` |

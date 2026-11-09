@@ -69,11 +69,14 @@ func str(desc string) map[string]any { return map[string]any{"type": "string", "
 func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
+	case http.MethodGet:
+		s.mcpStream(w, r)
+		return
 	case http.MethodDelete:
 		w.WriteHeader(http.StatusNoContent)
 		return
 	default:
-		w.Header().Set("Allow", "POST, DELETE")
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
@@ -128,14 +131,14 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if v == "" {
 			v = mcpProtocol
 		}
-		caps := map[string]any{"tools": map[string]any{"listChanged": false}}
+		caps := map[string]any{"tools": map[string]any{"listChanged": true}}
 		if st.Resources {
-			caps["resources"] = map[string]any{"listChanged": false, "subscribe": false}
+			caps["resources"] = map[string]any{"listChanged": true, "subscribe": false}
 		}
 		if st.Prompts {
 			caps["prompts"] = map[string]any{"listChanged": false}
 		}
-		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself. Read service_guide before calling a service you have not used: it lists the endpoints, parameters, limits and errors. Code you write can also call a provider's own URL with Acnologia as its HTTPS_PROXY (the app token as the proxy password, the proxy CA from /api/v1/proxy/ca.pem trusted): the guide shows the proxy URL."
+		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. When a tool you need is not listed, search_tools finds it across every provider (for example: linkedin jobs) and call_tool runs it; the list follows the providers on this server and changes as they are added. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself. Read service_guide before calling a service you have not used: it lists the endpoints, parameters, limits and errors. Code you write can also call a provider's own URL with Acnologia as its HTTPS_PROXY (the app token as the proxy password, the proxy CA from /api/v1/proxy/ca.pem trusted): the guide shows the proxy URL."
 		if strings.TrimSpace(st.Instructions) != "" {
 			instr += "\n\n" + strings.TrimSpace(st.Instructions)
 		}
@@ -148,7 +151,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": s.mcpTools(ctx, a, st)}, nil
+		return map[string]any{"tools": s.mcpListedTools(ctx, a, st)}, nil
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -161,16 +164,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		if t == nil {
 			return nil, &rpcErr{-32602, "unknown or disabled tool: " + p.Name}
 		}
-		var out map[string]any
-		var err error
-		switch t.Set {
-		case setService:
-			out, err = s.callServiceTool(ctx, r, t, p.Arguments)
-		case setInsights, setManage:
-			out, err = s.mcpAdminCall(ctx, a, p.Name, p.Arguments)
-		default:
-			out, err = s.mcpCall(ctx, r, p.Name, p.Arguments)
-		}
+		out, err := s.runTool(ctx, r, a, st, t, p.Arguments)
 		if err != nil {
 			return map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil
 		}

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -512,10 +513,23 @@ func (s *Spec) Normalize() {
 var registry sync.Map // slug -> *Spec
 
 // Set installs or replaces a provider spec. Safe while serving traffic.
-func Set(slug string, s *Spec) { registry.Store(slug, s) }
+func Set(slug string, s *Spec) {
+	registry.Store(slug, s)
+	version.Add(1)
+}
+
+// version counts registry changes, so caches built from specs (the MCP
+// tool catalog) know when to rebuild.
+var version atomic.Int64
+
+// Version is the registry's change counter.
+func Version() int64 { return version.Load() }
 
 // Remove drops a provider from the registry.
-func Remove(slug string) { registry.Delete(slug) }
+func Remove(slug string) {
+	registry.Delete(slug)
+	version.Add(1)
+}
 
 // Get returns the spec for a provider slug, or a generic spec with standard
 // rules when the slug is unknown.

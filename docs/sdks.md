@@ -1,6 +1,6 @@
 # SDKs
 
-The SDKs call Acnologia's consumer API (`/proxy/...` and `/api/v1/...`) with an app token, so your code never has to store a provider key. There are seventeen, one per folder under [`sdk/`](../sdk), and they all have the same shape: once you know one, the others differ mostly in naming.
+The SDKs call Acnologia's consumer API (`/proxy/...` and `/api/v1/...`) with an app token, so your code never has to store a provider key. There are seventeen, one per folder under [`sdk/`](../sdk), all at version 0.2.0 with one shared surface, written down in [`sdk/SPEC.md`](../sdk/SPEC.md): once you know one, the others differ mostly in naming.
 
 None is on a package registry yet. The package column below is the name each one will publish under; [Install today](#install-today) shows how to add each one now.
 
@@ -30,15 +30,33 @@ Each README opens with a quick start, then covers install, the full API, errors 
 
 ## What every SDK covers
 
-- **A client** built from the server URL and an app token (`acn_...`).
-- **Proxy mode.** Send the request to `/proxy/{service}/{path}`. Acnologia attaches a key, moves to the next key when one is rate limited or out of quota, and returns the provider's response as it is. The secret never reaches your process.
+- **A client** built from the server URL and an app token (`acn_...`), with an `accessPassword` option that sends `X-Acnologia-Access` for a deploy behind the access password.
+- **Proxy mode.** Send the request to `/proxy/{service}/{path}`. Acnologia attaches a key, moves to the next key when one is rate limited or out of quota, and returns the provider's response as it is. The secret never reaches your process. `{service}` may also be a service group or a capability slug. Per call options `idempotencyKey` (`Idempotency-Key`) and `noCache` (`Cache-Control: no-cache`).
+- **Response metadata**: `keyId`, `attempts`, `service`, `cache`, `replayed`, `capability` and `tried`, read from Acnologia's answer headers. Some SDKs put them on the response; others use a helper: `ProxyInfo(resp)` in Go, `proxy_info(resp)` in Python, `proxyInfo(res)` in TypeScript, `ProxyResponse.of(res)` in Java, `res.acnologia` in Kotlin, `res.GetProxyInfo()` in C# and the `ProxyResponseExt` trait in Rust.
+- **Discovery.** `me` (`GET /api/v1/me`: the app, its limits and usage, its services, and the share behind a share's token), `services` (each with its `guide_url`), `guide` and `guideMarkdown` (the usage guide, structured or as Markdown), `capabilities`, and `capability` to call one with its params. Ruby and C++ kept their older names: `guide` returns the Markdown there, and the structured guide is `guide_doc` in Ruby and `guide_details` in C++.
+- **The forward proxy.** `forwardProxy` (`GET /api/v1/proxy`), `forwardProxyCA` (the CA, public, plus a variant that saves it to `acnologia-ca.pem` where there is a file system), `forwardProxyURL` (the proxy URL with the token) and `forwardProxyEnv` (`HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`, to hand to any program). Java spells two of them `forwardProxyCa` and `forwardProxyUrl`, Kotlin `forwardProxyUrl`. See [the table below](#forward-proxy-clients) for SDKs that also build a ready HTTP client.
 - **Lease mode**, for code that has to hold the raw key. `lease` borrows one, with optional excluded key ids, a TTL, a `wait` of up to 60 seconds for a free slot, and `exclusive` to keep the key from every other caller. The lease puts the secret where the provider expects it: a query parameter, a header or a bearer token.
 - **Report, rotate and renew.** `report` sends the outcome (`ok`, `rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned` or `error`). With `rotate` it returns the next key in the same call. `renew` extends a lease that a long job still needs.
 - **The lease helper** (the last column above) runs that loop for you. It leases a key, calls your function and reports every lease it takes, even when your function throws. Signal a rate limit, used up quota or invalid key from your function and it rotates to the next key.
-- **Typed errors** for no key available, all keys busy (a kind of no key available) and service unavailable when the provider's circuit breaker is open, each with the server's retry after. Other failures are an API error carrying the HTTP status and the error code, such as `lease_not_found`.
-- **Redaction.** String forms, debug output and report messages hide the token and the secret.
+- **Typed errors** for no key available, all keys busy (a kind of no key available), service unavailable when the provider's circuit breaker is open, app limit reached (429 `app_limit_reached`, with `limit`, `reset_at` and retry after) and share unavailable (403 `share_revoked`, `share_paused` or `share_expired`, with the status), each with the server's retry after where it gives one. Elixir models the last two as reasons with the helpers `Acnologia.Error.app_limit_reached?/1` and `share_unavailable?/1`, Zig as error values with `isShareUnavailable`, C as error codes and Lua as fields on the error. Other failures are an API error carrying the HTTP status and the error code, such as `lease_not_found`.
+- **Redaction.** String forms, debug output and report messages hide the token and the secret. `forwardProxyURL`, `forwardProxyEnv` and the forward proxy clients do carry the token: keep them out of logs.
 
-You may not need an SDK at all. With the [forward proxy](api.md#forward-proxy), any plain HTTP client calls provider URLs as they are and Acnologia puts the key on: set `HTTPS_PROXY` to `http://app:acn_...@your-server:8888`, trust the server's CA (`GET /api/v1/proxy/ca.pem`), and keep your code unchanged. The SDKs add leases, typed errors and the helpers above.
+### Forward proxy clients
+
+Where the language's own HTTP client takes a proxy and extra CA roots, the SDK returns one set up for the forward proxy (the token as proxy credentials, the system roots plus the Acnologia CA):
+
+| SDK | Call | Returns |
+|---|---|---|
+| Go | `c.ForwardProxyTransport(ctx)` | `*http.Transport` |
+| Python | `acn.forward_proxy_client()` | `httpx.Client` (`httpx.AsyncClient` on `AsyncAcnologia`) |
+| Rust | `acn.forward_proxy_client()` | `reqwest::Client` |
+| Kotlin | `acn.forwardProxyClient()` | OkHttp `OkHttpClient` |
+| C# | `acn.CreateForwardProxyHandlerAsync()` | `HttpClientHandler` |
+| Ruby | `acn.forward_proxy_http(host)` | `Net::HTTP` |
+
+In the other SDKs, pass `forwardProxyEnv` to a child process, or set the proxy and CA on your HTTP client yourself.
+
+You may not need an SDK at all. With the [forward proxy](api.md#forward-proxy), any plain HTTP client calls provider URLs as they are and Acnologia puts the key on: set `HTTPS_PROXY` to `http://app:acn_...@your-server:8888`, trust the server's CA (`GET /api/v1/proxy/ca.pem`), and keep your code unchanged. The SDKs add leases, typed errors and the helpers above, and their forward proxy calls set this up for you.
 
 A service that another Acnologia server shares with yours is proxy only. A lease on it fails with a 403 and the code `lease_not_allowed`, so call it in proxy mode.
 
@@ -46,7 +64,7 @@ A service that another Acnologia server shares with yours is proxy only. A lease
 
 - **Environment variables.** Most clients can be built from `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` (for example `Client.new` in Ruby, `Acnologia.fromEnvironment()` in Dart, `Client::from_env()` in C++). The Go, TypeScript and PHP clients do not read them: pass the values to the constructor yourself.
 - **Auth errors.** Rust, Java, Kotlin, C#, Swift, Dart, C++ and Ruby have their own types for 401 (unauthenticated) and 403 (forbidden). Go, Python, TypeScript and PHP raise their generic API error, so check its status and code.
-- **The newer API (Ruby, C++, C, Zig, Elixir, Haskell and Lua).** These seven also have `me` for `GET /api/v1/me`, their own errors for `app_limit_reached` (with `limit`, `reset_at` and `retry_after`), `share_revoked`, `share_paused`, `share_expired`, `lease_not_allowed`, `upstream_blocked` and `loop_detected`, an `Idempotency-Key` on proxied POSTs, `Retry-After` from the header when the body has none, and the `X-Acnologia-Access` header for a deploy behind the access password. They also tell Acnologia's own refusals on the proxy apart from the provider's answers. The other SDKs report those errors as their generic API error. Ruby adds opt in retries that sleep the server's `Retry-After`.
+- **Extra error kinds.** Beyond the shared set, Ruby, C++, C, Zig, Elixir, Haskell and Lua also have their own errors for `lease_not_allowed`, `upstream_blocked` and `loop_detected`, take `Retry-After` from the header when the body has none, and tell Acnologia's own refusals on the proxy apart from the provider's answers. The other SDKs report those codes as their generic API error, with the code. Ruby adds opt in retries (`max_retries:`) that sleep the server's `Retry-After`.
 
 ## Install today
 
@@ -94,13 +112,13 @@ acnologia = { git = "https://github.com/sidharthpunathil/acnologia", package = "
 **Java**
 
 ```sh
-cd sdk/java && mvn install   # then depend on dev.acnologia:acnologia:0.1.0
+cd sdk/java && mvn install   # then depend on dev.acnologia:acnologia:0.2.0
 ```
 
 **Kotlin**
 
 ```sh
-cd sdk/kotlin && gradle publishToMavenLocal   # then mavenLocal() and dev.acnologia:acnologia-kotlin:0.1.0
+cd sdk/kotlin && gradle publishToMavenLocal   # then mavenLocal() and dev.acnologia:acnologia-kotlin:0.2.0
 ```
 
 **C#**
@@ -210,7 +228,7 @@ Without a local toolchain, the Java, Kotlin, C#, Dart and PHP READMEs show how t
 
 ### On Windows
 
-The SDKs read no files and keep no config of their own, so they behave the same on Windows. CI runs the Go, Python, Ruby and TypeScript suites on `windows-latest` as well as Linux and macOS.
+The SDKs keep no config of their own (the only file one writes is the forward proxy CA, when you ask it to), so they behave the same on Windows. CI runs the Go, Python, Ruby and TypeScript suites on `windows-latest` as well as Linux and macOS.
 
 For the SDKs that read the environment, set the token for one PowerShell session with `$env:ACNOLOGIA_TOKEN = "acn_..."`, or for your account with `setx ACNOLOGIA_TOKEN acn_...` (new terminals only).
 
