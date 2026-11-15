@@ -35,7 +35,8 @@ func (m *mcpClient) toolNames() []string {
 	res := m.call("tools/list", nil)
 	names := []string{}
 	for _, t := range res["result"].(map[string]any)["tools"].([]any) {
-		names = append(names, t.(map[string]any)["name"].(string))
+		// Built in tools are listed as acnologia_<name>; tests compare the internal name.
+		names = append(names, canonicalTool(t.(map[string]any)["name"].(string)))
 	}
 	return names
 }

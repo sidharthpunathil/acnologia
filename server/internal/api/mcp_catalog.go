@@ -367,10 +367,7 @@ func (s *Server) searchTools(ctx context.Context, a *store.App, st store.MCPSett
 	}
 	c := s.toolCatalog(ctx)
 	v := c.view(a)
-	off := map[string]bool{}
-	for _, n := range st.DisabledTools {
-		off[n] = true
-	}
+	off := disabledSet(st.DisabledTools)
 	// usable is the app's tools, narrowed to one service when asked.
 	usable := make([]bool, len(c.tools))
 	ids := []int{}
@@ -447,9 +444,9 @@ func (s *Server) searchTools(ctx context.Context, a *store.App, st store.MCPSett
 		res["services"] = directory()
 	}
 	if total == 0 {
-		res["hint"] = "No tool matched. Try a provider or site name, or other words; the services list shows what exists. proxy_request calls any endpoint of a service, and service_guide lists its endpoints."
+		res["hint"] = publicText("No tool matched. Try a provider or site name, or other words; the services list shows what exists. proxy_request calls any endpoint of a service, and service_guide lists its endpoints.")
 	} else {
-		res["hint"] = "Call a tool with call_tool {name, arguments}, or by its name."
+		res["hint"] = publicText("Call a tool with call_tool {name, arguments}, or by its name.")
 	}
 	return res, nil
 }
@@ -463,7 +460,7 @@ func (s *Server) callTool(ctx context.Context, r *http.Request, a *store.App, st
 	if err := json.Unmarshal(raw, &in); err != nil || in.Name == "" {
 		return nil, errors.New("name is required")
 	}
-	if isDiscovery(in.Name) {
+	if isDiscovery(canonicalTool(in.Name)) {
 		return nil, errors.New("call_tool cannot call " + in.Name)
 	}
 	t := s.mcpTool(ctx, a, st, in.Name)

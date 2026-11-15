@@ -53,7 +53,7 @@ func (m *mcpClient) tools() map[string]map[string]any {
 	out := map[string]map[string]any{}
 	for _, x := range m.call("tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		t := x.(map[string]any)
-		out[t["name"].(string)] = t
+		out[canonicalTool(t["name"].(string))] = t
 	}
 	return out
 }

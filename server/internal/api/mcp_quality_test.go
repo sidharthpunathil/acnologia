@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -87,5 +88,149 @@ func TestMCPErrorsSayWhatToDoNext(t *testing.T) {
 	out, _ = m.tool("no_such_tool", nil)
 	if !strings.Contains(out["rpc_error"].(map[string]any)["message"].(string), "search_tools") {
 		t.Fatalf("unknown tool: %v", out)
+	}
+}
+
+// Agents see the built in tools as acnologia_<name>, with an output schema;
+// the old names still call, and a hidden tool stays hidden in either form.
+func TestMCPPublicNamesAndOutputSchemas(t *testing.T) {
+	e := newEnv(t)
+	e.addKeys(map[string]any{"secret": "pubkey01"})
+	appID, tok := e.app(map[string]any{"name": "agent"})
+	m := &mcpClient{e: e, tok: tok}
+
+	listed := map[string]map[string]any{}
+	for _, tl := range m.call("tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
+		listed[tl.(map[string]any)["name"].(string)] = tl.(map[string]any)
+	}
+	gk := listed["acnologia_get_key"]
+	if gk == nil || listed["get_key"] != nil {
+		t.Fatalf("get_key must be listed as acnologia_get_key: %v", keysOfMap(listed))
+	}
+	if !strings.Contains(gk["description"].(string), "acnologia_report_key") {
+		t.Fatalf("descriptions name tools by their public names: %v", gk["description"])
+	}
+	if gk["outputSchema"].(map[string]any)["type"] != "object" || listed["serpapi_google_search"]["outputSchema"] == nil {
+		t.Fatal("built in and service tools carry an output schema")
+	}
+	init := m.call("initialize", map[string]any{"protocolVersion": "2025-06-18"})["result"].(map[string]any)
+	if !strings.Contains(init["instructions"].(string), "acnologia_search_tools") {
+		t.Fatalf("instructions: %v", init["instructions"])
+	}
+
+	for _, name := range []string{"acnologia_list_services", "list_services"} {
+		if out, isErr := m.tool(name, nil); isErr || out["services"] == nil {
+			t.Fatalf("%s: %v", name, out)
+		}
+	}
+	out, _ := m.tool("acnologia_get_key", map[string]any{"service": "serpapi"})
+	if out["lease_id"] == nil {
+		t.Fatalf("get_key by its public name: %v", out)
+	}
+
+	// Hidden under either name, it is hidden under both.
+	for _, saved := range []string{"pool_status", "acnologia_pool_status"} {
+		e.do(e.super, "PUT", "/api/admin/apps/"+itoa(int(appID))+"/mcp", map[string]any{
+			"core": true, "service_tools": true, "disabled_tools": []string{saved}}, 200, nil)
+		for _, name := range []string{"pool_status", "acnologia_pool_status"} {
+			if _, isErr := m.tool(name, map[string]any{"service": "serpapi"}); !isErr {
+				t.Fatalf("saved %q: %s still callable", saved, name)
+			}
+		}
+	}
+}
+
+// conforms checks v against the parts of JSON Schema the output schemas use.
+func conforms(schema map[string]any, v any, at string) []string {
+	var bad []string
+	switch schema["type"] {
+	case "object":
+		m, ok := v.(map[string]any)
+		if !ok {
+			return []string{at + ": not an object"}
+		}
+		for _, r := range schema["required"].([]string) {
+			if _, ok := m[r]; !ok {
+				bad = append(bad, at+"."+r+": missing")
+			}
+		}
+		props, _ := schema["properties"].(map[string]any)
+		for k, sub := range props {
+			if x, ok := m[k]; ok {
+				bad = append(bad, conforms(sub.(map[string]any), x, at+"."+k)...)
+			}
+		}
+	case "array":
+		l, ok := v.([]any)
+		if !ok {
+			return []string{at + ": not an array"}
+		}
+		for i, x := range l {
+			bad = append(bad, conforms(schema["items"].(map[string]any), x, fmt.Sprintf("%s[%d]", at, i))...)
+		}
+	case "string":
+		if _, ok := v.(string); !ok {
+			bad = append(bad, at+": not a string")
+		}
+	case "boolean":
+		if _, ok := v.(bool); !ok {
+			bad = append(bad, at+": not a boolean")
+		}
+	case "integer":
+		if f, ok := v.(float64); !ok || f != float64(int64(f)) {
+			bad = append(bad, at+": not an integer")
+		}
+	}
+	return bad
+}
+
+// Every built in tool's real result matches the output schema it declares:
+// clients reject a result that does not.
+func TestMCPResultsMatchOutputSchemas(t *testing.T) {
+	e := newEnv(t)
+	keys := e.addKeys(map[string]any{"secret": "schemakey01"}, map[string]any{"secret": "schemakey02"})
+	appID, tok := e.app(map[string]any{"name": "agent"})
+	e.do(e.super, "PUT", "/api/admin/apps/"+itoa(int(appID))+"/mcp", map[string]any{
+		"core": true, "service_tools": true, "insights": true, "manage": true}, 200, nil)
+	m := &mcpClient{e: e, tok: tok}
+
+	lease, _ := m.tool("get_key", map[string]any{"service": "serpapi"})
+	kid := float64(keys[0].ID)
+	calls := []struct {
+		name string
+		args map[string]any
+	}{
+		{"list_services", nil},
+		{"pool_status", map[string]any{"service": "serpapi"}},
+		{"get_key", map[string]any{"service": "serpapi", "exclusive": true}},
+		{"renew_key", map[string]any{"lease_id": lease["lease_id"], "ttl_sec": 60}},
+		{"report_key", map[string]any{"lease_id": lease["lease_id"], "outcome": "rate_limited", "rotate": true}},
+		{"service_guide", map[string]any{"service": "serpapi"}},
+		{"proxy_request", map[string]any{"service": "serpapi", "path": "/search.json", "query": map[string]any{"q": "x"}}},
+		{"search_tools", map[string]any{"query": "google search"}},
+		{"call_tool", map[string]any{"name": "serpapi_google_search", "arguments": map[string]any{"q": "x"}}},
+		{"list_keys", map[string]any{"limit": 1}},
+		{"key_details", map[string]any{"key_id": kid}},
+		{"service_stats", map[string]any{"service": "serpapi"}},
+		{"check_keys", map[string]any{"service": "serpapi"}},
+		{"set_key_status", map[string]any{"key_id": kid, "status": "active"}},
+		{"add_keys", map[string]any{"service": "serpapi", "keys": []any{map[string]any{"secret": "schemakey03"}}}},
+	}
+	for _, c := range calls {
+		out, isErr := m.tool(c.name, c.args)
+		if isErr {
+			t.Errorf("%s failed: %v", c.name, out)
+			continue
+		}
+		if bad := conforms(toolOutputs[c.name], out, c.name); len(bad) > 0 {
+			t.Errorf("%s does not match its output schema: %v", c.name, bad)
+		}
+	}
+	if len(calls) != len(toolOutputs) {
+		t.Errorf("checked %d tools, %d have output schemas", len(calls), len(toolOutputs))
+	}
+	out, _ := m.tool("serpapi_google_search", map[string]any{"q": "x"})
+	if bad := conforms(proxyOutput, out, "serpapi_google_search"); len(bad) > 0 {
+		t.Errorf("service tool result: %v", bad)
 	}
 }

@@ -159,12 +159,12 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 			"protocolVersion": v,
 			"capabilities":    caps,
 			"serverInfo":      map[string]any{"name": "acnologia", "title": "Acnologia: " + a.Name, "version": s.Cfg.Version},
-			"instructions":    instr,
+			"instructions":    publicText(instr),
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": s.mcpListedTools(ctx, a, st)}, nil
+		return map[string]any{"tools": presentTools(s.mcpListedTools(ctx, a, st))}, nil
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -175,11 +175,11 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		}
 		t := s.mcpTool(ctx, a, st, p.Name)
 		if t == nil {
-			return nil, &rpcErr{-32602, "unknown or disabled tool: " + p.Name + "; call tools/list, or search_tools to find a service tool"}
+			return nil, &rpcErr{-32602, publicText("unknown or disabled tool: " + p.Name + "; call tools/list, or search_tools to find a service tool")}
 		}
 		out, err := s.runTool(ctx, r, a, st, t, p.Arguments)
 		if err != nil {
-			return map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil
+			return map[string]any{"content": []map[string]any{{"type": "text", "text": publicText(err.Error())}}, "isError": true}, nil
 		}
 		b, _ := json.Marshal(out)
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}, nil
@@ -343,7 +343,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"service": args.Service, "generated": d.Generated, "markdown": d.Render(false)}, nil
+		return map[string]any{"service": args.Service, "generated": d.Generated, "markdown": publicText(d.Render(false))}, nil
 	case "proxy_request":
 		sv, err := svcFor()
 		if err != nil {
