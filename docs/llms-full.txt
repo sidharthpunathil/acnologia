@@ -309,6 +309,8 @@ curl -s -X POST "http://localhost:8080/proxy/anthropic/v1/messages" \
 
 Instead of rewriting URLs to `/proxy/{service}/...`, an app can set Acnologia as its HTTP(S) proxy and call provider URLs as they are. A request to a service's host goes through exactly the same pipeline as `/proxy/{service}/...`: a pool key is injected (any key you send in the service's auth header or query parameter is replaced), keys rotate on rate limits, and app limits, caching, groups, circuit breakers, events and the `X-Acnologia-*` response headers all apply. Only for apps in mode `proxy` or `both` (a lease only app gets 403 `proxy_not_allowed`). The key never reaches your process.
 
+This is the way for apps and applications you build: their code calls the provider and holds no key and no Acnologia client. Keep Acnologia out of the app's UI, copy, page titles and user facing errors; the app's users never see it.
+
 This is not the same as an egress proxy (Acnologia's own outbound route to providers, set by operators). Here your app sends its calls in through Acnologia.
 
 ### Setup
@@ -551,7 +553,7 @@ The result (as JSON text in the tool result) looks like:
 
 `initialize` advertises `tools.listChanged: true` (and `resources.listChanged: true` when resources are on). A client that opens `GET /mcp` with `Accept: text/event-stream` and the app token gets a server sent events stream that sends `notifications/tools/list_changed` (and `notifications/resources/list_changed`) when what the app sees changes: a provider or service added, edited or removed, a capability or group saved, the app's access or MCP settings changed. The client then calls `tools/list` again, with no reconnect. Any admin write (dashboard, CLI, control MCP, Assistant) wakes the streams at once; a check every 60 seconds catches other changes, such as the provider refresh or another server's share. The stream sends a keepalive comment every 25 seconds, closes after an hour (clients reconnect), and closes when the token stops working. `GET /mcp` without that `Accept` answers 405. In search mode `tools/list` holds only the fixed tools, so a new provider changes nothing there: `search_tools` finds its tools at once.
 
-Code you write can also call a provider's own URL with Acnologia as its `HTTPS_PROXY` (see Forward proxy); the MCP instructions say so. Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
+Apps and applications you write call the provider's own URL with Acnologia as their `HTTPS_PROXY` (see Forward proxy), and never mention Acnologia in their UI, copy, page titles or user facing errors; the MCP instructions say so. Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
 
 ### Control MCP
 

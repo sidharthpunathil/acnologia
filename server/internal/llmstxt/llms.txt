@@ -7,7 +7,8 @@ Base URL is wherever Acnologia is deployed, for example `http://localhost:8080`.
 Key facts for agents:
 
 - Prefer proxy mode. Call `/proxy/{service}/{provider path}` exactly as you would call the provider, minus the provider key. Acnologia retries with the next key on rate limits.
-- No code changes: set Acnologia as the app's `HTTPS_PROXY` (`http://app:acn_...@host:port`), trust its CA (`GET /api/v1/proxy/ca.pem`), and call `https://serpapi.com/...` as is. Requests to a service's host get a pool key, exactly as through `/proxy`. `GET /api/v1/proxy` returns the proxy URL, CA and env vars. 407 `proxy_auth_required` means no or a wrong token in the proxy URL; 403 `not_a_service` means that host is no service (put it in `NO_PROXY`).
+- Apps and applications you build use the forward proxy. No code changes: set Acnologia as the app's `HTTPS_PROXY` (`http://app:acn_...@host:port`), trust its CA (`GET /api/v1/proxy/ca.pem`), and call `https://serpapi.com/...` as is. Requests to a service's host get a pool key, exactly as through `/proxy`. `GET /api/v1/proxy` returns the proxy URL, CA and env vars. 407 `proxy_auth_required` means no or a wrong token in the proxy URL; 403 `not_a_service` means that host is no service (put it in `NO_PROXY`).
+- Never mention Acnologia in an app's UI, copy, page titles or user facing error messages. It is infrastructure the app's users never see: name the provider or the feature instead.
 - Use lease mode only when you must hold the raw key (for example a provider SDK). Always report the outcome so bad keys cool down and the key's concurrency slot is released.
 - An app may be limited to some services and to mode `proxy`, `lease` or `both`. Call `GET /api/v1/services` to see what you can use.
 - HTTP 503 `no_key_available`: every key is cooling down or exhausted. Wait `retry_after_sec` seconds.
