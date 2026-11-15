@@ -33,7 +33,7 @@ tokens that reach them.
 
 **Where a key does leave the server, by design:**
 
-- A lease (an app in `lease` or `both` mode, or the MCP `get_key` tool)
+- A lease (an app in `lease` or `both` mode, or the MCP `acnologia_get_key` tool)
   returns the plain secret to the app.
 - A superadmin can reveal a key in the dashboard. Each reveal is audited.
 - A handover share sends keys to another server, and a reveal share shows
@@ -176,7 +176,7 @@ delete, its service's delete, or a peer link revoke or disconnect removing it),
 since nothing would mark them hidden once the key row is gone.
 
 A health check sends the secret to the service's base URL, so a key is only
-ever checked against its own service, and MCP `check_keys` needs a service.
+ever checked against its own service, and MCP `acnologia_check_keys` needs a service.
 Its path may only add to that base URL: a spec's `health.path` must start with
 `/` and may not hold `.` or `..` segments, raw or percent encoded, and
 `health.from_origin` (which drops the base URL's path) is refused when the
@@ -241,8 +241,8 @@ caller's:
   buffered, cached, replayed or relayed as an error. Response headers are
   scrubbed for every caller. An app that may lease the key gets the body as is.
 - **No key ids for shares.** Share and person tokens get no
-  `X-Acnologia-Key-Id` or `X-Acnologia-Attempts`, and the MCP `proxy_request`
-  tool leaves `key_id` out for them.
+  `X-Acnologia-Key-Id` or `X-Acnologia-Attempts`, and the MCP
+  `acnologia_proxy_request` tool leaves `key_id` out for them.
 - **No made up Acnologia headers.** Upstream `X-Acnologia-*` and `X-Cogito-*`
   headers are dropped, except from the owner of a shared service. A receiver
   marks its link revoked, paused or expired only when the owner's 403 carries
@@ -250,8 +250,8 @@ caller's:
   owner relays from its upstream cannot.
 - **Limits hold under bursts.** An app's or share's request and budget limits
   are checked and one request (and its estimated cost) reserved in one step
-  before the upstream call, for the proxy, MCP `proxy_request`, leases and
-  `get_key`, and released once the usage is recorded. Concurrent requests
+  before the upstream call, for the proxy, MCP `acnologia_proxy_request`, leases
+  and `acnologia_get_key`, and released once the usage is recorded. Concurrent requests
   cannot pass a limit that has one request left.
 - **Operators win over late results.** A request picked before an admin
   disabled a key, or before a key was banned, cannot write `invalid` or
@@ -421,7 +421,7 @@ and delivery errors, and every log line (a wrapping `slog` handler).
 Limits: a short key with no prefix and no `key=` in front of it (a bare 12
 character token in a sentence) is caught only if it is already a pool key or
 the paste parser finds it. Leasing a key, through the API or the MCP
-`get_key` tool, returns the secret to the app by design; use proxy mode for
+`acnologia_get_key` tool, returns the secret to the app by design; use proxy mode for
 any client you would not hand a key to.
 
 ## AI models, prices and provider refresh
@@ -779,7 +779,7 @@ docs say so plainly.
 - **On the receiver the key stays inside the proxy.** A handed over key is a
   hidden key of a service whose target the owner chose. Local apps use it
   only through the proxy; `/keys/{id}/reveal` refuses it, leases (REST and
-  MCP `get_key`) refuse it even for apps with `lease_hidden`, it cannot be
+  MCP `acnologia_get_key`) refuse it even for apps with `lease_hidden`, it cannot be
   shared onward (its service is a peer service), and its secret, hidden flag
   and egress, and its service's base URL, auth, provider and egress, cannot
   be changed to send it elsewhere, also in the same request that changes the
@@ -820,7 +820,7 @@ token, like a receiving server; in reveal mode they get the raw keys.
   with the core tools that do not hand out keys and the generated service
   tools.
 - **What it cannot do.** Lease a key (the app is proxy only, so neither
-  `/api/v1/lease` nor MCP `get_key` works) or see any key secret, hint or
+  `/api/v1/lease` nor MCP `acnologia_get_key` works) or see any key secret, hint or
   count by status. Use key insights or key management over MCP: a share's
   token never gets those tool sets, whatever the app's MCP settings say, and
   the Apps page cannot change a share's app. Reach any dashboard route (app

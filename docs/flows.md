@@ -532,7 +532,9 @@ takes an admin API token (`acnadm_...`) and nothing else.
 1. On initialize, the server finds the token's owner and caps their role at
    the token's scope.
 2. `tools/list` returns the tools that role and the endpoint options
-   (`groups`, `read_only`, `exclude`) allow.
+   (`groups`, `read_only`, `exclude`) allow, each named `acnologia_<name>`.
+   A call by the old name still works. List tools return one page at a
+   time, with `has_more` and `next_offset` for the next.
 3. Each tool call becomes an in process request to an existing `/api/admin`
    route with the same token, so the route checks the role, validates the
    input and writes the audit entry.
@@ -556,15 +558,15 @@ sequenceDiagram
     M-->>Cl: acnologia-control, instructions
     Cl->>M: tools/list (?groups=, read_only=, exclude=)
     M-->>Cl: tools this role and these options allow
-    Cl->>M: tools/call delete_service {service: "weather"}
+    Cl->>M: tools/call acnologia_delete_service {service: "weather"}
     M->>R: GET /api/admin/services/{id} (same token)
     M-->>Cl: would delete weather and its 12 keys, call again with confirm
-    Cl->>M: tools/call delete_service {service, confirm: true}
+    Cl->>M: tools/call acnologia_delete_service {service, confirm: true}
     M->>R: DELETE /api/admin/services/{id} (same token, X-Requested-With)
     R->>R: role check, audit
     R-->>M: {"ok": true}
     M-->>Cl: result (structuredContent, capped at 512 KB)
-    Cl->>M: tools/call call_service {service, path, query}
+    Cl->>M: tools/call acnologia_call_service {service, path, query}
     M->>P: run the proxy as the Control MCP app
     P-->>M: provider answer (key injected, rotated on 429)
     M-->>Cl: status, headers, body
@@ -1085,7 +1087,7 @@ any other service.
      already rotated.
 
 Shared services are proxy only. A lease would hand out the token, so
-`/api/v1/lease` answers 403 `lease_not_allowed` and MCP `get_key` is refused
+`/api/v1/lease` answers 403 `lease_not_allowed` and MCP `acnologia_get_key` is refused
 the same way.
 
 **Which keys.** Each shared service can be limited to all its keys, up to N
@@ -1269,7 +1271,7 @@ resolve to public addresses. Each key is hidden, labeled "Handed over by
 <server>", and carries `peer_link_id` and `peer_valid_until`. Local apps use
 it through B's proxy like any key. B never reveals it, leases it (403
 `lease_not_allowed`, also for apps with `lease_hidden` and for MCP
-`get_key`), shares it onward, changes its secret, hidden flag or egress, or
+`acnologia_get_key`), shares it onward, changes its secret, hidden flag or egress, or
 points its service anywhere else (409 `handover_service`).
 
 **The lease.** Every handed over key is valid until `now + lease` (1h, 6h,
@@ -1398,8 +1400,9 @@ calls `/proxy/<service>/...`, `/api/v1/services`, `/api/v1/me` and `/mcp`
 with `Authorization: Bearer acn_...`. Keys never leave the server. Pause,
 revoke and an ended timer refuse the very next call with 403 `share_paused`,
 `share_revoked` or `share_expired`. At `/mcp` the token sees the core tools
-that do not hand out keys (`list_services`, `pool_status`, `proxy_request`)
-and the tools generated for the shared services. It never sees `get_key`,
+that do not hand out keys (`acnologia_list_services`,
+`acnologia_pool_status`, `acnologia_proxy_request`) and the tools generated
+for the shared services. It never sees `acnologia_get_key`,
 key insights or key management.
 
 **Reveal mode.** Redeem returns the keys the scopes resolve to, exactly once,

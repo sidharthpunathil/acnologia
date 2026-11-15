@@ -54,7 +54,7 @@ test("mcp tool mode: search lists fewer tools", async ({ page }, info) => {
   await expect(dialog.getByRole("radio", { name: /^Search/ })).toBeChecked();
   await expect(summary).toContainText("Save to update.");
   await dialog.getByRole("button", { name: "Save changes" }).click();
-  await expect(summary).toHaveText(/^Listing \d+ of \d+ tools: the rest are found with search_tools\.$/);
+  await expect(summary).toHaveText(/^Listing \d+ of \d+ tools: the rest are found with acnologia_search_tools\.$/);
 
   // The tools left out of tools/list are marked in the Tools tab.
   await dialog.getByRole("tab", { name: /Tools/ }).click();

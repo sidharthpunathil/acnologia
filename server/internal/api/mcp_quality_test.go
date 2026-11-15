@@ -234,3 +234,27 @@ func TestMCPResultsMatchOutputSchemas(t *testing.T) {
 		t.Errorf("service tool result: %v", bad)
 	}
 }
+
+// The dashboard shows each tool by the name agents see, and keeps the
+// internal name for disabled_tools.
+func TestMCPViewShowsPublicNames(t *testing.T) {
+	e := newEnv(t)
+	appID, _ := e.app(map[string]any{"name": "agent"})
+	var view struct {
+		Tools []struct {
+			Name       string `json:"name"`
+			PublicName string `json:"public_name"`
+		} `json:"tools"`
+	}
+	e.do(e.super, "GET", "/api/admin/apps/"+itoa(int(appID))+"/mcp", nil, 200, &view)
+	public := map[string]string{}
+	for _, tl := range view.Tools {
+		public[tl.Name] = tl.PublicName
+	}
+	if public["get_key"] != "acnologia_get_key" {
+		t.Fatalf("get_key public name: %q", public["get_key"])
+	}
+	if public["serpapi_google_search"] != "serpapi_google_search" {
+		t.Fatalf("service tool public name: %q (tools %v)", public["serpapi_google_search"], public)
+	}
+}

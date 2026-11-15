@@ -49,15 +49,15 @@ const SETS: Array<{ id: MCPToolSet; label: string; body: string }> = [
 const MODES: Array<{ id: MCPToolMode; label: string; body: (autoMax: number) => string }> = [
   { id: "auto", label: "Auto", body: (n) => `Lists everything up to ${n} service tools, then uses search.` },
   { id: "all", label: "All tools", body: () => "Always lists every tool, however long the list gets." },
-  { id: "search", label: "Search", body: () => "Lists core tools plus search_tools and call_tool. The rest stay callable." },
+  { id: "search", label: "Search", body: () => "Lists core tools plus acnologia_search_tools and acnologia_call_tool. The rest stay callable." },
 ];
 
 /** What tools/list shows with the saved settings, in one line. */
 export function listingSummary(l: MCPListing): string {
   if (l.mode === "search" && l.listed < l.total) {
-    return `Listing ${l.listed} of ${plural(l.total, "tool")}: the rest are found with search_tools.`;
+    return `Listing ${l.listed} of ${plural(l.total, "tool")}: the rest are found with acnologia_search_tools.`;
   }
-  if (l.mode === "search") return `Listing ${l.total === 1 ? "the only tool" : `all ${plural(l.total, "tool")}`}. New service tools are found with search_tools.`;
+  if (l.mode === "search") return `Listing ${l.total === 1 ? "the only tool" : `all ${plural(l.total, "tool")}`}. New service tools are found with acnologia_search_tools.`;
   return l.total === 1 ? "Listing the only tool." : `Listing all ${plural(l.total, "tool")}.`;
 }
 
@@ -400,13 +400,14 @@ function ToolsTab({
               <ul className="divide-y divide-separator-border rounded-2xl border border-border-button-default">
                 {tools.map((t) => {
                   const checked = toolOn(draft, t);
-                  // On, but left out of tools/list: the agent finds it with search_tools.
+                  // On, but left out of tools/list: the agent finds it with acnologia_search_tools.
                   const searchOnly = t.enabled && t.listed === false;
+                  const shown = t.public_name || t.name;
                   return (
                     <li key={t.name} className="flex items-start gap-3 px-4 py-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-baseline gap-x-2">
-                          <span className="break-all font-mono text-body-2-regular text-text-primary">{t.name}</span>
+                          <span className="break-all font-mono text-body-2-regular text-text-primary">{shown}</span>
                           {searchOnly && <span className="text-caption-1-regular text-text-tertiary">via search</span>}
                         </div>
                         {t.description && <p className="mt-0.5 text-caption-1-regular text-text-secondary">{t.description}</p>}
@@ -416,7 +417,7 @@ function ToolsTab({
                         isSelected={checked}
                         onChange={(v) => setTool(t.name, v)}
                         isDisabled={readOnly}
-                        aria-label={`${t.name} ${checked ? "on" : "off"}`}
+                        aria-label={`${shown} ${checked ? "on" : "off"}`}
                         className="mt-0.5 shrink-0"
                       />
                     </li>

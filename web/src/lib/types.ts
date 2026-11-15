@@ -1038,7 +1038,10 @@ export interface MCPSettings {
 export type MCPSettingsInput = Omit<MCPSettings, "updated_at">;
 
 export interface MCPTool {
+  /** Internal name, the one disabled_tools stores. */
   name: string;
+  /** The name agents see in tools/list, such as acnologia_get_key. */
+  public_name?: string;
   title: string;
   description: string;
   set: MCPToolSet;

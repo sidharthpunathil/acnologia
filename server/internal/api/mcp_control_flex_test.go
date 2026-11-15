@@ -15,7 +15,7 @@ func TestControlMCPShaping(t *testing.T) {
 	for _, x := range c.call("tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		tl := x.(map[string]any)
 		props := tl["inputSchema"].(map[string]any)["properties"].(map[string]any)
-		switch tl["name"] {
+		switch ctlCanonicalTool(tl["name"].(string)) {
 		case "list_keys", "search", "list_routes":
 			if props["fields"] == nil || props["filter"] == nil || props["limit"] == nil {
 				t.Fatalf("%s lacks shaping inputs", tl["name"])
@@ -40,7 +40,7 @@ func TestControlMCPShaping(t *testing.T) {
 	if len(keys) != 1 || len(keys[0].(map[string]any)) != 2 || !strings.HasPrefix(keys[0].(map[string]any)["label"].(string), "alpha") {
 		t.Fatalf("shaped keys: %s", text)
 	}
-	if sc["_matched"].(map[string]any)["keys"] != float64(2) {
+	if sc["total"] != float64(2) || sc["has_more"] != true || sc["next_offset"] != float64(1) {
 		t.Fatalf("matched count: %s", text)
 	}
 	sc, _, _ = c.tool("list_keys", map[string]any{"filter": map[string]any{"label": "alpha"}, "offset": 1, "fields": "keys.label"})
@@ -83,7 +83,7 @@ func TestControlMCPSearch(t *testing.T) {
 	}
 	sc, text, _ = read.tool("search", map[string]any{"query": "marketing", "types": []any{"key"}})
 	res := sc["results"].([]any)
-	if len(res) != 1 || res[0].(map[string]any)["details_tool"] != "key_details" || strings.Contains(text, "searchsecret1") {
+	if len(res) != 1 || res[0].(map[string]any)["details_tool"] != "acnologia_key_details" || strings.Contains(text, "searchsecret1") {
 		t.Fatalf("key search: %s", text)
 	}
 	if _, _, isErr := read.tool("search", map[string]any{"query": " "}); !isErr {
@@ -160,7 +160,7 @@ func TestControlMCPRoutesAndHealth(t *testing.T) {
 		tool, _ := r["tool"].(string)
 		found[r["method"].(string)+" "+r["path"].(string)] = tool
 	}
-	if found["GET /api/admin/health/settings"] != "health_settings" || found["PUT /api/admin/health/settings"] != "update_health_settings" {
+	if found["GET /api/admin/health/settings"] != "acnologia_health_settings" || found["PUT /api/admin/health/settings"] != "acnologia_update_health_settings" {
 		t.Fatalf("routes: %s", text)
 	}
 	sc, _, _ = c.tool("list_routes", nil)

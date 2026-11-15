@@ -36,7 +36,8 @@ func (s *Server) mcpView(ctx context.Context, a *store.App, st store.MCPSettings
 	}
 	list := []map[string]any{}
 	for _, t := range all {
-		list = append(list, map[string]any{"name": t.Name, "title": t.Title, "description": t.Description, "set": t.Set, "enabled": enabled[t.Name], "listed": listed[t.Name]})
+		// name is what disabled_tools stores, public_name what agents see.
+		list = append(list, map[string]any{"name": t.Name, "public_name": publicTool(t.Name), "title": t.Title, "description": t.Description, "set": t.Set, "enabled": enabled[t.Name], "listed": listed[t.Name]})
 	}
 	effective := toolModeAll
 	if s.searchModeFor(ctx, a, st) {
