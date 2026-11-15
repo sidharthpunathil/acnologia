@@ -177,16 +177,8 @@ func (s *Server) mcpControl(w http.ResponseWriter, r *http.Request) {
 func (c *ctlCtx) dispatch(req rpcReq) (any, *rpcErr) {
 	switch req.Method {
 	case "initialize":
-		var p struct {
-			ProtocolVersion string `json:"protocolVersion"`
-		}
-		_ = json.Unmarshal(req.Params, &p)
-		v := p.ProtocolVersion
-		if v == "" {
-			v = mcpProtocol
-		}
 		return map[string]any{
-			"protocolVersion": v,
+			"protocolVersion": negotiateVersion(req.Params),
 			"capabilities": map[string]any{
 				"tools":     map[string]any{"listChanged": false},
 				"resources": map[string]any{"listChanged": false, "subscribe": false},
