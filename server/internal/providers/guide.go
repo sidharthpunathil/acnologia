@@ -179,7 +179,7 @@ func (d GuideDoc) Render(admin bool) string {
 		slug = ServicePlaceholder
 	}
 	if d.ForwardProxy != "" && d.DirectBase != "" {
-		p("- Forward proxy: or keep calling `%s` itself and set `HTTPS_PROXY=%s` with your app token as the password (`http://app:acn_...@host:port`). Trust the proxy's CA from `%s/api/v1/proxy/ca.pem` (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `curl --cacert`); Node needs `--use-env-proxy`. The key is added the same way.\n",
+		p("- Forward proxy (use this for apps and applications): keep calling `%s` itself and set `HTTPS_PROXY=%s` with your app token as the password (`http://app:acn_...@host:port`). Trust the proxy's CA from `%s/api/v1/proxy/ca.pem` (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `curl --cacert`); Node needs `--use-env-proxy`. The key is added the same way. Do not mention Acnologia in the app's UI, copy or user facing errors.\n",
 			d.DirectBase, d.ForwardProxy, strings.TrimSuffix(strings.SplitN(d.ProxyBase, "/proxy/", 2)[0], "/"))
 	}
 	p("- MCP: with the app MCP server at `/mcp`, call `proxy_request` with `service=%s`, a `method` and a `path`. From the control MCP at `/mcp/control`, use `call_service`.\n", slug)
