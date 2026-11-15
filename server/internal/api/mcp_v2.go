@@ -33,12 +33,13 @@ const (
 )
 
 type mcpTool struct {
-	Name        string         `json:"name"`
-	Title       string         `json:"title,omitempty"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
-	Annotations map[string]any `json:"annotations,omitempty"`
-	Set         string         `json:"-"`
+	Name         string         `json:"name"`
+	Title        string         `json:"title,omitempty"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+	Annotations  map[string]any `json:"annotations,omitempty"`
+	Set          string         `json:"-"`
 	// For generated service tools.
 	service string
 	example *providers.Example
@@ -212,7 +213,7 @@ func capabilityMCPTools(cs []*store.Capability, taken []mcpTool) []mcpTool {
 	used := map[string]bool{}
 	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, discoveryTools, taken} {
 		for _, t := range set {
-			used[t.Name] = true
+			used[t.Name], used[toolPrefix+t.Name] = true, true
 		}
 	}
 	out := []mcpTool{}
@@ -274,7 +275,7 @@ func serviceToolNames(svcs []*store.Service, a *store.App) map[toolKey]string {
 	seen := map[string]bool{}
 	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, discoveryTools} {
 		for _, t := range set {
-			seen[t.Name] = true
+			seen[t.Name], seen[toolPrefix+t.Name] = true, true
 		}
 	}
 	ordered := make([]*store.Service, 0, len(svcs))
@@ -354,16 +355,15 @@ func isStaticTool(name string) bool {
 // so the service tools (every service's examples) are built only when the
 // name is not a static one.
 func (s *Server) mcpTool(ctx context.Context, a *store.App, st store.MCPSettings, name string) *mcpTool {
+	name = canonicalTool(name)
 	if isStaticTool(name) {
 		return findTool(s.mcpToolSet(ctx, a, st, false), name)
 	}
 	if !st.ServiceTools || !a.AllowsProxy() {
 		return nil
 	}
-	for _, n := range st.DisabledTools {
-		if n == name {
-			return nil
-		}
+	if disabledSet(st.DisabledTools)[name] {
+		return nil
 	}
 	c := s.toolCatalog(ctx)
 	id, ok := c.byName[name]
@@ -399,10 +399,7 @@ func (s *Server) mcpToolSet(ctx context.Context, a *store.App, st store.MCPSetti
 	if st.Manage {
 		all = append(all, manageTools...)
 	}
-	off := map[string]bool{}
-	for _, n := range st.DisabledTools {
-		off[n] = true
-	}
+	off := disabledSet(st.DisabledTools)
 	out := make([]mcpTool, 0, len(all))
 	for _, t := range all {
 		if !off[t.Name] {
@@ -702,7 +699,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 		if err != nil {
 			return nil, fmt.Errorf("no resource %s", uri)
 		}
-		return text("text/markdown", d.Render(false)), nil
+		return text("text/markdown", publicText(d.Render(false))), nil
 	case strings.HasPrefix(uri, "acnologia://services/"):
 		slug := strings.TrimPrefix(uri, "acnologia://services/")
 		if !a.CanUse(slug) {
@@ -722,7 +719,7 @@ func (s *Server) mcpReadResource(ctx context.Context, a *store.App, uri string) 
 			"base_url": sv.BaseURL, "auth": map[string]any{"type": sv.AuthType, "name": sv.AuthName},
 			"quota_unit": spec.Quota.Unit, "max_concurrency_per_key": sv.MaxConcurrency, "examples": examples,
 			"offers":      offerRows(spec.Offers),
-			"how_to_call": "Use proxy_request with service=" + sv.Slug + " and a path, or the generated tool for an example. Acnologia adds the key.",
+			"how_to_call": publicText("Use proxy_request with service=" + sv.Slug + " and a path, or the generated tool for an example. Acnologia adds the key."),
 			"guide":       "acnologia://services/" + sv.Slug + "/guide",
 		}
 		if p, err := s.Store.GetProvider(ctx, sv.DocProvider()); err == nil && strings.HasPrefix(p.DocsURL, "https://") {
@@ -745,7 +742,7 @@ var mcpPrompts = []map[string]any{
 
 func (s *Server) mcpGetPrompt(ctx context.Context, a *store.App, st store.MCPSettings, name string, args map[string]string) (map[string]any, error) {
 	msg := func(t string) map[string]any {
-		return map[string]any{"messages": []map[string]any{{"role": "user", "content": map[string]any{"type": "text", "text": t}}}}
+		return map[string]any{"messages": []map[string]any{{"role": "user", "content": map[string]any{"type": "text", "text": publicText(t)}}}}
 	}
 	switch name {
 	case "use_service":

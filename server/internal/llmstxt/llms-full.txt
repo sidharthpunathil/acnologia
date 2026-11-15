@@ -489,23 +489,25 @@ On Windows the bridge is `acnologia.exe mcp` with the same flags; in a JSON clie
 
 Each app chooses its tool sets on the dashboard Apps page. Core, service tools, resources and prompts are on by default; insights and manage are off.
 
+The built in tools are listed with an `acnologia_` prefix (`acnologia_get_key`, `acnologia_search_tools`), so they never clash with another server's tools; generated service tools keep their own names. A call by the old name (`get_key`) still works, and `disabled_tools` accepts either form. Every built in tool and service tool declares an `outputSchema` matching its `structuredContent`.
+
 | set | tool | purpose | typical arguments |
 |---|---|---|---|
-| core | `list_services` | services the token may use, with availability | none |
-| core | `pool_status` | whether a service has a key available now | `service` |
-| core | `service_guide` | the service's usage guide as Markdown; read it before calling a service you have not used | `service` |
-| core | `get_key` | lease a key (lease mode apps only); always follow with `report_key` | `service`, optional `exclusive`, `exclude_key_ids`, `ttl_sec` (max 86400), `wait_sec` (0 to 60) |
-| core | `renew_key` | extend a lease for a long job | `lease_id`, optional `ttl_sec` |
-| core | `report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome` (`ok`, `rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned`, `error`), optional `retry_after_sec`, `message`, `rotate` |
-| core | `proxy_request` | make a provider call through the proxy without seeing a key | `service`, `path`, optional `method`, `query`, `body` |
+| core | `acnologia_list_services` | services the token may use, with availability | none |
+| core | `acnologia_pool_status` | whether a service has a key available now | `service` |
+| core | `acnologia_service_guide` | the service's usage guide as Markdown; read it before calling a service you have not used | `service` |
+| core | `acnologia_get_key` | lease a key (lease mode apps only); always follow with `acnologia_report_key` | `service`, optional `exclusive`, `exclude_key_ids`, `ttl_sec` (max 86400), `wait_sec` (0 to 60) |
+| core | `acnologia_renew_key` | extend a lease for a long job | `lease_id`, optional `ttl_sec` |
+| core | `acnologia_report_key` | report a lease outcome, optionally rotate | `lease_id`, `outcome` (`ok`, `rate_limited`, `busy`, `quota_exhausted`, `invalid`, `banned`, `error`), optional `retry_after_sec`, `message`, `rotate` |
+| core | `acnologia_proxy_request` | make a provider call through the proxy without seeing a key | `service`, `path`, optional `method`, `query`, `body` |
 | service tools | one per provider example and per usage guide endpoint that no example covers, named `<service slug>_<group>_<endpoint name>` (such as `serpapi_google_search`) | ready to call endpoints; the description names the matching offer, whether it is free and its per key limits | path parameters (required), query parameters from the example or the guide's params, `extra_query`, and `body` (the guide's body params) |
-| service tools | `search_tools`, `call_tool` | find service tools by words and call one by name; listed in every tool mode while service tools are on | `query`, optional `service`, `limit`; `name`, `arguments` |
-| insights | `list_keys`, `key_details`, `service_stats` | read only key health, quota and recent events, never a secret | `service`, `validity`, `key_id`; `list_keys` pages with `limit` (default 50, max 200) and `offset` |
-| manage | `check_keys`, `set_key_status`, `add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
+| service tools | `acnologia_search_tools`, `acnologia_call_tool` | find service tools by words and call one by name; listed in every tool mode while service tools are on | `query`, optional `service`, `limit`; `name`, `arguments` |
+| insights | `acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats` | read only key health, quota and recent events, never a secret | `service`, `validity`, `key_id`; `acnologia_list_keys` pages with `limit` (default 50, max 200) and `offset` |
+| manage | `acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
 
-`list_services` and `list_keys` return their items (`services` or `keys`) with `total`, `count`, `offset`, `has_more` and `next_offset`: pass `next_offset` as `offset` for the next page. Every built in tool states `readOnlyHint`, `destructiveHint` and `openWorldHint` (only `proxy_request`, `call_tool` and `set_key_status` are marked destructive) and has a top level `title`. `initialize` answers with the client's protocol version when the server speaks it (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`), else `2025-06-18`. Errors name the tool that helps next, such as `list_services` for an unknown service.
+`acnologia_list_services` and `acnologia_list_keys` return their items (`services` or `keys`) with `total`, `count`, `offset`, `has_more` and `next_offset`: pass `next_offset` as `offset` for the next page. Every built in tool states `readOnlyHint`, `destructiveHint` and `openWorldHint` (only `acnologia_proxy_request`, `acnologia_call_tool` and `acnologia_set_key_status` are marked destructive) and has a top level `title`. `initialize` answers with the client's protocol version when the server speaks it (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`), else `2025-06-18`. Errors name the tool that helps next, such as `acnologia_list_services` for an unknown service.
 
-Resources: `acnologia://services`, `acnologia://services/{slug}`, `acnologia://services/{slug}/guide` (the usage guide, `text/markdown`) and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `get_key` exclusive by default, add instructions, hide single tools and pick the tool mode.
+Resources: `acnologia://services`, `acnologia://services/{slug}`, `acnologia://services/{slug}/guide` (the usage guide, `text/markdown`) and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `acnologia_get_key` exclusive by default, add instructions, hide single tools and pick the tool mode.
 
 Service tools follow the provider data: every example in a provider's spec, then every endpoint of its usage guide (`Guide.Endpoints`) that no example covers, typed from the guide's params. Adding a provider or a service, or the provider builder writing a guide, adds its tools at once, with no code and no restart.
 
@@ -513,7 +515,7 @@ Example call:
 
 ```json
 {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
- "params": {"name": "proxy_request",
+ "params": {"name": "acnologia_proxy_request",
             "arguments": {"service": "serpapi", "method": "GET", "path": "/search.json",
                           "query": {"engine": "google", "q": "coffee"}}}}
 ```
@@ -526,13 +528,13 @@ An app can reach hundreds of service tools, more than a model's context should h
 |---|---|
 | `auto` (default) | every tool while the app has 30 or fewer service tools, else as `search` |
 | `all` | every tool |
-| `search` | the core (and insights, manage) tools plus `search_tools` and `call_tool` |
+| `search` | the core (and insights, manage) tools plus `acnologia_search_tools` and `acnologia_call_tool` |
 
-Service tools that are not listed can still be called by name with `tools/call`. `search_tools` `{query, service?, limit?}` (limit default 8, max 25) ranks tools by the words in the service name, provider, product group, host, tool name, description and params, weighting rare words, tolerating one typo and plurals, and matching a few synonyms (search and find, scrape and extract, jobs and careers, maps and places, ...). It returns each tool with its input schema. An empty query returns the services with their tool counts. `call_tool` `{name, arguments}` runs a tool it found.
+Service tools that are not listed can still be called by name with `tools/call`. `acnologia_search_tools` `{query, service?, limit?}` (limit default 8, max 25) ranks tools by the words in the service name, provider, product group, host, tool name, description and params, weighting rare words, tolerating one typo and plurals, and matching a few synonyms (search and find, scrape and extract, jobs and careers, maps and places, ...). It returns each tool with its input schema. An empty query returns the services with their tool counts. `acnologia_call_tool` `{name, arguments}` runs a tool it found.
 
 ```json
 {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
- "params": {"name": "search_tools", "arguments": {"query": "linkedin jobs", "limit": 1}}}
+ "params": {"name": "acnologia_search_tools", "arguments": {"query": "linkedin jobs", "limit": 1}}}
 ```
 
 The result (as JSON text in the tool result) looks like:
@@ -541,21 +543,21 @@ The result (as JSON text in the tool result) looks like:
 {"tools": [{"name": "omkar_cloud_linkedin_jobs_linkedin_jobs_scraper_host_search_jobs",
             "title": "Omkar Cloud: LinkedIn Jobs (linkedin-jobs-scraper host): search jobs",
             "description": "...", "inputSchema": {"type": "object", "properties": {"keywords": {"type": "string"}, "location": {"type": "string"}, "extra_query": {"type": "object"}}}}],
- "matches": 3, "catalog_size": 42, "hint": "Call a tool with call_tool {name, arguments}, or by its name."}
+ "matches": 3, "catalog_size": 42, "hint": "Call a tool with acnologia_call_tool {name, arguments}, or by its name."}
 ```
 
 ```json
 {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
- "params": {"name": "call_tool",
+ "params": {"name": "acnologia_call_tool",
             "arguments": {"name": "omkar_cloud_linkedin_jobs_linkedin_jobs_scraper_host_search_jobs",
                           "arguments": {"keywords": "golang", "location": "Berlin"}}}}
 ```
 
 ### Staying current
 
-`initialize` advertises `tools.listChanged: true` (and `resources.listChanged: true` when resources are on). A client that opens `GET /mcp` with `Accept: text/event-stream` and the app token gets a server sent events stream that sends `notifications/tools/list_changed` (and `notifications/resources/list_changed`) when what the app sees changes: a provider or service added, edited or removed, a capability or group saved, the app's access or MCP settings changed. The client then calls `tools/list` again, with no reconnect. Any admin write (dashboard, CLI, control MCP, Assistant) wakes the streams at once; a check every 60 seconds catches other changes, such as the provider refresh or another server's share. The stream sends a keepalive comment every 25 seconds, closes after an hour (clients reconnect), and closes when the token stops working. `GET /mcp` without that `Accept` answers 405. In search mode `tools/list` holds only the fixed tools, so a new provider changes nothing there: `search_tools` finds its tools at once.
+`initialize` advertises `tools.listChanged: true` (and `resources.listChanged: true` when resources are on). A client that opens `GET /mcp` with `Accept: text/event-stream` and the app token gets a server sent events stream that sends `notifications/tools/list_changed` (and `notifications/resources/list_changed`) when what the app sees changes: a provider or service added, edited or removed, a capability or group saved, the app's access or MCP settings changed. The client then calls `tools/list` again, with no reconnect. Any admin write (dashboard, CLI, control MCP, Assistant) wakes the streams at once; a check every 60 seconds catches other changes, such as the provider refresh or another server's share. The stream sends a keepalive comment every 25 seconds, closes after an hour (clients reconnect), and closes when the token stops working. `GET /mcp` without that `Accept` answers 405. In search mode `tools/list` holds only the fixed tools, so a new provider changes nothing there: `acnologia_search_tools` finds its tools at once.
 
-Apps and applications you write call the provider's own URL with Acnologia as their `HTTPS_PROXY` (see Forward proxy), and never mention Acnologia in their UI, copy, page titles or user facing errors; the MCP instructions say so. Prefer `proxy_request` or a service tool over `get_key` so secrets never enter the model context. `proxy_request` also queues for busy keys like the proxy does. If you do use `get_key`, call `report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
+Apps and applications you write call the provider's own URL with Acnologia as their `HTTPS_PROXY` (see Forward proxy), and never mention Acnologia in their UI, copy, page titles or user facing errors; the MCP instructions say so. Prefer `acnologia_proxy_request` or a service tool over `acnologia_get_key` so secrets never enter the model context. `acnologia_proxy_request` also queues for busy keys like the proxy does. If you do use `acnologia_get_key`, call `acnologia_report_key` for every lease: on concurrency limited services an unreported lease keeps the key's slot busy until `ttl_sec` runs out.
 
 ### Control MCP
 

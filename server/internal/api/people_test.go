@@ -93,7 +93,7 @@ func mcpTools(t *testing.T, e *env, tok string) map[string]bool {
 	e.do(http.DefaultClient, "POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, 200, &res, "Authorization", "Bearer "+tok)
 	out := map[string]bool{}
 	for _, tl := range res["result"].(map[string]any)["tools"].([]any) {
-		out[tl.(map[string]any)["name"].(string)] = true
+		out[canonicalTool(tl.(map[string]any)["name"].(string))] = true
 	}
 	return out
 }

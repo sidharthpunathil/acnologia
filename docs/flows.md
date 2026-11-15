@@ -452,15 +452,15 @@ tools map onto the consumer API and the proxy, with the same token rules.
 An admin picks each app's tool sets in the dashboard (`GET`/`PUT
 /api/admin/apps/{id}/mcp`):
 
-- **core**: `list_services`, `pool_status`, `service_guide`, `get_key`,
-  `renew_key`, `report_key`, `proxy_request`.
+- **core**: `acnologia_list_services`, `acnologia_pool_status`, `acnologia_service_guide`, `acnologia_get_key`,
+  `acnologia_renew_key`, `acnologia_report_key`, `acnologia_proxy_request`.
 - **service tools**: generated from each provider's examples, then from
   every usage guide endpoint no example covers, typed from the guide's
   params, and named `<slug>_<group>_<endpoint name>`. A new provider,
-  service or guide adds its tools without code or a restart. `search_tools`
-  and `call_tool` come with them.
-- **insights** (read only): `list_keys`, `key_details`, `service_stats`.
-- **manage**: `check_keys`, `set_key_status`, `add_keys`. `check_keys` needs a
+  service or guide adds its tools without code or a restart. `acnologia_search_tools`
+  and `acnologia_call_tool` come with them.
+- **insights** (read only): `acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats`.
+- **manage**: `acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys`. `acnologia_check_keys` needs a
   service and checks only that service's keys.
 
 Core, service tools, resources and prompts are on by default. When two
@@ -470,25 +470,32 @@ another server therefore never takes a local tool's name or a built in one.
 Clients that only speak stdio can bridge with `acnologia mcp --url ...
 --token acn_...`.
 
+The built in tools are listed with an `acnologia_` prefix
+(`acnologia_get_key`, `acnologia_search_tools`), so they never clash with
+another server's tools; generated service tools keep their own names. A call
+by the old name (`get_key`) still works, and `disabled_tools` accepts either
+form. Every built in tool and service tool declares an `outputSchema`
+matching its `structuredContent`.
+
 A typical session:
 
 1. The client initializes with `Authorization: Bearer acn_...`. The
-   instructions tell the agent to read `service_guide` before calling a
+   instructions tell the agent to read `acnologia_service_guide` before calling a
    service it has not used.
 2. `tools/list` returns the tools this app's settings allow. With the app's
    `tool_mode` at `search`, or at `auto` (the default) with more than 30
-   service tools, it lists the other tools plus `search_tools` and
-   `call_tool`: the agent asks `search_tools` for what it needs ("linkedin
+   service tools, it lists the other tools plus `acnologia_search_tools` and
+   `acnologia_call_tool`: the agent asks `acnologia_search_tools` for what it needs ("linkedin
    jobs") and gets matching tools with their input schemas, then calls one
-   by name or through `call_tool`. With `all` it lists every tool.
+   by name or through `acnologia_call_tool`. With `all` it lists every tool.
    An agent that keeps `GET /mcp` open (`Accept: text/event-stream`) gets
    `notifications/tools/list_changed` when the app's tools change, and lists
    them again.
-3. `service_guide` returns the usage guide as Markdown: endpoints, params,
+3. `acnologia_service_guide` returns the usage guide as Markdown: endpoints, params,
    limits and errors.
-4. `proxy_request` runs the proxy handler in process, with the response
+4. `acnologia_proxy_request` runs the proxy handler in process, with the response
    capped at `max_result_kb` (default 200). A JSON answer within the cap is
-   embedded as sent, so large integers keep every digit. `get_key` issues a
+   embedded as sent, so large integers keep every digit. `acnologia_get_key` issues a
    lease with the same checks as `/api/v1/lease`.
 
 The guide is also the resource `acnologia://services/{slug}/guide` (one per
@@ -507,12 +514,12 @@ sequenceDiagram
     M-->>Ag: server info, capabilities
     Ag->>M: tools/list
     M-->>Ag: the tools this app's settings allow
-    Ag->>M: tools/call service_guide {service}
+    Ag->>M: tools/call acnologia_service_guide {service}
     M-->>Ag: the usage guide as Markdown<br/>(endpoints, params, limits, errors)
-    Ag->>M: tools/call get_key {service}
+    Ag->>M: tools/call acnologia_get_key {service}
     M->>C: issue lease (same checks as /api/v1/lease)
     M-->>Ag: lease JSON
-    Ag->>M: tools/call proxy_request {service, method, path}
+    Ag->>M: tools/call acnologia_proxy_request {service, method, path}
     M->>P: run the proxy handler in process<br/>(response capped at max_result_kb, default 200)
     M-->>Ag: status, headers, body
 ```
