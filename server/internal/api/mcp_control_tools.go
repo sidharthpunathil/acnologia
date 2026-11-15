@@ -53,6 +53,9 @@ type ctlTool struct {
 	// (call_service, list_service_examples, api_request). It returns the
 	// tool result.
 	Run func(c *ctlCtx, in map[string]any) map[string]any
+	// Page is set for list tools (ctlPaging in mcp_control_names.go): they
+	// return one page of their list with the paging block.
+	Page *ctlPage
 }
 
 // ctlGroup is a tool group as the dashboard shows it.
@@ -318,15 +321,14 @@ func describeIn(path, list, what, input, label string) func(c *ctlCtx, in map[st
 // /mcp/control, which reads this table.
 var ctlTools []ctlTool
 
-func init() { ctlTools = buildCtlTools() }
+func init() {
+	ctlTools = buildCtlTools()
+	indexCtlTools()
+}
 
+// ctlToolByName finds a tool by its internal or its public name.
 func ctlToolByName(name string) *ctlTool {
-	for i := range ctlTools {
-		if ctlTools[i].Name == name {
-			return &ctlTools[i]
-		}
-	}
-	return nil
+	return ctlIndex[ctlCanonicalTool(name)]
 }
 
 func buildCtlTools() []ctlTool {
@@ -342,14 +344,13 @@ func buildCtlTools() []ctlTool {
 			Desc:  "Requests, errors and spend per day, service and app over the last days, plus AI spend.",
 			Props: map[string]any{"days": iProp("Days to cover, default 30")}, Query: []string{"days"}},
 		{Name: "list_events", Title: "List events", Group: "overview", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/events",
-			Desc: "Recent request and health check events, newest first.",
+			Desc: "Recent request and health check events, newest first, paging through the newest 500.",
 			Props: map[string]any{
 				"service": sProp("Only this service: id, slug or name"),
 				"key_id":  iProp("Only this key"),
 				"kind":    sProp("Event kind: proxy, lease, rate_limited, quota_exhausted, invalid, error or health"),
-				"limit":   iProp("How many events"),
 			},
-			Query: []string{"service", "key_id", "kind", "limit"}, Rename: map[string]string{"service": "service_id"}},
+			Query: []string{"service", "key_id", "kind"}, Rename: map[string]string{"service": "service_id"}},
 		{Name: "settings_summary", Title: "Server settings", Group: "overview", Kind: ctlRead, Role: a, Method: get, Path: "/api/admin/settings",
 			Desc: "The server's configuration from its environment, with secrets shown only as set or not set."},
 		{Name: "whoami", Title: "Who am I", Group: "overview", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/me",
@@ -779,7 +780,7 @@ func buildCtlTools() []ctlTool {
 				return fmt.Sprintf("delete user %s (%s)", argStr(u, "email"), argStr(u, "role")), nil
 			}},
 		{Name: "list_audit", Title: "Audit log", Group: "admin", Kind: ctlRead, Role: sa, Method: get, Path: "/api/admin/audit",
-			Desc: "Who changed what, newest first.", Props: map[string]any{"limit": iProp("How many entries")}, Query: []string{"limit"}},
+			Desc: "Who changed what, newest first, paging through the newest 1,000 entries."},
 
 		// ---- secrets ----
 		{Name: "reveal_key", Title: "Reveal a key", Group: "secrets", Kind: ctlWrite, Role: sa, Method: post, Path: "/api/admin/keys/{key_id}/reveal",

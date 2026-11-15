@@ -308,6 +308,13 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
 - **Listing.** Tools the caller's role cannot use are left out. Members see
   reads; admins add writes and `call`; superadmins add sharing and refresh
   writes and the `admin` group.
+- **Names.** Tools are listed as `acnologia_<name>` (`acnologia_list_keys`,
+  `acnologia_delete_service`), so they do not clash with another server's
+  tools; this section names them without the prefix. A call by the old name
+  still works, and `exclude` and `batch` take either form. The instructions,
+  descriptions, prompts and errors use the prefixed names. Every tool has a
+  `title` and states `readOnlyHint`, `destructiveHint`, `idempotentHint` and
+  `openWorldHint`.
 - **Confirm step.** Destructive tools (deletes, revokes, rotate, disconnect,
   a raw `DELETE`) take `confirm`. Without `confirm: true` nothing changes and
   the result says what would happen, for example the service and its key
@@ -322,19 +329,38 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
   - `filter`: `{field: value}` on the top level lists. Text matches as a
     case insensitive substring, numbers and booleans exactly, and dot paths
     reach nested fields.
-  - `limit` and `offset`.
+  - `limit` and `offset` on the top level lists.
 
   A filtered or paged result adds `_matched: {list: count}`, the matches
-  before paging. Shaping runs before the 512 KB cap, so it can bring a big
-  result under it. `provider_guide` and `service_guide` take
-  `format: markdown` for the Markdown alone.
+  before paging. List tools page instead (below). Shaping runs before the
+  512 KB cap, so it can bring a big result under it. `provider_guide` and
+  `service_guide` take `format: markdown` for the Markdown alone.
+- **Paging.** The list tools (`list_services`, `list_keys`, `list_events`,
+  `list_apps`, `list_app_tokens`, `list_providers`, `list_ai_runs`,
+  `list_webhooks`, `list_egress`, `list_groups`, `list_shares`,
+  `list_peers`, `list_users`, `list_audit`, `list_refresh_runs`,
+  `list_refresh_reviews` and `search`) return one page of their list with
+  `total`, `count`, `offset`, `has_more` and, when more follow,
+  `next_offset`: pass it as `offset` for the next page. `limit` is the page
+  size, 100 by default and at most 500; `list_providers` pages 25 (at most
+  50), `list_audit` 200, `list_ai_runs` 50, and the refresh lists and
+  `search` 50 (at most 200). `filter` runs before paging, so `total` counts
+  the matches, and `fields` keeps the paging fields. `list_events` pages
+  through the newest 500 events and `list_audit` through the newest 1,000
+  entries.
+- **Output schemas.** `whoami`, `search` and the list tools except
+  `list_ai_runs`, `list_peers` and the refresh lists declare an
+  `outputSchema` that their `structuredContent` matches: the paging fields,
+  and each item's id, name and a few other fields. Only the paging fields
+  are required, since `fields` can drop the rest.
 - **Search, batch and routes** (the `power` group, on by default).
-  - `search` `{query, types, limit}` looks through services, keys, apps,
-    providers, shares, connected servers, webhooks, egress proxies, groups
-    and users, and returns `{results: [{type, id, name, matched, value,
-    details_tool}], total, searched, skipped}`. Lists the role cannot read
-    are skipped and named, and secret bearing fields (keys, webhook URLs)
-    are never searched.
+  - `search` `{query, types, limit, offset}` looks through services, keys,
+    apps, providers, shares, connected servers, webhooks, egress proxies,
+    groups and users, and returns `{results: [{type, id, name, matched,
+    value, details_tool}], searched, skipped}` with the paging fields;
+    `details_tool` is the public name. Lists the role cannot read are
+    skipped and named, and secret bearing fields (keys, webhook URLs) are
+    never searched.
   - `batch` `{calls: [{tool, arguments}], stop_on_error}` runs up to 20
     tools in order and returns `{results: [{index, tool, ok, result,
     structured}], ran, failed}`. Each call is checked as if made alone
@@ -356,7 +382,7 @@ both are set:
 | Query | Header | Effect |
 |---|---|---|
 | `groups=services,keys` | `X-Acnologia-MCP-Groups` | Only these groups; `all` is every group. Default: every group except `admin`, `secrets` and `raw`. |
-| `exclude=delete_service` | `X-Acnologia-MCP-Exclude` | Drop tools by name. |
+| `exclude=delete_service` | `X-Acnologia-MCP-Exclude` | Drop tools by name, with or without the `acnologia_` prefix. |
 | `read_only=1` | `X-Acnologia-MCP-Read-Only` | List only read tools and refuse the others. |
 | `confirm=off` | `X-Acnologia-MCP-Confirm` | No confirm step. Default `on`. |
 
@@ -501,7 +527,7 @@ and `/me` pages, and the person's own calls with the token (`/proxy`,
 `/api/v1/services`, `/api/v1/me` and `/mcp`, only for the shared services and
 within the key scopes, limits and timer. It cannot lease (403
 `lease_not_allowed`). On MCP it sees only the core and service tools, never
-`get_key`, insights or manage tools, whatever the app's MCP settings say. It
+`acnologia_get_key`, insights or manage tools, whatever the app's MCP settings say. It
 gets 401 on every dashboard route and 403 `not_a_share` on the server to
 server routes. Pause, revoke and an ended timer refuse the very next call.
 

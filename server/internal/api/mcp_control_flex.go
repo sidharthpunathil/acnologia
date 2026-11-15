@@ -275,10 +275,6 @@ func ctlSearch(c *ctlCtx, in map[string]any) map[string]any {
 	for _, t := range argStrings(in, "types") {
 		want[strings.ToLower(t)] = true
 	}
-	limit := argInt(in, "limit")
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
 	hits := []map[string]any{}
 	searched, skipped := []string{}, map[string]string{}
 	for _, src := range searchSources {
@@ -309,17 +305,14 @@ func ctlSearch(c *ctlCtx, in map[string]any) map[string]any {
 				}
 				if strings.Contains(strings.ToLower(text), q) {
 					hits = append(hits, map[string]any{"type": src.Type, "id": m[src.ID], "name": m[src.Name],
-						"matched": f, "value": clipText(text, 160), "details_tool": src.Tool})
+						"matched": f, "value": clipText(text, 160), "details_tool": ctlPublicTool(src.Tool)})
 					break
 				}
 			}
 		}
 	}
-	total := len(hits)
-	if len(hits) > limit {
-		hits = hits[:limit]
-	}
-	return ctlJSON(map[string]any{"query": q, "results": hits, "total": total, "searched": searched, "skipped": skipped})
+	// call pages the hits (ctlPaging).
+	return ctlJSON(map[string]any{"query": q, "results": hits, "searched": searched, "skipped": skipped})
 }
 
 func isScalar(v any) bool {
@@ -370,7 +363,7 @@ func ctlBatch(c *ctlCtx, in map[string]any) map[string]any {
 		case t == nil:
 			res = ctlFail("unknown tool: " + name)
 		case t.Name == "batch":
-			res = ctlFail("a batch cannot contain batch")
+			res = ctlFail("a batch cannot contain " + ctlPublicTool("batch"))
 		default:
 			res = c.call(t, args)
 		}
@@ -434,7 +427,7 @@ func ctlListRoutes(c *ctlCtx, in map[string]any) map[string]any {
 		if q != "" && !strings.Contains(strings.ToLower(method+" "+p), q) {
 			return nil
 		}
-		out = append(out, route{Method: method, Path: p, Tool: toolFor(covered, method, p)})
+		out = append(out, route{Method: method, Path: p, Tool: ctlPublicTool(toolFor(covered, method, p))})
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool {
@@ -444,7 +437,7 @@ func ctlListRoutes(c *ctlCtx, in map[string]any) map[string]any {
 		return out[i].Method < out[j].Method
 	})
 	return ctlJSON(map[string]any{"routes": out, "count": len(out),
-		"note": "tool names the dedicated tool for a route; call the others with api_request (paths with {id} take the id). The route still checks your role."})
+		"note": ctlPublicText("tool names the dedicated tool for a route; call the others with api_request (paths with {id} take the id). The route still checks your role.")})
 }
 
 // toolFor finds the tool whose path matches a route, placeholders aside.
@@ -478,7 +471,6 @@ func ctlFlexTools() []ctlTool {
 			Props: map[string]any{
 				"query": sProp("Text to look for, case insensitive"),
 				"types": aProp(map[string]any{"type": "string", "enum": searchTypes()}, "Only these kinds; empty searches all"),
-				"limit": iProp("Most results, default 50, up to 200"),
 			}, Required: []string{"query"}},
 		{Name: "batch", Title: "Run several tools", Group: "power", Kind: ctlWrite, Role: m, Run: ctlBatch,
 			Desc: fmt.Sprintf("Run up to %d tool calls in one request, in order, and get every result back. Each call is checked as if made alone: your role, the connection's groups and read only setting, and confirm: true for destructive tools. Use it to read many things at once or to make a set of related changes.", batchMax),

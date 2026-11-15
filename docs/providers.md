@@ -265,7 +265,7 @@ will need next.
 - "How to call it through Acnologia": the proxy URL
   `<public url>/proxy/<service>`, the app token as
   `Authorization: Bearer acn_...`, a note not to send a provider key, and the
-  MCP alternatives `proxy_request` on `/mcp` or `call_service` on
+  MCP alternatives `acnologia_proxy_request` on `/mcp` or `call_service` on
   `/mcp/control`;
 - the endpoints, with a parameter table, example body and response notes;
 - the spec's `examples` as curl commands through the proxy;
@@ -316,7 +316,7 @@ can write one:
 - Apps: `GET /api/v1/services/{slug}/guide` (JSON, or Markdown with
   `Accept: text/markdown` or `?format=md`), linked from each entry of
   `GET /api/v1/services` as `guide_url`.
-- MCP: the `service_guide` core tool and the
+- MCP: the `acnologia_service_guide` core tool and the
   `acnologia://services/{slug}/guide` resource on `/mcp`.
 - Dashboard API: `GET /api/admin/providers/{slug}/guide` and
   `GET /api/admin/services/{id}/guide`.

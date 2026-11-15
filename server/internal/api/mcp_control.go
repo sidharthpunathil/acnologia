@@ -42,14 +42,8 @@ const controlAppMeta = "control_mcp_app_id"
 // controlAppName is that app's name on the Apps page.
 const controlAppName = "Control MCP"
 
-const ctlInstructions = "This is Acnologia's control MCP: it runs the server (services, keys, apps, providers, AI builds, sharing, usage) " +
-	"as the signed in user who owns the admin API token, with that user's role (or the token's scope when lower). Every change is audited under that user. " +
-	"Tools the role cannot use are not listed. Services are named by id, slug or name. " +
-	"call_service calls a provider API through the pooled keys as the app \"Control MCP\"; the key is never shown. " +
-	"search finds anything by text; batch runs up to 20 tools in one call; list_routes lists every admin route. " +
-	"Read tools take fields, filter, limit and offset to cut big results down, and the guide tools take format: markdown. " +
-	"Destructive tools (deletes, revokes, rotate, disconnect) do nothing on the first call: they say what would happen, then run when called again with confirm: true. Ask the user before confirming. " +
-	"The app side, where an app's token leases keys and proxies calls, is the separate /mcp endpoint."
+// ctlInstructions (what initialize tells the client) is in
+// mcp_control_names.go, with the tool names.
 
 // ctlOpts are the client's choices, from query parameters or headers.
 type ctlOpts struct {
@@ -76,7 +70,11 @@ func ctlOptions(r *http.Request) ctlOpts {
 		}
 		return out
 	}
-	o := ctlOpts{exclude: list(get("X-Acnologia-MCP-Exclude", "exclude")), confirm: true}
+	o := ctlOpts{exclude: map[string]bool{}, confirm: true}
+	// exclude takes a tool's internal or public name.
+	for n := range list(get("X-Acnologia-MCP-Exclude", "exclude")) {
+		o.exclude[ctlCanonicalTool(n)] = true
+	}
 	if g := get("X-Acnologia-MCP-Groups", "groups"); g != "" {
 		o.groups = list(g)
 	}
@@ -185,7 +183,7 @@ func (c *ctlCtx) dispatch(req rpcReq) (any, *rpcErr) {
 				"prompts":   map[string]any{"listChanged": false},
 			},
 			"serverInfo":   map[string]any{"name": "acnologia-control", "title": "Acnologia control", "version": c.s.Cfg.Version},
-			"instructions": ctlInstructions,
+			"instructions": ctlInstructions(),
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -208,7 +206,7 @@ func (c *ctlCtx) dispatch(req rpcReq) (any, *rpcErr) {
 		}
 		t := ctlToolByName(p.Name)
 		if t == nil {
-			return nil, &rpcErr{-32602, "unknown tool: " + p.Name}
+			return nil, &rpcErr{-32602, "unknown tool: " + p.Name + "; tools/list names them, and " + ctlPublicTool("search") + " finds things by text"}
 		}
 		in := map[string]any{}
 		if len(p.Arguments) > 0 && string(p.Arguments) != "null" {
@@ -255,13 +253,13 @@ func (c *ctlCtx) dispatch(req rpcReq) (any, *rpcErr) {
 func (c *ctlCtx) unavailable(t *ctlTool) string {
 	switch {
 	case !c.user.Role.AtLeast(t.Role):
-		return fmt.Sprintf("%s needs the %s role; this connection has %s", t.Name, t.Role, c.user.Role)
+		return fmt.Sprintf("%s needs the %s role; this connection has %s", ctlPublicTool(t.Name), t.Role, c.user.Role)
 	case !c.opts.groupOn(t.Group):
 		return fmt.Sprintf("the %s group is not on for this connection; add it with ?groups=", t.Group)
 	case c.opts.exclude[t.Name]:
-		return t.Name + " is excluded on this connection"
+		return ctlPublicTool(t.Name) + " is excluded on this connection"
 	case c.opts.readOnly && t.Kind != ctlRead:
-		return "this connection is read only; " + t.Name + " changes things"
+		return "this connection is read only; " + ctlPublicTool(t.Name) + " changes things"
 	}
 	return ""
 }
@@ -270,6 +268,9 @@ func (c *ctlCtx) toolJSON(t *ctlTool) map[string]any {
 	p := props(t.Props)
 	if t.Kind == ctlRead || t.Name == "api_request" {
 		p = props(p, shapeProps)
+	}
+	if t.Page != nil {
+		p = props(p, pageProps(t.Page))
 	}
 	if t.Name == "provider_guide" || t.Name == "service_guide" {
 		p["format"] = eProp("json (default): the structured guide and its Markdown. markdown: only the Markdown, ready to read", "json", "markdown")
@@ -288,17 +289,27 @@ func (c *ctlCtx) toolJSON(t *ctlTool) map[string]any {
 		"idempotentHint":  t.Kind == ctlRead || t.Method == http.MethodPut,
 		"openWorldHint":   t.OpenWorld,
 	}
-	return map[string]any{
-		"name": t.Name, "title": t.Title, "description": t.Desc,
-		"inputSchema": map[string]any{"type": "object", "properties": p, "required": req},
+	out := map[string]any{
+		"name": ctlPublicTool(t.Name), "title": t.Title, "description": ctlPublicText(t.Desc),
+		"inputSchema": map[string]any{"type": "object", "properties": ctlPublicSchema(p), "required": req},
 		"annotations": ann,
 	}
+	if o := ctlOutputs[t.Name]; o != nil {
+		out["outputSchema"] = o
+	}
+	return out
 }
 
 // call runs a tool and returns its MCP result, shaped by the fields,
-// filter, limit, offset and format inputs when given.
+// filter, limit, offset and format inputs when given. A list tool returns
+// one page of its list.
 func (c *ctlCtx) call(t *ctlTool, in map[string]any) map[string]any {
-	res := shapeResult(c.callRaw(t, in), in)
+	var res map[string]any
+	if t.Page != nil {
+		res = pageResult(c.callRaw(t, in), in, t.Page)
+	} else {
+		res = shapeResult(c.callRaw(t, in), in)
+	}
 	delete(res, ctlRawKey)
 	return res
 }
@@ -325,7 +336,7 @@ func (c *ctlCtx) callRaw(t *ctlTool, in map[string]any) map[string]any {
 			if err != nil {
 				return ctlFail(err.Error())
 			}
-			msg := "Nothing changed yet. This would " + what + ". If the user agrees, call " + t.Name + " again with the same arguments and confirm: true."
+			msg := "Nothing changed yet. This would " + what + ". If the user agrees, call " + ctlPublicTool(t.Name) + " again with the same arguments and confirm: true."
 			return map[string]any{
 				"content":           []map[string]any{{"type": "text", "text": msg}},
 				"structuredContent": map[string]any{"confirm_required": true, "would": what},
@@ -395,6 +406,11 @@ func (c *ctlCtx) buildPath(t *ctlTool, in map[string]any) (string, error) {
 			key = n
 		}
 		q.Set(key, resolve(name, v))
+	}
+	if t.Page != nil {
+		for k, vs := range t.Page.fetchQuery() {
+			q[k] = vs
+		}
 	}
 	if err != nil {
 		return "", err
@@ -634,7 +650,7 @@ func ctlBlockedHeader(k string) bool {
 // and the app's limits all apply.
 func ctlCallService(c *ctlCtx, in map[string]any) map[string]any {
 	if !c.user.Role.AtLeast(store.RoleAdmin) {
-		return ctlFail("call_service needs the admin role: it spends provider quota")
+		return ctlFail(ctlPublicText("call_service needs the admin role: it spends provider quota"))
 	}
 	sv, err := c.s.findService(c.r.Context(), argStr(in, "service"))
 	if err != nil {
@@ -734,7 +750,7 @@ func ctlServiceExamples(c *ctlCtx, in map[string]any) map[string]any {
 	return ctlJSON(map[string]any{
 		"service": sv.Slug, "name": sv.Name, "provider": sv.Provider, "base_url": sv.BaseURL,
 		"quota_unit": spec.Quota.Unit, "offers": offerRows(spec.Offers), "examples": examples,
-		"note": "Pass an example's call_service object to call_service; change the query or body as needed. Acnologia adds the key.",
+		"note": "Pass an example's call_service object as the arguments of " + ctlPublicTool("call_service") + "; change the query or body as needed. Acnologia adds the key.",
 	})
 }
 
@@ -809,6 +825,7 @@ var ctlPrompts = []map[string]any{
 
 func ctlPrompt(name string, args map[string]string) (map[string]any, error) {
 	msg := func(t string) map[string]any {
+		t = ctlPublicText(t)
 		return map[string]any{"messages": []map[string]any{{"role": "user", "content": map[string]any{"type": "text", "text": t}}}}
 	}
 	switch name {
@@ -821,7 +838,7 @@ func ctlPrompt(name string, args map[string]string) (map[string]any, error) {
 			"If it is not, call start_provider_build with kind create_provider and what you know (name, docs URLs), then poll get_ai_run until it ends. "+
 			"Then ask me for the API keys and add them with add_keys (text accepts a paste). Finish with list_keys for the service and tell me which keys work.", p)), nil
 	case "health_report":
-		return msg("Make a health report for this Acnologia server. Call overview, list_keys with validity invalid, list_services and service_breaker for any " +
+		return msg("Make a health report for this Acnologia server. Call " + ctlPublicTool("overview") + ", list_keys with validity invalid, list_services and service_breaker for any " +
 			"service with failures, and usage_report for 30 days. Report: keys that are invalid or out of quota (with the reason), services whose breaker is open, " +
 			"app or budget limits being hit, and spend. End with the one or two actions that matter most."), nil
 	case "set_up_app":
@@ -860,7 +877,7 @@ func (s *Server) mcpControlInfo(w http.ResponseWriter, r *http.Request) {
 	tools := make([]map[string]any, 0, len(ctlTools))
 	for i := range ctlTools {
 		t := &ctlTools[i]
-		tools = append(tools, map[string]any{"name": t.Name, "title": t.Title, "description": t.Desc, "group": t.Group,
+		tools = append(tools, map[string]any{"name": t.Name, "public_name": ctlPublicTool(t.Name), "title": t.Title, "description": t.Desc, "group": t.Group,
 			"kind": t.Kind, "available": u != nil && u.Role.AtLeast(t.Role)})
 	}
 	writeJSON(w, 200, map[string]any{"url": s.baseURL(r) + "/mcp/control", "groups": ctlGroups, "tools": tools})

@@ -44,11 +44,13 @@ func (c *ctlClient) tool(name string, args map[string]any) (map[string]any, stri
 	return sc, text, r["isError"] == true
 }
 
+// names lists the tools by internal name: they are listed as
+// acnologia_<name>, and tests compare the internal name.
 func (c *ctlClient) names() []string {
 	res := c.call("tools/list", nil)
 	out := []string{}
 	for _, t := range res["result"].(map[string]any)["tools"].([]any) {
-		out = append(out, t.(map[string]any)["name"].(string))
+		out = append(out, ctlCanonicalTool(t.(map[string]any)["name"].(string)))
 	}
 	return out
 }
@@ -96,7 +98,7 @@ func TestControlMCPInitializeAndRoles(t *testing.T) {
 	for _, x := range sup.call("tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		tl := x.(map[string]any)
 		ann := tl["annotations"].(map[string]any)
-		switch tl["name"] {
+		switch ctlCanonicalTool(tl["name"].(string)) {
 		case "list_services":
 			if ann["readOnlyHint"] != true || ann["destructiveHint"] != false {
 				t.Fatalf("list_services annotations: %v", ann)
