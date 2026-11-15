@@ -37,6 +37,9 @@ const TIME_PATTERNS = [
   "\\b\\d{1,2}:\\d{2}(?::\\d{2})?\\s*(?:AM|PM)?\\b",
 ];
 
+// The tallest slice of a page compared in one screenshot.
+const TILE = 16000;
+
 // The server and the fake upstream listen on a new port each run, and the
 // dashboard prints those addresses (service base URLs, Integrate snippets).
 const PORT_PATTERN = "\\b(?:127\\.0\\.0\\.1|localhost):\\d{2,5}\\b";
@@ -144,7 +147,18 @@ export const test = base.extend<Fixtures & { theme: Theme }>({
       for (const loc of opts.mask ?? []) {
         await loc.evaluateAll((els) => els.forEach((el) => el.setAttribute("data-e2e-mask", "")));
       }
-      await expect(page).toHaveScreenshot(`${name}.png`);
+      // Chrome often refuses to capture a very tall page in one go ("Unable to
+      // capture screenshot"), so a page taller than TILE is compared in
+      // slices of that height: name-1.png, name-2.png and so on.
+      const { width, height } = page.viewportSize()!;
+      if (height <= TILE) {
+        await expect(page).toHaveScreenshot(`${name}.png`);
+      } else {
+        for (let i = 0, y = 0; y < height; i++, y += TILE) {
+          const clip = { x: 0, y, width, height: Math.min(TILE, height - y) };
+          await expect(page).toHaveScreenshot(`${name}-${i + 1}.png`, { clip });
+        }
+      }
       await page.setViewportSize(size);
     });
     // Errors that showed up after the last snapshot still fail the test.
