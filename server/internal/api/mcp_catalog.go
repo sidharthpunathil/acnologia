@@ -33,21 +33,21 @@ const (
 // mcpAutoListMax is how many service tools auto mode still lists in full.
 const mcpAutoListMax = 30
 
-var discoveryTools = []mcpTool{
+var discoveryTools = withTitles([]mcpTool{
 	{Name: "search_tools", Set: setService, Annotations: readOnly("Find tools"),
 		Description: "Find the tools for a job across every provider this app can use, for example \"linkedin jobs\", \"tiktok video\", \"google maps reviews\" or \"generate image\". Returns the best matching tools with their input schemas; call one with call_tool (or by its name). An empty query lists the services and how many tools each has. The catalog follows the providers on the server, so new providers show up here at once.",
 		InputSchema: obj(map[string]any{
 			"query":   str("What you want to do, or a provider, product or site name"),
 			"service": str("Optional: only tools of this service slug"),
-			"limit":   map[string]any{"type": "integer", "description": "How many tools to return (default 8, max 25)"},
+			"limit":   integer("How many tools to return (default 8)", 1, 25),
 		})},
-	{Name: "call_tool", Set: setService, Annotations: map[string]any{"title": "Call a tool", "openWorldHint": true},
+	{Name: "call_tool", Set: setService, Annotations: hints("Call a tool", true, false, true),
 		Description: "Call a tool that search_tools found, by name, with its arguments.",
 		InputSchema: obj(map[string]any{
 			"name":      str("Tool name from search_tools"),
 			"arguments": map[string]any{"type": "object", "description": "The tool's arguments, as its input schema describes"},
 		}, "name")},
-}
+})
 
 // toolSource is one callable endpoint of a service: an example or a guide
 // endpoint.

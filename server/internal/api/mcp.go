@@ -40,6 +40,26 @@ type rpcErr struct {
 
 const mcpProtocol = "2025-06-18"
 
+// mcpVersions are the protocol revisions both MCP servers speak. The tools
+// use only what every one of them has, plus title and structuredContent,
+// which older clients ignore.
+var mcpVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+
+// negotiateVersion answers initialize: the client's version when this server
+// speaks it, else this server's own (the client then decides whether to go on).
+func negotiateVersion(params json.RawMessage) string {
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	_ = json.Unmarshal(params, &p)
+	for _, v := range mcpVersions {
+		if v == p.ProtocolVersion {
+			return v
+		}
+	}
+	return mcpProtocol
+}
+
 type mcpCtxKey int
 
 // mcpLimitKey carries the app's max result size (KB) into tool handlers.
@@ -123,14 +143,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 	}
 	switch req.Method {
 	case "initialize":
-		var p struct {
-			ProtocolVersion string `json:"protocolVersion"`
-		}
-		_ = json.Unmarshal(req.Params, &p)
-		v := p.ProtocolVersion
-		if v == "" {
-			v = mcpProtocol
-		}
+		v := negotiateVersion(req.Params)
 		caps := map[string]any{"tools": map[string]any{"listChanged": true}}
 		if st.Resources {
 			caps["resources"] = map[string]any{"listChanged": true, "subscribe": false}
@@ -162,7 +175,7 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		}
 		t := s.mcpTool(ctx, a, st, p.Name)
 		if t == nil {
-			return nil, &rpcErr{-32602, "unknown or disabled tool: " + p.Name}
+			return nil, &rpcErr{-32602, "unknown or disabled tool: " + p.Name + "; call tools/list, or search_tools to find a service tool"}
 		}
 		out, err := s.runTool(ctx, r, a, st, t, p.Arguments)
 		if err != nil {
@@ -231,6 +244,8 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		RetryAfterSec int               `json:"retry_after_sec"`
 		Message       string            `json:"message"`
 		Rotate        bool              `json:"rotate"`
+		Limit         int               `json:"limit"`
+		Offset        int               `json:"offset"`
 		Exclusive     *bool             `json:"exclusive"`
 		Method        string            `json:"method"`
 		Path          string            `json:"path"`
@@ -244,14 +259,14 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 	}
 	svcFor := func() (*store.Service, error) {
 		if !a.CanUse(args.Service) {
-			return nil, fmt.Errorf("this app cannot use service %q", args.Service)
+			return nil, fmt.Errorf("this app cannot use service %q; list_services shows the services it can use", args.Service)
 		}
 		sv, err := s.Store.GetServiceBySlug(ctx, args.Service)
 		if err != nil {
-			return nil, fmt.Errorf("no service named %q", args.Service)
+			return nil, fmt.Errorf("no service named %q; list_services shows the services this app can use", args.Service)
 		}
 		if !s.sharedAs(ctx, a, sv) {
-			return nil, fmt.Errorf("this app cannot use service %q", args.Service)
+			return nil, fmt.Errorf("this app cannot use service %q; list_services shows the services it can use", args.Service)
 		}
 		return sv, nil
 	}
@@ -274,11 +289,12 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		}
 		if name == "pool_status" {
 			if len(list) == 0 {
-				return nil, fmt.Errorf("no service named %q for this app", args.Service)
+				return nil, fmt.Errorf("no service named %q for this app; list_services shows the services it can use", args.Service)
 			}
 			return list[0], nil
 		}
-		return map[string]any{"services": list}, nil
+		page, pg := paginate(list, args.Offset, args.Limit, 100, 500)
+		return pg.into(map[string]any{"services": page}), nil
 	case "get_key":
 		if !a.AllowsLease() {
 			return nil, errors.New("this app is proxy only, use proxy_request")
@@ -450,6 +466,30 @@ func truncate(b []byte, n int) []byte {
 		return b[:n]
 	}
 	return b
+}
+
+// pageInfo is the paging block a list tool returns next to its items.
+type pageInfo struct{ total, count, offset int }
+
+func (p pageInfo) into(m map[string]any) map[string]any {
+	m["total"], m["count"], m["offset"] = p.total, p.count, p.offset
+	m["has_more"] = p.offset+p.count < p.total
+	if p.offset+p.count < p.total {
+		m["next_offset"] = p.offset + p.count
+	}
+	return m
+}
+
+// paginate cuts one page out of items: limit 0 means def, and limit is
+// capped at most.
+func paginate[T any](items []T, offset, limit, def, most int) ([]T, pageInfo) {
+	if limit <= 0 {
+		limit = def
+	}
+	limit = min(limit, most)
+	offset = min(max(offset, 0), len(items))
+	end := min(offset+limit, len(items))
+	return items[offset:end], pageInfo{total: len(items), count: end - offset, offset: offset}
 }
 
 func toMap(v any) map[string]any {

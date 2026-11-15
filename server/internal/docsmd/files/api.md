@@ -290,7 +290,8 @@ lower of its owner's role and its scope.
 `POST /mcp/control` is a second MCP server, for people operating Acnologia
 from an MCP client (Claude Code, Claude Desktop, claude.ai, Cursor). Apps use
 `/mcp` instead. It speaks the same JSON-RPC as `/mcp` (streamable HTTP, JSON
-responses, protocol `2025-06-18`); `DELETE` answers 204 and other methods
+responses, protocol `2025-06-18`, or the client's own when it is one of
+`2025-11-25`, `2025-06-18`, `2025-03-26` or `2024-11-05`); `DELETE` answers 204 and other methods
 405. The flow is in [flows.md](flows.md#control-mcp).
 
 - **Auth.** Only an admin API token, `Authorization: Bearer acnadm_...`. The

@@ -52,42 +52,71 @@ type mcpTool struct {
 }
 
 func readOnly(title string) map[string]any {
-	return map[string]any{"title": title, "readOnlyHint": true, "openWorldHint": false}
+	return map[string]any{"title": title, "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}
 }
 
-var coreTools = []mcpTool{
+// hints spells out every annotation, since an absent destructiveHint means
+// true and makes clients ask before harmless calls such as report_key.
+func hints(title string, destructive, idempotent, openWorld bool) map[string]any {
+	return map[string]any{"title": title, "readOnlyHint": false, "destructiveHint": destructive,
+		"idempotentHint": idempotent, "openWorldHint": openWorld}
+}
+
+func integer(desc string, lo, hi int) map[string]any {
+	m := map[string]any{"type": "integer", "description": desc, "minimum": lo}
+	if hi > 0 {
+		m["maximum"] = hi
+	}
+	return m
+}
+
+// withTitles copies each tool's annotation title to its top level title,
+// where clients since protocol 2025-06-18 read it.
+func withTitles(ts []mcpTool) []mcpTool {
+	for i := range ts {
+		if t, _ := ts[i].Annotations["title"].(string); ts[i].Title == "" && t != "" {
+			ts[i].Title = t
+		}
+	}
+	return ts
+}
+
+var coreTools = withTitles([]mcpTool{
 	{Name: "list_services", Set: setCore, Annotations: readOnly("List services"),
-		Description: "List the API services this app can use and whether each has a key available right now.",
-		InputSchema: obj(map[string]any{})},
+		Description: "List the API services this app can use and whether each has a key available right now. Use a service's slug with service_guide, proxy_request and the other tools. Pages with limit and offset; has_more says when to ask for the next page.",
+		InputSchema: obj(map[string]any{
+			"limit":  integer("How many services to return (default 100, max 500)", 1, 500),
+			"offset": integer("How many services to skip, from next_offset of the previous page", 0, 0),
+		})},
 	{Name: "pool_status", Set: setCore, Annotations: readOnly("Pool status"),
 		Description: "Check whether a service currently has an available key.",
 		InputSchema: obj(map[string]any{"service": str("Service slug")}, "service")},
-	{Name: "get_key", Set: setCore, Annotations: map[string]any{"title": "Lease a key", "openWorldHint": false},
+	{Name: "get_key", Set: setCore, Annotations: hints("Lease a key", false, false, false),
 		Description: "Lease an API key for a service. Returns the secret, where to put it, and a lease_id. Always call report_key when done. Set exclusive=true to keep the key to yourself (no other caller gets it) until you report or the lease expires; use renew_key for long jobs.",
 		InputSchema: obj(map[string]any{
 			"service":         str("Service slug"),
 			"exclusive":       map[string]any{"type": "boolean", "description": "Reserve the key for you alone until you report or it expires"},
 			"exclude_key_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Key ids to skip"},
-			"ttl_sec":         map[string]any{"type": "integer", "description": "How long to hold the key (default 120 to 300 seconds, max 86400)"},
-			"wait_sec":        map[string]any{"type": "integer", "description": "Wait up to this many seconds (max 60) for a key when all are busy"},
+			"ttl_sec":         integer("How long to hold the key, in seconds (default 120 to 300)", 1, 86400),
+			"wait_sec":        integer("Wait up to this many seconds for a key when all are busy", 0, 60),
 		}, "service")},
-	{Name: "renew_key", Set: setCore, Annotations: map[string]any{"title": "Renew a lease", "idempotentHint": true},
+	{Name: "renew_key", Set: setCore, Annotations: hints("Renew a lease", false, true, false),
 		Description: "Extend a lease you hold so a long job keeps its key.",
-		InputSchema: obj(map[string]any{"lease_id": str("Lease id from get_key"), "ttl_sec": map[string]any{"type": "integer", "description": "New time to live from now, in seconds"}}, "lease_id")},
-	{Name: "report_key", Set: setCore, Annotations: map[string]any{"title": "Report a lease"},
+		InputSchema: obj(map[string]any{"lease_id": str("Lease id from get_key"), "ttl_sec": integer("New time to live from now, in seconds", 1, 86400)}, "lease_id")},
+	{Name: "report_key", Set: setCore, Annotations: hints("Report a lease", false, false, false),
 		Description: "Report how a leased key performed and release it. Use outcome rate_limited, busy, quota_exhausted, invalid or banned with rotate=true to get the next key.",
 		InputSchema: obj(map[string]any{
 			"lease_id":        str("Lease id from get_key"),
 			"outcome":         map[string]any{"type": "string", "enum": []string{"ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error"}},
-			"retry_after_sec": map[string]any{"type": "integer"},
+			"retry_after_sec": integer("Seconds the provider said to wait, if it said", 0, 0),
 			"message":         str("Error text from the provider"),
 			"rotate":          map[string]any{"type": "boolean", "description": "Return a new lease when the outcome is a failure"},
 		}, "lease_id", "outcome")},
 	{Name: "service_guide", Set: setCore, Annotations: readOnly("Service guide"),
 		Description: "How to call a service through Acnologia, as Markdown: endpoints with parameters, example requests, limits and pricing, and how errors are handled. Read it before calling a service you have not used.",
 		InputSchema: obj(map[string]any{"service": str("Service slug")}, "service")},
-	{Name: "proxy_request", Set: setCore, Annotations: map[string]any{"title": "Call a service", "openWorldHint": true},
-		Description: "Call any endpoint of a service through Acnologia. Acnologia picks a key, injects it, and retries with the next key on rate limits. The key is never shown to you.",
+	{Name: "proxy_request", Set: setCore, Annotations: hints("Call a service", true, false, true),
+		Description: "Call any endpoint of a service through Acnologia. Acnologia picks a key, injects it, and retries with the next key on rate limits. The key is never shown to you. Read service_guide first for the service's paths and parameters.",
 		InputSchema: obj(map[string]any{
 			"service": str("Service slug"),
 			"method":  map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "PATCH", "DELETE"}, "default": "GET"},
@@ -95,40 +124,42 @@ var coreTools = []mcpTool{
 			"query":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 			"body":    map[string]any{"description": "JSON body for POST, PUT or PATCH"},
 		}, "service", "path")},
-}
+})
 
-var insightTools = []mcpTool{
+var insightTools = withTitles([]mcpTool{
 	{Name: "list_keys", Set: setInsights, Annotations: readOnly("List keys"),
-		Description: "List keys with whether each works, when it was last used and last worked, and how much quota is left. Secrets are never included.",
+		Description: "List keys with whether each works, when it was last used and last worked, and how much quota is left. Secrets are never included. Pages with limit and offset; has_more says when to ask for the next page.",
 		InputSchema: obj(map[string]any{
 			"service":  str("Optional service slug"),
 			"validity": map[string]any{"type": "string", "enum": []string{"valid", "invalid", "unknown"}},
+			"limit":    integer("How many keys to return (default 50, max 200)", 1, 200),
+			"offset":   integer("How many keys to skip, from next_offset of the previous page", 0, 0),
 		})},
 	{Name: "key_details", Set: setInsights, Annotations: readOnly("Key details"),
 		Description: "Details for one key: status, validity, quota, cooldown, last error, and recent events. No secret.",
-		InputSchema: obj(map[string]any{"key_id": map[string]any{"type": "integer"}}, "key_id")},
+		InputSchema: obj(map[string]any{"key_id": integer("Key id from list_keys", 1, 0)}, "key_id")},
 	{Name: "service_stats", Set: setInsights, Annotations: readOnly("Service stats"),
 		Description: "Key counts by state and requests in the last 24 hours for a service.",
 		InputSchema: obj(map[string]any{"service": str("Service slug")}, "service")},
-}
+})
 
-var manageTools = []mcpTool{
-	{Name: "check_keys", Set: setManage, Annotations: map[string]any{"title": "Check keys", "openWorldHint": true},
+var manageTools = withTitles([]mcpTool{
+	{Name: "check_keys", Set: setManage, Annotations: hints("Check keys", false, true, true),
 		Description: "Run the provider health check on every key of a service and update their status and quota.",
 		InputSchema: obj(map[string]any{"service": str("Service slug")}, "service")},
-	{Name: "set_key_status", Set: setManage, Annotations: map[string]any{"title": "Enable or disable a key", "destructiveHint": true, "idempotentHint": true},
+	{Name: "set_key_status", Set: setManage, Annotations: hints("Enable or disable a key", true, true, false),
 		Description: "Enable or disable a key. Disabled keys are never handed out.",
-		InputSchema: obj(map[string]any{"key_id": map[string]any{"type": "integer"}, "status": map[string]any{"type": "string", "enum": []string{"active", "disabled"}}}, "key_id", "status")},
-	{Name: "add_keys", Set: setManage, Annotations: map[string]any{"title": "Add keys"},
+		InputSchema: obj(map[string]any{"key_id": integer("Key id from list_keys", 1, 0), "status": map[string]any{"type": "string", "enum": []string{"active", "disabled"}}}, "key_id", "status")},
+	{Name: "add_keys", Set: setManage, Annotations: hints("Add keys", false, false, true),
 		Description: "Add API keys to a service. Duplicates are skipped. New keys are health checked in the background.",
 		InputSchema: obj(map[string]any{
 			"service": str("Service slug"),
 			"keys": map[string]any{"type": "array", "items": obj(map[string]any{
 				"label":  str("A name for the key, for example the account it belongs to"),
 				"secret": str("The API key"),
-			}, "secret")},
+			}, "secret"), "minItems": 1, "maxItems": 200},
 		}, "service", "keys")},
-}
+})
 
 var toolNameRe = regexp.MustCompile(`[^a-z0-9_]+`)
 
@@ -471,7 +502,7 @@ func (s *Server) appKeys(ctx context.Context, a *store.App, service string) ([]*
 func (s *Server) appKey(ctx context.Context, a *store.App, id int64) (*store.Key, *store.Service, error) {
 	k, err := s.Store.GetKey(ctx, id)
 	if err != nil || (k.Hidden && !a.LeaseHidden) {
-		return nil, nil, fmt.Errorf("no key %d", id)
+		return nil, nil, fmt.Errorf("no key %d for this app; list_keys shows the key ids", id)
 	}
 	sv, err := s.Store.GetService(ctx, k.ServiceID)
 	if err != nil || !a.CanUse(sv.Slug) {
@@ -487,6 +518,8 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 		Validity string `json:"validity"`
 		KeyID    int64  `json:"key_id"`
 		Status   string `json:"status"`
+		Limit    int    `json:"limit"`
+		Offset   int    `json:"offset"`
 		Keys     []struct {
 			Label  string `json:"label"`
 			Secret string `json:"secret"`
@@ -504,14 +537,18 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 		if err != nil {
 			return nil, err
 		}
-		list := []map[string]any{}
+		matched := keys[:0:0]
 		for _, k := range keys {
-			if args.Validity != "" && k.Validity != args.Validity {
-				continue
+			if args.Validity == "" || k.Validity == args.Validity {
+				matched = append(matched, k)
 			}
+		}
+		page, pg := paginate(matched, args.Offset, args.Limit, 50, 200)
+		list := make([]map[string]any, 0, len(page))
+		for _, k := range page {
 			list = append(list, s.mcpKeyView(k, bySvc[k.ServiceID]))
 		}
-		return map[string]any{"keys": list, "count": len(list)}, nil
+		return pg.into(map[string]any{"keys": list}), nil
 	case "key_details":
 		k, sv, err := s.appKey(ctx, a, args.KeyID)
 		if err != nil {
