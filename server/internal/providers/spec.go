@@ -72,9 +72,26 @@ type GuideParam struct {
 }
 
 type Auth struct {
-	Type   string `json:"type"` // query | header | bearer
+	Type   string `json:"type"` // query | header | bearer | basic | fields
 	Name   string `json:"name"`
 	Prefix string `json:"prefix"`
+	// Fields are the parts of a fields credential (several values, each in
+	// its own header or query param), or the labels of a basic one's login
+	// and password. See credential.go.
+	Fields []AuthField `json:"fields,omitempty"`
+}
+
+// Equal reports whether two auth blocks place credentials the same way.
+func (a Auth) Equal(b Auth) bool {
+	if a.Type != b.Type || a.Name != b.Name || a.Prefix != b.Prefix || len(a.Fields) != len(b.Fields) {
+		return false
+	}
+	for i := range a.Fields {
+		if a.Fields[i] != b.Fields[i] {
+			return false
+		}
+	}
+	return true
 }
 
 type Defaults struct {
@@ -230,15 +247,7 @@ func (s *Spec) Validate() []string {
 	if u, err := url.Parse(s.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		add("base_url must be an http(s) URL")
 	}
-	switch s.Auth.Type {
-	case "query", "header":
-		if strings.TrimSpace(s.Auth.Name) == "" {
-			add("auth.name is required for %s auth", s.Auth.Type)
-		}
-	case "bearer":
-	default:
-		add("auth.type must be query, header or bearer")
-	}
+	s.Auth.validate(add)
 	d := s.Defaults
 	if d.Strategy != "" && !strategies[d.Strategy] {
 		add("defaults.strategy %q is unknown", d.Strategy)

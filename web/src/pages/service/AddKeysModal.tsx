@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { RiCheckboxCircleLine } from "@remixicon/react";
+import { RiAddLine, RiCheckboxCircleLine, RiCloseLine } from "@remixicon/react";
 import { AcnApiKey } from "@/components/foundations/icons/acn";
-import type { App, NewKeyInput, Service, Tier } from "../../lib/types";
+import type { App, CredentialPart, NewKeyInput, Service, Tier } from "../../lib/types";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
 import { api, errorMessage } from "../../lib/api";
@@ -9,6 +9,7 @@ import { num, plural } from "../../lib/format";
 import { MultiSelect } from "../../components/MultiSelect";
 import { KeyPasteArea, KeyPreview, useKeyInput } from "../../components/KeyPaste";
 import { Button } from "@/components/base/buttons/button";
+import { IconButton } from "@/components/base/buttons/icon-button";
 import { Input } from "@/components/base/input/input";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
 import { NumberField } from "@/components/base/number-field/number-field";
@@ -28,6 +29,36 @@ sk_live_a1b2c3d4e5f6a7b8c9d0
 prod-eu, f6e5d4c3b2a1f6e5d4c3
 OPENAI_KEY=9f8e7d6c5b4a9f8e7d6c
 # lines starting with # are ignored`;
+
+/** One key of a multi part credential, as typed: a label and a value per part. */
+interface PartRow {
+  id: number;
+  label: string;
+  parts: Record<string, string>;
+}
+
+let rowSeq = 0;
+const emptyRow = (): PartRow => ({ id: ++rowSeq, label: "", parts: {} });
+
+/**
+ * Pasting "login:password" (or a Basic base64 value) into the first box of a
+ * two part credential fills both boxes.
+ */
+function splitPaste(text: string, parts: CredentialPart[]): Record<string, string> | null {
+  let s = text.trim().replace(/^Basic\s+/i, "");
+  if (parts.length !== 2 || /\s/.test(s)) return null;
+  if (!s.includes(":")) {
+    try {
+      const dec = atob(s);
+      if (dec.includes(":") && /^[\x20-\x7e]+$/.test(dec)) s = dec;
+    } catch {
+      return null;
+    }
+  }
+  const i = s.indexOf(":");
+  if (i <= 0 || i === s.length - 1) return null;
+  return { [parts[0].key]: s.slice(0, i), [parts[1].key]: s.slice(i + 1) };
+}
 
 type Phase =
   | { kind: "edit" }
@@ -62,10 +93,16 @@ export function AddKeysModal({
   const [notes, setNotes] = useState("");
   const [account, setAccount] = useState({ name: "", email: "", phone: "", ref: "" });
   const [phase, setPhase] = useState<Phase>({ kind: "edit" });
+  // A provider whose key is several values (DataForSEO's login and password)
+  // gets one box per value instead of the paste area.
+  const credParts = service.credential_parts ?? [];
+  const multi = credParts.length > 0;
+  const [rows, setRows] = useState<PartRow[]>(() => [emptyRow()]);
 
   useEffect(() => {
     if (!open) return;
     reset();
+    setRows([emptyRow()]);
     setTier("primary");
     setHidden(false);
     setRestricted(false);
@@ -79,7 +116,8 @@ export function AddKeysModal({
 
   const fallbackLabel = (i: number) => `${service.slug} ${existingCount + i + 1}`;
   const busy = phase.kind === "adding";
-  const count = parsed.keys.length;
+  const filledRows = rows.filter((r) => credParts.every((p) => (r.parts[p.key] ?? "").trim()));
+  const count = multi ? filledRows.length : parsed.keys.length;
   const accountName = account.name.trim() || account.email.trim();
   const optionsSummary = [
     `${tier === "backup" ? "Backup" : "Primary"} tier`,
@@ -96,8 +134,8 @@ export function AddKeysModal({
     e.preventDefault();
     if (busy) return;
     if (!count) {
-      toast.error("Paste or drop at least one key.");
-      document.getElementById("add-keys-text")?.focus();
+      toast.error(multi ? `Fill in ${credParts.map((p) => p.label).join(" and ")}.` : "Paste or drop at least one key.");
+      if (!multi) document.getElementById("add-keys-text")?.focus();
       return;
     }
     const batchEmail = account.email.trim();
@@ -105,9 +143,17 @@ export function AddKeysModal({
       toast.error("Account email needs an @.");
       return;
     }
-    const payload: NewKeyInput[] = parsed.keys.map((p, i) => ({
+    const entries = multi
+      ? filledRows.map((r) => ({
+          label: r.label.trim(),
+          secret: undefined as string | undefined,
+          parts: Object.fromEntries(credParts.map((p) => [p.key, (r.parts[p.key] ?? "").trim()])) as Record<string, string> | undefined,
+        }))
+      : parsed.keys.map((p) => ({ label: p.label ?? "", secret: p.secret as string | undefined, parts: undefined }));
+    const payload: NewKeyInput[] = entries.map((p, i) => ({
       label: p.label || fallbackLabel(i),
       secret: p.secret,
+      parts: p.parts,
       tier,
       hidden: canHidden ? hidden : false,
       restricted,
@@ -204,17 +250,81 @@ export function AddKeysModal({
     >
       <ModalHeader
         title={`Add keys to ${service.name}`}
-        description="Paste keys in any shape: one per line, comma or space separated, label then key, an env file, CSV with a header, or JSON. You see what was found before anything is saved."
+        description={
+          multi
+            ? `This provider signs in with ${credParts.map((p) => p.label.toLowerCase()).join(" and ")}. Acnologia stores them together, encrypted, as one key.`
+            : "Paste keys in any shape: one per line, comma or space separated, label then key, an env file, CSV with a header, or JSON. You see what was found before anything is saved."
+        }
         icon={AcnApiKey}
         showCloseButton={!busy}
       />
       <ModalBody>
-        <form id="add-keys-form" onSubmit={submit} className="pb-1" {...input.dropProps}>
+        <form id="add-keys-form" onSubmit={submit} className="pb-1" {...(multi ? {} : input.dropProps)}>
           <fieldset disabled={busy} className="min-w-0 space-y-6">
-            <div className="space-y-3">
-              <KeyPasteArea input={input} id="add-keys-text" label="Keys" rows={8} placeholder={PLACEHOLDER} />
-              <KeyPreview parsed={parsed} stale={input.stale} fallbackLabel={fallbackLabel} />
-            </div>
+            {multi ? (
+              <div className="space-y-3" role="group" aria-label="Keys">
+                <p className="text-body-2-regular text-text-secondary">
+                  Each key of {service.name} is {credParts.map((p) => p.label).join(" and ")}. Pasting{" "}
+                  {credParts.length === 2 ? (
+                    <>
+                      <span className="font-mono">{credParts[0].key}:{credParts[1].key}</span> or a Basic value into the first box fills both.
+                    </>
+                  ) : (
+                    "each value into its box adds one key."
+                  )}
+                </p>
+                {rows.map((r, ri) => (
+                  <div key={r.id} className="space-y-3 rounded-2xl border border-border-button-default p-3">
+                    <div className="flex items-end gap-2">
+                      <Input
+                        label="Label"
+                        className="flex-1"
+                        value={r.label}
+                        placeholder={fallbackLabel(ri)}
+                        maxLength={200}
+                        autoComplete="off"
+                        onChange={(v) => setRows((cur) => cur.map((x) => (x.id === r.id ? { ...x, label: v } : x)))}
+                      />
+                      {rows.length > 1 && (
+                        <IconButton
+                          icon={RiCloseLine}
+                          size="small"
+                          aria-label={`Remove key ${ri + 1}`}
+                          onClick={() => setRows((cur) => cur.filter((x) => x.id !== r.id))}
+                        />
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {credParts.map((p, pi) => (
+                        <Input
+                          key={p.key}
+                          label={p.label}
+                          type={p.public ? "text" : "password"}
+                          className="font-mono"
+                          value={r.parts[p.key] ?? ""}
+                          autoComplete="off"
+                          spellCheck="false"
+                          onChange={(v) => {
+                            const split = pi === 0 ? splitPaste(v, credParts) : null;
+                            setRows((cur) =>
+                              cur.map((x) => (x.id === r.id ? { ...x, parts: split ? { ...x.parts, ...split } : { ...x.parts, [p.key]: v } } : x)),
+                            );
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <Button variant="secondary" size="small" leadingIcon={RiAddLine} onClick={() => setRows((cur) => [...cur, emptyRow()])}>
+                  Add another key
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <KeyPasteArea input={input} id="add-keys-text" label="Keys" rows={8} placeholder={PLACEHOLDER} />
+                <KeyPreview parsed={parsed} stale={input.stale} fallbackLabel={fallbackLabel} />
+              </div>
+            )}
 
             {/* Most batches keep the defaults, so the options stay folded under a summary of what applies. */}
             <Accordion variant="separated">

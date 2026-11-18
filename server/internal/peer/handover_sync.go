@@ -304,7 +304,7 @@ func (y *Syncer) handoverService(ctx context.Context, link *store.PeerLink, hs H
 		return 0, errors.New("the owner sent an invalid service slug")
 	}
 	switch hs.AuthType {
-	case "query", "header", "bearer":
+	case "query", "header", "bearer", "basic", "fields":
 	default:
 		return 0, errors.New("unknown auth type " + hs.AuthType)
 	}

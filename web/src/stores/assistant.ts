@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { maskSecret, parseKeys } from "../lib/keyparse";
 import { toast } from "./toast";
 import type { DraftImage } from "../lib/chatImages";
@@ -83,6 +83,17 @@ interface AssistantStore {
   enqueue: (threadId: number, text: string, images?: DraftImage[]) => void;
   /** Takes a queued message out, for Remove or Edit; returns it. */
   unqueue: (threadId: number, id: string) => QueuedMessage | undefined;
+  /**
+   * Messages sent with Send now into the running turn, by thread, that the
+   * turn has not read yet. Shown under the queue until it does.
+   */
+  steered: Record<number, QueuedMessage[]>;
+  /**
+   * Sends a queued message into the open thread's running turn, which reads
+   * it before its next step. False when no turn is taking messages; the
+   * message then goes back to the front of the queue.
+   */
+  sendNow: (threadId: number, id: string) => Promise<boolean>;
   setDraftAttachment: (key: string, attachment: Update<DraftAttachment | null>) => void;
   setDraftImages: (key: string, images: Update<DraftImage[]>) => void;
   fetch: () => Promise<void>;
@@ -104,6 +115,15 @@ interface AssistantStore {
 
 let localSeq = 0;
 const POLL_MS = 1200;
+
+/** Drops the Send now messages a turn has read: the oldest go first. */
+function trimSteered(all: Record<number, QueuedMessage[]>, threadId: number, turn: ChatTurn): Record<number, QueuedMessage[]> {
+  const cur = all[threadId];
+  if (!cur?.length) return all;
+  const left = turn.active ? (turn.steered ?? 0) : 0;
+  if (left >= cur.length) return all;
+  return { ...all, [threadId]: cur.slice(cur.length - left) };
+}
 
 /**
  * Masks the keys in a message the way the server will (…last4), so the
@@ -157,7 +177,8 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     const changed = new Map(res.items.map((it) => [it.id, it]));
     const merged = base.map((it) => changed.get(it.id) ?? it);
     for (const it of res.items) if (!merged.some((m) => m.id === it.id)) merged.push(it);
-    set({ items: withSecrets(merged), turn: res.turn ?? { active: false } });
+    const turn = res.turn ?? { active: false };
+    set({ items: withSecrets(merged), turn, steered: trimSteered(get().steered, threadId, turn) });
     if (res.turn?.active) poll(threadId);
   };
 
@@ -180,7 +201,7 @@ export const useAssistant = create<AssistantStore>((set, get) => {
         keepSecrets(res.items ?? []);
         noteCompaction(threadId, res.items ?? []);
         const turn = res.turn ?? { active: false };
-        set({ items: withSecrets(res.items ?? []), turn });
+        set({ items: withSecrets(res.items ?? []), turn, steered: trimSteered(get().steered, threadId, turn) });
         if (!turn.active) {
           polling = null;
           putThread({ ...res.thread, updated_at: new Date().toISOString() });
@@ -223,6 +244,34 @@ export const useAssistant = create<AssistantStore>((set, get) => {
     lastSent: {},
     drafts: {},
     queues: {},
+    steered: {},
+
+    sendNow: async (threadId, id) => {
+      const m = get().unqueue(threadId, id);
+      if (!m) return false;
+      set({ steered: { ...get().steered, [threadId]: [...(get().steered[threadId] ?? []), m] } });
+      const dropSteered = () =>
+        set({ steered: { ...get().steered, [threadId]: (get().steered[threadId] ?? []).filter((x) => x.id !== m.id) } });
+      const requeue = () =>
+        set({ queues: { ...get().queues, [threadId]: [m, ...(get().queues[threadId] ?? [])] } });
+      try {
+        await api.steerChat(
+          threadId,
+          m.text,
+          (m.images ?? []).map((im) => ({ media_type: im.mediaType, data: im.data })),
+        );
+        set({ lastSent: { ...get().lastSent, [threadId]: m.text } });
+        // The turn may be waiting on the first request: follow it so the
+        // message shows up as soon as it is read.
+        if (get().currentId === threadId && get().sending !== threadId) poll(threadId);
+        return true;
+      } catch (e) {
+        dropSteered();
+        requeue();
+        if (e instanceof ApiError && e.code === "not_running") return false;
+        throw e;
+      }
+    },
 
     enqueue: (threadId, text, images) => {
       const q = get().queues[threadId] ?? [];

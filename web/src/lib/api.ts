@@ -294,6 +294,9 @@ export const api = {
   answerChat: (id: number, body: ChatAnswer) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/answer`, body),
   compactChat: (id: number) => request<ChatReply>("POST", `/api/admin/chat/threads/${id}/compact`, {}),
   /** Ends the running turn and the provider builds it started; answers like GET thread. */
+  /** Sends a message into the running turn; 409 not_running when none is taking messages. */
+  steerChat: (id: number, text: string, images: { media_type: string; data: string }[] = []) =>
+    request<{ ok: boolean; turn?: ChatTurn }>("POST", `/api/admin/chat/threads/${id}/steer`, images.length ? { text, images } : { text }),
   stopChat: (id: number) =>
     request<{ thread: ChatThread; items: ChatItem[]; turn?: ChatTurn }>("POST", `/api/admin/chat/threads/${id}/stop`, {}),
 

@@ -5,6 +5,7 @@ import {
   RiEditLine,
   RiFlowChart,
   RiImageAddLine,
+  RiSendPlane2Line,
   RiTimeLine,
   RiKey2Line,
   RiSettings3Line,
@@ -19,6 +20,7 @@ import { MAX_IMAGES, isImageFile, type DraftImage } from "@/lib/chatImages";
 import { Button } from "@/components/base/buttons/button";
 import { CloseButton } from "@/components/base/buttons/close-button";
 import { IconButton } from "@/components/base/buttons/icon-button";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
 import { Kbd } from "@/components/base/kbd/kbd";
 import { AgentChatHistory, compactAge } from "@/components/application/agent-chat/agent-chat-history";
 import { AgentComposer, ComposerModel } from "@/components/application/agent-chat/agent-composer";
@@ -413,7 +415,7 @@ export function Composer({
             <>
               <span className="text-text-secondary">
                 {queued > 0
-                  ? `${queued} queued. Each one sends when the step before it finishes.`
+                  ? `${queued} queued. Each one sends when the turn finishes, or press Send now to hand it to Claude mid-turn.`
                   : "Working on it. Send more and they wait in line, or press Stop."}
               </span>
               {model && (
@@ -447,40 +449,84 @@ export function Composer({
 
 /**
  * Messages you sent while a turn was running, in the order they will go out.
- * Edit moves one back into the composer; remove drops it.
+ * Send now hands one to the running turn, which reads it before its next
+ * step; edit moves one back into the composer; remove drops it. Messages
+ * already sent now show below until the turn reads them.
  */
 export function QueuedList({
   items,
+  steered = [],
   paused,
+  canSendNow,
   onRemove,
   onEdit,
+  onSendNow,
 }: {
   items: QueuedMessage[];
+  steered?: QueuedMessage[];
   paused: boolean;
+  /** A turn is running and can take a message now. */
+  canSendNow: boolean;
   onRemove: (id: string) => void;
   onEdit: (id: string) => void;
+  onSendNow: (id: string) => void;
 }) {
   return (
     <section aria-label="Queued messages" className="mb-2 flex flex-col gap-1">
-      <p className="flex items-center gap-1.5 px-1 text-caption-1-semibold text-text-tertiary">
-        <RiTimeLine className="size-3.5 shrink-0 text-foreground-icon-tertiary" aria-hidden />
-        {paused ? "Queued, waiting for your answer above" : `Queued (${items.length})`}
-      </p>
-      <ol className="flex flex-col gap-1">
-        {items.map((m, i) => (
-          <li
-            key={m.id}
-            className="flex items-center gap-2 rounded-xl border border-border-button-default bg-background-secondary-default py-1 ps-3 pe-1"
-          >
-            <span className="shrink-0 text-caption-1-semibold tabular-nums text-text-tertiary">{i + 1}</span>
-            <span className="min-w-0 flex-1 truncate text-body-2-regular text-text-secondary" title={m.shown}>
-              {m.shown.replace(/\s+/g, " ")}
-            </span>
-            <IconButton icon={RiEditLine} size="small" aria-label={`Edit queued message ${i + 1}`} onClick={() => onEdit(m.id)} />
-            <IconButton icon={RiCloseLine} size="small" aria-label={`Remove queued message ${i + 1}`} onClick={() => onRemove(m.id)} />
-          </li>
-        ))}
-      </ol>
+      {items.length > 0 && (
+        <>
+          <p className="flex items-center gap-1.5 px-1 text-caption-1-semibold text-text-tertiary">
+            <RiTimeLine className="size-3.5 shrink-0 text-foreground-icon-tertiary" aria-hidden />
+            {paused ? "Queued, waiting for your answer above" : `Queued (${items.length})`}
+          </p>
+          <ol className="flex flex-col gap-1">
+            {items.map((m, i) => (
+              <li
+                key={m.id}
+                className="flex items-center gap-2 rounded-xl border border-border-button-default bg-background-secondary-default py-1 ps-3 pe-1"
+              >
+                <span className="shrink-0 text-caption-1-semibold tabular-nums text-text-tertiary">{i + 1}</span>
+                <span className="min-w-0 flex-1 truncate text-body-2-regular text-text-secondary" title={m.shown}>
+                  {m.shown.replace(/\s+/g, " ")}
+                </span>
+                {canSendNow && (
+                  <TooltipTrigger delay={300}>
+                    <IconButton
+                      icon={RiSendPlane2Line}
+                      size="small"
+                      aria-label={`Send queued message ${i + 1} now`}
+                      onClick={() => onSendNow(m.id)}
+                    />
+                    <Tooltip>Send now. Claude reads it before its next step.</Tooltip>
+                  </TooltipTrigger>
+                )}
+                <IconButton icon={RiEditLine} size="small" aria-label={`Edit queued message ${i + 1}`} onClick={() => onEdit(m.id)} />
+                <IconButton icon={RiCloseLine} size="small" aria-label={`Remove queued message ${i + 1}`} onClick={() => onRemove(m.id)} />
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+      {steered.length > 0 && (
+        <>
+          <p className="flex items-center gap-1.5 px-1 text-caption-1-semibold text-text-tertiary" aria-live="polite">
+            <RiSendPlane2Line className="size-3.5 shrink-0 text-foreground-icon-tertiary" aria-hidden />
+            Sent to Claude, read at its next step
+          </p>
+          <ol className="flex flex-col gap-1">
+            {steered.map((m) => (
+              <li
+                key={m.id}
+                className="flex items-center gap-2 rounded-xl border border-dashed border-border-button-default py-1.5 ps-3 pe-3"
+              >
+                <span className="min-w-0 flex-1 truncate text-body-2-regular text-text-tertiary" title={m.shown}>
+                  {m.shown.replace(/\s+/g, " ")}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
     </section>
   );
 }

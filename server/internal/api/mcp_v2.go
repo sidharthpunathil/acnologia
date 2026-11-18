@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
@@ -152,13 +151,15 @@ var manageTools = withTitles([]mcpTool{
 		Description: "Enable or disable a key. Disabled keys are never handed out.",
 		InputSchema: obj(map[string]any{"key_id": integer("Key id from list_keys", 1, 0), "status": map[string]any{"type": "string", "enum": []string{"active", "disabled"}}}, "key_id", "status")},
 	{Name: "add_keys", Set: setManage, Annotations: hints("Add keys", false, false, true),
-		Description: "Add API keys to a service. Duplicates are skipped. New keys are health checked in the background.",
+		Description: "Add API keys to a service. Duplicates are skipped. New keys are health checked in the background. A provider whose credential has several parts (a login and a password for Basic auth, or an app id and an app key) takes parts instead of secret, or secret as login:password.",
 		InputSchema: obj(map[string]any{
 			"service": str("Service slug"),
 			"keys": map[string]any{"type": "array", "items": obj(map[string]any{
 				"label":  str("A name for the key, for example the account it belongs to"),
 				"secret": str("The API key"),
-			}, "secret"), "minItems": 1, "maxItems": 200},
+				"parts": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"},
+					"description": "The parts of a multi part credential by part key, such as {\"login\": \"...\", \"password\": \"...\"}"},
+			}), "minItems": 1, "maxItems": 200},
 		}, "service", "keys")},
 })
 
@@ -518,8 +519,9 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 		Limit    int    `json:"limit"`
 		Offset   int    `json:"offset"`
 		Keys     []struct {
-			Label  string `json:"label"`
-			Secret string `json:"secret"`
+			Label  string            `json:"label"`
+			Secret string            `json:"secret"`
+			Parts  map[string]string `json:"parts"`
 		} `json:"keys"`
 	}
 	if len(raw) > 0 {
@@ -622,9 +624,10 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 		}
 		added, skipped := []map[string]any{}, 0
 		created := []*store.Key{}
+		auth := serviceAuth(sv)
 		for _, in := range args.Keys {
-			secret := strings.TrimSpace(in.Secret)
-			if secret == "" {
+			secret, err := auth.NormalizeSecret(in.Secret, in.Parts)
+			if err != nil {
 				skipped++
 				continue
 			}
@@ -632,12 +635,13 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 			if err != nil {
 				return nil, err
 			}
+			hint := auth.SecretHint(secret)
 			label := strings.TrimSpace(in.Label)
 			if label == "" {
-				label = sv.Name + " key " + crypto.Hint(secret)[3:]
+				label = sv.Name + " key " + hint[3:]
 			}
 			k, err := s.Store.CreateKey(ctx, store.NewKey{ServiceID: sv.ID, Label: label, SecretEnc: enc, SecretFP: s.Pool.Box.Fingerprint(secret),
-				Hint: crypto.Hint(secret), Tier: "primary", Weight: 1, Priority: 100})
+				Hint: hint, Tier: "primary", Weight: 1, Priority: 100})
 			if errors.Is(err, store.ErrDuplicate) {
 				skipped++
 				continue

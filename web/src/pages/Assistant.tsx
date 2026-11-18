@@ -197,6 +197,8 @@ export function AssistantPage() {
     queues,
     enqueue,
     unqueue,
+    steered,
+    sendNow,
   } = useAssistant();
   // The draft lives in the store by thread, so it survives leaving the page.
   // Setters write to the thread open at call time: a failed first send
@@ -459,6 +461,15 @@ export function AssistantPage() {
 
   const removeQueued = (id: string) => {
     if (currentId !== null) unqueue(currentId, id);
+  };
+  const steeredNow = currentId !== null ? (steered[currentId] ?? []) : [];
+  const sendQueuedNow = async (id: string) => {
+    if (currentId === null) return;
+    try {
+      if (!(await sendNow(currentId, id))) toast.info("Claude just finished, so it goes out as the next message.");
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
   };
   const editQueued = (id: string) => {
     if (currentId === null) return;
@@ -929,8 +940,16 @@ export function AssistantPage() {
                 The Assistant needs an Anthropic API key. Set ANTHROPIC_API_KEY, then restart Acnologia.
               </Callout>
             )}
-            {queue.length > 0 && (
-              <QueuedList items={queue} paused={awaitingYou && !busy} onRemove={removeQueued} onEdit={editQueued} />
+            {(queue.length > 0 || steeredNow.length > 0) && (
+              <QueuedList
+                items={queue}
+                steered={steeredNow}
+                paused={awaitingYou && !busy}
+                canSendNow={active && stopping !== currentId}
+                onRemove={removeQueued}
+                onEdit={editQueued}
+                onSendNow={(id) => void sendQueuedNow(id)}
+              />
             )}
             <Composer
               ref={box}

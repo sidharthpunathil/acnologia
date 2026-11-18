@@ -33,6 +33,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/notify"
 	"github.com/sidharthpunathil/acnologia/server/internal/peer"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/redact"
 	"github.com/sidharthpunathil/acnologia/server/internal/refresh"
 	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
@@ -159,7 +160,9 @@ func NewRedactor(st *store.Store, box *crypto.Box) *redact.Redactor {
 		out := make([]string, 0, len(blobs))
 		for _, b := range blobs {
 			if sec, err := box.Decrypt(b); err == nil {
-				out = append(out, sec)
+				// A multi part key also travels as its parts and as a
+				// Basic auth value.
+				out = append(out, providers.SecretVariants(sec)...)
 			}
 		}
 		return out, nil
@@ -298,6 +301,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/chat/threads/{id}/answer", s.chatAnswer)
 		r.Post("/chat/threads/{id}/compact", s.chatCompactNow)
 		r.Post("/chat/threads/{id}/stop", s.chatStop)
+		r.Post("/chat/threads/{id}/steer", s.chatSteer)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleAdmin))

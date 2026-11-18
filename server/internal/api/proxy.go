@@ -108,13 +108,27 @@ func authPrefix(sv *store.Service) string {
 		return ""
 	}
 	name := a.Name
-	if a.Type == "bearer" && name == "" {
+	if (a.Type == "bearer" || a.Type == "basic") && name == "" {
 		name = "Authorization"
 	}
 	if name != sv.AuthName {
 		return ""
 	}
 	return a.Prefix
+}
+
+// serviceAuth is how the service places a key: its own type and name, the
+// provider's prefix while they match the provider's, and the provider's
+// fields for a multi part (fields or basic) credential.
+func serviceAuth(sv *store.Service) providers.Auth {
+	a := providers.Auth{Type: sv.AuthType, Name: sv.AuthName, Prefix: authPrefix(sv)}
+	if p := providers.Get(sv.Provider).Auth; p.Type == sv.AuthType {
+		a.Fields = p.Fields
+	}
+	if a.Type == "basic" && a.Name == "" {
+		a.Name = "Authorization"
+	}
+	return a
 }
 
 // newUpstreamClient connects to any address the base URL resolves to but
@@ -161,10 +175,8 @@ var hopHeaders = []string{
 func buildUpstream(ctx context.Context, r *http.Request, sv *store.Service, path string, body []byte, secret string) (*http.Request, error) {
 	q := r.URL.Query()
 	delTokenParams(q)
-	prefix := authPrefix(sv)
-	if sv.AuthType == "query" {
-		q.Set(sv.AuthName, prefix+secret)
-	}
+	auth := serviceAuth(sv)
+	auth.ApplyQuery(q, secret)
 	target, err := serviceURL(sv, path, q)
 	if err != nil {
 		return nil, err
@@ -182,19 +194,7 @@ func buildUpstream(ctx context.Context, r *http.Request, sv *store.Service, path
 	if isBearerAppToken(req.Header.Get("Authorization")) {
 		req.Header.Del("Authorization")
 	}
-	switch sv.AuthType {
-	case "header":
-		req.Header.Set(sv.AuthName, prefix+secret)
-	case "bearer":
-		name := sv.AuthName
-		if name == "" {
-			name = "Authorization"
-		}
-		if prefix == "" {
-			prefix = "Bearer "
-		}
-		req.Header.Set(name, prefix+secret)
-	}
+	auth.ApplyHeaders(req.Header, secret)
 	req.ContentLength = int64(len(body))
 	return req, nil
 }

@@ -104,6 +104,11 @@ func (s *Server) getService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillLogos(r.Context(), sv)
+	if a := serviceAuth(sv); a.MultiPart() {
+		for _, p := range a.Parts() {
+			sv.CredentialParts = append(sv.CredentialParts, store.CredentialPart{Key: p.Key, Label: p.Label, Public: p.Public})
+		}
+	}
 	writeJSON(w, 200, sv)
 }
 
@@ -205,9 +210,11 @@ func (in serviceInput) apply(sv *store.Service) string {
 		return "name is required"
 	case sv.Provider == "":
 		return "provider is required"
-	case sv.AuthType != "query" && sv.AuthType != "header" && sv.AuthType != "bearer":
-		return "auth_type must be query, header or bearer"
-	case sv.AuthName == "" && sv.AuthType != "bearer":
+	case !validServiceAuth[sv.AuthType]:
+		return "auth_type must be query, header, bearer, basic or fields"
+	case sv.AuthType == "fields" && providers.Get(sv.Provider).Auth.Type != "fields":
+		return "fields auth comes from the provider: its spec must list the fields"
+	case sv.AuthName == "" && sv.AuthType != "bearer" && sv.AuthType != "basic" && sv.AuthType != "fields":
 		return "auth_name is required"
 	case !pool.ValidStrategy(sv.Strategy):
 		return "unknown strategy"
@@ -224,11 +231,13 @@ func (in serviceInput) apply(sv *store.Service) string {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "base_url must be an http(s) URL"
 	}
-	if sv.AuthType == "bearer" && sv.AuthName == "" {
+	if (sv.AuthType == "bearer" || sv.AuthType == "basic") && sv.AuthName == "" {
 		sv.AuthName = "Authorization"
 	}
 	return ""
 }
+
+var validServiceAuth = map[string]bool{"query": true, "header": true, "bearer": true, "basic": true, "fields": true}
 
 func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 	var in serviceInput
@@ -423,17 +432,20 @@ func (s *Server) fillInFlight(keys ...*store.Key) {
 }
 
 type keyInput struct {
-	Label      *string  `json:"label"`
-	Secret     *string  `json:"secret"`
-	Tier       *string  `json:"tier"`
-	Hidden     *bool    `json:"hidden"`
-	Restricted *bool    `json:"restricted"`
-	AppIDs     *[]int64 `json:"app_ids"`
-	Status     *string  `json:"status"`
-	Weight     *int     `json:"weight"`
-	Priority   *int     `json:"priority"`
-	Notes      *string  `json:"notes"`
-	QuotaLimit *int64   `json:"quota_limit"`
+	Label  *string `json:"label"`
+	Secret *string `json:"secret"`
+	// Parts are the inputs of a multi part credential (login and password,
+	// or the provider's fields) by part key; they replace Secret.
+	Parts      map[string]string `json:"parts"`
+	Tier       *string           `json:"tier"`
+	Hidden     *bool             `json:"hidden"`
+	Restricted *bool             `json:"restricted"`
+	AppIDs     *[]int64          `json:"app_ids"`
+	Status     *string           `json:"status"`
+	Weight     *int              `json:"weight"`
+	Priority   *int              `json:"priority"`
+	Notes      *string           `json:"notes"`
+	QuotaLimit *int64            `json:"quota_limit"`
 	// MaxConc overrides the service concurrency limit; -1 clears the override.
 	MaxConc *int64 `json:"max_concurrency"`
 	// EgressID sends this key's traffic through an egress proxy; 0 falls back to the service's.
@@ -543,6 +555,13 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var parsed *keyparse.Result
+	auth := serviceAuth(sv)
+	if strings.TrimSpace(body.Text) != "" && auth.MultiPart() {
+		// One credential per line, its parts joined (login:password, a JSON
+		// object, a Basic value), optionally after a label.
+		body.Keys = append(body.Keys, multiPartLines(auth, body.Text)...)
+		body.Text = ""
+	}
 	if strings.TrimSpace(body.Text) != "" {
 		res := keyparse.Parse(body.Text)
 		parsed = &res
@@ -570,10 +589,17 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i, in := range body.Keys {
-		if in.Secret == nil {
+		if in.Secret == nil && len(in.Parts) == 0 {
 			writeErr(w, 400, "invalid", fmt.Sprintf("key %d has no secret", i+1))
 			return
 		}
+		secret, err := auth.NormalizeSecret(deref(in.Secret), in.Parts)
+		if err != nil {
+			writeErr(w, 400, "invalid", fmt.Sprintf("key %d: %s", i+1, err.Error()))
+			return
+		}
+		body.Keys[i].Secret, body.Keys[i].Parts = &secret, nil
+		in = body.Keys[i]
 		if code, msg := s.validateKey(in, r); code != 0 {
 			writeErr(w, code, "invalid", msg)
 			return
@@ -627,9 +653,10 @@ func (s *Server) newKey(sv *store.Service, in keyInput, by int64) (store.NewKey,
 	if err != nil {
 		return store.NewKey{}, err
 	}
+	hint := serviceAuth(sv).SecretHint(secret)
 	nk := store.NewKey{
-		ServiceID: sv.ID, SecretEnc: enc, SecretFP: s.Pool.Box.Fingerprint(secret), Hint: crypto.Hint(secret),
-		Tier: "primary", Weight: 1, Priority: 100, CreatedBy: by, Label: DefaultKeyLabel(sv, secret),
+		ServiceID: sv.ID, SecretEnc: enc, SecretFP: s.Pool.Box.Fingerprint(secret), Hint: hint,
+		Tier: "primary", Weight: 1, Priority: 100, CreatedBy: by, Label: fmt.Sprintf("%s key %s", sv.Name, hint[3:]),
 	}
 	if in.Label != nil && strings.TrimSpace(*in.Label) != "" {
 		nk.Label = strings.TrimSpace(*in.Label)
@@ -740,14 +767,20 @@ func (s *Server) updateKey(w http.ResponseWriter, r *http.Request) {
 		}
 		p.MaxConc = &m
 	}
-	if in.Secret != nil {
-		secret := strings.TrimSpace(*in.Secret)
+	if in.Secret != nil || len(in.Parts) > 0 {
+		auth := serviceAuth(sv)
+		secret, err := auth.NormalizeSecret(deref(in.Secret), in.Parts)
+		if err != nil {
+			writeErr(w, 400, "invalid", err.Error())
+			return
+		}
 		enc, err := s.Pool.Box.Encrypt(secret)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
 		}
-		p.SecretEnc, p.SecretFP, p.Hint = enc, s.Pool.Box.Fingerprint(secret), crypto.Hint(secret)
+		p.SecretEnc, p.SecretFP, p.Hint = enc, s.Pool.Box.Fingerprint(secret), auth.SecretHint(secret)
+		in.Secret = &secret
 	}
 	if in.EgressID != nil {
 		if *in.EgressID > 0 {
@@ -1276,4 +1309,40 @@ func userChangeDetail(before *store.User, name *string, role *store.Role, disabl
 		parts = append(parts, "password reset")
 	}
 	return strings.Join(parts, ", ")
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// multiPartLines reads pasted credentials for a multi part auth: one per
+// line, as the parts joined or a JSON object, with an optional label first
+// ("acct-1 login:password").
+func multiPartLines(auth providers.Auth, text string) []keyInput {
+	out := []keyInput{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		in := keyInput{}
+		if sec, err := auth.NormalizeSecret(line, nil); err == nil {
+			in.Secret = &sec
+		} else if f := strings.Fields(line); len(f) > 1 {
+			rest := strings.TrimSpace(strings.TrimPrefix(line, f[0]))
+			if sec, err := auth.NormalizeSecret(rest, nil); err == nil {
+				label := strings.TrimRight(f[0], ":=,")
+				in.Secret, in.Label = &sec, &label
+			}
+		}
+		if in.Secret == nil {
+			raw := line
+			in.Secret = &raw // fails NormalizeSecret with the reason
+		}
+		out = append(out, in)
+	}
+	return out
 }

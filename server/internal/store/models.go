@@ -55,6 +55,13 @@ type KeyCounts struct {
 	Shared int `json:"shared"`
 }
 
+// CredentialPart is one input of a multi part key.
+type CredentialPart struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Public bool   `json:"public,omitempty"`
+}
+
 type Service struct {
 	ID          int64     `json:"id"`
 	Slug        string    `json:"slug"`
@@ -82,8 +89,12 @@ type Service struct {
 	// ProviderLogoURL is the provider's logo when the service shows its own,
 	// such as the site a scraper reads, so both can be shown.
 	ProviderLogoURL *string `json:"provider_logo_url,omitempty"`
-	HasLogo         bool    `json:"-"`
-	LogoRev         int     `json:"-"`
+	// CredentialParts are the inputs one key takes when the credential has
+	// several parts (a login and a password, an app id and a key). Empty for
+	// a single API key. Filled by GET service.
+	CredentialParts []CredentialPart `json:"credential_parts,omitempty"`
+	HasLogo         bool             `json:"-"`
+	LogoRev         int              `json:"-"`
 	// TargetTrusted is false after someone other than a superadmin set the
 	// base URL or auth placement. Hidden keys are never sent to such a target.
 	TargetTrusted bool `json:"target_trusted"`

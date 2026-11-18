@@ -31,7 +31,25 @@ export interface KeyCounts {
 
 /** Provider slug. Built-ins are serpapi, elevenlabs and generic; AI or manual providers add more. */
 export type ProviderSlug = string;
-export type AuthType = "query" | "header" | "bearer";
+export type AuthType = "query" | "header" | "bearer" | "basic" | "fields";
+
+/** One part of a credential made of several values (a login and a password). */
+export interface CredentialPart {
+  key: string;
+  label: string;
+  /** Not secret on its own (a login, an app id): shown as plain text. */
+  public?: boolean;
+}
+
+/** Where one part of a fields credential goes. */
+export interface AuthField {
+  key: string;
+  label?: string;
+  in: "header" | "query";
+  name: string;
+  prefix?: string;
+  public?: boolean;
+}
 export type Strategy = "round_robin" | "fill_first" | "least_used" | "most_quota" | "random";
 
 export interface Service {
@@ -44,6 +62,8 @@ export interface Service {
   base_url: string;
   auth_type: AuthType;
   auth_name: string;
+  /** The inputs one key takes when the credential has several parts. */
+  credential_parts?: CredentialPart[];
   strategy: Strategy;
   cooldown_sec: number;
   max_attempts: number;
@@ -282,7 +302,10 @@ export interface CheckSummary {
 
 export interface NewKeyInput {
   label: string;
-  secret: string;
+  /** The key. A multi part credential sends parts instead. */
+  secret?: string;
+  /** The parts of a multi part credential by part key. */
+  parts?: Record<string, string>;
   tier: Tier;
   hidden: boolean;
   restricted: boolean;
@@ -630,7 +653,7 @@ export interface GenerateGuideResult {
 
 export interface ProviderSpec {
   base_url: string;
-  auth: { type: AuthType; name: string; prefix: string };
+  auth: { type: AuthType; name: string; prefix: string; fields?: AuthField[] };
   defaults: {
     strategy: Strategy;
     cooldown_sec: number;
@@ -981,6 +1004,8 @@ export interface ChatTurn {
   /** What the assistant is doing right now, such as "Running the tests". */
   step?: string;
   started_at?: string;
+  /** Messages sent with Send now that the turn has not read yet. */
+  steered?: number;
 }
 
 /** Body for POST /api/admin/chat/threads/{id}/answer. */

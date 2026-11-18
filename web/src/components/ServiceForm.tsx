@@ -136,6 +136,8 @@ const AUTH_TYPES: Array<{ id: AuthType; label: string }> = [
   { id: "query", label: "query parameter" },
   { id: "header", label: "header" },
   { id: "bearer", label: "bearer token" },
+  { id: "basic", label: "login and password (Basic)" },
+  { id: "fields", label: "several fields (from the provider)" },
 ];
 
 const LEGEND = "mb-3 font-mono text-caption-2-semibold uppercase text-text-tertiary";
@@ -243,9 +245,17 @@ export function ServiceForm({
         </BoardSelect>
         <Input
           label={value.auth_type === "query" ? "Query parameter name" : "Header name"}
-          value={value.auth_name}
+          isDisabled={value.auth_type === "fields"}
+          hint={
+            value.auth_type === "basic"
+              ? "Each key is a login and a password, sent as Authorization: Basic."
+              : value.auth_type === "fields"
+                ? "The provider's spec says where each part of the key goes."
+                : undefined
+          }
+          value={value.auth_type === "fields" ? "" : value.auth_name}
           onChange={(v) => set("auth_name", v)}
-          placeholder={value.auth_type === "query" ? "api_key" : value.auth_type === "bearer" ? "Authorization" : "X-API-Key"}
+          placeholder={value.auth_type === "query" ? "api_key" : value.auth_type === "bearer" || value.auth_type === "basic" ? "Authorization" : "X-API-Key"}
           spellCheck="false"
           inputDir="ltr"
           inputClassName="font-mono"
