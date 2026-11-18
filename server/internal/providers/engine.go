@@ -3,6 +3,7 @@ package providers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -270,32 +271,26 @@ func (m Match) matchesAny(status int, h http.Header, body []byte, low string, pa
 }
 
 // Value is the credential exactly as Apply sends it: the secret with the
-// spec's prefix, or "Bearer " for bearer auth without a prefix.
+// spec's prefix, "Bearer " for bearer auth without a prefix, or the Basic
+// value. A fields credential has no single value; Value returns the secret.
 func (a Auth) Value(secret string) string {
-	if a.Type == "bearer" && a.Prefix == "" {
-		return "Bearer " + secret
+	switch a.Type {
+	case "bearer":
+		if a.Prefix == "" {
+			return "Bearer " + secret
+		}
+	case "basic":
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(secret))
+	case "fields":
+		return secret
 	}
 	return a.Prefix + secret
 }
 
 // Apply puts the secret where the provider expects it.
 func (a Auth) Apply(req *http.Request, q url.Values, secret string) {
-	switch a.Type {
-	case "query":
-		q.Set(a.Name, a.Prefix+secret)
-	case "bearer":
-		name := a.Name
-		if name == "" {
-			name = "Authorization"
-		}
-		prefix := a.Prefix
-		if prefix == "" {
-			prefix = "Bearer "
-		}
-		req.Header.Set(name, prefix+secret)
-	default:
-		req.Header.Set(a.Name, a.Prefix+secret)
-	}
+	a.applyQuery(q, secret)
+	a.ApplyHeaders(req.Header, secret)
 }
 
 // ---- fixture tests ----

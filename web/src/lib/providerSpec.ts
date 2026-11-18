@@ -105,7 +105,7 @@ export function inputOf(p: Provider): ProviderInput {
 export function fromTemplate(t: ProviderTemplate): Provider {
   const spec = blankSpec();
   spec.base_url = t.base_url;
-  spec.auth = { type: (["query", "header", "bearer"].includes(t.auth_type) ? t.auth_type : "header") as AuthType, name: t.auth_name, prefix: "" };
+  spec.auth = { type: (["query", "header", "bearer", "basic"].includes(t.auth_type) ? t.auth_type : "header") as AuthType, name: t.auth_name, prefix: "" };
   spec.defaults.cooldown_sec = t.default_cooldown_sec || 60;
   return {
     slug: t.provider,

@@ -220,6 +220,44 @@ type turnState struct {
 	// builds this turn started, cancelled with it.
 	stopped bool
 	runs    []int64
+	// inbox holds messages sent with Send now while the turn runs; the loop
+	// adds them to the conversation before its next model call. closed is
+	// set once the loop has taken its last look, so a late message is
+	// refused and goes out as a normal message instead of being dropped.
+	inbox  []steerMsg
+	closed bool
+}
+
+// steerMsg is a message the user pushed into a running turn.
+type steerMsg struct {
+	text   string
+	images []chatImageIn
+}
+
+// push hands a message to the running turn. False means the turn has
+// already finished taking messages.
+func (t *turnState) push(m steerMsg) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed || t.stopped {
+		return false
+	}
+	t.inbox = append(t.inbox, m)
+	return true
+}
+
+// take drains the inbox. With last set and nothing waiting it also closes
+// the inbox, in the same lock, so no message can slip in after the loop's
+// final look.
+func (t *turnState) take(last bool) []steerMsg {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := t.inbox
+	t.inbox = nil
+	if last && len(out) == 0 {
+		t.closed = true
+	}
+	return out
 }
 
 func (t *turnState) addRun(id int64) {
@@ -260,7 +298,9 @@ func (t *turnState) setStep(s string) {
 func (t *turnState) view() map[string]any {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return map[string]any{"active": true, "step": t.step, "started_at": t.started}
+	// steered counts messages sent with Send now that the turn has not read
+	// yet, so the client can keep showing them until it does.
+	return map[string]any{"active": true, "step": t.step, "started_at": t.started, "steered": len(t.inbox)}
 }
 
 // chatTurns maps a thread id to its running turn.
@@ -436,29 +476,89 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		cs.expireAsks()
-		model, shown, list, n, err := cs.vaultMessage(text)
-		if err != nil {
-			return err
-		}
-		// Anything key shaped that is left (a known pool key in prose, say)
-		// is scrubbed from both copies as a last line.
-		ctx := cs.ctx
-		model, shown = cs.s.Store.Scrub(ctx, model), cs.s.Store.Scrub(ctx, shown)
-		blocks := []chatBlock{}
-		refs := []chatImage{}
-		for _, im := range images {
-			cs.data.ImageSeq++
-			id := fmt.Sprintf("img%d", cs.data.ImageSeq)
-			blocks = append(blocks, chatBlock{Type: "image", ImageID: id, MediaType: im.MediaType, Data: im.Data})
-			refs = append(refs, chatImage{ID: id, MediaType: im.MediaType})
-		}
-		if model != "" {
-			blocks = append(blocks, chatBlock{Type: "text", Text: model})
-		}
-		cs.addItem(chatItem{Kind: "user", Text: shown, Keys: n, KeyList: list, OK: true, Images: refs})
-		cs.appendUser(blocks...)
-		return nil
+		return cs.addUserMessage(text, images, "")
 	})
+}
+
+// addUserMessage vaults the keys in a message, records it in the transcript
+// and adds it to the model conversation. note goes before the text the model
+// reads only.
+func (cs *chatSession) addUserMessage(text string, images []chatImageIn, note string) error {
+	model, shown, list, n, err := cs.vaultMessage(text)
+	if err != nil {
+		return err
+	}
+	// Anything key shaped that is left (a known pool key in prose, say)
+	// is scrubbed from both copies as a last line.
+	ctx := cs.ctx
+	model, shown = cs.s.Store.Scrub(ctx, model), cs.s.Store.Scrub(ctx, shown)
+	blocks := []chatBlock{}
+	refs := []chatImage{}
+	for _, im := range images {
+		cs.data.ImageSeq++
+		id := fmt.Sprintf("img%d", cs.data.ImageSeq)
+		blocks = append(blocks, chatBlock{Type: "image", ImageID: id, MediaType: im.MediaType, Data: im.Data})
+		refs = append(refs, chatImage{ID: id, MediaType: im.MediaType})
+	}
+	if model != "" || note != "" {
+		blocks = append(blocks, chatBlock{Type: "text", Text: strings.TrimSpace(note + " " + model)})
+	}
+	cs.addItem(chatItem{Kind: "user", Text: shown, Keys: n, KeyList: list, OK: true, Images: refs})
+	cs.appendUser(blocks...)
+	return nil
+}
+
+// takeSteer adds the messages sent with Send now to the conversation, so
+// the model reads them on its next call. It reports whether there were any.
+func (cs *chatSession) takeSteer(last bool) bool {
+	msgs := cs.turn.take(last)
+	for _, m := range msgs {
+		if err := cs.addUserMessage(m.text, m.images, "[The user sent this while you were working. Take it into account from here on.]"); err != nil {
+			cs.addItem(chatItem{Kind: "error", Text: err.Error()})
+		}
+	}
+	if len(msgs) > 0 {
+		_ = cs.save()
+	}
+	return len(msgs) > 0
+}
+
+// chatSteer is POST /chat/threads/{id}/steer: it sends a message into the
+// thread's running turn, which reads it before its next step instead of
+// after it ends. 409 not_running means no turn is taking messages; send it
+// as a normal message then.
+func (s *Server) chatSteer(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Text   string        `json:"text"`
+		Images []chatImageIn `json:"images"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	text := strings.TrimSpace(body.Text)
+	images, msg := checkChatImages(body.Images)
+	if msg != "" {
+		writeErr(w, 400, "invalid", msg)
+		return
+	}
+	if (text == "" && len(images) == 0) || len(text) > chatMaxMessage {
+		writeErr(w, 400, "invalid", fmt.Sprintf("send a message of 1 to %d characters, or an image", chatMaxMessage))
+		return
+	}
+	if _, _, err := s.loadChat(r.Context(), id, userFrom(r).ID); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	v, ok := chatTurns.Load(id)
+	if !ok || !v.(*turnState).push(steerMsg{text: text, images: images}) {
+		writeErr(w, 409, "not_running", "this chat is not working on anything; send the message normally")
+		return
+	}
+	writeJSON(w, 202, map[string]any{"ok": true, "turn": turnView(id)})
 }
 
 func (s *Server) chatConfirm(w http.ResponseWriter, r *http.Request) {
@@ -562,6 +662,10 @@ func (s *Server) chatTurn(w http.ResponseWriter, r *http.Request, apply func(cs 
 			close(ts.done)
 		}()
 		err := cs.loop(ctx)
+		// Messages sent with Send now that the loop never read (it stopped
+		// or failed) still go into the transcript, so nothing typed is lost.
+		for cs.takeSteer(true) {
+		}
 		switch {
 		case ts.wasStopped():
 			cs.noteStopped()
@@ -819,6 +923,9 @@ func (cs *chatSession) loop(ctx context.Context) error {
 		if cs.s.chatModel != nil {
 			converse = cs.s.chatModel
 		}
+		if turn > 0 {
+			cs.takeSteer(false)
+		}
 		cs.maybeCompact(ctx, system)
 		cs.turn.setStep("Thinking")
 		history, trimmed := cs.history(system)
@@ -861,6 +968,13 @@ func (cs *chatSession) loop(ctx context.Context) error {
 		if cs.halt {
 			// ask_user: the answer comes back as the user's next message.
 			cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: results})
+			// A message sent with Send now meanwhile answers instead: the
+			// question is dropped and the model reads the message.
+			if cs.takeSteer(true) {
+				cs.halt = false
+				cs.expireAsks()
+				continue
+			}
 			return nil
 		}
 		_ = cs.save()
@@ -879,6 +993,11 @@ func (cs *chatSession) loop(ctx context.Context) error {
 			// Tool calls without a tool_use stop: still answer them so the
 			// history stays valid, then let the model wrap up.
 			cs.data.Messages = append(cs.data.Messages, chatMsg{Role: "user", Blocks: results})
+			continue
+		}
+		// Last look for messages sent with Send now: any that came in
+		// while the model wrote this reply get an answer in this turn.
+		if cs.takeSteer(true) {
 			continue
 		}
 		return nil

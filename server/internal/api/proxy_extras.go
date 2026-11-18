@@ -235,11 +235,7 @@ func requestVariant(r *http.Request, sv *store.Service, body []byte) string {
 	for _, h := range hopHeaders {
 		skip[http.CanonicalHeaderKey(h)] = true
 	}
-	if sv.AuthType == "header" || sv.AuthType == "bearer" {
-		name := sv.AuthName
-		if name == "" {
-			name = "Authorization"
-		}
+	for _, name := range serviceAuth(sv).HeaderNames() {
 		skip[http.CanonicalHeaderKey(name)] = true // replaced by the key
 	}
 	if isBearerAppToken(r.Header.Get("Authorization")) {

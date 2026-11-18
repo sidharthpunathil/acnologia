@@ -14,7 +14,7 @@ import {
 } from "@remixicon/react";
 import { Focusable } from "react-aria-components";
 import type { ComponentType } from "react";
-import type { AuthType, Guide, OfferLimit, OfferPer, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecOffer, SpecRule, Strategy, TestReport } from "../../lib/types";
+import type { AuthField, AuthType, Guide, OfferLimit, OfferPer, Outcome, ProviderSpec, QuotaHeaders, RetrySource, SpecExample, SpecFixture, SpecHealth, SpecOffer, SpecRule, Strategy, TestReport } from "../../lib/types";
 import { LIMIT_PERS, PRICE_UNITS, matchText } from "../../lib/offers";
 import { OUTCOMES } from "../../lib/types";
 import { STRATEGY_HELP } from "../../lib/format";
@@ -422,6 +422,8 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
               { id: "query", label: "query parameter" },
               { id: "header", label: "header" },
               { id: "bearer", label: "bearer token" },
+              { id: "basic", label: "login and password (Basic)" },
+              { id: "fields", label: "several fields" },
             ]}
           />
           <TextInput
@@ -435,7 +437,13 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
           />
           <TextInput
             label="Value prefix"
-            hint={spec.auth.type === "bearer" ? "Bearer adds its own prefix." : "Text before the key, if the API needs any."}
+            hint={
+              spec.auth.type === "bearer"
+                ? "Bearer adds its own prefix."
+                : spec.auth.type === "basic"
+                  ? "Basic auth sends Authorization: Basic base64(login:password)."
+                  : "Text before the key, if the API needs any."
+            }
             mono
             value={spec.auth.prefix}
             disabled={readOnly}
@@ -444,6 +452,13 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
             spellCheck={false}
           />
         </div>
+        {spec.auth.type === "fields" && (
+          <AuthFieldsEditor
+            fields={spec.auth.fields ?? []}
+            readOnly={readOnly}
+            onChange={(fields) => set({ auth: { ...spec.auth, fields } })}
+          />
+        )}
       </Section>
 
       <Section title="Defaults for new services" description="Services created from this provider start with these values. Existing services keep their own settings.">
@@ -1395,5 +1410,46 @@ export function GuideTab({ spec, onChange, readOnly, provider }: SpecTabProps & 
         onChange={setGuide}
       />
     </Section>
+  );
+}
+
+/** The parts of a fields credential: what each is called and where it goes. */
+function AuthFieldsEditor({ fields, readOnly, onChange }: { fields: AuthField[]; readOnly?: boolean; onChange: (f: AuthField[]) => void }) {
+  const put = (i: number, patch: Partial<AuthField>) => onChange(fields.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      <p className="text-body-2-regular text-text-secondary">
+        Each key is made of these parts. The add key form asks for each one, and the proxy sends each in its header or query parameter.
+      </p>
+      {fields.map((f, i) => (
+        <div key={i} className="grid grid-cols-2 items-end gap-3 sm:grid-cols-[1fr_1fr_8rem_1fr_auto]">
+          <TextInput label="Part key" mono value={f.key} disabled={readOnly} onChange={(v) => put(i, { key: v })} placeholder="app_id" spellCheck={false} />
+          <TextInput label="Label" value={f.label ?? ""} disabled={readOnly} onChange={(v) => put(i, { label: v })} placeholder="App ID" />
+          <SelectField
+            label="Sent in"
+            value={f.in}
+            disabled={readOnly}
+            onChange={(v) => put(i, { in: v as AuthField["in"] })}
+            options={[
+              { id: "header", label: "header" },
+              { id: "query", label: "query" },
+            ]}
+          />
+          <TextInput label="Name" mono value={f.name} disabled={readOnly} onChange={(v) => put(i, { name: v })} placeholder="X-App-Id" spellCheck={false} />
+          {!readOnly && (
+            <Button variant="ghost" size="small" onClick={() => onChange(fields.filter((_, j) => j !== i))}>
+              Remove
+            </Button>
+          )}
+        </div>
+      ))}
+      {!readOnly && fields.length < 8 && (
+        <div>
+          <Button variant="secondary" size="small" onClick={() => onChange([...fields, { key: "", label: "", in: "header", name: "" }])}>
+            Add a part
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

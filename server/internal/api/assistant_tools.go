@@ -511,10 +511,12 @@ func init() {
 					"properties": withProps(keyInputProps, map[string]any{
 						"ref":    map[string]any{"type": "string", "description": "vault ref such as k3"},
 						"secret": map[string]any{"type": "string", "description": "only for a key that reached you as plain text, never a placeholder"},
+						"parts": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"},
+							"description": "for a service whose credential has several parts (auth basic: login and password; auth fields: the provider's field keys): part key to vault ref such as k3, or plain text for a part that is not secret, such as a login"},
 					}),
 				}},
 			},
-			Desc: "Add API keys to a service. Pasted keys reach you as placeholders [key k3 ...c21e]: pass batch \"latest\" to add every key from the last paste in one call, key_refs for some of them, or keys with ref plus account details, label, tier or notes. Labels from the paste are kept. Duplicates are skipped. New keys are health checked in the background.",
+			Desc: "Add API keys to a service. Pasted keys reach you as placeholders [key k3 ...c21e]: pass batch \"latest\" to add every key from the last paste in one call, key_refs for some of them, or keys with ref plus account details, label, tier or notes. Labels from the paste are kept. Duplicates are skipped. New keys are health checked in the background. Some providers take a credential of several parts (a login and a password for Basic auth, or an app id and an app key): one key then has parts, such as {\"parts\": {\"login\": \"k1\", \"password\": \"k2\"}}; a single pasted login:password or Basic base64 value also works as one ref.",
 			Run:  addKeysTool,
 		},
 		{

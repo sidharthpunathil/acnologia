@@ -94,6 +94,33 @@ func addKeysTool(cs *chatSession, in map[string]any) toolOut {
 			}
 			used[ref] = true
 		}
+		// A multi part credential (login and password, app id and key):
+		// each part is a vault ref, or plain text for a part that is not
+		// secret, such as a login typed in the message.
+		if pm, ok := m["parts"].(map[string]any); ok && len(pm) > 0 {
+			parts := map[string]string{}
+			for name, v := range pm {
+				val, _ := v.(string)
+				val = strings.TrimSpace(val)
+				if e := cs.vaultEntry(val); e != nil {
+					sec, err := cs.vaultSecret(*e)
+					if err != nil {
+						return toolFail(err.Error())
+					}
+					if argStr(body, "label") == "" && e.Label != "" {
+						body["label"] = e.Label
+					}
+					used[val] = true
+					refOf = append(refOf, val)
+					val = sec
+				}
+				parts[name] = val
+			}
+			body["parts"] = parts
+			inputs = append(inputs, body)
+			refOf = append(refOf, ref)
+			continue
+		}
 		if argStr(body, "secret") == "" {
 			continue
 		}
