@@ -1,12 +1,9 @@
-## OpenQodex before main
-- Pushes to `stage` or any branch other than `main` get no OpenQodex review and no question about one: just push.
-- Before every push to `main`, ask the developer casually and name OpenQodex ("Want an OpenQodex pass on the new
-  commits before main?"). Never push to `main` without that question. On a no, push.
-- On a yes, run `npx -y openqodex@0.19.0 review --base origin/main` from the repository root, in the background (it can
-  take minutes, and OpenQodex stops the reviewer after 30 minutes). Review only commits not on `main` yet.
-- Show the receipt: the verdict, one line per finding and the absolute path of `report.html`. Ask: "Fix all, or tell
-  me which?" Fix only the findings they name (`npx -y openqodex@0.19.0 findings 1,3`). Do not push on a blocked verdict
-  unless the developer says so after seeing the findings.
+## OpenQodex: only when asked, at the end of a project
+- Never ask about an OpenQodex review and never run one, for any push to any branch, `main` included: just push.
+- The developer runs one complete scan when the project ends. Run it only when they ask, as they say (the whole
+  change, or `npx -y openqodex@0.19.0 review --all`), in the background (it can take a long time; OpenQodex stops the
+  reviewer after 30 minutes). Show the receipt (verdict, one line per finding, the absolute path of `report.html`) and
+  ask "Fix all, or tell me which?"
 - No hooks: no push gate and no git pre-push hook (removed on 2026-11-22). Never install one.
 - Never add a file to `review.instructions_files` on your own. Ask the developer which files the reviewer may use, then
   set only what they name. The report is in `.openqodex/reviews/`.
