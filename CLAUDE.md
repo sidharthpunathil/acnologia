@@ -1,8 +1,12 @@
-<!-- openqodex:start -->
-## Review with OpenQodex before you push
-- Before any `git push`, run `npx -y openqodex@0.19.0 review` from the repository root. It can take minutes, and OpenQodex stops the reviewer after 30 minutes. Run it in the background and wait for it to exit.
-- Show the developer the receipt it prints: the verdict, one line per finding and the absolute path of `report.html`. Ask: "Fix all, or tell me which?" Fix only the findings they name (`npx -y openqodex@0.19.0 findings 1,3` prints them in full), then review again and show the new receipt. OpenQodex starts its own reviewer process, so by default the agent that wrote the code does not judge its own work.
-- Do not push on a blocked verdict unless the developer says so after seeing the findings.
-- Never add a file to `review.instructions_files` on your own. Ask the developer which files the reviewer may use, then set only what they name.
-- The report is in `.openqodex/reviews/`.
-<!-- openqodex:end -->
+## OpenQodex before main
+- Pushes to `stage` or any branch other than `main` get no OpenQodex review and no question about one: just push.
+- Before every push to `main`, ask the developer casually and name OpenQodex ("Want an OpenQodex pass on the new
+  commits before main?"). Never push to `main` without that question. On a no, push.
+- On a yes, run `npx -y openqodex@0.19.0 review --base origin/main` from the repository root, in the background (it can
+  take minutes, and OpenQodex stops the reviewer after 30 minutes). Review only commits not on `main` yet.
+- Show the receipt: the verdict, one line per finding and the absolute path of `report.html`. Ask: "Fix all, or tell
+  me which?" Fix only the findings they name (`npx -y openqodex@0.19.0 findings 1,3`). Do not push on a blocked verdict
+  unless the developer says so after seeing the findings.
+- No hooks: no push gate and no git pre-push hook (removed on 2026-11-22). Never install one.
+- Never add a file to `review.instructions_files` on your own. Ask the developer which files the reviewer may use, then
+  set only what they name. The report is in `.openqodex/reviews/`.
