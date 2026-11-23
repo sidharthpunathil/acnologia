@@ -6,6 +6,7 @@ import {
   RiInformationLine,
   RiPulseLine,
   RiRefreshLine,
+  RiSparkling2Line,
 } from "@remixicon/react";
 import { AcnKeyPool } from "@/components/foundations/icons/acn";
 import { useTitle } from "../../hooks/useTitle";
@@ -42,6 +43,7 @@ import { KeyDrawer } from "./KeyDrawer";
 import { IntegratePanel } from "./IntegratePanel";
 import { LlmBriefButton } from "./LlmBrief";
 import { ServiceSettings } from "./ServiceSettings";
+import { ServiceChat } from "./ServiceChat";
 import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
@@ -86,6 +88,7 @@ export function ServicePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [openKey, setOpenKey] = useState<Key | null>(null);
   const [checking, setChecking] = useState(false);
+  const [chatting, setChatting] = useState(false);
   const checkService = useInsights((s) => s.checkService);
 
   const perms = { manage: can.manage(role), hidden: can.hidden(role), reveal: can.reveal(role), super: can.users(role) };
@@ -260,6 +263,13 @@ export function ServicePage() {
           <>
             <ActionIcon icon={RiRefreshLine} label="Reload" size="medium" busy={refreshing} disabled={refreshing} onClick={() => void refresh()} />
             <LlmBriefButton service={service} />
+            {/* Icon only until the header has room, so its actions keep one row. */}
+            <span className="2xl:hidden">
+              <ActionIcon icon={RiSparkling2Line} label="Ask AI" size="medium" onClick={() => setChatting(true)} />
+            </span>
+            <Button variant="secondary" leadingIcon={RiSparkling2Line} onClick={() => setChatting(true)} className="max-2xl:hidden">
+              Ask AI
+            </Button>
             {perms.manage && keys.length > 0 && provider?.spec?.health && (
               <Button
                 variant="secondary"
@@ -452,6 +462,7 @@ export function ServicePage() {
       />
       <RevealModal k={revealing} onClose={() => setRevealing(null)} />
       <KeyDrawer keyId={openKey?.id ?? null} seed={openKey} onClose={() => setOpenKey(null)} />
+      <ServiceChat service={service} open={chatting} onClose={() => setChatting(false)} />
     </div>
   );
 }

@@ -34,7 +34,7 @@ func (a *Agent) ConverseWith(ctx context.Context, model, system string, messages
 	}
 	return a.client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
 		Model:        anthropic.Model(model),
-		MaxTokens:    4096,
+		MaxTokens:    16000,
 		System:       sys,
 		Messages:     messages,
 		Tools:        tools,

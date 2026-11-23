@@ -122,7 +122,14 @@ type Service struct {
 	// that take the same key. Only keys that are neither hidden nor limited
 	// to some apps are shared, and only while both services send the key to
 	// the same site in the same place (catalog.CanShareKeys).
-	KeySourceID   *int64 `json:"key_source_id"`
+	KeySourceID *int64 `json:"key_source_id"`
+	// Rotation lets requests to this service go to other services that
+	// serve the same endpoint: services of the same provider, or of
+	// providers whose catalog lists the same entry (an amazon-scraper on
+	// Omkar Cloud and on a self-hosted server). "" is off, "fallback" tries
+	// this service first, "round_robin" spreads requests over all of them.
+	// Only services with rotation on take part.
+	Rotation      string `json:"rotation"`
 	KeySourceSlug string `json:"key_source_slug,omitempty"`
 	KeySourceName string `json:"key_source_name,omitempty"`
 }

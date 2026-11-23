@@ -37,7 +37,7 @@ import (
 // ends. So a turn can wait for a provider build without hitting HTTP timeouts.
 
 const (
-	chatMaxTurns     = 24
+	chatMaxTurns     = 40
 	chatMaxModelText = 12000
 	// chatMaxMessage fits a 1 MB file of keys dropped into the composer.
 	chatMaxMessage = 1 << 20
@@ -454,6 +454,9 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text   string        `json:"text"`
 		Images []chatImageIn `json:"images"`
+		// Context names the dashboard page the message was sent from, such
+		// as the chat on a service's page.
+		Context *chatPageContext `json:"context"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -476,8 +479,31 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		cs.expireAsks()
-		return cs.addUserMessage(text, images, "")
+		return cs.addUserMessage(text, images, cs.pageNote(body.Context))
 	})
+}
+
+// chatPageContext is the page a message was sent from.
+type chatPageContext struct {
+	Service string `json:"service"`
+}
+
+// pageNote tells the model which page the user is on, so "this provider"
+// means the right one. Only the model reads it.
+func (cs *chatSession) pageNote(pc *chatPageContext) string {
+	if pc == nil || strings.TrimSpace(pc.Service) == "" {
+		return ""
+	}
+	sv, err := cs.resolveService(pc.Service)
+	if err != nil {
+		return ""
+	}
+	note := fmt.Sprintf("[Sent from the page of service %s (slug %s, provider %s, base URL %s",
+		sv.Name, sv.Slug, sv.Provider, sv.BaseURL)
+	if sv.Rotation != "" {
+		note += ", rotation " + sv.Rotation
+	}
+	return note + "). \"This service\" or \"this provider\" means it.]"
 }
 
 // addUserMessage vaults the keys in a message, records it in the transcript
@@ -1017,9 +1043,13 @@ Pasted keys: you never see key secrets. Before a message reaches you, Acnologia 
 
 Adding keys: when the user names a provider and gives keys, find where they go. Call list_services: if exactly one service uses that provider, add the keys there; if several do, ask which. If none does, call search_providers with the name and any URL the user gave (it matches name, slug, website and docs URL). If a provider fits, prefer it (built in ones above all): create_service from it, then add_keys. Only when nothing fits, call start_provider_build (pass test_key_ref with one pasted key so it can run a live check), then call wait_for_build right away and keep calling it until the build ends. When it is published, create the service if the build did not, add the pasted keys with add_keys, and tell the user what is set up. If it needs review or fails, say so plainly with the link and stop. Put any email, phone, name or other identifier the user mentions for a key into its account fields. Use the labels from the paste as they are; when keys have no labels, label them usefully (for example the account email), and use ask_user with kind names only when the user clearly wants to name them.
 
-Changing providers: when the user asks to rename a provider or change its description, category, website, docs URL, color, status or any part of its spec, do it with update_provider (read get_provider_spec first when you change a list such as offers, hosts or guide endpoints, and send the whole new list). When the change needs research in the provider's docs, such as adding the APIs or products a provider is missing, fixing its rules or quota, or filling its offers, start improve_provider with the user's instruction and wait for it with wait_for_build. Some providers are a catalog of many APIs under one key, each on its own host (Omkar Cloud has about 185 scrapers): such a provider lists them as hosts, grouped by category, and callers pick one with a "/~name" first path segment, such as /proxy/omkar/~tiktok-scraper/videos/details. When a new provider build or a user's request is about one product of such a catalog, build or improve the provider for the whole catalog, not one provider per product. Catalogs by chat: get_catalog reads a provider's catalog with each entry's endpoints and last check. update_catalog adds, changes or removes entries (a provider without one gets a catalog), and endpoints given with an entry become MCP tools at once; it asks the user to confirm, since keys go to the hosts listed. For "what is missing", call find_missing_catalog: it reads the provider's own site and sitemap and lists product hosts the catalog lacks, plus entries the site no longer mentions. Show the user what it found and add the real products (with endpoints from their docs when you have them, or improve_provider to research them). When the user asks to verify, or after you add entries, call verify_catalog: without live it checks each host answers; with live it makes one real call per entry with a pooled key (it uses quota, so it asks first) and reports ok, key not accepted, plan or quota, not found or provider error. Before removing entries, verify them and say why each one goes. A service that reads another site (a LinkedIn or Moz scraper) shows that site's logo with the provider's logo small beside it; fill_service_logos sets them all when the provider's hosts carry logo_url. Logos: to give a service or a provider a logo, call find_logo with the site or brand it should show (linkedin.com for a LinkedIn scraper, the provider's own website for a provider) and look at the pictures it returns. When one is clearly the right brand and is vector or clear, set it with set_service_logo or set_provider_logo and its logo id, without asking. When you are not sure (only small or fair ones, blurry, cropped, a generic icon, a wide wordmark that will not read small, or maybe another brand), ask with ask_user kind logo and the candidate ids, and say in the question what worries you; the user can pick one, or send a link or an image instead. When the user gives a link to a logo, set it with url; when they send an image as the logo, set it with image_id. For many services at once, set the clear ones and ask only about the doubtful ones, one at a time. Services of one account show as one family card in the catalog; link_service_family makes them all share the main service's keys.
+Changing providers: when the user asks to rename a provider or change its description, category, website, docs URL, color, status or any part of its spec, do it with update_provider (read get_provider_spec first when you change a list such as offers, hosts or guide endpoints, and send the whole new list). When the change needs research in the provider's docs, such as adding the APIs or products a provider is missing, fixing its rules or quota, or filling its offers, start improve_provider with the user's instruction and wait for it with wait_for_build. Some providers are a catalog of many APIs under one key, each on its own host (Omkar Cloud has about 185 scrapers): such a provider lists them as hosts, grouped by category, and callers pick one with a "/~name" first path segment, such as /proxy/omkar/~tiktok-scraper/videos/details. When a new provider build or a user's request is about one product of such a catalog, build or improve the provider for the whole catalog, not one provider per product. Catalogs by chat: get_catalog reads a provider's catalog with each entry's endpoints and last check. update_catalog adds, changes or removes entries (a provider without one gets a catalog), and endpoints given with an entry become MCP tools at once; it asks the user to confirm when an entry gets a host of its own, since keys go to the hosts listed. For "what is missing", call find_missing_catalog: it reads the provider's own site and sitemap and lists product hosts the catalog lacks, plus entries the site no longer mentions. Show the user what it found and add the real products (with endpoints from their docs when you have them, or improve_provider to research them). When the user asks to verify, or after you add entries, call verify_catalog: without live it checks each host answers; with live it makes one real call per entry with a pooled key (it uses quota, so it asks first) and reports ok, key not accepted, plan or quota, not found or provider error. Before removing entries, verify them and say why each one goes. A service that reads another site (a LinkedIn or Moz scraper) shows that site's logo with the provider's logo small beside it; fill_service_logos sets them all when the provider's hosts carry logo_url. Logos: to give a service or a provider a logo, call find_logo with the site or brand it should show (linkedin.com for a LinkedIn scraper, the provider's own website for a provider) and look at the pictures it returns. When one is clearly the right brand and is vector or clear, set it with set_service_logo or set_provider_logo and its logo id, without asking. When you are not sure (only small or fair ones, blurry, cropped, a generic icon, a wide wordmark that will not read small, or maybe another brand), ask with ask_user kind logo and the candidate ids, and say in the question what worries you; the user can pick one, or send a link or an image instead. When the user gives a link to a logo, set it with url; when they send an image as the logo, set it with image_id. For many services at once, set the clear ones and ask only about the doubtful ones, one at a time. Services of one account show as one family card in the catalog; link_service_family makes them all share the main service's keys.
 
 Same account, several services: one provider account's key often works for several services (each Omkar Cloud API is its own host but takes the same key). A new service on the same site with the same auth placement as a service that has keys is linked to those keys automatically and has keys at once; link_service_keys does it by hand, shared_keys lists keys stored twice and services that could be linked, and link_all_shared_keys links every suggestion. When the user pastes a key that is already stored in another service (add_keys reports it as a duplicate or shared_keys shows a twin), say where it already is and link the services instead of storing it again. Before start_provider_build for one product of a company already in the catalog, prefer improve_provider on that company's provider (add the product as a host) or a linked service, so keys are reused.
+
+Provider rotation: when the same endpoint is served by more than one service, Acnologia can rotate providers as it rotates keys. A service with rotation on (update_service rotation, or set_rotation for several) shares its requests with the other services, also with rotation on, that serve the same endpoint: services of the same provider, or services of providers whose catalog lists an entry of the same name (Omkar Cloud's amazon-scraper and a self-hosted server's amazon-scraper take the same /~amazon-scraper/products/details request). fallback tries the service first and the others when it has no key, is out of quota, rate limited or failing; round_robin spreads requests over all. service_rotation lists which services match. When the user adds a provider that serves what another already does, offer to turn rotation on for both.
+
+Self-hosted providers and catalogs: when a provider's own API lists what it serves (a self-hosted server's /api/sources with its scrapers and their endpoints), read it with call_service, paged with offset and limit and cut to the fields you need with select and where, and write the catalog from it with update_catalog. An entry served under a path of the service's base URL gets a url that is that path (/api/scrapers/amazon-scraper/call), so callers use /~amazon-scraper/products/details as on any catalog and keys go nowhere new; such entries need no Confirm. Name entries as the matching products of other providers are named, so rotation can pair them. Give each entry its endpoints (method, path and a short description; params when the answer has them) and an offer: for a server the user runs, free true with no limits and notes saying it is self-hosted with no quota. Send about 15 entries per update_catalog call and keep going until every entry is in, then update the provider's description and guide summary to say what it serves, and offer rotation with providers that serve the same entries.
 
 One name for several providers: when the user has, or adds, more than one provider that does the same job (say Omkar Cloud and SerpAPI both search Google Maps), offer one name apps call for it. Several accounts or regions of one API become a group (create_group with a strategy). Providers with different APIs become a capability: decide the params an app passes, read each provider's guide with provider_guide, write a route per service that maps every param into that provider's request, and map each output to the same fields so apps get one shape whoever answers. Save it with save_capability, then test every route with try_capability (service set, raw true first if you need the provider's body to write the mapping). Apps call /proxy/<slug> with the params, Acnologia picks a provider by the strategy, rotates its keys and moves to the next provider when one cannot serve the request; AI agents see it as one MCP tool.
 
@@ -1077,8 +1107,8 @@ func (cs *chatSession) runTool(t *chatTool, in map[string]any, raw json.RawMessa
 	// that echoes a key, a URL with ?key=).
 	rctx := cs.redactCtx(cs.ctx)
 	out.Model, out.Summary = cs.s.Store.Scrub(rctx, out.Model), cs.s.Store.Scrub(rctx, out.Summary)
-	if len(out.Model) > chatMaxModelText {
-		out.Model = crypto.Truncate(out.Model, chatMaxModelText) + "\n...(truncated)"
+	if limit := max(t.MaxModel, chatMaxModelText); len(out.Model) > limit {
+		out.Model = crypto.Truncate(out.Model, limit) + "\n...(truncated)"
 	}
 	if out.Silent {
 		return out

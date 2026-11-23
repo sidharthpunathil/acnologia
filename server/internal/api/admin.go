@@ -133,6 +133,8 @@ type serviceInput struct {
 	CacheTTLSec *int64 `json:"cache_ttl_sec"`
 	// CostPerRequest overrides the provider's USD price; -1 goes back to the provider default.
 	CostPerRequest *float64 `json:"cost_per_request"`
+	// Rotation is "", "fallback" or "round_robin" (see store.Service).
+	Rotation *string `json:"rotation"`
 	// TargetTrusted true is a superadmin confirming where the service sends
 	// keys; false revokes that. Nothing else sets the flag to true.
 	TargetTrusted *bool `json:"target_trusted"`
@@ -202,8 +204,16 @@ func (in serviceInput) apply(sv *store.Service) string {
 			sv.CostPerRequest = in.CostPerRequest
 		}
 	}
+	if in.Rotation != nil {
+		sv.Rotation = strings.TrimSpace(*in.Rotation)
+		if sv.Rotation == "off" {
+			sv.Rotation = ""
+		}
+	}
 	sv.BaseURL = strings.TrimRight(sv.BaseURL, "/")
 	switch {
+	case !validRotation[sv.Rotation]:
+		return "rotation must be off, fallback or round_robin"
 	case !slugRe.MatchString(sv.Slug):
 		return "slug must be lowercase letters, digits and hyphens"
 	case sv.Name == "":
@@ -236,6 +246,8 @@ func (in serviceInput) apply(sv *store.Service) string {
 	}
 	return ""
 }
+
+var validRotation = map[string]bool{"": true, RotationFallback: true, RotationRoundRobin: true}
 
 var validServiceAuth = map[string]bool{"query": true, "header": true, "bearer": true, "basic": true, "fields": true}
 
@@ -284,6 +296,7 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.create", created.Slug, "")
+	s.forgetRotating()
 	// A new service of an account already in the pool uses its keys at once.
 	if src, err := catalog.AutoLinkKeys(r.Context(), s.Store, created); err == nil && src != nil {
 		if again, err := s.Store.GetService(r.Context(), created.ID); err == nil {
@@ -350,6 +363,7 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.update", sv.Slug, "")
+	s.forgetRotating()
 	// Settings decide what may be served from cache, so start fresh.
 	s.Cache.PurgePrefix(servicePrefix(sv.ID))
 	_ = s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r), s.Pool.InFlight())
@@ -390,6 +404,7 @@ func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
 	// Services that used its keys go back to their own.
 	_ = s.Store.ClearKeySourcesOf(r.Context(), sv.ID)
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.delete", sv.Slug, "")
+	s.forgetRotating()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

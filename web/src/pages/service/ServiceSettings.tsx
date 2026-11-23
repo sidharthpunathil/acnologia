@@ -25,6 +25,7 @@ import { RadioCard } from "@/components/base/radio/radio-card";
 import { Label } from "@/components/base/input/label";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { applyServiceFields } from "../AddServiceModal";
+import { RotationCard } from "./RotationCard";
 
 function inputOf(s: Service): ServiceInput {
   const { slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon } = s;
@@ -517,6 +518,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         {canManage && <SaveRow dirty={dirty} saving={saving} onDiscard={discardRotation} onSave={saveStrategy} label="Save rotation" />}
       </Section>
 
+      <RotationCard service={service} canManage={canManage} />
       <TrafficCard service={service} canManage={canManage} isSuper={isSuper} />
       <BreakerCard service={service} canManage={canManage} />
 

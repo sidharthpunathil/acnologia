@@ -10,7 +10,7 @@ import (
 const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev, target_trusted, egress_id, cache_ttl_sec, cost_per_request,
 peer_link_id, peer_remote_slug, peer_provider, COALESCE((SELECT pl.peer_name FROM peer_links pl WHERE pl.id=services.peer_link_id),''),
 COALESCE((SELECT pl.trusted FROM peer_links pl WHERE pl.id=services.peer_link_id),0),
-key_source_id, COALESCE((SELECT k.slug FROM services k WHERE k.id=services.key_source_id),''), COALESCE((SELECT k.name FROM services k WHERE k.id=services.key_source_id),'')`
+rotation, key_source_id, COALESCE((SELECT k.slug FROM services k WHERE k.id=services.key_source_id),''), COALESCE((SELECT k.name FROM services k WHERE k.id=services.key_source_id),'')`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
@@ -20,7 +20,7 @@ func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.Provider, &s.Category, &s.Description, &s.BaseURL,
 		&s.AuthType, &s.AuthName, &s.Strategy, &s.CooldownSec, &s.MaxAttempts, &s.Icon, &created, &s.MaxConcurrency, &s.QueueTimeoutSec, &s.HasLogo, &s.LogoRev, &s.TargetTrusted,
 		&egress, &ttl, &cost, &link, &s.PeerRemoteSlug, &s.PeerProvider, &s.PeerName, &s.PeerTrusted,
-		&src, &s.KeySourceSlug, &s.KeySourceName)
+		&s.Rotation, &src, &s.KeySourceSlug, &s.KeySourceName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -45,11 +45,11 @@ func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO services(id,slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec,target_trusted,egress_id,cache_ttl_sec,cost_per_request)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err = tx.ExecContext(ctx, `INSERT INTO services(id,slug,name,provider,category,description,base_url,auth_type,auth_name,strategy,cooldown_sec,max_attempts,icon,created_at,max_concurrency,queue_timeout_sec,target_trusted,egress_id,cache_ttl_sec,cost_per_request,rotation)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
 		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, now(), sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted),
-		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest))
+		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest), sv.Rotation)
 	if err != nil {
 		return nil, err
 	}
@@ -60,10 +60,10 @@ func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error
 }
 
 func (s *Store) UpdateService(ctx context.Context, sv *Service) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=?,target_trusted=?,egress_id=?,cache_ttl_sec=?,cost_per_request=? WHERE id=?`,
+	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=?,target_trusted=?,egress_id=?,cache_ttl_sec=?,cost_per_request=?,rotation=? WHERE id=?`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
 		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted),
-		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest), sv.ID)
+		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest), sv.Rotation, sv.ID)
 	return err
 }
 

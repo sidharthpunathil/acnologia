@@ -95,7 +95,7 @@ func serviceURL(sv *store.Service, path string, q url.Values) (string, error) {
 		return "", err
 	}
 	if ok {
-		return upstreamURL(h.URL, rest, q)
+		return upstreamURL(h.Resolve(sv.BaseURL), rest, q)
 	}
 	return upstreamURL(sv.BaseURL, path, q)
 }
@@ -215,11 +215,11 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 508, "loop_detected", "this request already passed through too many Acnologia servers")
 		return
 	}
-	targets, group, ok := s.proxyTargets(w, r, slug)
+	svcs, group, ok := s.proxyTargets(w, r, slug)
 	if !ok {
 		return
 	}
-	for _, sv := range targets {
+	for _, sv := range svcs {
 		if sv.Provider == providers.PeerSlug && hops+1 > maxPeerHops {
 			writeErr(w, 508, "loop_detected", "this request already passed through too many Acnologia servers")
 			return
@@ -242,18 +242,23 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	} else {
 		path = chi.URLParam(r, "*")
 	}
+	var targets []proxyTarget
 	if group != nil {
-		targets = s.orderGroup(r.Context(), group.Slug, group.Strategy, targets, r.Method, path)
+		targets = singleTargets(s.orderGroup(r.Context(), group.Slug, group.Strategy, svcs, r.Method, path), path)
+	} else {
+		// One service: with provider rotation on, the services that serve
+		// the same endpoint join it, each with the path in its own form.
+		targets = s.rotationTargets(r, a, svcs[0], path)
 	}
-	for _, sv := range targets {
-		if _, err := serviceURL(sv, path, nil); err != nil {
+	for _, t := range targets {
+		if _, err := serviceURL(t.sv, t.path, nil); err != nil {
 			writeErr(w, 400, "bad_path", err.Error())
 			return
 		}
 	}
 	est := 0.0
-	for _, sv := range targets {
-		est = max(est, costPerRequest(sv, providers.Get(sv.Provider), r.Method, "/"+path))
+	for _, t := range targets {
+		est = max(est, costPerRequest(t.sv, providers.Get(t.sv.Provider), r.Method, "/"+t.path))
 	}
 	release, limited := s.appLimited(w, r, a, est)
 	if limited {
@@ -271,15 +276,16 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 
 	var last *serviceResult
 	var failErr error
-	for i, sv := range targets {
+	for i, t := range targets {
+		sv := t.sv
 		prov := providers.Get(sv.Provider)
 		cacheKey, ttl := "", cacheTTL(sv, prov)
 		if ttl > 0 && r.Method == http.MethodGet && !noCache(r) {
-			cacheKey = responseCacheKey(sv, a, r, path, body)
+			cacheKey = responseCacheKey(sv, a, r, t.path, body)
 			if e, ok := s.Cache.Get(cacheKey); ok {
 				setHeader(w.Header(), "Service", sv.Slug)
 				writeCached(w, e, "hit", hidesKey(a))
-				s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "cache_hit", ServiceID: sv.ID, AppID: a.ID, StatusCode: e.Status, Detail: r.Method + " /" + path})
+				s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "cache_hit", ServiceID: sv.ID, AppID: a.ID, StatusCode: e.Status, Detail: r.Method + " /" + t.path})
 				_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, true)
 				return
 			}
@@ -289,7 +295,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 			failErr = &serviceDownError{Service: sv.Name, RetryAfter: ra}
 			continue
 		}
-		res := s.proxyService(w, r, a, sv, prov, path, body, bcfg, capture{cacheKey: cacheKey, ttl: ttl, idemKey: idemKey})
+		res := s.proxyService(w, r, a, sv, prov, t.path, body, bcfg, capture{cacheKey: cacheKey, ttl: ttl, idemKey: idemKey})
 		if res.served {
 			_ = s.Store.RecordAppUsage(r.Context(), a.ID, res.cost, false)
 			return
@@ -299,8 +305,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		last = res
-		// In a group, a failure that another account or region could avoid
-		// moves on to the next member. A request the provider rejected as
+		// In a group or a rotation, a failure that another account, region
+		// or provider could avoid moves on to the next service. A request the provider rejected as
 		// malformed would fail everywhere, so it is relayed as is.
 		if i < len(targets)-1 && (res.outcome.Rotates() || res.outcome.ProviderFault()) {
 			continue
@@ -324,9 +330,9 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 503, map[string]any{"error": apiError{Code: "service_unavailable",
 			Message: down.Service + " keeps failing, so Acnologia paused traffic to it"}, "retry_after_sec": retry})
 	case errors.Is(failErr, errUpstreamBlocked):
-		writeErr(w, 502, "upstream_blocked", "could not reach "+targets[len(targets)-1].Name+": "+catalog.ErrMetadataAddr)
+		writeErr(w, 502, "upstream_blocked", "could not reach "+targets[len(targets)-1].sv.Name+": "+catalog.ErrMetadataAddr)
 	case errors.Is(failErr, errUpstreamUnreachable):
-		writeErr(w, 502, "upstream_unreachable", "could not reach "+targets[len(targets)-1].Name)
+		writeErr(w, 502, "upstream_unreachable", "could not reach "+targets[len(targets)-1].sv.Name)
 	case failErr != nil:
 		if !writeNoKey(w, failErr) {
 			writeStoreErr(w, failErr)

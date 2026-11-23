@@ -9,6 +9,7 @@ import type {
   ChatAnswer,
   ChatItem,
   ChatReply,
+  ChatPageContext,
   ChatThread,
   ChatTurn,
   AcnologiaEvent,
@@ -285,8 +286,12 @@ export const api = {
   getChatThread: (id: number) =>
     request<{ thread: ChatThread; items: ChatItem[]; turn?: ChatTurn }>("GET", `/api/admin/chat/threads/${id}`),
   deleteChatThread: (id: number) => request<unknown>("DELETE", `/api/admin/chat/threads/${id}`),
-  sendChatMessage: (id: number, text: string, images: { media_type: string; data: string }[] = []) =>
-    request<ChatReply>("POST", `/api/admin/chat/threads/${id}/messages`, images.length ? { text, images } : { text }),
+  sendChatMessage: (id: number, text: string, images: { media_type: string; data: string }[] = [], context?: ChatPageContext) =>
+    request<ChatReply>("POST", `/api/admin/chat/threads/${id}/messages`, {
+      text,
+      ...(images.length ? { images } : {}),
+      ...(context ? { context } : {}),
+    }),
   chatImageURL: (threadId: number, imageId: string) => `/api/admin/chat/threads/${threadId}/images/${encodeURIComponent(imageId)}`,
   chatLogoURL: (threadId: number, logoId: string) => `/api/admin/chat/threads/${threadId}/logos/${encodeURIComponent(logoId)}`,
   confirmChat: (id: number, pendingId: string, approve: boolean) =>

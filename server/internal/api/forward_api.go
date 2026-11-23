@@ -49,7 +49,7 @@ func (s *Server) forwardHosts(ctx context.Context, a *store.App) ([]forwardHost,
 		}
 		add(sv.BaseURL, sv)
 		for _, h := range providers.Get(sv.Provider).Hosts {
-			add(h.URL, sv)
+			add(h.Resolve(sv.BaseURL), sv)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Host < out[j].Host })

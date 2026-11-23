@@ -36,8 +36,12 @@ func TestAssistantCatalogCreateFindVerify(t *testing.T) {
 			t.Fatalf("%s is not registered", n)
 		}
 	}
-	if !chatToolByName("update_catalog").Confirm {
-		t.Fatal("update_catalog changes where keys go: it must confirm")
+	uc := chatToolByName("update_catalog")
+	if uc.ConfirmIf == nil || !uc.ConfirmIf(map[string]any{"slug": "acme", "upsert": []any{map[string]any{"name": "x", "url": "https://x.example.com"}}}) {
+		t.Fatal("an entry on a host of its own changes where keys go: it must confirm")
+	}
+	if uc.ConfirmIf(map[string]any{"slug": "acme", "upsert": []any{map[string]any{"name": "x", "url": "/api/x"}}, "remove": []any{"y"}}) {
+		t.Fatal("a path entry or a removal sends keys nowhere new: no confirm")
 	}
 
 	// Create the catalog: two products, one with endpoints.

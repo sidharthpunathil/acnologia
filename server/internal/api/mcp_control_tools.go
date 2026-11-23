@@ -139,6 +139,7 @@ var (
 		"egress_id":         iProp("Egress proxy id from list_egress; 0 connects directly"),
 		"cache_ttl_sec":     iProp("Cache successful GET responses this long, 0 to 86400; 0 turns caching off, -1 uses the provider default"),
 		"cost_per_request":  nProp("USD cost of one request, 0 to 100, used for budgets; -1 uses the provider default"),
+		"rotation":          eProp("Provider rotation: share requests with other services that serve the same endpoint", "off", "fallback", "round_robin"),
 		"icon":              sProp("Icon name"),
 	}
 

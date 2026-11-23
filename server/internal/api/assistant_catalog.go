@@ -38,20 +38,27 @@ const catalogVerifyMeta = "catalog_verify:"
 func catalogTools() []*chatTool {
 	entry := map[string]any{"type": "object", "properties": map[string]any{
 		"name":        map[string]any{"type": "string", "description": "short id used in paths as /~name: lowercase letters, digits, hyphens (tiktok-scraper)"},
-		"url":         map[string]any{"type": "string", "description": "the product's API base URL, on the provider's own site"},
+		"url":         map[string]any{"type": "string", "description": "the product's API base URL, on the provider's own site; or a path starting with / when the product is served under a path of the service's base URL, as on a self-hosted server that runs many scrapers (/api/scrapers/amazon-scraper/call)"},
 		"title":       map[string]any{"type": "string", "description": "the product name people know"},
 		"group":       map[string]any{"type": "string", "description": "category, such as Social & Video"},
 		"description": map[string]any{"type": "string"},
 		"docs_url":    map[string]any{"type": "string"},
 		"logo_url":    map[string]any{"type": "string", "description": "logo of the product or the site it reads"},
-		"endpoints": map[string]any{"type": "array", "description": "the product's calls, paths relative to its own url (no /~name prefix); each becomes an MCP tool",
+		"offer": map[string]any{"type": "object", "description": "what calls to this entry cost and allow; matched on its /~name/ path. For a self-hosted server with no quota: free true, no limits, notes saying so",
+			"properties": map[string]any{
+				"free":   map[string]any{"type": "boolean"},
+				"price":  map[string]any{"type": "object", "properties": map[string]any{"amount": map[string]any{"type": "number"}, "unit": map[string]any{"type": "string"}}},
+				"limits": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"count": map[string]any{"type": "integer"}, "per": map[string]any{"type": "string"}, "unit": map[string]any{"type": "string"}}}},
+				"notes":  map[string]any{"type": "string"},
+			}},
+		"endpoints": map[string]any{"type": "array", "description": "the product's calls, paths relative to its own url (no /~name prefix); each becomes an MCP tool. name defaults to one made from the path",
 			"items": map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string"}, "method": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"},
 				"description": map[string]any{"type": "string"},
 				"params": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
 					"name": map[string]any{"type": "string"}, "in": map[string]any{"type": "string", "enum": []string{"query", "path", "body", "header"}},
 					"type": map[string]any{"type": "string"}, "required": map[string]any{"type": "boolean"}, "description": map[string]any{"type": "string"}}}},
-			}, "required": []string{"name", "path"}}},
+			}, "required": []string{"path"}}},
 	}, "required": []string{"name"}}
 	return []*chatTool{
 		{
@@ -72,11 +79,12 @@ func catalogTools() []*chatTool {
 				"remove": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "entry names to remove, with their endpoints, examples and offers"},
 				"note":   map[string]any{"type": "string"},
 			},
-			Desc: "Create or change a provider's catalog: add entries, change them, or remove them. A provider with no catalog gets one. Entries must sit on the provider's own site. " +
-				"Publishes a new provider version after validation, so the new entries' endpoints become MCP tools at once. Asks the user first, since it changes where keys are sent.",
-			Confirm:  true,
-			Describe: describeCatalogChange,
-			Run:      updateCatalogTool,
+			Desc: "Create or change a provider's catalog: add entries, change them, or remove them. A provider with no catalog gets one. Entries must sit on the provider's own site, or be a path on the service's base URL. " +
+				"Publishes a new provider version after validation, so the new entries' endpoints become MCP tools at once, and the offer given with an entry shows under Offers and limits. " +
+				"Asks the user first when an entry gets a host of its own, since that changes where keys are sent; entries that are a path, and removals, need no Confirm. Send at most about 15 entries per call.",
+			ConfirmIf: catalogMovesKeys,
+			Describe:  describeCatalogChange,
+			Run:       updateCatalogTool,
 		},
 		{
 			Name: "find_missing_catalog", Role: store.RoleMember, Required: []string{"slug"},
@@ -198,12 +206,38 @@ func getCatalogTool(cs *chatSession, in map[string]any) toolOut {
 type catalogEntryIn struct {
 	Name        string                    `json:"name"`
 	URL         *string                   `json:"url"`
+	Offer       *catalogOfferIn           `json:"offer"`
 	Title       *string                   `json:"title"`
 	Group       *string                   `json:"group"`
 	Description *string                   `json:"description"`
 	DocsURL     *string                   `json:"docs_url"`
 	LogoURL     *string                   `json:"logo_url"`
 	Endpoints   []providers.GuideEndpoint `json:"endpoints"`
+}
+
+// catalogOfferIn is the offer of one catalog entry; its match is the
+// entry's path.
+type catalogOfferIn struct {
+	Free   bool              `json:"free"`
+	Price  *providers.Price  `json:"price"`
+	Limits []providers.Limit `json:"limits"`
+	Notes  string            `json:"notes"`
+}
+
+// catalogMovesKeys reports whether a catalog change gives an entry a host of
+// its own, which sends the provider's keys somewhere new. An entry that is a
+// path on the service's base URL, or a removal, does not.
+func catalogMovesKeys(in map[string]any) bool {
+	ups, _, err := catalogInput(in)
+	if err != nil {
+		return true
+	}
+	for _, u := range ups {
+		if u.URL != nil && !strings.HasPrefix(strings.TrimSpace(*u.URL), "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func catalogInput(in map[string]any) ([]catalogEntryIn, []string, error) {
@@ -324,6 +358,10 @@ func updateCatalogTool(cs *chatSession, in map[string]any) toolOut {
 		set(&h.Description, u.Description)
 		set(&h.DocsURL, u.DocsURL)
 		set(&h.LogoURL, u.LogoURL)
+		if u.Offer != nil {
+			offers = setCatalogOffer(offers, h, *u.Offer)
+			touchedOffers = true
+		}
 		if u.Endpoints != nil {
 			keep := eps[:0:0]
 			for _, ep := range eps {
@@ -335,6 +373,9 @@ func updateCatalogTool(cs *chatSession, in map[string]any) toolOut {
 				ep.Path = providers.HostPath(u.Name) + "/" + strings.TrimPrefix(strings.TrimSpace(ep.Path), "/")
 				ep.Path = strings.TrimSuffix(ep.Path, "/")
 				ep.Method = strings.ToUpper(orDefault(ep.Method, "GET"))
+				if strings.TrimSpace(ep.Name) == "" {
+					ep.Name = endpointName(strings.TrimPrefix(ep.Path, providers.HostPath(u.Name)))
+				}
 				if ep.Group == "" {
 					ep.Group = orDefault(h.Title, u.Name)
 				}
@@ -413,6 +454,42 @@ func updateCatalogTool(cs *chatSession, in map[string]any) toolOut {
 		}
 	}
 	return out
+}
+
+// setCatalogOffer puts the offer of one entry in offers, replacing the one
+// matched on the same path prefix.
+func setCatalogOffer(offers []providers.Offer, h *providers.Host, in catalogOfferIn) []providers.Offer {
+	prefix := providers.HostPath(h.Name) + "/"
+	o := providers.Offer{Name: orDefault(h.Title, h.Name), Match: &providers.OfferMatch{Path: prefix}, Free: in.Free, Price: in.Price,
+		Limits: in.Limits, Notes: strings.TrimSpace(in.Notes), CheckedAt: time.Now().UTC().Format("2006-01-02")}
+	if o.Free && o.Price == nil {
+		o.Price = &providers.Price{Amount: 0, Currency: "USD", Unit: "request"}
+	}
+	out := offers[:0:0]
+	for _, x := range offers {
+		if x.Match != nil && x.Match.Path == prefix {
+			continue
+		}
+		out = append(out, x)
+	}
+	// Names are unique within a spec: another offer of that name keeps it.
+	for _, x := range out {
+		if x.Name == o.Name {
+			o.Name = o.Name + " (" + h.Name + ")"
+			break
+		}
+	}
+	return append(out, o)
+}
+
+// endpointName makes a name from a path: /products/details is "Products details".
+func endpointName(path string) string {
+	words := strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '-' || r == '_' || r == '{' || r == '}' })
+	if len(words) == 0 {
+		return "Root"
+	}
+	n := strings.Join(words, " ")
+	return strings.ToUpper(n[:1]) + n[1:]
 }
 
 func toJSONValue(v any) any {
@@ -586,7 +663,7 @@ func findMissingCatalogTool(cs *chatSession, in map[string]any) toolOut {
 	if len(read) > 0 {
 		for _, h := range spec.Hosts {
 			u, err := url.Parse(h.URL)
-			if err == nil && !seenHosts[strings.ToLower(u.Hostname())] {
+			if err == nil && !h.Relative() && !seenHosts[strings.ToLower(u.Hostname())] {
 				unseen = append(unseen, h.Name)
 			}
 		}
@@ -672,6 +749,12 @@ func verifyCatalogTool(cs *chatSession, in map[string]any) toolOut {
 			return toolFail("live calls need a service of " + p.Name + " with keys; create one, or verify without live")
 		}
 	}
+	// Entries that are a path on the base URL are checked on the service's
+	// own base URL when there is one, as requests go there.
+	base := spec.BaseURL
+	if svc != nil {
+		base = svc.BaseURL
+	}
 	ctx, cancel := context.WithTimeout(cs.ctx, 3*time.Minute)
 	defer cancel()
 	results := make([]catalogVerify, len(hosts))
@@ -686,7 +769,7 @@ func verifyCatalogTool(cs *chatSession, in map[string]any) toolOut {
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				results[i] = reachHost(ctx, hosts[i])
+				results[i] = reachHost(ctx, hosts[i].Resolve(base))
 				if live && results[i].Status == "reachable" {
 					results[i] = cs.liveCheckHost(ctx, app, svc, spec, hosts[i])
 				}
@@ -743,8 +826,8 @@ func verifyCatalogTool(cs *chatSession, in map[string]any) toolOut {
 
 // reachHost checks a host answers HTTPS at all. Any HTTP answer counts: a
 // product root often says 404 or 401 without a key.
-func reachHost(ctx context.Context, h providers.Host) catalogVerify {
-	u, err := url.Parse(h.URL)
+func reachHost(ctx context.Context, hostURL string) catalogVerify {
+	u, err := url.Parse(hostURL)
 	if err != nil || u.Host == "" {
 		return catalogVerify{Status: "error", Detail: "bad url"}
 	}

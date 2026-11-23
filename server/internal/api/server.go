@@ -112,6 +112,8 @@ type Server struct {
 	ctlAppMu sync.Mutex
 	// keyCounts caches free keys per service for routing (routing.go).
 	keyCounts keyCounts
+	// rotating caches the services with provider rotation on.
+	rotating rotating
 	// static serves WebFS (serveWeb); Router builds it.
 	static atomic.Pointer[staticSite]
 }
@@ -281,6 +283,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/providers/{slug}", s.getProvider)
 		r.Get("/providers/{slug}/guide", s.providerGuide)
 		r.Get("/services/{id}/guide", s.adminServiceGuide)
+		r.Get("/services/{id}/rotation", s.serviceRotation)
 		r.Post("/providers/validate", s.validateProvider)
 		r.Get("/ai/status", s.aiStatus)
 		r.Get("/ai/rules", s.aiGetRules)
@@ -307,6 +310,7 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.requireRole(store.RoleAdmin))
 			r.Post("/services", s.createService)
 			r.Patch("/services/{id}", s.updateService)
+			r.Post("/services/rotation", s.setServicesRotation)
 			r.Delete("/services/{id}", s.deleteService)
 			r.Post("/services/{id}/keys", s.createKeys)
 			r.Patch("/keys/{id}", s.updateKey)
