@@ -2,7 +2,7 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed), through the forward proxy (set `HTTPS_PROXY` to Acnologia and call provider URLs as they are), or by leasing a key and reporting the outcome.
 
-Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), the forward proxy (HTTPS_PROXY), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
+Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), the forward proxy (HTTPS_PROXY), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, provider rotation, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
 
 Before calling a service you have not used, fetch its usage guide: `GET /api/v1/services/{slug}/guide` (or the `acnologia_service_guide` MCP tool). It lists the endpoints worth knowing with their parameters, ready curl examples through the proxy, limits and pricing, and how errors are handled. Every entry of `GET /api/v1/services` carries its `guide_url`.
 
@@ -1013,6 +1013,10 @@ Authorization: Bearer acn_...
 ```
 
 The group's strategy picks which member goes first: `priority` (the listed order, the default), `round_robin` (each request starts at the next member), `random`, `cheapest` (lowest price per request from the providers' offers) or `most_keys` (the member with the most keys free right now). A member whose breaker is open or that has no free key goes last whatever the strategy. Acnologia moves to the next member when one has no usable key, its breaker is open, it cannot be reached, or every key it tried was rate limited, busy, exhausted, invalid or banned. A request the provider rejects as malformed (400, 422) is relayed as is, since it would fail everywhere. `X-Acnologia-Service` names the member that answered. An app allowed to use the group may use its members through it.
+
+## Provider rotation
+
+A service with `rotation` on (`fallback` or `round_robin`) shares its requests with the other services, also with rotation on, that serve the same endpoint: services of the same provider on its plain base URL with the same path, or services of providers whose catalog lists an entry of the same name (`/~amazon-scraper/products/details` on Omkar Cloud and on a self-hosted scraper server). Each service gets the path in its own form. `fallback` tries the named service first; `round_robin` starts each request at the next service. Acnologia moves on under the same rules as a group, and `X-Acnologia-Service` names the service that answered. An app only reaches services it may use, and a share's token never rotates.
 
 ## Shared keys
 

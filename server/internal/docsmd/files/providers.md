@@ -361,8 +361,18 @@ Every host must be on the same site as `base_url` (its host without the
 first label, `omkar.cloud` here), so a spec can never send a key to another
 company's domain. Changing the set of hosts or their URLs counts as a key
 target change, like `auth`. The live check runs only examples on the main
-host. A spec with hosts may have up to 400 hosts, 400 guide endpoints and
+host. A spec with hosts may have up to 400 hosts, 1500 guide endpoints and
 400 offers.
+
+An entry's `url` can also be a path starting with `/`, for a server that
+runs many products under paths of one host. A self-hosted scraper server
+that answers `/api/scrapers/amazon-scraper/call/products/details`, say, gets
+the entry `{"name": "amazon-scraper", "url": "/api/scrapers/amazon-scraper/call"}`,
+and callers use `/proxy/scrapebox/~amazon-scraper/products/details` as on
+any other catalog. The path is joined to the service's own base URL, so it
+follows the service when the server moves and sends keys nowhere new. Such
+entries need no named domain, so `base_url` may be an IP address when every
+entry is a path. A path entry may not hold a query, `.` or `..` segments.
 
 The AI builder looks for a provider's full catalog and fills `hosts` (in
 batches with its `stage_parts` tool when the list is long). From the
@@ -377,11 +387,22 @@ The Assistant also runs a catalog entry by entry:
 
 - `get_catalog` lists the entries by category, with each one's URL, docs,
   logo, how many endpoints it documents and its last check.
-- `update_catalog` adds, changes or removes entries after your Confirm. A
-  provider without a catalog gets one. Endpoints given with an entry
-  (paths relative to the entry, such as `/search`) are stored as
-  `/~name/search` guide endpoints, so they become MCP tools at once.
-  Removing an entry also removes its endpoints, examples and offers.
+- `update_catalog` adds, changes or removes entries. It asks for your
+  Confirm when an entry gets a host of its own; path entries and removals
+  go through without one. A provider without a catalog gets one. Endpoints
+  given with an entry (paths relative to the entry, such as `/search`) are
+  stored as `/~name/search` guide endpoints, so they become MCP tools at
+  once; an endpoint without a name is named from its path. An entry can
+  carry an `offer` (`free`, `price`, `limits`, `notes`), stored as an offer
+  matched on `/~name/`. Removing an entry also removes its endpoints,
+  examples and offers.
+- `call_service` calls one endpoint of a service through the proxy, as the
+  Assistant app. For a provider whose own API lists what it serves (a
+  self-hosted server's `/api/sources`), the Assistant reads that list with
+  it, paged with `offset` and `limit` and cut down with `select` (dot paths
+  to keep from each item) and `where` (dot path equals text), and writes
+  the catalog from the answer. GET runs at once; other methods wait for
+  your Confirm.
 - `find_missing_catalog` reads the provider's website, docs page, sitemap
   and any pages you name, and lists product hosts on the provider's site
   that the catalog lacks, plus entries those pages no longer mention.
@@ -394,7 +415,16 @@ The Assistant also runs a catalog entry by entry:
   or `no_test_call`. Results are kept per entry and shown by `get_catalog`.
 
 Ask in plain words: "what Omkar APIs are we missing?", "add them",
-"verify the Omkar catalog live", "remove the ones that are dead".
+"verify the Omkar catalog live", "remove the ones that are dead", or on a
+self-hosted server's service page, "read what this server serves and fill
+in its catalog". For a server you run, the Assistant gives each entry a
+free offer with no limits and a note that it is self-hosted.
+
+Every service page has an **Ask AI** button that opens the Assistant in a
+drawer. Messages sent from it tell Claude which service the page is about,
+so "this provider" means that one. The chat is an ordinary Assistant chat:
+reopening the drawer picks it up again, and it also opens on the Assistant
+page.
 
 A service on a host with a `logo_url` shows that logo (the site the API
 reads, such as TikTok), with the provider's logo as a small badge on it.
@@ -412,6 +442,46 @@ are per API (as with Omkar), write the rules so an error about one API does
 not park the key for all of them: a used up API quota as `busy` (rotate to
 the next key without a long cooldown) and a missing or inactive plan as `ok`
 (the error is relayed and the key kept). The AI builder writes them that way.
+
+## Provider rotation
+
+Acnologia rotates keys inside a service. With provider rotation on, it also
+moves requests between services that serve the same endpoint:
+
+- services of the same provider on its plain base URL (two accounts, or two
+  servers of one API), with the same path, and
+- services of providers whose catalogs list an entry of the same name.
+  Omkar Cloud's `amazon-scraper` and a self-hosted server's
+  `amazon-scraper` both take `/~amazon-scraper/products/details`. A service
+  whose base URL is one entry's host (an Omkar Amazon Scraper service at
+  `https://amazon-scraper.omkar.cloud`) serves that entry with its plain
+  paths.
+
+Each service gets the path in its own form, so
+`/proxy/omkar-amazon/products/details` can be answered by the self-hosted
+server as `/api/scrapers/amazon-scraper/call/products/details`.
+
+Turn it on per service in Settings, Provider rotation, or with `rotation` on
+`PATCH /api/admin/services/{id}`. Only services with rotation on take part.
+The mode of the service a request names decides the order:
+
+- `fallback`: that service first, the others in turn behind it.
+- `round_robin`: each request starts at the next service.
+
+A service whose breaker is open or that has no free key goes last. The
+request moves on when a service has no usable key, its breaker is open, it
+cannot be reached, every key it tried was rate limited, busy, out of quota,
+invalid or banned, or it failed on its side. A request the provider rejects
+as malformed (400, 422) is relayed as is. `X-Acnologia-Service` names the
+service that answered. An app only reaches services it may use, and a
+share's token never rotates. The Settings card lists the services that
+match, with their mode and free keys, and turns rotation on for all of them
+in one click. From the Assistant, `service_rotation` lists the matches and
+`set_rotation` sets a mode on several services.
+
+Requests to an entry only one provider lists stay with that provider, and a
+service group still works for services that share a request shape without
+a catalog.
 
 ## Validation rules
 

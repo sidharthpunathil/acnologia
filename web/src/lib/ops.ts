@@ -2,6 +2,7 @@
 // service groups, admin API tokens, app limits and usage, circuit breakers
 // and the response cache.
 import { request } from "./api";
+import type { Rotation } from "./types";
 
 export type WebhookFormat = "json" | "slack" | "discord" | "telegram";
 
@@ -244,7 +245,31 @@ export const ops = {
   resetBreaker: (serviceId: number) => request<BreakerReport>("POST", `/api/admin/services/${serviceId}/breaker/reset`),
   purgeCache: (serviceId: number) => request<{ purged: number }>("POST", `/api/admin/services/${serviceId}/cache/purge`),
   cacheStats: () => request<CacheStats>("GET", "/api/admin/cache"),
+  rotation: (serviceId: number) => request<RotationReport>("GET", `/api/admin/services/${serviceId}/rotation`),
+  setRotation: (services: number[], rotation: Rotation | "off") =>
+    request<{ ok: boolean; rotation: string; changed: string[] }>("POST", "/api/admin/services/rotation", { services, rotation }),
 };
+
+/** A service that serves some of the same endpoints as another. */
+export interface RotationMatch {
+  id: number;
+  slug: string;
+  name: string;
+  provider: string;
+  rotation: Rotation;
+  /** Free keys right now. */
+  keys: number;
+  /** How many endpoints they share: catalog entries, or the plain base URL. */
+  shared: number;
+  /** Up to 12 of the shared entry names; "" is the plain base URL. */
+  entries: string[];
+}
+
+export interface RotationReport {
+  service: string;
+  rotation: Rotation;
+  matches: RotationMatch[];
+}
 
 export const usd = (n: number | null | undefined, digits = 2) =>
   n === null || n === undefined ? "" : `$${n.toFixed(n !== 0 && Math.abs(n) < 0.01 ? 4 : digits)}`;

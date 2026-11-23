@@ -53,6 +53,9 @@ type chatTool struct {
 	Run          func(cs *chatSession, in map[string]any) toolOut
 	// Describe explains a destructive action for the confirmation card.
 	Describe func(cs *chatSession, in map[string]any) (string, error)
+	// MaxModel raises how much of the tool's result the model reads, for a
+	// tool that pages a long answer itself. 0 is chatMaxModelText.
+	MaxModel int
 }
 
 // secretsIn returns the key secrets present in a tool input, so they can be
@@ -254,6 +257,7 @@ func init() {
 	none := map[string]any{}
 	defer func() {
 		chatTools = append(append(append(append(append(append(chatTools, opsTools()...), guideTools()...), providerTools()...), capabilityTools()...), logoTools()...), catalogTools()...)
+		chatTools = append(chatTools, callTools()...)
 	}()
 	chatTools = []*chatTool{
 		{
@@ -482,6 +486,7 @@ func init() {
 				"egress_id":         map[string]any{"type": "integer", "description": "egress proxy id from list_egress_proxies; 0 for none"},
 				"cache_ttl_sec":     map[string]any{"type": "integer", "description": "cache successful GET responses this long; 0 turns caching off"},
 				"cost_per_request":  map[string]any{"type": "number", "description": "cost of one request, used for app budgets"},
+				"rotation":          map[string]any{"type": "string", "enum": []string{"off", "fallback", "round_robin"}, "description": "provider rotation: share requests with other services that serve the same endpoint (set_rotation sets it on several at once)"},
 			},
 			Desc:      "Change a service's settings: name, base URL, rotation strategy, cooldown, attempts, concurrency, egress proxy, response cache and cost per request. A new base URL or egress proxy needs the user's Confirm.",
 			ConfirmIf: hasAny("base_url", "auth_type", "auth_name", "provider", "egress_id", "target_trusted"),
@@ -492,10 +497,10 @@ func init() {
 					return toolFail(err.Error())
 				}
 				body := pick(in, "name", "description", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
-					"egress_id", "cache_ttl_sec", "cost_per_request")
+					"egress_id", "cache_ttl_sec", "cost_per_request", "rotation")
 				return cs.simple("PATCH", fmt.Sprintf("/api/admin/services/%d", sv.ID), body, "Updated service "+sv.Slug, func(m map[string]any) any {
 					return pick(m, "id", "slug", "name", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
-						"target_trusted", "egress_id", "cache_ttl_sec", "cost_per_request")
+						"target_trusted", "egress_id", "cache_ttl_sec", "cost_per_request", "rotation")
 				})
 			},
 		},

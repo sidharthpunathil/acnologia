@@ -3,7 +3,7 @@ import { api, ApiError } from "../lib/api";
 import { maskSecret, parseKeys } from "../lib/keyparse";
 import { toast } from "./toast";
 import type { DraftImage } from "../lib/chatImages";
-import type { ChatAi, ChatAnswer, ChatItem, ChatReply, ChatThread, ChatTurn } from "../lib/types";
+import type { ChatAi, ChatAnswer, ChatItem, ChatPageContext, ChatReply, ChatThread, ChatTurn } from "../lib/types";
 
 /** Keys pasted or dropped, held beside the composer instead of inside it. */
 export interface DraftAttachment {
@@ -100,7 +100,8 @@ interface AssistantStore {
   open: (id: number | null) => Promise<void>;
   create: () => Promise<ChatThread>;
   remove: (id: number) => Promise<void>;
-  send: (text: string, images?: DraftImage[]) => Promise<void>;
+  /** context names the page the message comes from, such as a service's chat drawer. */
+  send: (text: string, images?: DraftImage[], context?: ChatPageContext) => Promise<void>;
   confirm: (pendingId: string, approve: boolean) => Promise<void>;
   answer: (body: ChatAnswer) => Promise<void>;
   /** Thread id with a Compact now request in flight. */
@@ -368,7 +369,7 @@ export const useAssistant = create<AssistantStore>((set, get) => {
       if (get().currentId === id) set({ currentId: null, items: [], turn: null });
     },
 
-    send: async (text, images = []) => {
+    send: async (text, images = [], context) => {
       let id = get().currentId;
       if (id === null) id = (await get().create()).id;
       // Your own bubble shows keys masked from the first frame.
@@ -393,6 +394,7 @@ export const useAssistant = create<AssistantStore>((set, get) => {
           id,
           text,
           images.map((im) => ({ media_type: im.mediaType, data: im.data })),
+          context,
         );
         apply(id, res);
       } catch (e) {

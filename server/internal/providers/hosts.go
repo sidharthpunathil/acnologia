@@ -24,7 +24,11 @@ type Host struct {
 	// Name is what follows "~" in the path: lowercase letters, digits and
 	// hyphens.
 	Name string `json:"name"`
-	// URL is the host's base URL, on the same site as base_url.
+	// URL is the host's base URL, on the same site as base_url. It may
+	// instead be a path starting with "/" for a product served under a path
+	// of the service's own base URL, as a self-hosted server that runs many
+	// scrapers does (/api/scrapers/amazon-scraper/call). Such an entry
+	// sends keys nowhere new, and it follows the service's base URL.
 	URL string `json:"url"`
 	// Title is the product name people know, such as "TikTok Scraper".
 	Title string `json:"title,omitempty"`
@@ -54,7 +58,7 @@ var hostNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // A spec with hosts covers many products, so it may document and price more.
 func maxGuideEndpoints(s *Spec) int {
 	if len(s.Hosts) > 0 {
-		return 400
+		return 1500
 	}
 	return 40
 }
@@ -93,6 +97,21 @@ func onSite(host, site string) bool {
 	return site != "" && (host == site || strings.HasSuffix(host, "."+site))
 }
 
+// Relative reports whether the host is a path on the service's base URL
+// rather than a host of its own.
+func (h Host) Relative() bool { return strings.HasPrefix(h.URL, "/") }
+
+// Resolve is the host's absolute base URL for a service whose base URL is
+// base: its own URL, or base plus its path when it is relative.
+func (h Host) Resolve(base string) string {
+	if !h.Relative() {
+		return h.URL
+	}
+	return strings.TrimRight(base, "/") + "/" + strings.Trim(h.URL, "/")
+}
+
+var hostPathRe = regexp.MustCompile(`^(/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)+/?$`)
+
 func (s *Spec) validateHosts(add func(string, ...any)) {
 	if len(s.Hosts) == 0 {
 		return
@@ -100,9 +119,15 @@ func (s *Spec) validateHosts(add func(string, ...any)) {
 	if len(s.Hosts) > MaxHosts {
 		add("hosts: at most %d", MaxHosts)
 	}
+	absolute := false
+	for _, h := range s.Hosts {
+		if !h.Relative() {
+			absolute = true
+		}
+	}
 	site := HostSite(s.BaseURL)
-	if site == "" || net.ParseIP(site) != nil {
-		add("hosts need base_url to be on a named domain")
+	if absolute && (site == "" || net.ParseIP(site) != nil) {
+		add("hosts with a url of their own need base_url to be on a named domain; give them a path instead")
 		return
 	}
 	seen := map[string]bool{}
@@ -115,8 +140,14 @@ func (s *Spec) validateHosts(add func(string, ...any)) {
 			add("%s: name is listed twice", label)
 		}
 		seen[h.Name] = true
+		if h.Relative() {
+			if !hostPathRe.MatchString(h.URL) || strings.Contains(h.URL, "//") || hasDotSegment(h.URL) || len(h.URL) > 300 {
+				add("%s: a path url must be a plain path such as /api/scrapers/%s/call, without a query, . or .. segments", label, h.Name)
+			}
+		}
 		u, err := url.Parse(h.URL)
 		switch {
+		case h.Relative():
 		case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "":
 			add("%s: url must be an http(s) URL", label)
 		case u.User != nil || u.RawQuery != "" || u.Fragment != "":
@@ -144,6 +175,15 @@ func (s *Spec) validateHosts(add func(string, ...any)) {
 			}
 		}
 	}
+}
+
+func hasDotSegment(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if dec, err := url.PathUnescape(seg); err != nil || dec == "." || dec == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // Host returns the host with the given name.

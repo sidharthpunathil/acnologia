@@ -1,8 +1,9 @@
-<!-- openqodex:start -->
-## Review with OpenQodex before you push
-- Before any `git push`, run `npx -y openqodex@0.19.0 review` from the repository root. It can take minutes, and OpenQodex stops the reviewer after 30 minutes. Run it in the background and wait for it to exit.
-- Show the developer the receipt it prints: the verdict, one line per finding and the absolute path of `report.html`. Ask: "Fix all, or tell me which?" Fix only the findings they name (`npx -y openqodex@0.19.0 findings 1,3` prints them in full), then review again and show the new receipt. OpenQodex starts its own reviewer process, so by default the agent that wrote the code does not judge its own work.
-- Do not push on a blocked verdict unless the developer says so after seeing the findings.
-- Never add a file to `review.instructions_files` on your own. Ask the developer which files the reviewer may use, then set only what they name.
-- The report is in `.openqodex/reviews/`.
-<!-- openqodex:end -->
+## OpenQodex: only when asked, at the end of a project
+- Never ask about an OpenQodex review and never run one, for any push to any branch, `main` included: just push.
+- The developer runs one complete scan when the project ends. Run it only when they ask, as they say (the whole
+  change, or `npx -y openqodex@0.19.0 review --all`), in the background (it can take a long time; OpenQodex stops the
+  reviewer after 30 minutes). Show the receipt (verdict, one line per finding, the absolute path of `report.html`) and
+  ask "Fix all, or tell me which?"
+- No hooks: no push gate and no git pre-push hook (removed on 2026-11-22). Never install one.
+- Never add a file to `review.instructions_files` on your own. Ask the developer which files the reviewer may use, then
+  set only what they name. The report is in `.openqodex/reviews/`.

@@ -97,7 +97,11 @@ export interface Service {
   peer_name?: string;
   /** The owner's provider for a shared service: its name, logo, docs and examples describe it. */
   peer_provider?: string;
+  /** Provider rotation: "" is off; with it on, services that serve the same endpoint share requests. */
+  rotation?: Rotation;
 }
+
+export type Rotation = "" | "fallback" | "round_robin";
 
 export type ServiceInput = Pick<
   Service,
@@ -114,7 +118,7 @@ export type ServiceInput = Pick<
   | "max_attempts"
   | "icon"
 > &
-  Partial<Pick<Service, "max_concurrency" | "queue_timeout_sec" | "egress_id" | "cache_ttl_sec" | "cost_per_request" | "target_trusted">>;
+  Partial<Pick<Service, "max_concurrency" | "queue_timeout_sec" | "egress_id" | "cache_ttl_sec" | "cost_per_request" | "target_trusted">> & { rotation?: Rotation | "off" };
 
 export type KeyStatus = "active" | "disabled" | "exhausted" | "invalid" | "banned";
 export type EffectiveStatus = KeyStatus | "cooling";
@@ -1017,6 +1021,12 @@ export interface ChatAnswer {
   auto?: boolean;
   /** choice: the option picked. */
   choice?: string;
+}
+
+/** The dashboard page a chat message was sent from. */
+export interface ChatPageContext {
+  /** Service slug: "this service" in the message means it. */
+  service?: string;
 }
 
 export interface ChatReply {

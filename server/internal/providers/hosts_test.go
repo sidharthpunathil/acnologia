@@ -141,3 +141,36 @@ func TestGuideRendersHostsAndGroups(t *testing.T) {
 		t.Errorf("guide doc hosts: %+v", doc.Hosts)
 	}
 }
+
+// A self-hosted server serves its products under paths of its own base URL,
+// which may be an IP address: entries with a path url need no named domain.
+func TestRelativeHosts(t *testing.T) {
+	s := &Spec{BaseURL: "http://10.0.0.5:8000", Auth: Auth{Type: "header", Name: "X-Key"},
+		Hosts: []Host{{Name: "amazon-scraper", URL: "/api/scrapers/amazon-scraper/call"}}}
+	var errs []string
+	s.validateHosts(func(f string, a ...any) { errs = append(errs, f) })
+	if len(errs) > 0 {
+		t.Fatalf("path entry rejected: %v", errs)
+	}
+	h := s.Hosts[0]
+	if !h.Relative() || h.Resolve("https://box.example.com/") != "https://box.example.com/api/scrapers/amazon-scraper/call" {
+		t.Fatalf("resolve: %s", h.Resolve("https://box.example.com/"))
+	}
+	if abs := (Host{URL: "https://a.omkar.cloud"}); abs.Relative() || abs.Resolve("https://x.y") != "https://a.omkar.cloud" {
+		t.Fatal("an absolute entry keeps its own url")
+	}
+	for _, bad := range []string{"/a/../b", "/a?x=1", "/a#f", "//evil.example.com/x", "/a/./b"} {
+		var errs []string
+		(&Spec{BaseURL: "https://box.example.com", Hosts: []Host{{Name: "x", URL: bad}}}).validateHosts(func(f string, a ...any) { errs = append(errs, f) })
+		if len(errs) == 0 {
+			t.Errorf("path %q accepted", bad)
+		}
+	}
+	// An absolute entry beside them still needs a named domain.
+	s.Hosts = append(s.Hosts, Host{Name: "own", URL: "https://own.example.com"})
+	errs = nil
+	s.validateHosts(func(f string, a ...any) { errs = append(errs, f) })
+	if len(errs) == 0 {
+		t.Fatal("an absolute entry on an IP base_url accepted")
+	}
+}
