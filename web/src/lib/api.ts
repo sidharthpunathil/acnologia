@@ -53,6 +53,7 @@ import type {
 import type { ForwardProxySetup } from "./types";
 import type { ControlMcpView, MCPSettingsInput, MCPView, ServiceFamily, ServiceMCPView, SharedKeysReport } from "./types";
 import type { ServiceMCPToolAccess } from "./types";
+import type { OAuthClientInput, OAuthConnectState, OAuthSettings } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -350,4 +351,14 @@ export const mcpApi = {
   put: (appId: number, body: MCPSettingsInput) => request<MCPView>("PUT", `/api/admin/apps/${appId}/mcp`, body),
   /** The control MCP (run the server from Claude): its URL, groups and tools. Any signed in user. */
   control: () => request<ControlMcpView>("GET", "/api/admin/mcp/control"),
+};
+
+/** OAuth credentials: services whose keys are signed in accounts. */
+export const oauthApi = {
+  settings: (serviceId: number) => request<OAuthSettings>("GET", `/api/admin/services/${serviceId}/oauth`),
+  setClient: (serviceId: number, body: OAuthClientInput) => request<OAuthSettings>("PUT", `/api/admin/services/${serviceId}/oauth`, body),
+  connect: (serviceId: number, fields?: Record<string, string>) =>
+    request<OAuthConnectState>("POST", `/api/admin/services/${serviceId}/oauth/connect`, { fields: fields ?? {} }),
+  reconnect: (keyId: number) => request<OAuthConnectState>("POST", `/api/admin/keys/${keyId}/oauth/reconnect`, {}),
+  status: (connectId: string) => request<OAuthConnectState>("GET", `/api/admin/oauth/connects/${encodeURIComponent(connectId)}`),
 };

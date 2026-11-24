@@ -427,7 +427,7 @@ export function AddServiceModal({ open, onClose, initialProvider }: { open: bool
     setBusy(true);
     try {
       const s = await create(form);
-      toast.success(`${s.name} is ready. Add its keys next.`);
+      toast.success(s.auth_type === "oauth2" ? `${s.name} is ready. Set up its OAuth app and connect an account next.` : `${s.name} is ready. Add its keys next.`);
       onClose();
       navigate(`/services/${s.id}`);
     } catch (err) {
