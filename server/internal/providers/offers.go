@@ -459,6 +459,9 @@ func (s *Spec) HasFreeOffer() bool {
 func (o *Offer) Summary() string {
 	var b strings.Builder
 	b.WriteString(o.Name)
+	if o.Model != "" && !strings.Contains(o.Name, o.Model) {
+		b.WriteString(" [model " + o.Model + "]")
+	}
 	if m := o.Match; m != nil {
 		var sel []string
 		if m.Method != "" || m.Path != "" {
@@ -475,6 +478,15 @@ func (o *Offer) Summary() string {
 	switch {
 	case o.Free:
 		parts = append(parts, "free")
+	case o.Price != nil && o.Price.Unit == "token" && (o.Price.Currency == "" || o.Price.Currency == "USD"):
+		// Per token prices read as zero at six decimals; per million is how
+		// providers publish them.
+		in := trimFloat(o.Price.Amount * 1e6)
+		if o.Price.OutputAmount > 0 && o.Price.OutputAmount != o.Price.Amount {
+			parts = append(parts, fmt.Sprintf("$%s input and $%s output per million tokens", in, trimFloat(o.Price.OutputAmount*1e6)))
+		} else {
+			parts = append(parts, fmt.Sprintf("$%s per million tokens", in))
+		}
 	case o.Price != nil:
 		cur := o.Price.Currency
 		if cur == "" || cur == "USD" {
