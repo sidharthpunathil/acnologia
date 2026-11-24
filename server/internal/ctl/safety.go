@@ -9,6 +9,7 @@ package ctl
 // safety first (one line in ctl.go).
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -74,8 +75,12 @@ func (c *cli) safety(args *[]string) (done bool, err error) {
 		if base == nil {
 			base = http.DefaultTransport
 		}
-		hc.Transport = safetyTransport{base: base, dry: dry, key: key}
+		t := &safetyTransport{base: base, dry: dry, key: key}
+		hc.Transport = t
 		c.http = hc
+		if dry && len(rest) > 0 && rest[0] != "help" {
+			return true, c.runDry(rest, t)
+		}
 	}
 	if len(rest) == 0 {
 		rest = []string{"help"}
@@ -95,26 +100,75 @@ func (c *cli) safety(args *[]string) (done bool, err error) {
 	return false, nil
 }
 
-// safetyTransport adds dry_run=1 and the Idempotency-Key to admin writes.
-type safetyTransport struct {
-	base http.RoundTripper
-	dry  bool
-	key  string
+// runDry runs a command with --dry-run. The command prints for a real
+// answer, so its output is held back: when the server answered dry runs,
+// their "would" lines are printed instead (the answers themselves with
+// --json); when nothing was a write, the output goes out as it is.
+func (c *cli) runDry(args []string, t *safetyTransport) error {
+	out := c.out
+	var buf bytes.Buffer
+	c.out = &buf
+	err := c.run(args)
+	c.out = out
+	if len(t.answers) == 0 {
+		_, _ = c.out.Write(buf.Bytes())
+		return err
+	}
+	for _, a := range t.answers {
+		if c.json {
+			if perr := c.printJSON(a); perr != nil {
+				return perr
+			}
+			continue
+		}
+		var d struct {
+			Would string `json:"would"`
+		}
+		_ = json.Unmarshal(a, &d)
+		fmt.Fprintln(c.out, "Dry run: would", clean(d.Would))
+	}
+	return nil
 }
 
-func (t safetyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if isWrite(r.Method) && strings.HasPrefix(r.URL.Path, "/api/admin/") {
-		r = r.Clone(r.Context())
-		if t.dry {
-			q := r.URL.Query()
-			q.Set("dry_run", "1")
-			r.URL.RawQuery = q.Encode()
-		}
-		if t.key != "" {
-			r.Header.Set("Idempotency-Key", t.key)
-		}
+// safetyTransport adds dry_run=1 and the Idempotency-Key to admin writes,
+// and keeps the server's dry run answers.
+type safetyTransport struct {
+	base    http.RoundTripper
+	dry     bool
+	key     string
+	answers []json.RawMessage
+}
+
+func (t *safetyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if !isWrite(r.Method) || !strings.HasPrefix(r.URL.Path, "/api/admin/") {
+		return t.base.RoundTrip(r)
 	}
-	return t.base.RoundTrip(r)
+	r = r.Clone(r.Context())
+	if t.dry {
+		q := r.URL.Query()
+		q.Set("dry_run", "1")
+		r.URL.RawQuery = q.Encode()
+	}
+	if t.key != "" {
+		r.Header.Set("Idempotency-Key", t.key)
+	}
+	resp, err := t.base.RoundTrip(r)
+	if err != nil || !t.dry || resp.StatusCode != http.StatusOK {
+		return resp, err
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(b))
+	var d struct {
+		DryRun bool `json:"dry_run"`
+	}
+	if json.Unmarshal(b, &d) == nil && d.DryRun {
+		t.answers = append(t.answers, b)
+	}
+	return resp, nil
 }
 
 func isWrite(m string) bool {

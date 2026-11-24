@@ -75,8 +75,8 @@ func TestSafetyCommandsAndFlags(t *testing.T) {
 	}
 	// The global flags reach admin writes only.
 	seen = nil
-	if code, _, errs := run("--dry-run", "api", "POST", "/api/admin/apps", "--data", `{"name":"x"}`, "--idempotency-key", "k1"); code != 0 {
-		t.Fatal(errs)
+	if code, out, errs := run("--dry-run", "api", "POST", "/api/admin/apps", "--data", `{"name":"x"}`, "--idempotency-key", "k1"); code != 0 || strings.TrimSpace(out) != "Dry run: would create app x" {
+		t.Fatalf("%q %s", out, errs)
 	}
 	if len(seen) != 1 || !strings.Contains(seen[0], "dry_run=1") || !strings.HasSuffix(seen[0], "key=k1") {
 		t.Fatalf("sent %v", seen)
