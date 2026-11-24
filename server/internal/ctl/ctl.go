@@ -309,6 +309,8 @@ func (c *cli) run(args []string) error {
 		return c.tokens(args[1:])
 	case "scan":
 		return c.scan(args[1:])
+	case "oauth":
+		return c.oauth(args[1:])
 	}
 	return usageErrorf("unknown command %q; run %s help", args[0], c.name())
 }
