@@ -285,6 +285,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/apps", s.listApps)
 		r.Get("/apps/{id}/mcp", s.getAppMCP)
 		r.Get("/apps/{id}/tokens", s.listAppTokens)
+		// Per-token defaults, tag budgets, deny rules (app_controls.go).
+		r.Get("/apps/{id}/controls", s.appControls)
+		r.Get("/apps/{id}/deny-rules", s.listDenyRules)
+		r.Get("/apps/{id}/usage/tags", s.appTagUsage)
 		r.Get("/providers/{slug}", s.getProvider)
 		r.Get("/providers/{slug}/guide", s.providerGuide)
 		r.Get("/services/{id}/guide", s.adminServiceGuide)
@@ -336,6 +340,12 @@ func (s *Server) Router() http.Handler {
 			r.With(s.notShareApp).Patch("/apps/{id}/tokens/{tokenId}", s.renameAppToken)
 			r.With(s.notShareApp).Delete("/apps/{id}/tokens/{tokenId}", s.revokeAppToken)
 			r.With(s.notShareApp).Put("/apps/{id}/mcp", s.putAppMCP)
+			// A share app takes these too: they cap each claimant's token.
+			r.Put("/apps/{id}/token-limits", s.putAppTokenLimits)
+			r.Put("/apps/{id}/tag-budgets", s.putAppTagBudgets)
+			r.Post("/apps/{id}/deny-rules", s.createDenyRule)
+			r.Delete("/apps/{id}/deny-rules/{ruleId}", s.deleteDenyRule)
+			r.Get("/settings/spend-ceiling", s.getSpendCeiling)
 			// Settings: the read only configuration the environment sets.
 			r.Get("/settings", s.settingsSummary)
 			r.Get("/ai/models", s.aiModels)
@@ -408,6 +418,7 @@ func (s *Server) Router() http.Handler {
 			// Provider offers refresh: only a superadmin changes anything.
 			r.Put("/providers/refresh/settings", s.putRefreshSettings)
 			r.Put("/health/settings", s.putHealthSettings)
+			r.Put("/settings/spend-ceiling", s.putSpendCeiling)
 			r.Post("/providers/refresh/run", s.runRefresh)
 			r.Post("/providers/refresh/reviews/{id}/apply", s.applyRefreshReview)
 			r.Post("/providers/refresh/reviews/{id}/dismiss", s.dismissRefreshReview)
@@ -449,6 +460,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/services", s.v1Services)
 			r.Get("/services/{slug}/guide", s.v1ServiceGuide)
 			r.Get("/capabilities", s.v1Capabilities)
+			r.Get("/usage/tags", s.v1TagUsage)
 			r.Post("/lease", s.v1Lease)
 			r.Post("/leases/{id}/report", s.v1Report)
 			r.Post("/leases/{id}/renew", s.v1Renew)

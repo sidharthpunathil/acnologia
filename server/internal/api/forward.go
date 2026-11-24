@@ -314,6 +314,10 @@ func (s *Server) forwardDispatch(w http.ResponseWriter, r *http.Request, a *stor
 		writeStoreErr(w, err)
 		return
 	}
+	// The app's deny rules on this host and path (/proxy checks the service).
+	if s.forwardDenied(w, r, a, host, slug, rest, path) {
+		return
+	}
 	target := "/proxy/" + url.PathEscape(slug) + "/" + strings.TrimPrefix(rest, "/")
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -355,6 +359,11 @@ func (s *Server) forwardConnect(w http.ResponseWriter, r *http.Request, a *store
 	}
 	if !known && !forwardTunnelPorts[port] {
 		writeErr(w, 403, "port_not_allowed", "the forward proxy tunnels to other hosts on ports 443 and 8443 only")
+		return
+	}
+	// A deny rule for the whole host blocks the tunnel; path rules apply to
+	// the requests inside it.
+	if s.forwardDenied(w, r, a, host, "", "/", "/") {
 		return
 	}
 	var ca *forwardCA
