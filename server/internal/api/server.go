@@ -392,6 +392,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/capabilities/{id}", s.deleteCapability)
 			r.Post("/services/{id}/breaker/reset", s.resetServiceBreaker)
 			r.Post("/services/{id}/cache/purge", s.purgeServiceCache)
+			r.Post("/services/{id}/try", s.tryService) // the service page's Try it panel (tryit.go)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleSuperadmin))
@@ -427,6 +428,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/peers/{id}/sync", s.syncPeer)
 			r.Post("/peers/{id}/providers/{slug}/pull", s.pullPeerProvider)
 			r.Delete("/peers/{id}", s.disconnectPeer)
+			r.HandleFunc("/demo", s.demo) // GET, POST and DELETE: sample data (demo.go)
 		})
 	})
 
@@ -443,6 +445,7 @@ func (s *Server) Router() http.Handler {
 		// The forward proxy's CA certificate is public: apps download it to
 		// trust the proxy.
 		r.Get("/proxy/ca.pem", s.v1ProxyCA)
+		r.HandleFunc("/demo/upstream/*", s.demoUpstreamHandler) // the demo service's fake provider (demo.go)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireApp)
 			r.Get("/proxy", s.v1ProxySetup)
