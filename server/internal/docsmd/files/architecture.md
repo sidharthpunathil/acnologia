@@ -97,7 +97,19 @@ file in the next section.
 | `internal/worker` | The background loops. See [Background work](#background-work). |
 | `internal/ctl` | The admin API command line client, built as `acn` and as `acnologia ctl`. |
 | `internal/mcpbridge` | The stdio to HTTP MCP loop shared by `acnologia mcp` and `acn mcp`, plus the control MCP tool filters (`--groups`, `--exclude`, `--read-only`, `--confirm`). |
+| `internal/apierr`, `internal/clientip`, `internal/keyscrub`, `internal/tokenmeter` | Leaf code taken out of `internal/api`: the error registry and envelope, client IP parsing, key scrubbing and token metering. See [Package layout](#package-layout). |
 | `internal/webui`, `internal/llmstxt`, `internal/docsmd` | Embedded assets: the built dashboard, `llms.txt` and `llms-full.txt`, and the Markdown docs with their images. |
+
+### Package layout
+
+`internal/api` holds the handlers, and nearly all of it is methods on `*Server`. Code that needs no server state lives outside it, in small packages a reviewer can read alone:
+
+- `internal/apierr`: the error code registry and the error envelope (hint, fix, doc link, request id, `retry_after_sec`). `writeErr` in `api` wraps it, and `docs/errors.md` is generated from it.
+- `internal/clientip`: the client IP behind a reverse proxy, read from the right of `X-Forwarded-For` or from one named header.
+- `internal/keyscrub`: every spelling of a key an upstream may echo, and the buffered and streamed scrubbers the proxy runs over relayed headers and bodies.
+- `internal/tokenmeter`: reads the tokens an LLM answer used as it streams through the proxy.
+
+These packages and the ones on the key handling path (`store`, `pool`, `crypto`, `providers`, `catalog`, `egress`, `redact`, `respcache`, `breaker`) never import `internal/api`, `internal/agent` or `net/http/httptest` outside tests, even indirectly, so the proxy path never pulls in the Assistant. The test in `internal/boundary` checks this. New code that needs no `*Server` goes in a package like these, not in `api`.
 
 ### Inside internal/api
 
