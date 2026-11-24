@@ -91,18 +91,51 @@ func (s *Server) forwardSetup(r *http.Request, a *store.App) (map[string]any, er
 		"proxy_url_with_token": withToken,
 		"ca_url":               caURL,
 		"ca_fingerprint":       ca.Fingerprint(),
-		"passthrough":          s.Cfg.ForwardPassthrough && (a == nil || a.ShareID == nil),
+		"passthrough":          s.Cfg.ForwardPassthrough && mayPassthrough(a),
 		"hosts":                hosts,
+		// File names in env are where the app keeps the files: caFile is
+		// the CA from ca_url, caBundleFile the system roots plus that CA.
 		"env": map[string]string{
 			"HTTPS_PROXY":         withToken,
 			"HTTP_PROXY":          withToken,
+			"NO_PROXY":            forwardNoProxy,
+			"no_proxy":            forwardNoProxy,
 			"NODE_USE_ENV_PROXY":  "1",
-			"NODE_EXTRA_CA_CERTS": "acnologia-ca.pem",
-			"REQUESTS_CA_BUNDLE":  "acnologia-ca.pem",
-			"SSL_CERT_FILE":       "acnologia-ca.pem",
+			"NODE_EXTRA_CA_CERTS": caFile,
+			"REQUESTS_CA_BUNDLE":  caBundleFile,
+			"SSL_CERT_FILE":       caBundleFile,
+		},
+		"env_notes": map[string]string{
+			"NO_PROXY":            "keeps local calls off the proxy, which refuses hosts that are no service",
+			"NODE_EXTRA_CA_CERTS": "adds to Node's built in roots, so the CA alone is right",
+			"REQUESTS_CA_BUNDLE":  "replaces the whole trust store: point it at a bundle of the system roots plus the CA, never the CA alone",
+			"SSL_CERT_FILE":       "replaces the whole trust store: point it at a bundle of the system roots plus the CA, never the CA alone",
+		},
+		"ca_bundle": map[string]string{
+			"file":  caBundleFile,
+			"build": "cat /etc/ssl/certs/ca-certificates.crt " + caFile + " > " + caBundleFile,
+			"note":  "the system roots first, then the Acnologia CA. The roots file is /etc/ssl/certs/ca-certificates.crt on Debian and Ubuntu, /etc/pki/tls/certs/ca-bundle.crt on RHEL and Fedora, /etc/ssl/cert.pem on Alpine and macOS, or $(python -m certifi) for Python. acn proxy env builds it for you.",
 		},
 		"service_header": headerPrefix + "Service",
 	}, nil
+}
+
+const (
+	// caFile is the file name the setup suggests for the CA alone.
+	caFile = "acnologia-ca.pem"
+	// caBundleFile holds the system roots plus the CA, for the variables
+	// that replace the trust store (SSL_CERT_FILE, REQUESTS_CA_BUNDLE).
+	caBundleFile = "acnologia-ca-bundle.pem"
+	// forwardNoProxy is the NO_PROXY the setup suggests.
+	forwardNoProxy = "localhost,127.0.0.1,::1"
+)
+
+// mayPassthrough reports whether an app's token may tunnel HTTPS to hosts
+// that are no service (when the server allows passthrough at all). A
+// share's token and a read-only token reach known services only. A nil app
+// is the admin view: what the server allows.
+func mayPassthrough(a *store.App) bool {
+	return a == nil || (a.ShareID == nil && !a.TokenReadOnly)
 }
 
 // v1ProxySetup is GET /api/v1/proxy for an app token.

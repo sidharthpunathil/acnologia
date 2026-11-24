@@ -347,7 +347,9 @@ func (s *Server) forwardConnect(w http.ResponseWriter, r *http.Request, a *store
 		writeStoreErr(w, err)
 		return
 	}
-	if !known && (!s.Cfg.ForwardPassthrough || a.ShareID != nil) {
+	// Passthrough is a general relay: a share's token and a read-only
+	// token only reach the services they were given.
+	if !known && (!s.Cfg.ForwardPassthrough || !mayPassthrough(a)) {
 		writeErr(w, 403, "not_a_service", host+" is not the host of any service here; call it directly or list it in NO_PROXY")
 		return
 	}

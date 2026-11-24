@@ -211,6 +211,11 @@ var (
 	errLeaseNotFound = errors.New("lease not found, already reported, or expired")
 	// errLeaseRevoked ends a lease the app may no longer hold.
 	errLeaseRevoked = errors.New("this app may no longer hold this key; the lease has ended")
+	// errReadOnlyLease refuses lease calls from a read-only token. Leases
+	// belong to the app, not the token, so a read-only token could otherwise
+	// renew, end or rotate a lease a sibling token holds, and a rotation
+	// hands back a new raw key.
+	errReadOnlyLease = errors.New("read-only tokens cannot lease, renew or report raw API keys; use read-only /proxy or /mcp calls instead")
 )
 
 // renewLease extends an open lease so long jobs keep their key. Access is
@@ -218,13 +223,18 @@ var (
 // or hidden key grant changed, or whose key an admin disabled, cannot keep
 // a key (and an exclusive hold on it) by renewing. Such a lease ends.
 func (s *Server) renewLease(ctx context.Context, a *store.App, id string, ttl time.Duration) (time.Time, error) {
+	// Refused before the lease is read: a read-only token must not end a
+	// lease another token of the same app holds, either.
+	if a.TokenReadOnly {
+		return time.Time{}, errReadOnlyLease
+	}
 	l, err := s.Store.GetLease(ctx, id)
 	if err != nil || l.AppID != a.ID || l.Outcome != "" || !time.Now().Before(l.ExpiresAt) {
 		return time.Time{}, errLeaseNotFound
 	}
 	sv, err := s.Store.GetService(ctx, l.ServiceID)
 	k, kerr := s.Store.GetKey(ctx, l.KeyID)
-	if err != nil || kerr != nil || !a.AllowsLease() || a.TokenReadOnly || !a.CanUse(sv.Slug) || sv.Provider == providers.PeerSlug || isHandoverService(sv) ||
+	if err != nil || kerr != nil || !a.AllowsLease() || !a.CanUse(sv.Slug) || sv.Provider == providers.PeerSlug || isHandoverService(sv) ||
 		k.Status == store.StatusDisabled || k.Status == store.StatusBanned || !s.Pool.MayUse(ctx, sv, a.ID, a.LeaseHidden, k) {
 		if s.Store.ClaimLeaseOutcome(ctx, l.ID, "revoked") == nil {
 			s.Pool.ReleaseLease(l.ID)
@@ -253,6 +263,10 @@ func (s *Server) v1Renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exp, err := s.renewLease(r.Context(), appFrom(r), chi.URLParam(r, "id"), time.Duration(body.TTLSec)*time.Second)
+	if errors.Is(err, errReadOnlyLease) {
+		writeErr(w, 403, "read_only_token", err.Error())
+		return
+	}
 	if errors.Is(err, errLeaseRevoked) {
 		writeErr(w, 403, "lease_revoked", err.Error())
 		return
@@ -271,7 +285,7 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.TokenReadOnly {
-		writeErr(w, 403, "read_only_token", "read-only tokens cannot lease raw API keys; use read-only /proxy or /mcp calls instead")
+		writeErr(w, 403, "read_only_token", errReadOnlyLease.Error())
 		return
 	}
 	var body struct {
@@ -328,6 +342,11 @@ func (s *Server) report(ctx context.Context, a *store.App, leaseID string, in re
 	out, ok := providers.ParseOutcome(in.Outcome)
 	if !ok {
 		return nil, 400, errors.New("outcome must be ok, rate_limited, busy, quota_exhausted, invalid, banned or error")
+	}
+	// A report changes the key's state and can rotate to a new raw key, and
+	// the lease may be a sibling token's: a read-only token does neither.
+	if a.TokenReadOnly {
+		return nil, 403, errReadOnlyLease
 	}
 	l, err := s.Store.GetLease(ctx, leaseID)
 	if err != nil || l.AppID != a.ID {
@@ -414,6 +433,10 @@ func (s *Server) v1Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next, code, err := s.report(r.Context(), appFrom(r), chi.URLParam(r, "id"), in)
+	if errors.Is(err, errReadOnlyLease) {
+		writeErr(w, code, "read_only_token", err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, code, "report_failed", err.Error())
 		return
