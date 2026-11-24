@@ -161,6 +161,7 @@ func (s *Server) mcpControl(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	r = s.controlAttribution(r, req)
 	c := &ctlCtx{s: s, r: r, user: u, opts: ctlOptions(r)}
 	result, rerr := c.dispatch(req)
 	resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}
