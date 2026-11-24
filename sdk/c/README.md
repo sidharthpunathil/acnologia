@@ -216,7 +216,8 @@ if (acn_guide_get(client, "agi-labs", &g, &err) == ACN_OK) {
 An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Save the CA, then get the proxy URL or the whole environment:
 
 ```c
-acn_forward_proxy_save_ca(client, NULL, &err);   /* writes acnologia-ca.pem */
+acn_forward_proxy_save_ca(client, NULL, &err);          /* writes acnologia-ca.pem */
+acn_forward_proxy_save_ca_bundle(client, NULL, &err);   /* writes acnologia-ca-bundle.pem */
 
 acn_env *env = NULL;
 if (acn_forward_proxy_env(client, NULL, &env, &err) == ACN_OK) {
@@ -233,13 +234,15 @@ acn_forward_proxy_url(client, &proxy, &err);    /* http://app:acn_...@host:8888 
 CURL *h = curl_easy_init();
 curl_easy_setopt(h, CURLOPT_URL, "https://serpapi.com/search.json?q=coffee");
 curl_easy_setopt(h, CURLOPT_PROXY, proxy);
-curl_easy_setopt(h, CURLOPT_CAINFO, "acnologia-ca.pem");
+curl_easy_setopt(h, CURLOPT_CAINFO, "acnologia-ca-bundle.pem");
 curl_easy_perform(h);
 curl_easy_cleanup(h);
 acn_free(proxy);
 ```
 
 `acn_forward_proxy_get` returns the server's setup (`acn_forward_proxy`: `proxy_url`, `proxy_url_with_token` with an `<app token>` placeholder, `ca_url`, `ca_fingerprint`, `passthrough`, `hosts`, `env`, `service_header`), which never holds the token. `acn_forward_proxy_ca` returns the PEM text and sends no token. The strings from `acn_forward_proxy_url` and `acn_forward_proxy_env` do hold the token: keep them out of logs. `acn_env_free` wipes them.
+
+`acn_forward_proxy_env` sets `NODE_EXTRA_CA_CERTS` to the CA path, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` to `acnologia-ca-bundle.pem` (`acn_forward_proxy_env_bundle` takes another path), and `NO_PROXY` and `no_proxy` to `localhost,127.0.0.1,::1`. `acn_forward_proxy_save_ca_bundle` writes the system roots (from `$SSL_CERT_FILE` or the usual system bundles) plus the CA, and fails with `ACN_ERR_INVALID_ARGUMENT` when there are none, as on Windows. `NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service. The same goes for `CURLOPT_CAINFO`, which is why the example above gives curl the bundle.
 
 ## Lease mode
 

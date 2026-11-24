@@ -163,7 +163,8 @@ An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are
 
 ```haskell
 saveForwardProxyCAOrThrow client "acnologia-ca.pem"
-env <- forwardProxyEnvOrThrow client "acnologia-ca.pem"
+saveForwardProxyCABundleOrThrow client "acnologia-ca-bundle.pem" -- the system roots plus the CA
+env <- forwardProxyEnvWithBundleOrThrow client "acnologia-ca.pem" "acnologia-ca-bundle.pem"
 mapM_ (\(k, v) -> setEnv (T.unpack k) (T.unpack v)) (Map.toList env)
 -- A child process (node, python, curl) now goes through Acnologia.
 ```
@@ -175,10 +176,14 @@ http-client's default manager also reads `HTTPS_PROXY`, but http-client-tls trus
 | `forwardProxy` | `ForwardProxy`: `fpProxyUrl`, `fpProxyUrlWithToken` (with an `<app token>` placeholder), `fpCaUrl`, `fpCaFingerprint`, `fpPassthrough`, `fpHosts`, `fpEnv`, `fpServiceHeader` |
 | `forwardProxyCA` | The CA as PEM text. Sent without the token |
 | `saveForwardProxyCA client path` | Writes the CA to `path` |
+| `saveForwardProxyCABundle client path` | Writes the system roots plus the CA to `path`. The roots come from `$SSL_CERT_FILE` or the usual system bundles; `InvalidInput` when there are none, as on Windows |
 | `forwardProxyURL` | The proxy URL with user `app` and the token as the password: `http://app:acn_...@host:8888` |
-| `forwardProxyEnv client caPath` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `caPath` |
+| `forwardProxyEnv client caPath` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `caPath`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `acnologia-ca-bundle.pem`, and `NO_PROXY`, `no_proxy` set to `localhost,127.0.0.1,::1` |
+| `forwardProxyEnvWithBundle client caPath bundlePath` | The same, with `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundlePath` |
 
 `ForwardProxy` and its `show` never hold the token. `forwardProxyURL` and `forwardProxyEnv` do: keep them out of logs. Each call has an `OrThrow` variant.
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
 
 ## Errors
 

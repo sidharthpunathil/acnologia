@@ -41,6 +41,7 @@ import { AddKeysModal } from "./AddKeysModal";
 import { RevealModal } from "./RevealModal";
 import { KeyDrawer } from "./KeyDrawer";
 import { IntegratePanel } from "./IntegratePanel";
+import { TryItPanel } from "./TryItPanel";
 import { LlmBriefButton } from "./LlmBrief";
 import { ServiceSettings } from "./ServiceSettings";
 import { ServiceMcpPanel } from "./ServiceMcpPanel";
@@ -466,6 +467,7 @@ export function ServicePage() {
         </TabPanel>
 
         <TabPanel id="integrate" className="fade-up">
+          {perms.manage && <TryItPanel service={service} />}
           <IntegratePanel service={service} />
         </TabPanel>
 

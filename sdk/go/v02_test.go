@@ -351,7 +351,8 @@ func TestForwardProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{"HTTPS_PROXY": u, "HTTP_PROXY": u, "NODE_USE_ENV_PROXY": "1",
-		"NODE_EXTRA_CA_CERTS": "acnologia-ca.pem", "REQUESTS_CA_BUNDLE": "acnologia-ca.pem", "SSL_CERT_FILE": "acnologia-ca.pem"}
+		"NODE_EXTRA_CA_CERTS": "acnologia-ca.pem", "REQUESTS_CA_BUNDLE": "acnologia-ca-bundle.pem", "SSL_CERT_FILE": "acnologia-ca-bundle.pem",
+		"NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1"}
 	if len(env) != len(want) {
 		t.Fatalf("%v", env)
 	}
@@ -361,7 +362,11 @@ func TestForwardProxy(t *testing.T) {
 		}
 	}
 	env, _ = c.ForwardProxyEnv(context.Background(), "/etc/ca.pem")
-	if env["SSL_CERT_FILE"] != "/etc/ca.pem" {
+	if env["NODE_EXTRA_CA_CERTS"] != "/etc/ca.pem" || env["SSL_CERT_FILE"] != "acnologia-ca-bundle.pem" {
+		t.Fatal(env)
+	}
+	env, _ = c.ForwardProxyEnv(context.Background(), "/etc/ca.pem", "/etc/bundle.pem")
+	if env["SSL_CERT_FILE"] != "/etc/bundle.pem" || env["REQUESTS_CA_BUNDLE"] != "/etc/bundle.pem" {
 		t.Fatal(env)
 	}
 }
@@ -390,6 +395,25 @@ func TestForwardProxyCA(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(path); string(b) != s.caPEM {
 		t.Fatal("saved CA differs")
+	}
+}
+
+func TestSaveForwardProxyCABundle(t *testing.T) {
+	c, s := setupV02(t)
+	dir := t.TempDir()
+	roots := filepath.Join(dir, "roots.pem")
+	if err := os.WriteFile(roots, []byte("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSL_CERT_FILE", roots)
+	path := filepath.Join(dir, "bundle.pem")
+	got, err := c.SaveForwardProxyCABundle(context.Background(), path)
+	if err != nil || got != path {
+		t.Fatal(err)
+	}
+	want := "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\n" + strings.TrimRight(s.caPEM, "\n") + "\n"
+	if b, _ := os.ReadFile(path); string(b) != want {
+		t.Fatalf("bundle = %q", b)
 	}
 }
 

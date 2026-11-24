@@ -41,8 +41,9 @@ type apiDoc struct {
 
 // openAPIExcluded are routes the spec leaves out on purpose, with why.
 var openAPIExcluded = map[string]string{
-	"GET /robots.txt":         "crawler rules, not an API",
-	"GET /docs/assets/{name}": "images the docs pages embed",
+	"GET /robots.txt":           "crawler rules, not an API",
+	"GET /docs/assets/{name}":   "images the docs pages embed",
+	"* /api/v1/demo/upstream/*": "the fake provider behind the demo service; reached only through /proxy/demo with a demo key",
 }
 
 var anyObj = map[string]any{"type": "object", "description": "JSON object"}
@@ -112,6 +113,10 @@ var apiDocs = map[string]apiDoc{
 	"DELETE /api/admin/apps/{id}/deny-rules/{ruleId}": {Summary: "Delete a deny rule", Auth: "admin", Role: store.RoleAdmin, Tag: "apps"},
 	"GET /api/admin/settings/spend-ceiling":           {Summary: "Server spend ceiling", Desc: "The server's daily spend ceiling in USD, where it comes from, and today's spend.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "settings"},
 	"PUT /api/admin/settings/spend-ceiling":           {Summary: "Set the server spend ceiling", Desc: "An amount in USD, 0 for off, or null to fall back to ACNOLOGIA_DAILY_SPEND_CEILING_USD.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "settings", Body: map[string]any{"usd": anyObj}},
+	"POST /api/admin/services/{id}/try":               {Summary: "Try it", Desc: "Send one request through the proxy as a chosen app, or the internal Try it app, and get status, headers, latency and body. Logged as a try event.", Auth: "admin", Role: store.RoleAdmin, Tag: "services", Body: map[string]any{"method": sProp("HTTP method"), "path": sProp("Path on the service"), "query": anyObj, "body": anyObj, "app_id": iProp("App to try as"), "read_only": map[string]any{"type": "boolean"}}},
+	"GET /api/admin/demo":                             {Summary: "Demo data state", Desc: "Whether demo data is loaded, and what it made.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "services"},
+	"POST /api/admin/demo":                            {Summary: "Load demo data", Desc: "Add a demo service backed by a built-in fake provider, two keys, an app and a token, for a first call with no real key. Refused on a server with services unless force is true.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "services", Body: map[string]any{"force": map[string]any{"type": "boolean"}}},
+	"DELETE /api/admin/demo":                          {Summary: "Remove demo data", Desc: "Delete exactly what POST /api/admin/demo made.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "services"},
 	"GET /api/v1/me":                                  {Summary: "Who am I (app)", Desc: "The app the token belongs to, its mode and services; a stopped share says why.", Auth: "app", Tag: "consumer"},
 	"GET /api/v1/proxy/ca.pem":                        {Summary: "Forward proxy CA", Desc: "The CA certificate apps trust to use Acnologia as their HTTPS_PROXY.", Auth: "none", Tag: "consumer", Produces: "application/x-pem-file"},
 	"GET /api/v1/proxy":                               {Summary: "Forward proxy setup", Desc: "The HTTPS_PROXY URL for this app and the hosts that get keys.", Auth: "app", Tag: "consumer"},

@@ -357,8 +357,11 @@ $check($enc->forwardProxyURL() === 'http://app:acn_a%2Fb%2Bc@acn.test:8888', 'fo
 $env = $c->forwardProxyEnv();
 $url = 'http://app:acn_x@acn.test:8888';
 $check($env === ['HTTPS_PROXY' => $url, 'HTTP_PROXY' => $url, 'NODE_USE_ENV_PROXY' => '1', 'NODE_EXTRA_CA_CERTS' => 'acnologia-ca.pem',
-    'REQUESTS_CA_BUNDLE' => 'acnologia-ca.pem', 'SSL_CERT_FILE' => 'acnologia-ca.pem'], 'forwardProxyEnv');
-$check($c->forwardProxyEnv('/etc/acn.pem')['SSL_CERT_FILE'] === '/etc/acn.pem', 'forwardProxyEnv caPath');
+    'REQUESTS_CA_BUNDLE' => 'acnologia-ca-bundle.pem', 'SSL_CERT_FILE' => 'acnologia-ca-bundle.pem',
+    'NO_PROXY' => 'localhost,127.0.0.1,::1', 'no_proxy' => 'localhost,127.0.0.1,::1'], 'forwardProxyEnv');
+$check($c->forwardProxyEnv('/etc/acn.pem')['NODE_EXTRA_CA_CERTS'] === '/etc/acn.pem', 'forwardProxyEnv caPath');
+$both = $c->forwardProxyEnv('/etc/acn.pem', '/etc/bundle.pem');
+$check($both['SSL_CERT_FILE'] === '/etc/bundle.pem' && $both['REQUESTS_CA_BUNDLE'] === '/etc/bundle.pem', 'forwardProxyEnv bundlePath');
 
 $pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
 $next = new Response(200, ['content-type' => 'application/x-pem-file'], $pem);
@@ -367,6 +370,17 @@ $check($last()['method'] === 'GET' && $last()['path'] === '/api/v1/proxy/ca.pem'
 $tmp = tempnam(sys_get_temp_dir(), 'acn');
 $check($c->saveForwardProxyCA($tmp) === $tmp && file_get_contents($tmp) === $pem, 'saveForwardProxyCA writes the file');
 unlink($tmp);
+$roots = tempnam(sys_get_temp_dir(), 'acn');
+file_put_contents($roots, "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n");
+$oldCertFile = getenv('SSL_CERT_FILE');
+putenv('SSL_CERT_FILE=' . $roots);
+$tmp = tempnam(sys_get_temp_dir(), 'acn');
+$check($c->saveForwardProxyCABundle($tmp) === $tmp
+    && file_get_contents($tmp) === "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\n" . rtrim($pem, "\n") . "\n",
+    'saveForwardProxyCABundle writes the system roots plus the CA');
+putenv($oldCertFile === false ? 'SSL_CERT_FILE' : 'SSL_CERT_FILE=' . $oldCertFile);
+unlink($tmp);
+unlink($roots);
 
 $locked = new Acnologia('http://acn.test', 'acn_x', 30, $script, 'gatepw');
 $next = $jsonRes([]);

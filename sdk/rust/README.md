@@ -127,13 +127,14 @@ println!("served by {:?}, tried {:?}", resp.service(), resp.tried());
 
 ## Use the forward proxy
 
-An app can also send its own HTTP calls to provider URLs, unchanged, through Acnologia as an HTTPS proxy. Save the CA, then hand the environment from `forward_proxy_env` to a child process:
+An app can also send its own HTTP calls to provider URLs, unchanged, through Acnologia as an HTTPS proxy. Save the CA and the bundle, then hand the environment from `forward_proxy_env` to a child process:
 
 ```rust
 use std::path::Path;
 
 let ca = acn.save_forward_proxy_ca(Some(Path::new("acnologia-ca.pem"))).await?;
-let env = acn.forward_proxy_env(ca.to_str()).await?; // HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, ...
+let bundle = acn.save_forward_proxy_ca_bundle(Some(Path::new("acnologia-ca-bundle.pem"))).await?;
+let env = acn.forward_proxy_env_with_bundle(ca.to_str(), bundle.to_str()).await?; // HTTPS_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, ...
 std::process::Command::new("node").arg("app.js").envs(&env).status()?;
 ```
 
@@ -152,9 +153,13 @@ let resp = http
 | `forward_proxy()` | `ForwardProxy { proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts, env, service_header }`. Holds no token (`proxy_url_with_token` has a `<app token>` placeholder). |
 | `forward_proxy_ca()` | the CA as PEM text. The route is public, so no token is sent. |
 | `save_forward_proxy_ca(path)` | writes the CA to `path` (default `acnologia-ca.pem`) and returns the path. |
+| `save_forward_proxy_ca_bundle(path)` | writes the system roots plus the CA to `path` (default `acnologia-ca-bundle.pem`) and returns the path. The roots come from `$SSL_CERT_FILE` or the usual system bundles; `Error::InvalidInput` when there are none, as on Windows. |
 | `forward_proxy_url()` | `http://app:acn_...@host:8888`. **Contains the token.** |
-| `forward_proxy_env(ca_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `ca_path` (default `acnologia-ca.pem`). **Contains the token.** |
+| `forward_proxy_env(ca_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `ca_path` (default `acnologia-ca.pem`), `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `acnologia-ca-bundle.pem`, and `NO_PROXY`, `no_proxy` set to `localhost,127.0.0.1,::1`. **Contains the token.** |
+| `forward_proxy_env_with_bundle(ca_path, bundle_path)` | the same, with `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundle_path`. **Contains the token.** |
 | `forward_proxy_client()` | a `reqwest::Client` set up for the proxy. Carries the token. |
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
 
 ## Lease a key with `with_key`
 

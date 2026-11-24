@@ -1224,6 +1224,35 @@ TEST_CASE("forward proxy setup, CA, URL and environment") {
     CHECK(saved.str() == pem);
     std::remove(file.c_str());
 
+#ifndef _WIN32
+    // The bundle: the roots from $SSL_CERT_FILE, then the CA.
+    const std::string roots = "acn-cpp-test-roots.pem";
+    {
+        std::ofstream out(roots, std::ios::binary);
+        out << "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n";
+    }
+    const char* old_cert_file = std::getenv("SSL_CERT_FILE");
+    const std::string saved_cert_file = old_cert_file ? old_cert_file : "";
+    setenv("SSL_CERT_FILE", roots.c_str(), 1);
+    const std::string bundle_file = "acn-cpp-test-bundle.pem";
+    f.client.save_forward_proxy_ca_bundle(bundle_file);
+    if (old_cert_file) {
+        setenv("SSL_CERT_FILE", saved_cert_file.c_str(), 1);
+    } else {
+        unsetenv("SSL_CERT_FILE");
+    }
+    std::ifstream bin(bundle_file, std::ios::binary);
+    std::stringstream bundle;
+    bundle << bin.rdbuf();
+    bin.close();
+    std::string ca_trimmed = pem;
+    while (!ca_trimmed.empty() && ca_trimmed.back() == '\n') ca_trimmed.pop_back();
+    CHECK(bundle.str() == "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\n" +
+                              ca_trimmed + "\n");
+    std::remove(bundle_file.c_str());
+    std::remove(roots.c_str());
+#endif
+
     Fixture g([](const acn::HttpRequest&) {
         return reply(200, {{"proxy_url", "http://acn.test:8888"}});
     });
@@ -1232,14 +1261,17 @@ TEST_CASE("forward proxy setup, CA, URL and environment") {
     acn::Client odd("http://acn.test", "acn_a+b/c=", o);
     CHECK(odd.forward_proxy_url() == "http://app:acn_a%2Bb%2Fc%3D@acn.test:8888");
     auto env = odd.forward_proxy_env();
-    CHECK(env.size() == 6);
+    CHECK(env.size() == 8);
     CHECK(env.at("HTTPS_PROXY") == "http://app:acn_a%2Bb%2Fc%3D@acn.test:8888");
     CHECK(env.at("HTTP_PROXY") == env.at("HTTPS_PROXY"));
     CHECK(env.at("NODE_USE_ENV_PROXY") == "1");
     CHECK(env.at("NODE_EXTRA_CA_CERTS") == "acnologia-ca.pem");
-    CHECK(env.at("REQUESTS_CA_BUNDLE") == "acnologia-ca.pem");
-    CHECK(env.at("SSL_CERT_FILE") == "acnologia-ca.pem");
-    CHECK(odd.forward_proxy_env("/etc/acn.pem").at("SSL_CERT_FILE") == "/etc/acn.pem");
+    CHECK(env.at("REQUESTS_CA_BUNDLE") == "acnologia-ca-bundle.pem");
+    CHECK(env.at("SSL_CERT_FILE") == "acnologia-ca-bundle.pem");
+    CHECK(env.at("NO_PROXY") == "localhost,127.0.0.1,::1");
+    CHECK(env.at("no_proxy") == "localhost,127.0.0.1,::1");
+    CHECK(odd.forward_proxy_env("/etc/acn.pem").at("NODE_EXTRA_CA_CERTS") == "/etc/acn.pem");
+    CHECK(odd.forward_proxy_env("/etc/acn.pem", "/etc/bundle.pem").at("SSL_CERT_FILE") == "/etc/bundle.pem");
 }
 
 TEST_CASE("ShareUnavailable carries the share status") {

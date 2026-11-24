@@ -191,10 +191,16 @@ final class DiscoveryTests: XCTestCase {
         let env = try await client.forwardProxyEnv(caPath: "/tmp/ca.pem")
         XCTAssertEqual(env, [
             "HTTPS_PROXY": url, "HTTP_PROXY": url, "NODE_USE_ENV_PROXY": "1",
-            "NODE_EXTRA_CA_CERTS": "/tmp/ca.pem", "REQUESTS_CA_BUNDLE": "/tmp/ca.pem", "SSL_CERT_FILE": "/tmp/ca.pem",
+            "NODE_EXTRA_CA_CERTS": "/tmp/ca.pem", "REQUESTS_CA_BUNDLE": "acnologia-ca-bundle.pem",
+            "SSL_CERT_FILE": "acnologia-ca-bundle.pem",
+            "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1",
         ])
         let def = try await client.forwardProxyEnv()
-        XCTAssertEqual(def["SSL_CERT_FILE"], "acnologia-ca.pem")
+        XCTAssertEqual(def["NODE_EXTRA_CA_CERTS"], "acnologia-ca.pem")
+        XCTAssertEqual(def["SSL_CERT_FILE"], "acnologia-ca-bundle.pem")
+        let both = try await client.forwardProxyEnv(caPath: "/tmp/ca.pem", bundlePath: "/tmp/bundle.pem")
+        XCTAssertEqual(both["SSL_CERT_FILE"], "/tmp/bundle.pem")
+        XCTAssertEqual(both["REQUESTS_CA_BUNDLE"], "/tmp/bundle.pem")
         XCTAssertTrue(StubProtocol.requests.allSatisfy { $0.url.path == "/api/v1/proxy" })
     }
 
@@ -214,6 +220,17 @@ final class DiscoveryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: path) }
         let written = try await client.forwardProxyCA(saveTo: path)
         XCTAssertEqual(try String(contentsOf: written, encoding: .utf8), pem)
+    }
+
+    func testForwardProxyCABundle() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("acn-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let roots = dir.appendingPathComponent("roots.pem")
+        try Data("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n".utf8).write(to: roots)
+        let found = try XCTUnwrap(Acnologia.systemRoots(target: dir.appendingPathComponent("bundle.pem"), envCertFile: roots.path))
+        XCTAssertEqual(Acnologia.caBundle(roots: found, ca: "CA\n"),
+                       "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n")
     }
 
     func testAccessPassword() async throws {

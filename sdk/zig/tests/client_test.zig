@@ -696,6 +696,29 @@ test "forward proxy: the CA is fetched without a token and saved to a file" {
     try testing.expect(fake.last().header("authorization") == null);
 }
 
+test "forward proxy: the CA bundle is the system roots plus the CA" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+    var fake: Fake = undefined;
+    try fake.start(&.{.{ .method = "GET", .path = "/api/v1/proxy/ca.pem", .body = pem, .headers = &.{.{ .name = "Content-Type", .value = "application/x-pem-file" }} }});
+    defer fake.stop();
+    var client = try newClient(&fake, .{});
+    defer client.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "roots.pem", .data = "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n" });
+    var roots_buf: [256]u8 = undefined;
+    const roots = try std.fmt.bufPrint(&roots_buf, ".zig-cache/tmp/{s}/roots.pem", .{tmp.sub_path});
+    var path_buf: [256]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, ".zig-cache/tmp/{s}/bundle.pem", .{tmp.sub_path});
+    try client.saveForwardProxyCABundle(path, roots, .{});
+    var read_buf: [512]u8 = undefined;
+    const saved = try tmp.dir.readFile(testing.io, "bundle.pem", &read_buf);
+    try testing.expectEqualStrings("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\n" ++
+        "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n", saved);
+}
+
 test "forward proxy: URL and environment carry the escaped token" {
     var fake: Fake = undefined;
     try fake.start(&.{.{ .method = "GET", .path = "/api/v1/proxy", .body = proxy_setup_body, .headers = &.{json_type} }});
@@ -715,13 +738,21 @@ test "forward proxy: URL and environment carry the escaped token" {
     try testing.expectEqualStrings(url, env.get("HTTP_PROXY").?);
     try testing.expectEqualStrings("1", env.get("NODE_USE_ENV_PROXY").?);
     try testing.expectEqualStrings("acnologia-ca.pem", env.get("NODE_EXTRA_CA_CERTS").?);
-    try testing.expectEqualStrings("acnologia-ca.pem", env.get("REQUESTS_CA_BUNDLE").?);
-    try testing.expectEqualStrings("acnologia-ca.pem", env.get("SSL_CERT_FILE").?);
-    try testing.expectEqual(@as(usize, 6), env.count());
+    try testing.expectEqualStrings("acnologia-ca-bundle.pem", env.get("REQUESTS_CA_BUNDLE").?);
+    try testing.expectEqualStrings("acnologia-ca-bundle.pem", env.get("SSL_CERT_FILE").?);
+    try testing.expectEqualStrings("localhost,127.0.0.1,::1", env.get("NO_PROXY").?);
+    try testing.expectEqualStrings("localhost,127.0.0.1,::1", env.get("no_proxy").?);
+    try testing.expectEqual(@as(usize, 8), env.count());
 
     var custom = try client.forwardProxyEnv(testing.allocator, "/etc/acn/ca.pem", .{});
     defer custom.deinit();
-    try testing.expectEqualStrings("/etc/acn/ca.pem", custom.get("SSL_CERT_FILE").?);
+    try testing.expectEqualStrings("/etc/acn/ca.pem", custom.get("NODE_EXTRA_CA_CERTS").?);
+    try testing.expectEqualStrings("acnologia-ca-bundle.pem", custom.get("SSL_CERT_FILE").?);
+
+    var both = try client.forwardProxyEnvWithBundle(testing.allocator, "/etc/acn/ca.pem", "/etc/acn/bundle.pem", .{});
+    defer both.deinit();
+    try testing.expectEqualStrings("/etc/acn/bundle.pem", both.get("SSL_CERT_FILE").?);
+    try testing.expectEqualStrings("/etc/acn/bundle.pem", both.get("REQUESTS_CA_BUNDLE").?);
 }
 
 // ---------------------------------------------------------------- errors

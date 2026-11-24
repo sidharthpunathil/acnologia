@@ -148,7 +148,9 @@ fn blocking_v2_calls() {
     assert_eq!(url, format!("http://app:{TOKEN}@acn.example:8888"));
     let env = c.forward_proxy_env(Some("ca.pem")).unwrap();
     assert_eq!(env["HTTP_PROXY"], url);
-    assert_eq!(env["REQUESTS_CA_BUNDLE"], "ca.pem");
+    assert_eq!(env["NODE_EXTRA_CA_CERTS"], "ca.pem");
+    assert_eq!(env["REQUESTS_CA_BUNDLE"], acnologia::DEFAULT_CA_BUNDLE_PATH);
+    assert_eq!(env["NO_PROXY"], "localhost,127.0.0.1,::1");
 
     c.proxy("serpapi")
         .idempotency_key("k9")

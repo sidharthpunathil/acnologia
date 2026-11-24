@@ -109,6 +109,40 @@ public class Acnologia(
         /** The file name [saveForwardProxyCA] and [forwardProxyEnv] use by default. */
         public const val DEFAULT_CA_PATH: String = "acnologia-ca.pem"
 
+        /** The file name [saveForwardProxyCABundle] and [forwardProxyEnv] use by default. */
+        public const val DEFAULT_CA_BUNDLE_PATH: String = "acnologia-ca-bundle.pem"
+
+        /** Hosts that stay off the forward proxy, which refuses hosts that are no service. */
+        public const val NO_PROXY: String = "localhost,127.0.0.1,::1"
+
+        private val SYSTEM_ROOTS = listOf(
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/pki/tls/certs/ca-bundle.crt",
+            "/etc/ssl/ca-bundle.pem",
+            "/etc/ssl/cert.pem",
+        )
+
+        /** The first system root bundle found ([envCertFile] first), skipping [target]. */
+        internal fun systemRoots(target: Path, envCertFile: String?): String? {
+            if (System.getProperty("os.name", "").lowercase().startsWith("windows")) return null
+            val paths = listOfNotNull(envCertFile?.takeIf { it.isNotEmpty() }) + SYSTEM_ROOTS
+            for (p in paths) {
+                val candidate = Paths.get(p)
+                try {
+                    if (Files.exists(target) && Files.exists(candidate) && Files.isSameFile(candidate, target)) continue
+                    val text = Files.readString(candidate)
+                    if (text.contains("BEGIN CERTIFICATE")) return text
+                } catch (e: IOException) {
+                    continue
+                }
+            }
+            return null
+        }
+
+        /** The system roots followed by the Acnologia CA. */
+        internal fun caBundle(roots: String, ca: String): String =
+            roots.trimEnd('\n') + "\n\n# Acnologia forward proxy CA\n" + ca.trimEnd('\n') + "\n"
+
         /**
          * Creates a client from the `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` environment variables,
          * and `ACNOLOGIA_ACCESS_PASSWORD` when set.
@@ -187,6 +221,25 @@ public class Acnologia(
     }
 
     /**
+     * Saves the system roots followed by the forward proxy's CA certificate to [path] and returns
+     * the path. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so they
+     * need this bundle, not the CA alone. The roots come from `$SSL_CERT_FILE` (when it is a PEM
+     * bundle other than [path]) or the usual system bundles. Throws [AcnologiaException] when
+     * there is none, as on Windows.
+     */
+    public suspend fun saveForwardProxyCABundle(path: String = DEFAULT_CA_BUNDLE_PATH): Path {
+        val p = Paths.get(path)
+        val roots = withContext(Dispatchers.IO) { systemRoots(p, System.getenv("SSL_CERT_FILE")) }
+            ?: throw AcnologiaException(
+                "acnologia: no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a " +
+                    "bundle of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone",
+            )
+        val pem = forwardProxyCA()
+        withContext(Dispatchers.IO) { Files.writeString(p, caBundle(roots, pem)) }
+        return p
+    }
+
+    /**
      * The forward proxy URL with user `app` and this client's token as the password, such as
      * `http://app:acn_...@host:8888`. It contains the token: do not log it.
      */
@@ -194,19 +247,26 @@ public class Acnologia(
 
     /**
      * The environment an app needs to send its own HTTP calls through the forward proxy:
-     * `HTTPS_PROXY` and `HTTP_PROXY` ([forwardProxyUrl]), `NODE_USE_ENV_PROXY=1`, and
-     * `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to [caPath]. Save the CA
-     * there with [saveForwardProxyCA]. The proxy entries contain the token: do not log them.
+     * `HTTPS_PROXY` and `HTTP_PROXY` ([forwardProxyUrl]), `NODE_USE_ENV_PROXY=1`,
+     * `NODE_EXTRA_CA_CERTS` set to [caPath], `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to
+     * [bundlePath], and `NO_PROXY` and `no_proxy` set to [NO_PROXY]. Save the CA with
+     * [saveForwardProxyCA] and the bundle (system roots plus the CA) with
+     * [saveForwardProxyCABundle]. The proxy entries contain the token: do not log them.
      */
-    public suspend fun forwardProxyEnv(caPath: String = DEFAULT_CA_PATH): Map<String, String> {
+    public suspend fun forwardProxyEnv(
+        caPath: String = DEFAULT_CA_PATH,
+        bundlePath: String = DEFAULT_CA_BUNDLE_PATH,
+    ): Map<String, String> {
         val url = forwardProxyUrl()
         return linkedMapOf(
             "HTTPS_PROXY" to url,
             "HTTP_PROXY" to url,
             "NODE_USE_ENV_PROXY" to "1",
             "NODE_EXTRA_CA_CERTS" to caPath,
-            "REQUESTS_CA_BUNDLE" to caPath,
-            "SSL_CERT_FILE" to caPath,
+            "REQUESTS_CA_BUNDLE" to bundlePath,
+            "SSL_CERT_FILE" to bundlePath,
+            "NO_PROXY" to NO_PROXY,
+            "no_proxy" to NO_PROXY,
         )
     }
 

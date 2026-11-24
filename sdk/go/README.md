@@ -246,13 +246,16 @@ hc := &http.Client{Transport: tr}
 resp, err := hc.Get("https://api.openai.com/v1/models") // Acnologia adds the key
 ```
 
-For another process (a Node or Python tool), save the CA and hand it the environment:
+For another process (a Node or Python tool), save the CA and the bundle, then hand it the environment:
 
 ```go
 if _, err := c.SaveForwardProxyCA(ctx, "acnologia-ca.pem"); err != nil {
 	return err
 }
-env, err := c.ForwardProxyEnv(ctx, "acnologia-ca.pem")
+if _, err := c.SaveForwardProxyCABundle(ctx, "acnologia-ca-bundle.pem"); err != nil {
+	return err
+}
+env, err := c.ForwardProxyEnv(ctx, "acnologia-ca.pem", "acnologia-ca-bundle.pem")
 cmd := exec.Command("node", "agent.js")
 cmd.Env = os.Environ()
 for k, v := range env {
@@ -265,9 +268,12 @@ for k, v := range env {
 | `c.ForwardProxy(ctx)` | `*ForwardProxy`: `ProxyURL`, `ProxyURLWithToken` (with an `<app token>` placeholder), `CAURL`, `CAFingerprint`, `Passthrough`, `Hosts`, `Env`, `ServiceHeader` |
 | `c.ForwardProxyCA(ctx)` | the CA certificate as PEM. Public: the token is not sent |
 | `c.SaveForwardProxyCA(ctx, path)` | writes it to `path` (default `acnologia-ca.pem`) |
+| `c.SaveForwardProxyCABundle(ctx, path)` | writes the system roots plus the CA to `path` (default `acnologia-ca-bundle.pem`). The roots come from `$SSL_CERT_FILE` or the usual system bundles; it fails when there are none, as on Windows |
 | `c.ForwardProxyURL(ctx)` | `http://app:acn_...@host:8888`. Contains the token |
-| `c.ForwardProxyEnv(ctx, caPath)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `caPath`. Contains the token |
+| `c.ForwardProxyEnv(ctx, caPath, bundlePath...)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `caPath`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundlePath` (default `acnologia-ca-bundle.pem`), and `NO_PROXY`, `no_proxy` set to `localhost,127.0.0.1,::1`. Contains the token |
 | `c.ForwardProxyTransport(ctx)` | the `*http.Transport` above. Its proxy URL contains the token |
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
 
 ## About this token
 

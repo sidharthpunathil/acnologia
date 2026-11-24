@@ -256,13 +256,14 @@ with acn.forward_proxy_client(timeout=30) as http:
     resp = http.get("https://api.openai.com/v1/models")  # Acnologia adds the key
 ```
 
-For another process, or a library that reads the environment (`requests`, `openai`, Node), save the CA and hand over the environment:
+For another process, or a library that reads the environment (`requests`, `openai`, Node), save the CA and the bundle, then hand over the environment:
 
 ```python
 import os, subprocess
 
 acn.save_forward_proxy_ca("acnologia-ca.pem")
-env = {**os.environ, **acn.forward_proxy_env("acnologia-ca.pem")}
+acn.save_forward_proxy_ca_bundle("acnologia-ca-bundle.pem")
+env = {**os.environ, **acn.forward_proxy_env("acnologia-ca.pem", "acnologia-ca-bundle.pem")}
 subprocess.run(["node", "agent.js"], env=env)
 ```
 
@@ -271,9 +272,12 @@ subprocess.run(["node", "agent.js"], env=env)
 | `forward_proxy()` | `ForwardProxy`: `proxy_url`, `proxy_url_with_token` (with an `<app token>` placeholder), `ca_url`, `ca_fingerprint`, `passthrough`, `hosts`, `env`, `service_header` |
 | `forward_proxy_ca()` | the CA certificate as PEM text. Public: the token is not sent |
 | `save_forward_proxy_ca(path="acnologia-ca.pem")` | writes it and returns the path |
+| `save_forward_proxy_ca_bundle(path="acnologia-ca-bundle.pem")` | writes the system roots plus the CA and returns the path. The roots come from `$SSL_CERT_FILE` or the usual system bundles; raises `AcnologiaError` when there are none, as on Windows |
 | `forward_proxy_url()` | `http://app:acn_...@host:8888`. Contains the token |
-| `forward_proxy_env(ca_path="acnologia-ca.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `ca_path`. Contains the token |
+| `forward_proxy_env(ca_path="acnologia-ca.pem", bundle_path="acnologia-ca-bundle.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `ca_path`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundle_path`, and `NO_PROXY`, `no_proxy` set to `localhost,127.0.0.1,::1`. Contains the token |
 | `forward_proxy_client(**httpx_kwargs)` | the `httpx.Client` above (`httpx.AsyncClient` on `AsyncAcnologia`). Close it when done |
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
 
 ## About this token
 

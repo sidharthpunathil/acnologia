@@ -34,6 +34,20 @@ final class Acnologia
     /** Where saveForwardProxyCA() and forwardProxyEnv() put the proxy CA by default. */
     public const DEFAULT_CA_PATH = 'acnologia-ca.pem';
 
+    /** Where saveForwardProxyCABundle() and forwardProxyEnv() put the system roots plus the CA by default. */
+    public const DEFAULT_CA_BUNDLE_PATH = 'acnologia-ca-bundle.pem';
+
+    /** Hosts that stay off the forward proxy, which refuses hosts that are no service. */
+    public const NO_PROXY = 'localhost,127.0.0.1,::1';
+
+    /** The usual system root bundles, tried in order. */
+    private const SYSTEM_ROOTS = [
+        '/etc/ssl/certs/ca-certificates.crt',
+        '/etc/pki/tls/certs/ca-bundle.crt',
+        '/etc/ssl/ca-bundle.pem',
+        '/etc/ssl/cert.pem',
+    ];
+
     public readonly string $baseUrl;
 
     /** @var callable(string, string, array<string, string>, ?string): Response */
@@ -207,6 +221,52 @@ final class Acnologia
     }
 
     /**
+     * Write the system roots followed by the forward proxy's CA certificate to $path and
+     * return $path. SSL_CERT_FILE and REQUESTS_CA_BUNDLE replace the whole trust store, so
+     * they need this bundle, not the CA alone. The roots come from $SSL_CERT_FILE (when it
+     * is a PEM bundle other than $path) or the usual system bundles. Throws
+     * AcnologiaException when there is none, as on Windows.
+     */
+    public function saveForwardProxyCABundle(string $path = self::DEFAULT_CA_BUNDLE_PATH): string
+    {
+        $roots = self::systemRoots($path);
+        if ($roots === null) {
+            throw new AcnologiaException('no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a '
+                . 'bundle of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone');
+        }
+        $pem = $this->forwardProxyCA();
+        $bundle = rtrim($roots, "\n") . "\n\n# Acnologia forward proxy CA\n" . rtrim($pem, "\n") . "\n";
+        if (file_put_contents($path, $bundle) === false) {
+            throw new AcnologiaException('could not write ' . $path);
+        }
+        return $path;
+    }
+
+    /** The first system root bundle found ($SSL_CERT_FILE first), skipping the file at $target. */
+    private static function systemRoots(string $target): ?string
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return null;
+        }
+        $paths = self::SYSTEM_ROOTS;
+        $env = getenv('SSL_CERT_FILE');
+        if (is_string($env) && $env !== '') {
+            array_unshift($paths, $env);
+        }
+        $real = realpath($target);
+        foreach ($paths as $p) {
+            if ($p === $target || ($real !== false && realpath($p) === $real) || !is_readable($p)) {
+                continue;
+            }
+            $text = @file_get_contents($p);
+            if (is_string($text) && str_contains($text, 'BEGIN CERTIFICATE')) {
+                return $text;
+            }
+        }
+        return null;
+    }
+
+    /**
      * The forward proxy URL with user "app" and this client's token as the password,
      * percent escaped: http://app:acn_...@host:8888. It contains the token: keep it out
      * of logs.
@@ -227,23 +287,29 @@ final class Acnologia
 
     /**
      * Environment for a process that should reach providers through the forward proxy:
-     * HTTPS_PROXY and HTTP_PROXY (forwardProxyURL()), NODE_USE_ENV_PROXY=1, and
-     * NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to $caPath. The proxy
-     * values contain the token: keep them out of logs. Save the CA there with
-     * saveForwardProxyCA().
+     * HTTPS_PROXY and HTTP_PROXY (forwardProxyURL()), NODE_USE_ENV_PROXY=1,
+     * NODE_EXTRA_CA_CERTS set to $caPath, REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to
+     * $bundlePath, and NO_PROXY and no_proxy set to localhost,127.0.0.1,::1. The proxy
+     * values contain the token: keep them out of logs. Save the CA with
+     * saveForwardProxyCA() and the bundle (system roots plus the CA) with
+     * saveForwardProxyCABundle().
      *
      * @return array<string, string>
      */
-    public function forwardProxyEnv(string $caPath = self::DEFAULT_CA_PATH): array
-    {
+    public function forwardProxyEnv(
+        string $caPath = self::DEFAULT_CA_PATH,
+        string $bundlePath = self::DEFAULT_CA_BUNDLE_PATH,
+    ): array {
         $url = $this->forwardProxyURL();
         return [
             'HTTPS_PROXY' => $url,
             'HTTP_PROXY' => $url,
             'NODE_USE_ENV_PROXY' => '1',
             'NODE_EXTRA_CA_CERTS' => $caPath,
-            'REQUESTS_CA_BUNDLE' => $caPath,
-            'SSL_CERT_FILE' => $caPath,
+            'REQUESTS_CA_BUNDLE' => $bundlePath,
+            'SSL_CERT_FILE' => $bundlePath,
+            'NO_PROXY' => self::NO_PROXY,
+            'no_proxy' => self::NO_PROXY,
         ];
     }
 

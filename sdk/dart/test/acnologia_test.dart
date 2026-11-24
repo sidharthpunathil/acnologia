@@ -758,11 +758,15 @@ void main() {
         'HTTP_PROXY': 'http://app:acn_a%2Fb%2Bc@acn.test:8888',
         'NODE_USE_ENV_PROXY': '1',
         'NODE_EXTRA_CA_CERTS': 'acnologia-ca.pem',
-        'REQUESTS_CA_BUNDLE': 'acnologia-ca.pem',
-        'SSL_CERT_FILE': 'acnologia-ca.pem',
+        'REQUESTS_CA_BUNDLE': 'acnologia-ca-bundle.pem',
+        'SSL_CERT_FILE': 'acnologia-ca-bundle.pem',
+        'NO_PROXY': 'localhost,127.0.0.1,::1',
+        'no_proxy': 'localhost,127.0.0.1,::1',
       });
-      final env = await c.forwardProxyEnv('/etc/acn.pem');
-      expect(env['SSL_CERT_FILE'], '/etc/acn.pem');
+      final env = await c.forwardProxyEnv('/etc/acn.pem', '/etc/bundle.pem');
+      expect(env['NODE_EXTRA_CA_CERTS'], '/etc/acn.pem');
+      expect(env['SSL_CERT_FILE'], '/etc/bundle.pem');
+      expect(env['REQUESTS_CA_BUNDLE'], '/etc/bundle.pem');
       expect(seen.every((r) => r.url.path == '/api/v1/proxy'), isTrue);
     });
 
@@ -810,5 +814,18 @@ void main() {
         dir.deleteSync(recursive: true);
       }
     }, testOn: 'vm');
+
+    test('saveForwardProxyCABundle writes the system roots plus the CA', () async {
+      final (c, _) = recording((_) => http.Response('PEM\n', 200));
+      final dir = Directory.systemTemp.createTempSync('acn');
+      try {
+        final path = await c.saveForwardProxyCABundle('${dir.path}/bundle.pem');
+        final text = File(path).readAsStringSync();
+        expect(text, contains('BEGIN CERTIFICATE'));
+        expect(text, endsWith('\n\n# Acnologia forward proxy CA\nPEM\n'));
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    }, testOn: 'linux || mac-os');
   });
 }

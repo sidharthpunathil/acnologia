@@ -932,12 +932,23 @@ async fn forward_proxy_calls() {
     assert_eq!(env["HTTPS_PROXY"], url);
     assert_eq!(env["HTTP_PROXY"], url);
     assert_eq!(env["NODE_USE_ENV_PROXY"], "1");
-    for k in ["NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"] {
-        assert_eq!(env[k], acnologia::DEFAULT_CA_PATH);
+    assert_eq!(env["NODE_EXTRA_CA_CERTS"], acnologia::DEFAULT_CA_PATH);
+    for k in ["REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"] {
+        assert_eq!(env[k], acnologia::DEFAULT_CA_BUNDLE_PATH);
     }
-    assert_eq!(env.len(), 6);
+    for k in ["NO_PROXY", "no_proxy"] {
+        assert_eq!(env[k], "localhost,127.0.0.1,::1");
+    }
+    assert_eq!(env.len(), 8);
     let env = c.forward_proxy_env(Some("/etc/acn.pem")).await.unwrap();
-    assert_eq!(env["SSL_CERT_FILE"], "/etc/acn.pem");
+    assert_eq!(env["NODE_EXTRA_CA_CERTS"], "/etc/acn.pem");
+    assert_eq!(env["SSL_CERT_FILE"], acnologia::DEFAULT_CA_BUNDLE_PATH);
+    let env = c
+        .forward_proxy_env_with_bundle(Some("/etc/acn.pem"), Some("/etc/bundle.pem"))
+        .await
+        .unwrap();
+    assert_eq!(env["SSL_CERT_FILE"], "/etc/bundle.pem");
+    assert_eq!(env["REQUESTS_CA_BUNDLE"], "/etc/bundle.pem");
 
     let r = &requests(&server, "/api/v1/proxy").await[0];
     assert_eq!(r.method.as_str(), "GET");

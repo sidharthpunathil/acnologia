@@ -133,11 +133,16 @@ for (final h in setup.hosts) print('${h.host} -> ${h.service}');
 
 final pem = await acn.forwardProxyCA();          // the CA to trust, no token sent
 await acn.saveForwardProxyCA('acnologia-ca.pem'); // dart:io only, throws UnsupportedError on the web
+await acn.saveForwardProxyCABundle('acnologia-ca-bundle.pem'); // the system roots plus the CA, dart:io only
 
-final env = await acn.forwardProxyEnv('acnologia-ca.pem');
+final env = await acn.forwardProxyEnv('acnologia-ca.pem', 'acnologia-ca-bundle.pem');
 // HTTPS_PROXY and HTTP_PROXY = http://app:acn_...@host:8888, NODE_USE_ENV_PROXY=1,
-// NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and SSL_CERT_FILE = acnologia-ca.pem
+// NODE_EXTRA_CA_CERTS = acnologia-ca.pem,
+// REQUESTS_CA_BUNDLE and SSL_CERT_FILE = acnologia-ca-bundle.pem,
+// NO_PROXY and no_proxy = localhost,127.0.0.1,::1
 ```
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service. `saveForwardProxyCABundle` takes the roots from `$SSL_CERT_FILE` or the usual system bundles and throws `StateError` when there are none, as on Windows.
 
 Pass `env` to a child process (`Process.start(..., environment: env)`), or point the app's own `dart:io` client at the proxy:
 

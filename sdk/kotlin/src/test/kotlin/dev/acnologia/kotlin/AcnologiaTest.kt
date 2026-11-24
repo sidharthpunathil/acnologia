@@ -541,9 +541,12 @@ class AcnologiaTest {
         assertEquals("http://app:acn_test@127.0.0.1:8888", env["HTTPS_PROXY"])
         assertEquals(env["HTTPS_PROXY"], env["HTTP_PROXY"])
         assertEquals("1", env["NODE_USE_ENV_PROXY"])
-        for (k in listOf("NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE")) assertEquals("/etc/acn.pem", env[k])
-        assertEquals(6, env.size)
-        assertEquals("acnologia-ca.pem", c.forwardProxyEnv()["SSL_CERT_FILE"])
+        assertEquals("/etc/acn.pem", env["NODE_EXTRA_CA_CERTS"])
+        for (k in listOf("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE")) assertEquals("acnologia-ca-bundle.pem", env[k])
+        for (k in listOf("NO_PROXY", "no_proxy")) assertEquals("localhost,127.0.0.1,::1", env[k])
+        assertEquals(8, env.size)
+        assertEquals("acnologia-ca.pem", c.forwardProxyEnv()["NODE_EXTRA_CA_CERTS"])
+        assertEquals("/etc/bundle.pem", c.forwardProxyEnv(bundlePath = "/etc/bundle.pem")["SSL_CERT_FILE"])
     }
 
     @Test
@@ -557,6 +560,19 @@ class AcnologiaTest {
         assertEquals(TEST_CA, saved.toFile().readText())
         dir.toFile().deleteRecursively()
         Unit
+    }
+
+    @Test
+    fun forwardProxyCABundle() {
+        val dir = kotlin.io.path.createTempDirectory("acn")
+        val roots = dir.resolve("roots.pem")
+        roots.toFile().writeText("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n")
+        val found = Acnologia.systemRoots(dir.resolve("bundle.pem"), roots.toString())!!
+        assertEquals(
+            "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n",
+            Acnologia.caBundle(found, "CA\n"),
+        )
+        dir.toFile().deleteRecursively()
     }
 
     @Test

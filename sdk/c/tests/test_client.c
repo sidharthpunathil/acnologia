@@ -1267,6 +1267,41 @@ static void test_forward_proxy(void) {
     CHECK_STR(buf, PEM);
     remove(path);
 
+#ifndef _WIN32
+    /* The bundle: the roots from $SSL_CERT_FILE, then the CA. */
+    char roots[64];
+    snprintf(roots, sizeof roots, "acn-test-roots-%d.pem", fake_port(srv));
+    f = fopen(roots, "wb");
+    if (f) {
+        fputs("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n", f);
+        fclose(f);
+    }
+    const char *old_cert_file = getenv("SSL_CERT_FILE");
+    char *saved_cert_file = old_cert_file ? strdup(old_cert_file) : NULL;
+    setenv("SSL_CERT_FILE", roots, 1);
+    snprintf(path, sizeof path, "acn-test-bundle-%d.pem", fake_port(srv));
+    CHECK_CODE(acn_forward_proxy_save_ca_bundle(c, path, &err), ACN_OK);
+    if (saved_cert_file) {
+        setenv("SSL_CERT_FILE", saved_cert_file, 1);
+        free(saved_cert_file);
+    } else {
+        unsetenv("SSL_CERT_FILE");
+    }
+    char bundle[512] = {0};
+    f = fopen(path, "rb");
+    if (f) {
+        size_t n = fread(bundle, 1, sizeof bundle - 1, f);
+        bundle[n] = '\0';
+        fclose(f);
+    }
+    char want[512];
+    snprintf(want, sizeof want, "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\n%.*s\n",
+             (int)(strlen(PEM) - (PEM[strlen(PEM) - 1] == '\n')), PEM);
+    CHECK_STR(bundle, want);
+    remove(path);
+    remove(roots);
+#endif
+
     char *url = NULL;
     CHECK_CODE(acn_forward_proxy_url(c, &url, &err), ACN_OK);
     CHECK_STR(url, "http://app:" TOKEN_ENC "@acn.test:8888");
@@ -1274,18 +1309,26 @@ static void test_forward_proxy(void) {
 
     acn_env *env = NULL;
     CHECK_CODE(acn_forward_proxy_env(c, NULL, &env, &err), ACN_OK);
-    CHECK(env && env->count == 6);
+    CHECK(env && env->count == 8);
     CHECK_STR(acn_env_get(env, "HTTPS_PROXY"), "http://app:" TOKEN_ENC "@acn.test:8888");
     CHECK_STR(acn_env_get(env, "HTTP_PROXY"), "http://app:" TOKEN_ENC "@acn.test:8888");
     CHECK_STR(acn_env_get(env, "NODE_USE_ENV_PROXY"), "1");
     CHECK_STR(acn_env_get(env, "NODE_EXTRA_CA_CERTS"), "acnologia-ca.pem");
-    CHECK_STR(acn_env_get(env, "REQUESTS_CA_BUNDLE"), "acnologia-ca.pem");
-    CHECK_STR(acn_env_get(env, "SSL_CERT_FILE"), "acnologia-ca.pem");
+    CHECK_STR(acn_env_get(env, "REQUESTS_CA_BUNDLE"), "acnologia-ca-bundle.pem");
+    CHECK_STR(acn_env_get(env, "SSL_CERT_FILE"), "acnologia-ca-bundle.pem");
+    CHECK_STR(acn_env_get(env, "NO_PROXY"), "localhost,127.0.0.1,::1");
+    CHECK_STR(acn_env_get(env, "no_proxy"), "localhost,127.0.0.1,::1");
     CHECK(acn_env_get(env, "NOPE") == NULL);
     acn_env_free(env);
 
     CHECK_CODE(acn_forward_proxy_env(c, "/etc/acn.pem", &env, &err), ACN_OK);
-    CHECK_STR(acn_env_get(env, "SSL_CERT_FILE"), "/etc/acn.pem");
+    CHECK_STR(acn_env_get(env, "NODE_EXTRA_CA_CERTS"), "/etc/acn.pem");
+    CHECK_STR(acn_env_get(env, "SSL_CERT_FILE"), "acnologia-ca-bundle.pem");
+    acn_env_free(env);
+
+    CHECK_CODE(acn_forward_proxy_env_bundle(c, "/etc/acn.pem", "/etc/bundle.pem", &env, &err), ACN_OK);
+    CHECK_STR(acn_env_get(env, "SSL_CERT_FILE"), "/etc/bundle.pem");
+    CHECK_STR(acn_env_get(env, "REQUESTS_CA_BUNDLE"), "/etc/bundle.pem");
     acn_env_free(env);
     acn_client_free(c);
 }

@@ -114,10 +114,14 @@ module Acnologia
   , forwardProxyCAOrThrow
   , saveForwardProxyCA
   , saveForwardProxyCAOrThrow
+  , saveForwardProxyCABundle
+  , saveForwardProxyCABundleOrThrow
   , forwardProxyURL
   , forwardProxyURLOrThrow
   , forwardProxyEnv
   , forwardProxyEnvOrThrow
+  , forwardProxyEnvWithBundle
+  , forwardProxyEnvWithBundleOrThrow
 
     -- * Errors
   , AcnologiaError (..)
@@ -153,6 +157,7 @@ import qualified Network.HTTP.Client.TLS as TLS
 import Network.HTTP.Types (Method, Query, RequestHeaders, ResponseHeaders, HeaderName)
 import qualified Network.HTTP.Types as HT
 import System.Environment (lookupEnv)
+import qualified System.Info
 
 -- ---------------------------------------------------------------------------
 -- Client
@@ -1576,6 +1581,60 @@ saveForwardProxyCA c path = do
 saveForwardProxyCAOrThrow :: Client -> FilePath -> IO ()
 saveForwardProxyCAOrThrow c = orThrow . saveForwardProxyCA c
 
+-- | Fetch the CA and write the system roots followed by it to a file (pass
+-- @"acnologia-ca-bundle.pem"@ for the usual name). @SSL_CERT_FILE@ and
+-- @REQUESTS_CA_BUNDLE@ replace the whole trust store, so they need this
+-- bundle, not the CA alone. The roots come from @$SSL_CERT_FILE@ (when it is
+-- a PEM bundle other than the target) or the usual system bundles. No roots
+-- (as on Windows) or a file that cannot be written is 'InvalidInput'.
+saveForwardProxyCABundle :: Client -> FilePath -> IO (Either AcnologiaError ())
+saveForwardProxyCABundle c path0 = do
+  let path = if null path0 then "acnologia-ca-bundle.pem" else path0
+  roots <- systemRoots path
+  case roots of
+    Nothing ->
+      pure . Left . InvalidInput $
+        "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle "
+          <> "of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone"
+    Just rs -> do
+      r <- forwardProxyCA c
+      case r of
+        Left e -> pure (Left e)
+        Right pem -> do
+          let trim = BC.dropWhileEnd (== '\n')
+              bundle = trim rs <> "\n\n# Acnologia forward proxy CA\n" <> trim (TE.encodeUtf8 pem) <> "\n"
+          w <- try (BS.writeFile path bundle)
+          pure $ case w of
+            Left (e :: IOException) -> Left (InvalidInput ("could not write the CA bundle: " <> T.pack (displayException e)))
+            Right () -> Right ()
+
+-- | 'saveForwardProxyCABundle' that throws.
+saveForwardProxyCABundleOrThrow :: Client -> FilePath -> IO ()
+saveForwardProxyCABundleOrThrow c = orThrow . saveForwardProxyCABundle c
+
+-- | The first system root bundle found (@$SSL_CERT_FILE@ first), skipping
+-- the target path.
+systemRoots :: FilePath -> IO (Maybe BS.ByteString)
+systemRoots target
+  | System.Info.os == "mingw32" = pure Nothing
+  | otherwise = do
+      env <- lookupEnv "SSL_CERT_FILE"
+      go (filter (\p -> not (null p) && p /= target) (maybe [] pure env <> defaults))
+  where
+    defaults =
+      [ "/etc/ssl/certs/ca-certificates.crt"
+      , "/etc/pki/tls/certs/ca-bundle.crt"
+      , "/etc/ssl/ca-bundle.pem"
+      , "/etc/ssl/cert.pem"
+      ]
+    go [] = pure Nothing
+    go (p : ps) = do
+      r <- try (BS.readFile p)
+      case r of
+        Right b | "BEGIN CERTIFICATE" `BS.isInfixOf` b -> pure (Just b)
+        Right _ -> go ps
+        Left (_ :: IOException) -> go ps
+
 -- | The proxy URL with user @app@ and the client's token as the password,
 -- percent escaped: @http://app:acn_...\@host:8888@. It holds the token: keep
 -- it out of logs.
@@ -1597,23 +1656,40 @@ forwardProxyURLOrThrow = orThrow . forwardProxyURL
 
 -- | The environment that sends an app through the forward proxy:
 -- @HTTPS_PROXY@ and @HTTP_PROXY@ ('forwardProxyURL'), @NODE_USE_ENV_PROXY=1@,
--- and @NODE_EXTRA_CA_CERTS@, @REQUESTS_CA_BUNDLE@ and @SSL_CERT_FILE@ set to
--- the CA path (pass @"acnologia-ca.pem"@ for the usual name). The proxy
+-- @NODE_EXTRA_CA_CERTS@ set to the CA path (pass @"acnologia-ca.pem"@ for the
+-- usual name), @REQUESTS_CA_BUNDLE@ and @SSL_CERT_FILE@ set to
+-- @acnologia-ca-bundle.pem@ (see 'forwardProxyEnvWithBundle'), and
+-- @NO_PROXY@ and @no_proxy@ set to @localhost,127.0.0.1,::1@. The proxy
 -- values hold the token: keep them out of logs.
 forwardProxyEnv :: Client -> FilePath -> IO (Either AcnologiaError (Map.Map Text Text))
-forwardProxyEnv c caPath = fmap env <$> forwardProxyURL c
+forwardProxyEnv c caPath = forwardProxyEnvWithBundle c caPath ""
+
+-- | 'forwardProxyEnv' that throws.
+forwardProxyEnvOrThrow :: Client -> FilePath -> IO (Map.Map Text Text)
+forwardProxyEnvOrThrow c = orThrow . forwardProxyEnv c
+
+-- | 'forwardProxyEnv' with @REQUESTS_CA_BUNDLE@ and @SSL_CERT_FILE@ set to
+-- the bundle path (empty means @"acnologia-ca-bundle.pem"@). Those replace
+-- the whole trust store, so the file must hold the system roots plus the CA:
+-- write it with 'saveForwardProxyCABundle'.
+forwardProxyEnvWithBundle :: Client -> FilePath -> FilePath -> IO (Either AcnologiaError (Map.Map Text Text))
+forwardProxyEnvWithBundle c caPath bundlePath = fmap env <$> forwardProxyURL c
   where
     ca = T.pack (if null caPath then "acnologia-ca.pem" else caPath)
+    bundle = T.pack (if null bundlePath then "acnologia-ca-bundle.pem" else bundlePath)
+    noProxy = "localhost,127.0.0.1,::1"
     env u =
       Map.fromList
         [ ("HTTPS_PROXY", u)
         , ("HTTP_PROXY", u)
         , ("NODE_USE_ENV_PROXY", "1")
         , ("NODE_EXTRA_CA_CERTS", ca)
-        , ("REQUESTS_CA_BUNDLE", ca)
-        , ("SSL_CERT_FILE", ca)
+        , ("REQUESTS_CA_BUNDLE", bundle)
+        , ("SSL_CERT_FILE", bundle)
+        , ("NO_PROXY", noProxy)
+        , ("no_proxy", noProxy)
         ]
 
--- | 'forwardProxyEnv' that throws.
-forwardProxyEnvOrThrow :: Client -> FilePath -> IO (Map.Map Text Text)
-forwardProxyEnvOrThrow c = orThrow . forwardProxyEnv c
+-- | 'forwardProxyEnvWithBundle' that throws.
+forwardProxyEnvWithBundleOrThrow :: Client -> FilePath -> FilePath -> IO (Map.Map Text Text)
+forwardProxyEnvWithBundleOrThrow c ca = orThrow . forwardProxyEnvWithBundle c ca

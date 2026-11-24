@@ -36,6 +36,9 @@ pub const ENV_TOKEN: &str = "ACNOLOGIA_TOKEN";
 pub const ENV_ACCESS_PASSWORD: &str = "ACNOLOGIA_ACCESS_PASSWORD";
 /// Where [`Client::save_forward_proxy_ca`] writes the CA by default.
 pub const DEFAULT_CA_PATH: &str = core::DEFAULT_CA_PATH;
+/// Where [`Client::save_forward_proxy_ca_bundle`] writes the system roots
+/// plus the CA by default.
+pub const DEFAULT_CA_BUNDLE_PATH: &str = core::DEFAULT_CA_BUNDLE_PATH;
 
 pub(crate) struct Inner {
     pub base_url: String,
@@ -376,6 +379,27 @@ impl Client {
         Ok(path)
     }
 
+    /// Save the system roots followed by the forward proxy's CA certificate
+    /// to `path` (default [`DEFAULT_CA_BUNDLE_PATH`]) and return the path.
+    /// `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust
+    /// store, so they need this bundle, not the CA alone. The roots come
+    /// from `$SSL_CERT_FILE` (when it is a PEM bundle other than `path`) or
+    /// the usual system bundles; it fails with [`Error::InvalidInput`] when
+    /// there is none, as on Windows.
+    pub async fn save_forward_proxy_ca_bundle(
+        &self,
+        path: Option<&Path>,
+    ) -> Result<PathBuf, Error> {
+        let path = path
+            .unwrap_or(Path::new(DEFAULT_CA_BUNDLE_PATH))
+            .to_path_buf();
+        let roots = core::system_roots(&path, std::env::var_os("SSL_CERT_FILE"))
+            .ok_or_else(core::no_system_roots)?;
+        let pem = self.forward_proxy_ca().await?;
+        std::fs::write(&path, core::ca_bundle(&roots, &pem))?;
+        Ok(path)
+    }
+
     /// The forward proxy URL with user `app` and this client's token as the
     /// password, such as `http://app:acn_...@host:8888`.
     ///
@@ -388,20 +412,38 @@ impl Client {
     /// The environment that sends an app's HTTP calls through the forward
     /// proxy: `HTTPS_PROXY` and `HTTP_PROXY` (the
     /// [`forward_proxy_url`](Client::forward_proxy_url)),
-    /// `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`,
-    /// `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `ca_path` (default
-    /// [`DEFAULT_CA_PATH`]). Save the CA there with
-    /// [`save_forward_proxy_ca`](Client::save_forward_proxy_ca).
+    /// `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `ca_path`
+    /// (default [`DEFAULT_CA_PATH`]), `SSL_CERT_FILE` and
+    /// `REQUESTS_CA_BUNDLE` set to [`DEFAULT_CA_BUNDLE_PATH`], and
+    /// `NO_PROXY` and `no_proxy` set to `localhost,127.0.0.1,::1`. Save the
+    /// CA with [`save_forward_proxy_ca`](Client::save_forward_proxy_ca) and
+    /// the bundle with
+    /// [`save_forward_proxy_ca_bundle`](Client::save_forward_proxy_ca_bundle).
+    /// [`forward_proxy_env_with_bundle`](Client::forward_proxy_env_with_bundle)
+    /// takes another bundle path.
     ///
     /// The proxy variables contain the app token: keep them out of logs.
     pub async fn forward_proxy_env(
         &self,
         ca_path: Option<&str>,
     ) -> Result<BTreeMap<String, String>, Error> {
+        self.forward_proxy_env_with_bundle(ca_path, None).await
+    }
+
+    /// [`forward_proxy_env`](Client::forward_proxy_env) with `SSL_CERT_FILE`
+    /// and `REQUESTS_CA_BUNDLE` set to `bundle_path` (default
+    /// [`DEFAULT_CA_BUNDLE_PATH`]). Those replace the whole trust store, so
+    /// the file must hold the system roots plus the CA.
+    pub async fn forward_proxy_env_with_bundle(
+        &self,
+        ca_path: Option<&str>,
+        bundle_path: Option<&str>,
+    ) -> Result<BTreeMap<String, String>, Error> {
         let url = self.forward_proxy_url().await?;
         Ok(core::forward_proxy_env(
             &url,
             ca_path.unwrap_or(DEFAULT_CA_PATH),
+            bundle_path.unwrap_or(DEFAULT_CA_BUNDLE_PATH),
         ))
     }
 

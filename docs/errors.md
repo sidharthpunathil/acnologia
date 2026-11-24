@@ -291,6 +291,14 @@ This Idempotency-Key was already used with a different request body.
 
 What to do: Use a new Idempotency-Key for a different request.
 
+### `invalid_key`
+
+HTTP 401. Retry: no, not without a change.
+
+The demo provider was called without a demo key.
+
+What to do: Call the demo service through /proxy/demo so Acnologia adds a demo key.
+
 ### `lease_not_allowed`
 
 HTTP 403. Retry: no, not without a change.
@@ -614,6 +622,14 @@ HTTP 400. Retry: no, not without a change.
 The proxy path has a literal ?, #, or a . or .. segment.
 
 What to do: Send the query string as query parameters and drop dot segments.
+
+### `bad_query`
+
+HTTP 400. Retry: no, not without a change.
+
+The query string could not be parsed.
+
+What to do: Send the query as key=value pairs joined with &, URL encoded.
 
 ### `bad_request`
 
@@ -1045,6 +1061,14 @@ What to do: Nothing to do on this server.
 
 ## Dashboard and admin API
 
+### `app_off`
+
+HTTP 403. Retry: no, not without a change.
+
+The internal Try it app is turned off.
+
+What to do: Turn the Try it app back on in Apps, or send app_id to try as another app.
+
 ### `audit_unavailable`
 
 HTTP 503. Retry: yes, after `retry_after_sec` when the error gives one.
@@ -1052,6 +1076,14 @@ HTTP 503. Retry: yes, after `retry_after_sec` when the error gives one.
 A key reveal could not be written to the audit log, so the key was not shown.
 
 What to do: Try again.
+
+### `bad_app`
+
+HTTP 400. Retry: no, not without a change.
+
+Try it named an app that does not exist or may not use this service.
+
+What to do: Pick an app from GET /api/admin/apps that may use the service, or leave app_id out to use the Try it app.
 
 ### `bad_provider`
 
@@ -1090,6 +1122,22 @@ A secret could not be decrypted.
 What to do: Check that ACNOLOGIA_MASTER_KEY is the key the data was written with.
 
 More in [/docs/configuration.md](/docs/configuration.md).
+
+### `demo_loaded`
+
+HTTP 409. Retry: no, not without a change.
+
+Demo data is already loaded.
+
+What to do: Remove it first with DELETE /api/admin/demo, then load it again.
+
+### `has_services`
+
+HTTP 409. Retry: no, not without a change.
+
+The server already has services, so demo data is not added by default.
+
+What to do: Send {"force": true} to POST /api/admin/demo to add it anyway.
 
 ### `in_use`
 
@@ -1150,6 +1198,14 @@ HTTP 502. Retry: yes, after `retry_after_sec` when the error gives one.
 Syncing tools from the service's upstream MCP server failed.
 
 What to do: Check the MCP URL and its auth, then sync again.
+
+### `no_demo`
+
+HTTP 404. Retry: no, not without a change.
+
+No demo data is loaded.
+
+What to do: Load it with POST /api/admin/demo.
 
 ### `no_health_check`
 

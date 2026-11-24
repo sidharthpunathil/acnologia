@@ -12,6 +12,7 @@ import qualified Data.Aeson as A
 import qualified Data.Aeson.Key as AK
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.CaseInsensitive as CI
 import Data.IORef
@@ -24,7 +25,7 @@ import qualified Network.HTTP.Client as H
 import Network.HTTP.Types (RequestHeaders, ResponseHeaders, Status, mkStatus, parseQuery, urlEncode)
 import qualified Network.Wai as W
 import qualified Network.Wai.Handler.Warp as Warp
-import System.Environment (setEnv, unsetEnv)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -769,6 +770,18 @@ v2Tests fake url =
         expectRight =<< saveForwardProxyCA c path
         saved <- BS.readFile path
         saved @?= TE.encodeUtf8 pemText
+        let roots = "dist-newstyle/acn-hs-test-roots.pem"
+            bundlePath = "dist-newstyle/acn-hs-test-bundle.pem"
+        BS.writeFile roots "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n"
+        old <- lookupEnv "SSL_CERT_FILE"
+        setEnv "SSL_CERT_FILE" roots
+        expectRight =<< saveForwardProxyCABundle c bundlePath
+        maybe (unsetEnv "SSL_CERT_FILE") (setEnv "SSL_CERT_FILE") old
+        bundle <- BS.readFile bundlePath
+        bundle
+          @?= "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\n"
+            <> BC.dropWhileEnd (== '\n') (TE.encodeUtf8 pemText)
+            <> "\n"
     , testCase "forwardProxyURL and forwardProxyEnv put the token in" $ do
         c <- newClientOrThrow defaultConfig {configBaseUrl = Just url, configToken = Just "acn_a+b/c="}
         u <- expectRight =<< forwardProxyURL c
@@ -780,11 +793,17 @@ v2Tests fake url =
             , ("HTTP_PROXY", u)
             , ("NODE_USE_ENV_PROXY", "1")
             , ("NODE_EXTRA_CA_CERTS", "acnologia-ca.pem")
-            , ("REQUESTS_CA_BUNDLE", "acnologia-ca.pem")
-            , ("SSL_CERT_FILE", "acnologia-ca.pem")
+            , ("REQUESTS_CA_BUNDLE", "acnologia-ca-bundle.pem")
+            , ("SSL_CERT_FILE", "acnologia-ca-bundle.pem")
+            , ("NO_PROXY", "localhost,127.0.0.1,::1")
+            , ("no_proxy", "localhost,127.0.0.1,::1")
             ]
         env2 <- expectRight =<< forwardProxyEnv c "/etc/acn.pem"
-        Map.lookup "SSL_CERT_FILE" env2 @?= Just "/etc/acn.pem"
+        Map.lookup "NODE_EXTRA_CA_CERTS" env2 @?= Just "/etc/acn.pem"
+        Map.lookup "SSL_CERT_FILE" env2 @?= Just "acnologia-ca-bundle.pem"
+        env3 <- expectRight =<< forwardProxyEnvWithBundle c "/etc/acn.pem" "/etc/bundle.pem"
+        Map.lookup "SSL_CERT_FILE" env3 @?= Just "/etc/bundle.pem"
+        Map.lookup "REQUESTS_CA_BUNDLE" env3 @?= Just "/etc/bundle.pem"
     , testCase "shareUnavailable names the share's status" $ do
         c <- client url
         e <- expectLeft =<< proxyGet c "err" "403/share_paused" []

@@ -262,10 +262,15 @@ describe("0.2.0 surface", () => {
       HTTP_PROXY: url,
       NODE_USE_ENV_PROXY: "1",
       NODE_EXTRA_CA_CERTS: "acnologia-ca.pem",
-      REQUESTS_CA_BUNDLE: "acnologia-ca.pem",
-      SSL_CERT_FILE: "acnologia-ca.pem",
+      REQUESTS_CA_BUNDLE: "acnologia-ca-bundle.pem",
+      SSL_CERT_FILE: "acnologia-ca-bundle.pem",
+      NO_PROXY: "localhost,127.0.0.1,::1",
+      no_proxy: "localhost,127.0.0.1,::1",
     });
-    expect((await client.forwardProxyEnv("/etc/ca.pem")).SSL_CERT_FILE).toBe("/etc/ca.pem");
+    const custom = await client.forwardProxyEnv("/etc/ca.pem", "/etc/bundle.pem");
+    expect(custom.NODE_EXTRA_CA_CERTS).toBe("/etc/ca.pem");
+    expect(custom.SSL_CERT_FILE).toBe("/etc/bundle.pem");
+    expect(custom.REQUESTS_CA_BUNDLE).toBe("/etc/bundle.pem");
   });
 
   it("forwardProxyURL percent escapes the token", async () => {

@@ -919,9 +919,13 @@ class AcnologiaHTTPTest < Minitest::Test
     env = client.forward_proxy_env
     url = "http://app:#{TOKEN}@acn.test:8888"
     assert_equal({ "HTTPS_PROXY" => url, "HTTP_PROXY" => url, "NODE_USE_ENV_PROXY" => "1",
-                   "NODE_EXTRA_CA_CERTS" => "acnologia-ca.pem", "REQUESTS_CA_BUNDLE" => "acnologia-ca.pem",
-                   "SSL_CERT_FILE" => "acnologia-ca.pem" }, env)
-    assert_equal "/tmp/ca.pem", client.forward_proxy_env("/tmp/ca.pem")["SSL_CERT_FILE"]
+                   "NODE_EXTRA_CA_CERTS" => "acnologia-ca.pem", "REQUESTS_CA_BUNDLE" => "acnologia-ca-bundle.pem",
+                   "SSL_CERT_FILE" => "acnologia-ca-bundle.pem",
+                   "NO_PROXY" => "localhost,127.0.0.1,::1", "no_proxy" => "localhost,127.0.0.1,::1" }, env)
+    custom = client.forward_proxy_env("/tmp/ca.pem", "/tmp/bundle.pem")
+    assert_equal "/tmp/ca.pem", custom["NODE_EXTRA_CA_CERTS"]
+    assert_equal "/tmp/bundle.pem", custom["SSL_CERT_FILE"]
+    assert_equal "/tmp/bundle.pem", custom["REQUESTS_CA_BUNDLE"]
   end
 
   def test_forward_proxy_ca_sends_no_token
@@ -937,6 +941,24 @@ class AcnologiaHTTPTest < Minitest::Test
     end
     answer(500, err("proxy_ca"))
     assert_raises(Acnologia::Error) { client.forward_proxy_ca }
+  end
+
+  def test_save_forward_proxy_ca_bundle
+    @fake.handler = ->(_req) { [200, { "Content-Type" => "application/x-pem-file" }, "CA\n"] }
+    Dir.mktmpdir do |dir|
+      roots = File.join(dir, "roots.pem")
+      File.write(roots, "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n")
+      old = ENV.fetch("SSL_CERT_FILE", nil)
+      ENV["SSL_CERT_FILE"] = roots
+      begin
+        path = File.join(dir, "bundle.pem")
+        assert_equal path, client.save_forward_proxy_ca_bundle(path)
+        assert_equal "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n",
+                     File.read(path)
+      ensure
+        ENV["SSL_CERT_FILE"] = old
+      end
+    end
   end
 
   def test_forward_proxy_http

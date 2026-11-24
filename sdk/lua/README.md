@@ -168,9 +168,11 @@ Apps can also call a provider's own URL with Acnologia as their `HTTPS_PROXY`. T
 
 ```lua
 acnologia.assert(client:save_forward_proxy_ca("acnologia-ca.pem"))  -- public route, sends no token
-local env = acnologia.assert(client:forward_proxy_env("acnologia-ca.pem"))
+acnologia.assert(client:save_forward_proxy_ca_bundle("acnologia-ca-bundle.pem"))  -- the system roots plus the CA
+local env = acnologia.assert(client:forward_proxy_env("acnologia-ca.pem", "acnologia-ca-bundle.pem"))
 -- { HTTPS_PROXY = "http://app:acn_...@keys.example.com:8888", HTTP_PROXY = ..., NODE_USE_ENV_PROXY = "1",
---   NODE_EXTRA_CA_CERTS = "acnologia-ca.pem", REQUESTS_CA_BUNDLE = "acnologia-ca.pem", SSL_CERT_FILE = "acnologia-ca.pem" }
+--   NODE_EXTRA_CA_CERTS = "acnologia-ca.pem", REQUESTS_CA_BUNDLE = "acnologia-ca-bundle.pem",
+--   SSL_CERT_FILE = "acnologia-ca-bundle.pem", NO_PROXY = "localhost,127.0.0.1,::1", no_proxy = "localhost,127.0.0.1,::1" }
 
 -- run a program whose own HTTP client then goes through the proxy
 local parts = {}
@@ -183,10 +185,13 @@ os.execute("env " .. table.concat(parts, " ") .. " curl -s https://api.openai.co
 | `client:forward_proxy()` | `GET /api/v1/proxy` as a table: `proxy_url`, `proxy_url_with_token`, `ca_url`, `ca_fingerprint`, `passthrough`, `hosts` (`host`, `service`, `name`, `path`), `env`, `service_header` |
 | `client:forward_proxy_ca()` | The CA certificate as PEM text, from `GET /api/v1/proxy/ca.pem`, sent without a token |
 | `client:save_forward_proxy_ca(path)` | Writes the PEM to `path` (default `acnologia-ca.pem`) and returns `path` |
+| `client:save_forward_proxy_ca_bundle(path)` | Writes the system roots plus the CA to `path` (default `acnologia-ca-bundle.pem`) and returns `path`. The roots come from `$SSL_CERT_FILE` or the usual system bundles; returns nil and a `no_system_roots` error when there are none, as on Windows |
 | `client:forward_proxy_url()` | `proxy_url` with user `app` and your token as the password, percent escaped |
-| `client:forward_proxy_env(ca_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` |
+| `client:forward_proxy_env(ca_path, bundle_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS` (`ca_path`), `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` (`bundle_path`, default `acnologia-ca-bundle.pem`), `NO_PROXY` and `no_proxy` (`localhost,127.0.0.1,::1`) |
 
 `forward_proxy()` holds a `<app token>` placeholder, never the token, so it is safe to log. `forward_proxy_url()` and `forward_proxy_env()` contain the real token: keep them out of logs.
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
 
 ## Errors
 

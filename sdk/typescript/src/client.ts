@@ -31,6 +31,10 @@ import type {
 export const VERSION = "0.2.0";
 /** Where `forwardProxyEnv` points the CA variables by default. */
 export const DEFAULT_CA_PATH = "acnologia-ca.pem";
+/** Where `forwardProxyEnv` points `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` by default. */
+export const DEFAULT_CA_BUNDLE_PATH = "acnologia-ca-bundle.pem";
+/** Hosts that stay off the forward proxy, which refuses hosts that are no service. */
+export const NO_PROXY = "localhost,127.0.0.1,::1";
 const CLIENT_HEADER = `acnologia-ts/${VERSION}`;
 const DEFAULT_TIMEOUT_MS = 75_000;
 const MAX_REPORT_MESSAGE = 500;
@@ -631,19 +635,28 @@ export class Acnologia {
 
   /**
    * Environment that sends an app's HTTP through the forward proxy: `HTTPS_PROXY` and
-   * `HTTP_PROXY` (the `forwardProxyURL`), `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`,
-   * `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `caPath`. Save `forwardProxyCA()` there
-   * first. It contains the token: do not log it.
+   * `HTTP_PROXY` (the `forwardProxyURL`), `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set
+   * to `caPath`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundlePath`, and `NO_PROXY`
+   * and `no_proxy` set to `localhost,127.0.0.1,::1`. Save `forwardProxyCA()` at `caPath`.
+   * `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so `bundlePath`
+   * must hold the system roots plus the CA: build it with `acn proxy ca --bundle`, or
+   * `cat <system roots> acnologia-ca.pem > acnologia-ca-bundle.pem`. It contains the token:
+   * do not log it.
    */
-  async forwardProxyEnv(caPath: string = DEFAULT_CA_PATH): Promise<Record<string, string>> {
+  async forwardProxyEnv(
+    caPath: string = DEFAULT_CA_PATH,
+    bundlePath: string = DEFAULT_CA_BUNDLE_PATH,
+  ): Promise<Record<string, string>> {
     const url = await this.forwardProxyURL();
     return {
       HTTPS_PROXY: url,
       HTTP_PROXY: url,
       NODE_USE_ENV_PROXY: "1",
       NODE_EXTRA_CA_CERTS: caPath,
-      REQUESTS_CA_BUNDLE: caPath,
-      SSL_CERT_FILE: caPath,
+      REQUESTS_CA_BUNDLE: bundlePath,
+      SSL_CERT_FILE: bundlePath,
+      NO_PROXY,
+      no_proxy: NO_PROXY,
     };
   }
 

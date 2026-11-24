@@ -192,19 +192,36 @@ class SurfaceTest {
     }
 
     @Test
+    void forwardProxyCaBundle(@TempDir Path dir) throws IOException {
+        Path roots = dir.resolve("roots.pem");
+        Files.writeString(roots, "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n");
+        Path target = dir.resolve("bundle.pem");
+        String found = Acnologia.systemRoots(target, roots.toString());
+        assertEquals("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n",
+                Acnologia.caBundle(found, "CA\n"));
+    }
+
+    @Test
     void forwardProxyUrlAndEnv() {
         assertEquals("http://app:acn_test@acn.test:8888", c.forwardProxyUrl());
         assertEquals("http://app:acn_test@acn.test:8888", c.forwardProxyUrlAsync().join());
         Map<String, String> env = c.forwardProxyEnv();
         assertEquals(List.of("HTTPS_PROXY", "HTTP_PROXY", "NODE_USE_ENV_PROXY", "NODE_EXTRA_CA_CERTS",
-                "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"), List.copyOf(env.keySet()));
+                "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "NO_PROXY", "no_proxy"), List.copyOf(env.keySet()));
         assertEquals("http://app:acn_test@acn.test:8888", env.get("HTTPS_PROXY"));
         assertEquals("http://app:acn_test@acn.test:8888", env.get("HTTP_PROXY"));
         assertEquals("1", env.get("NODE_USE_ENV_PROXY"));
-        assertEquals("acnologia-ca.pem", env.get("SSL_CERT_FILE"));
+        assertEquals("acnologia-ca.pem", env.get("NODE_EXTRA_CA_CERTS"));
+        assertEquals("acnologia-ca-bundle.pem", env.get("SSL_CERT_FILE"));
+        assertEquals("acnologia-ca-bundle.pem", env.get("REQUESTS_CA_BUNDLE"));
+        assertEquals("localhost,127.0.0.1,::1", env.get("NO_PROXY"));
+        assertEquals("localhost,127.0.0.1,::1", env.get("no_proxy"));
         Map<String, String> custom = c.forwardProxyEnvAsync("/etc/acn.pem").join();
         assertEquals("/etc/acn.pem", custom.get("NODE_EXTRA_CA_CERTS"));
-        assertEquals("/etc/acn.pem", custom.get("REQUESTS_CA_BUNDLE"));
+        assertEquals("acnologia-ca-bundle.pem", custom.get("REQUESTS_CA_BUNDLE"));
+        Map<String, String> both = c.forwardProxyEnv("/etc/acn.pem", "/etc/bundle.pem");
+        assertEquals("/etc/bundle.pem", both.get("SSL_CERT_FILE"));
+        assertEquals("/etc/bundle.pem", both.get("REQUESTS_CA_BUNDLE"));
     }
 
     @Test

@@ -429,6 +429,82 @@ public final class Acnologia {
     }
 
     /**
+     * Saves the system roots plus the forward proxy's CA certificate to
+     * {@code acnologia-ca-bundle.pem}.
+     *
+     * @return the path written
+     * @see #saveForwardProxyCaBundle(Path)
+     */
+    public Path saveForwardProxyCaBundle() {
+        return saveForwardProxyCaBundle(Path.of(DEFAULT_CA_BUNDLE_PATH));
+    }
+
+    /**
+     * Writes the system roots followed by the forward proxy's CA certificate
+     * to {@code path}. {@code SSL_CERT_FILE} and {@code REQUESTS_CA_BUNDLE}
+     * replace the whole trust store, so they need this bundle, not the CA
+     * alone. The roots come from {@code $SSL_CERT_FILE} (when it is a PEM
+     * bundle other than {@code path}) or the usual system bundles.
+     *
+     * @param path where to write the bundle
+     * @return {@code path}
+     * @throws AcnologiaException when no system roots are found, as on Windows
+     */
+    public Path saveForwardProxyCaBundle(Path path) {
+        String roots = systemRoots(path, System.getenv("SSL_CERT_FILE"));
+        if (roots == null) {
+            throw new AcnologiaException("acnologia: no system root certificates found. SSL_CERT_FILE and "
+                    + "REQUESTS_CA_BUNDLE need a bundle of the system roots plus the Acnologia CA; "
+                    + "NODE_EXTRA_CA_CERTS takes the CA alone");
+        }
+        try {
+            Files.writeString(path, caBundle(roots, forwardProxyCa()), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new AcnologiaException("acnologia: write " + path + ": " + e.getMessage(), e);
+        }
+        return path;
+    }
+
+    private static final List<String> SYSTEM_ROOTS = List.of(
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/pki/tls/certs/ca-bundle.crt",
+            "/etc/ssl/ca-bundle.pem",
+            "/etc/ssl/cert.pem");
+
+    /** The first system root bundle found ({@code envCertFile} first), skipping {@code target}. */
+    static String systemRoots(Path target, String envCertFile) {
+        if (System.getProperty("os.name", "").toLowerCase().startsWith("windows")) {
+            return null;
+        }
+        List<String> paths = new ArrayList<>();
+        if (envCertFile != null && !envCertFile.isEmpty()) {
+            paths.add(envCertFile);
+        }
+        paths.addAll(SYSTEM_ROOTS);
+        for (String p : paths) {
+            Path candidate = Path.of(p);
+            try {
+                if (Files.exists(target) && Files.exists(candidate) && Files.isSameFile(candidate, target)) {
+                    continue;
+                }
+                String text = Files.readString(candidate, StandardCharsets.UTF_8);
+                if (text.contains("BEGIN CERTIFICATE")) {
+                    return text;
+                }
+            } catch (IOException | RuntimeException e) {
+                // not readable: try the next one
+            }
+        }
+        return null;
+    }
+
+    /** The system roots followed by the Acnologia CA. */
+    static String caBundle(String roots, String ca) {
+        return roots.replaceFirst("\\n+$", "") + "\n\n# Acnologia forward proxy CA\n"
+                + ca.replaceFirst("\\n+$", "") + "\n";
+    }
+
+    /**
      * Returns the forward proxy URL with user {@code app} and this client's
      * token as the password, such as {@code http://app:acn_...@host:8888}.
      * The result contains the token: keep it out of logs.
@@ -449,28 +525,43 @@ public final class Acnologia {
     }
 
     /**
-     * {@link #forwardProxyEnv(String)} with the CA at {@code acnologia-ca.pem}.
-     * The result contains the token.
+     * {@link #forwardProxyEnv(String, String)} with the CA at
+     * {@code acnologia-ca.pem} and the bundle at
+     * {@code acnologia-ca-bundle.pem}. The result contains the token.
      *
      * @return the environment
      */
     public Map<String, String> forwardProxyEnv() {
-        return forwardProxyEnv(DEFAULT_CA_PATH);
+        return forwardProxyEnv(DEFAULT_CA_PATH, DEFAULT_CA_BUNDLE_PATH);
     }
 
     /**
-     * Returns the environment that sends an app's HTTP calls through the
-     * forward proxy: {@code HTTPS_PROXY} and {@code HTTP_PROXY} (the
-     * {@link #forwardProxyUrl()}), {@code NODE_USE_ENV_PROXY=1}, and
-     * {@code NODE_EXTRA_CA_CERTS}, {@code REQUESTS_CA_BUNDLE} and
-     * {@code SSL_CERT_FILE} set to {@code caPath}. The proxy URLs contain the
-     * token: keep the map out of logs.
+     * {@link #forwardProxyEnv(String, String)} with the bundle at
+     * {@code acnologia-ca-bundle.pem}. The result contains the token.
      *
      * @param caPath where the CA certificate is (see {@link #saveForwardProxyCa(Path)})
      * @return the environment, in a fixed order
      */
     public Map<String, String> forwardProxyEnv(String caPath) {
-        return proxyEnv(forwardProxy(), caPath);
+        return forwardProxyEnv(caPath, DEFAULT_CA_BUNDLE_PATH);
+    }
+
+    /**
+     * Returns the environment that sends an app's HTTP calls through the
+     * forward proxy: {@code HTTPS_PROXY} and {@code HTTP_PROXY} (the
+     * {@link #forwardProxyUrl()}), {@code NODE_USE_ENV_PROXY=1},
+     * {@code NODE_EXTRA_CA_CERTS} set to {@code caPath},
+     * {@code REQUESTS_CA_BUNDLE} and {@code SSL_CERT_FILE} set to
+     * {@code bundlePath}, and {@code NO_PROXY} and {@code no_proxy} set to
+     * {@code localhost,127.0.0.1,::1}. The proxy URLs contain the token: keep
+     * the map out of logs.
+     *
+     * @param caPath where the CA certificate is (see {@link #saveForwardProxyCa(Path)})
+     * @param bundlePath where the system roots plus the CA are (see {@link #saveForwardProxyCaBundle(Path)})
+     * @return the environment, in a fixed order
+     */
+    public Map<String, String> forwardProxyEnv(String caPath, String bundlePath) {
+        return proxyEnv(forwardProxy(), caPath, bundlePath);
     }
 
     /**
@@ -480,22 +571,38 @@ public final class Acnologia {
      * @return the environment
      */
     public CompletableFuture<Map<String, String>> forwardProxyEnvAsync(String caPath) {
-        return forwardProxyAsync().thenApply(fp -> proxyEnv(fp, caPath));
+        return forwardProxyEnvAsync(caPath, DEFAULT_CA_BUNDLE_PATH);
+    }
+
+    /**
+     * Async form of {@link #forwardProxyEnv(String, String)}. The result contains the token.
+     *
+     * @param caPath where the CA certificate is
+     * @param bundlePath where the system roots plus the CA are
+     * @return the environment
+     */
+    public CompletableFuture<Map<String, String>> forwardProxyEnvAsync(String caPath, String bundlePath) {
+        return forwardProxyAsync().thenApply(fp -> proxyEnv(fp, caPath, bundlePath));
     }
 
     private static final String CA_PATH = "/api/v1/proxy/ca.pem";
     private static final String DEFAULT_CA_PATH = "acnologia-ca.pem";
+    private static final String DEFAULT_CA_BUNDLE_PATH = "acnologia-ca-bundle.pem";
+    private static final String NO_PROXY = "localhost,127.0.0.1,::1";
 
-    private Map<String, String> proxyEnv(ForwardProxy fp, String caPath) {
+    private Map<String, String> proxyEnv(ForwardProxy fp, String caPath, String bundlePath) {
         String url = proxyUrlWithToken(fp);
         String ca = caPath == null || caPath.isEmpty() ? DEFAULT_CA_PATH : caPath;
+        String bundle = bundlePath == null || bundlePath.isEmpty() ? DEFAULT_CA_BUNDLE_PATH : bundlePath;
         Map<String, String> env = new LinkedHashMap<>();
         env.put("HTTPS_PROXY", url);
         env.put("HTTP_PROXY", url);
         env.put("NODE_USE_ENV_PROXY", "1");
         env.put("NODE_EXTRA_CA_CERTS", ca);
-        env.put("REQUESTS_CA_BUNDLE", ca);
-        env.put("SSL_CERT_FILE", ca);
+        env.put("REQUESTS_CA_BUNDLE", bundle);
+        env.put("SSL_CERT_FILE", bundle);
+        env.put("NO_PROXY", NO_PROXY);
+        env.put("no_proxy", NO_PROXY);
         return Collections.unmodifiableMap(env);
     }
 

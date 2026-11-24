@@ -57,8 +57,8 @@ mod types;
 pub mod blocking;
 
 pub use client::{
-    check_status, Client, ClientBuilder, Lease, DEFAULT_CA_PATH, DEFAULT_TIMEOUT,
-    ENV_ACCESS_PASSWORD, ENV_TOKEN, ENV_URL,
+    check_status, Client, ClientBuilder, Lease, DEFAULT_CA_BUNDLE_PATH, DEFAULT_CA_PATH,
+    DEFAULT_TIMEOUT, ENV_ACCESS_PASSWORD, ENV_TOKEN, ENV_URL,
 };
 pub use error::{BoxError, Error};
 pub use lease_info::LeaseInfo;

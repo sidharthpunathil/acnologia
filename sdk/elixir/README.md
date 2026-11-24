@@ -134,11 +134,13 @@ they are. Acnologia injects the key for the service whose host matches.
 {:ok, setup} = Acnologia.forward_proxy(acn)   # proxy_url, ca_url, ca_fingerprint, hosts, env, ...
 {:ok, pem} = Acnologia.forward_proxy_ca(acn)   # public, no token sent
 {:ok, "acnologia-ca.pem"} = Acnologia.save_forward_proxy_ca(acn)
+{:ok, "acnologia-ca-bundle.pem"} = Acnologia.save_forward_proxy_ca_bundle(acn)  # system roots plus the CA
 
-{:ok, env} = Acnologia.forward_proxy_env(acn, "acnologia-ca.pem")
+{:ok, env} = Acnologia.forward_proxy_env(acn, "acnologia-ca.pem", "acnologia-ca-bundle.pem")
 # %{"HTTPS_PROXY" => "http://app:acn_...@host:8888", "HTTP_PROXY" => ...,
 #   "NODE_USE_ENV_PROXY" => "1", "NODE_EXTRA_CA_CERTS" => "acnologia-ca.pem",
-#   "REQUESTS_CA_BUNDLE" => "acnologia-ca.pem", "SSL_CERT_FILE" => "acnologia-ca.pem"}
+#   "REQUESTS_CA_BUNDLE" => "acnologia-ca-bundle.pem", "SSL_CERT_FILE" => "acnologia-ca-bundle.pem",
+#   "NO_PROXY" => "localhost,127.0.0.1,::1", "no_proxy" => "localhost,127.0.0.1,::1"}
 
 # run another program through the proxy
 System.cmd("node", ["--use-env-proxy", "app.js"], env: Map.to_list(env))
@@ -159,9 +161,14 @@ cacerts = for {:Certificate, der, _} <- :public_key.pem_decode(pem), do: der
    ssl: [verify: :verify_peer, cacerts: cacerts ++ :public_key.cacerts_get()]], [], :acnologia)
 ```
 
-`forward_proxy_url/1` and `forward_proxy_env/2` hold the app token: never
+`forward_proxy_url/1` and `forward_proxy_env/3` hold the app token: never
 log them. `%Acnologia.ForwardProxy{}` never does (its
 `proxy_url_with_token` has an `<app token>` placeholder).
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
+`save_forward_proxy_ca_bundle/2` takes the roots from `$SSL_CERT_FILE` or
+the usual system bundles and returns an `:invalid_argument` error when there
+are none, as on Windows.
 
 ## Leases
 

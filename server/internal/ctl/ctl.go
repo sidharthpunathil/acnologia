@@ -73,6 +73,10 @@ Forward proxy (apps set Acnologia as HTTPS_PROXY and call provider URLs):
   proxy ca [--out file|-]        save the CA certificate apps must trust (acnologia-ca.pem)
   proxy env [--token acn_...] [--ca file]
                                  export lines: HTTPS_PROXY, NODE_EXTRA_CA_CERTS and friends
+  run [--token acn_...] -- <cmd> [args]
+                                 run one command through the forward proxy ($ACN_APP_TOKEN)
+  scan [paths...] [--import [--yes]]
+                                 find provider keys in .env, shell and agent config files
 
 Connect Claude (MCP):
   mcp [--context name] [--groups g1,g2] [--exclude t1,t2] [--read-only] [--confirm on|off]
@@ -113,6 +117,9 @@ func (c *cli) exec(args []string) int {
 	err := c.run(args)
 	if err == nil {
 		return 0
+	}
+	if code, ok := err.(childExit); ok { // acn run: the command's own exit code
+		return int(code)
 	}
 	if c.json {
 		b, _ := json.MarshalIndent(map[string]any{"error": errorJSON(err)}, "", "  ")
@@ -237,6 +244,9 @@ func (c *cli) name() string {
 }
 
 func (c *cli) run(args []string) error {
+	if len(args) > 0 && args[0] == "run" { // before --json: the command's flags are its own
+		return c.runChild(args[1:])
+	}
 	// --json may sit anywhere on the line.
 	rest := args[:0:0]
 	for _, a := range args {
@@ -297,6 +307,8 @@ func (c *cli) run(args []string) error {
 		return c.apps(args[1:])
 	case "tokens":
 		return c.tokens(args[1:])
+	case "scan":
+		return c.scan(args[1:])
 	}
 	return usageErrorf("unknown command %q; run %s help", args[0], c.name())
 }

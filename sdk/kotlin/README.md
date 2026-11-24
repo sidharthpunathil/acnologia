@@ -199,7 +199,8 @@ Your app can keep calling provider URLs as they are, with Acnologia as its HTTPS
 
 ```kotlin
 acn.saveForwardProxyCA()                  // writes acnologia-ca.pem
-val env = acn.forwardProxyEnv()           // HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE
+acn.saveForwardProxyCABundle()            // writes acnologia-ca-bundle.pem: the system roots plus the CA
+val env = acn.forwardProxyEnv()           // HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, NO_PROXY, ...
 ProcessBuilder("node", "app.js").apply { environment().putAll(env) }.start()
 ```
 
@@ -215,6 +216,8 @@ http.newCall(Request.Builder().url("https://serpapi.com/search.json?q=coffee").b
 - `forwardProxy()` returns the setup: `proxyUrl`, `proxyUrlWithToken` (with a `<app token>` placeholder), `caUrl`, `caFingerprint`, `passthrough`, `hosts`, `env` and `serviceHeader`. It holds no token, so it is safe to log.
 - `forwardProxyUrl()` is `proxyUrl` with user `app` and your token as the password. It and `forwardProxyEnv(caPath)` contain the token: do not log them.
 - `forwardProxyCA()` returns the PEM. It is public and sent without the token.
+- `forwardProxyEnv(caPath, bundlePath)` sets `NODE_EXTRA_CA_CERTS` to `caPath` (default `acnologia-ca.pem`), `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` to `bundlePath` (default `acnologia-ca-bundle.pem`), and `NO_PROXY` and `no_proxy` to `localhost,127.0.0.1,::1`. `NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
+- `saveForwardProxyCABundle(path)` takes the roots from `$SSL_CERT_FILE` or the usual system bundles and throws `AcnologiaException` when there are none, as on Windows.
 
 ## Handle errors
 

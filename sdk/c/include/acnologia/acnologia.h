@@ -488,6 +488,14 @@ acn_code acn_forward_proxy_ca(acn_client *client, char **out, acn_error *err);
 /* Fetches the CA and writes it to path (NULL means "acnologia-ca.pem"). */
 acn_code acn_forward_proxy_save_ca(acn_client *client, const char *path, acn_error *err);
 
+/* Fetches the CA and writes the system roots followed by it to path (NULL
+ * means "acnologia-ca-bundle.pem"). SSL_CERT_FILE and REQUESTS_CA_BUNDLE
+ * replace the whole trust store, so they need this bundle, not the CA
+ * alone. The roots come from $SSL_CERT_FILE (when it is a PEM bundle other
+ * than path) or the usual system bundles. ACN_ERR_INVALID_ARGUMENT when
+ * there is none, as on Windows. */
+acn_code acn_forward_proxy_save_ca_bundle(acn_client *client, const char *path, acn_error *err);
+
 /* The proxy URL with user "app" and the client's token as the password,
  * percent escaped: http://app:acn_...@host:8888. It holds the token: do not
  * log it. Free with acn_free. */
@@ -500,11 +508,20 @@ typedef struct acn_env {
 } acn_env;
 
 /* The environment that sends an app through the forward proxy: HTTPS_PROXY
- * and HTTP_PROXY (acn_forward_proxy_url), NODE_USE_ENV_PROXY=1, and
- * NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to ca_path
- * (NULL means "acnologia-ca.pem"). The proxy values hold the token: do not
- * log them. Free with acn_env_free, which wipes them. */
+ * and HTTP_PROXY (acn_forward_proxy_url), NODE_USE_ENV_PROXY=1,
+ * NODE_EXTRA_CA_CERTS set to ca_path (NULL means "acnologia-ca.pem"),
+ * REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to "acnologia-ca-bundle.pem" (see
+ * acn_forward_proxy_env_bundle), and NO_PROXY and no_proxy set to
+ * "localhost,127.0.0.1,::1". The proxy values hold the token: do not log
+ * them. Free with acn_env_free, which wipes them. */
 acn_code acn_forward_proxy_env(acn_client *client, const char *ca_path, acn_env **out, acn_error *err);
+
+/* acn_forward_proxy_env with REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to
+ * bundle_path (NULL means "acnologia-ca-bundle.pem"). Those replace the
+ * whole trust store, so the file must hold the system roots plus the CA:
+ * write it with acn_forward_proxy_save_ca_bundle. */
+acn_code acn_forward_proxy_env_bundle(acn_client *client, const char *ca_path, const char *bundle_path,
+                                      acn_env **out, acn_error *err);
 void acn_env_free(acn_env *env);
 
 /* The value of one variable, or NULL. Owned by the env. */

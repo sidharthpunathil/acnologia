@@ -994,6 +994,28 @@ defmodule AcnologiaTest do
       assert File.read!(path) == pem
     end
 
+    test "save_forward_proxy_ca_bundle/2 writes the system roots plus the CA" do
+      srv = serve(fn _ -> {200, [{"content-type", "application/x-pem-file"}], "CA\n"} end)
+      c = client(srv)
+      tmp = Path.join(System.tmp_dir!(), "acn-bundle-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      roots = Path.join(tmp, "roots.pem")
+      File.write!(roots, "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n")
+      old = System.get_env("SSL_CERT_FILE")
+      System.put_env("SSL_CERT_FILE", roots)
+
+      on_exit(fn ->
+        if old, do: System.put_env("SSL_CERT_FILE", old), else: System.delete_env("SSL_CERT_FILE")
+        File.rm_rf(tmp)
+      end)
+
+      path = Path.join(tmp, "bundle.pem")
+      assert {:ok, ^path} = Acnologia.save_forward_proxy_ca_bundle(c, path)
+
+      assert File.read!(path) ==
+               "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n"
+    end
+
     test "forward_proxy_url/1 and forward_proxy_env/2 put the token in the URL" do
       srv = serve(fn _ -> {200, [], @fp_json} end)
       c = Acnologia.new!(base_url: srv.url, token: "acn_a/b+c")
@@ -1006,12 +1028,21 @@ defmodule AcnologiaTest do
                "HTTP_PROXY" => url,
                "NODE_USE_ENV_PROXY" => "1",
                "NODE_EXTRA_CA_CERTS" => "acnologia-ca.pem",
-               "REQUESTS_CA_BUNDLE" => "acnologia-ca.pem",
-               "SSL_CERT_FILE" => "acnologia-ca.pem"
+               "REQUESTS_CA_BUNDLE" => "acnologia-ca-bundle.pem",
+               "SSL_CERT_FILE" => "acnologia-ca-bundle.pem",
+               "NO_PROXY" => "localhost,127.0.0.1,::1",
+               "no_proxy" => "localhost,127.0.0.1,::1"
              }
 
-      assert {:ok, %{"SSL_CERT_FILE" => "/etc/acn.pem"}} =
+      assert {:ok,
+              %{
+                "NODE_EXTRA_CA_CERTS" => "/etc/acn.pem",
+                "SSL_CERT_FILE" => "acnologia-ca-bundle.pem"
+              }} =
                Acnologia.forward_proxy_env(c, "/etc/acn.pem")
+
+      assert {:ok, %{"SSL_CERT_FILE" => "/etc/b.pem", "REQUESTS_CA_BUNDLE" => "/etc/b.pem"}} =
+               Acnologia.forward_proxy_env(c, "/etc/acn.pem", "/etc/b.pem")
     end
 
     test "app_limit_reached?/1" do

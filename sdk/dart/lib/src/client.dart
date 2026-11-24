@@ -225,6 +225,25 @@ class Acnologia {
     return path;
   }
 
+  /// Writes the system roots followed by the forward proxy's CA certificate
+  /// to [path], then returns [path]. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`
+  /// replace the whole trust store, so they need this bundle, not the CA
+  /// alone. The roots come from `$SSL_CERT_FILE` (when it is a PEM bundle
+  /// other than [path]) or the usual system bundles. Throws [StateError]
+  /// when there is none, as on Windows, and [UnsupportedError] on the web.
+  Future<String> saveForwardProxyCABundle([String path = 'acnologia-ca-bundle.pem']) async {
+    final roots = await env.systemRoots(path);
+    if (roots == null) {
+      throw StateError('acnologia: no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE '
+          'need a bundle of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone');
+    }
+    final ca = await forwardProxyCA();
+    await env.writeTextFile(path, '${_trimNewlines(roots)}\n\n# Acnologia forward proxy CA\n${_trimNewlines(ca)}\n');
+    return path;
+  }
+
+  static String _trimNewlines(String s) => s.replaceFirst(RegExp(r'\n+$'), '');
+
   /// Returns the forward proxy URL with user `app` and this client's token as
   /// the password, for example `http://app:acn_...@host:8888`.
   ///
@@ -233,20 +252,26 @@ class Acnologia {
 
   /// Returns the environment an app needs to send its own HTTP calls through
   /// the forward proxy: `HTTPS_PROXY` and `HTTP_PROXY` (the
-  /// [forwardProxyURL]), `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`,
-  /// `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to [caPath]. Save the CA
-  /// there with [saveForwardProxyCA].
+  /// [forwardProxyURL]), `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to
+  /// [caPath], `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to [bundlePath],
+  /// and `NO_PROXY` and `no_proxy` set to `localhost,127.0.0.1,::1`. Save the
+  /// CA with [saveForwardProxyCA] and the bundle (system roots plus the CA)
+  /// with [saveForwardProxyCABundle].
   ///
   /// The result holds the app token: never log it.
-  Future<Map<String, String>> forwardProxyEnv([String caPath = 'acnologia-ca.pem']) async {
+  Future<Map<String, String>> forwardProxyEnv(
+      [String caPath = 'acnologia-ca.pem', String bundlePath = 'acnologia-ca-bundle.pem']) async {
     final url = _forwardProxyURL(await forwardProxy());
+    const noProxy = 'localhost,127.0.0.1,::1';
     return {
       'HTTPS_PROXY': url,
       'HTTP_PROXY': url,
       'NODE_USE_ENV_PROXY': '1',
       'NODE_EXTRA_CA_CERTS': caPath,
-      'REQUESTS_CA_BUNDLE': caPath,
-      'SSL_CERT_FILE': caPath,
+      'REQUESTS_CA_BUNDLE': bundlePath,
+      'SSL_CERT_FILE': bundlePath,
+      'NO_PROXY': noProxy,
+      'no_proxy': noProxy,
     };
   }
 

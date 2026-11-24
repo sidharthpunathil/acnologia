@@ -157,6 +157,45 @@ func (c *cli) proxyDir() string {
 	return filepath.Dir(c.configPath())
 }
 
+// writeCAFiles saves the CA, and a bundle of the system roots plus the CA,
+// next to the CLI config: one pair of files per CA, so two servers' files do
+// not overwrite each other. A ca or bundle path the caller gives is used
+// instead of the default, and a given ca is not written. The bundle path
+// comes back empty when no system roots were found (Windows keeps them in
+// the certificate store), since the CA alone would break every other host.
+func (c *cli) writeCAFiles(pem []byte, fingerprint, ca, bundle string) (string, string, error) {
+	dir := c.proxyDir()
+	tag := strings.ToLower(strings.ReplaceAll(fingerprint, ":", ""))
+	if len(tag) > 16 {
+		tag = tag[:16]
+	}
+	if tag != "" {
+		tag = "-" + tag
+	}
+	if ca == "" || bundle == "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", "", err
+		}
+	}
+	if ca == "" {
+		ca = filepath.Join(dir, "proxy-ca"+tag+".pem")
+		if err := os.WriteFile(ca, pem, 0o644); err != nil {
+			return "", "", err
+		}
+	}
+	src, roots := systemRoots(runtime.GOOS, os.Getenv, dir)
+	if src == "" {
+		return ca, "", nil
+	}
+	if bundle == "" {
+		bundle = filepath.Join(dir, "proxy-ca-bundle"+tag+".pem")
+	}
+	if err := os.WriteFile(bundle, caBundle(roots, pem), 0o644); err != nil {
+		return "", "", err
+	}
+	return ca, bundle, nil
+}
+
 // proxyCA saves the CA certificate, to acnologia-ca.pem by default. With
 // --bundle it saves the system roots plus the CA instead
 // (acnologia-ca-bundle.pem by default), for SSL_CERT_FILE and
@@ -241,36 +280,11 @@ func (c *cli) proxyEnv(args []string) error {
 	if err != nil {
 		return err
 	}
-	dir := c.proxyDir()
-	// One pair of files per CA, so two servers' env lines do not overwrite
-	// each other's bundle.
-	tag := strings.ToLower(strings.ReplaceAll(s.CAFingerprint, ":", ""))
-	if len(tag) > 16 {
-		tag = tag[:16]
+	ca, bundle, err = c.writeCAFiles(pem, s.CAFingerprint, ca, bundle)
+	if err != nil {
+		return err
 	}
-	if tag != "" {
-		tag = "-" + tag
-	}
-	if ca == "" || bundle == "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
-	}
-	if ca == "" {
-		ca = filepath.Join(dir, "proxy-ca"+tag+".pem")
-		if err := os.WriteFile(ca, pem, 0o644); err != nil {
-			return err
-		}
-	}
-	src, roots := systemRoots(runtime.GOOS, os.Getenv, dir)
-	if src != "" {
-		if bundle == "" {
-			bundle = filepath.Join(dir, "proxy-ca-bundle"+tag+".pem")
-		}
-		if err := os.WriteFile(bundle, caBundle(roots, pem), 0o644); err != nil {
-			return err
-		}
-	}
+	src := bundle
 	cred := "${ACN_APP_TOKEN}"
 	if token != "" {
 		cred = url.PathEscape(token)

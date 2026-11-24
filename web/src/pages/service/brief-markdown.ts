@@ -1,6 +1,7 @@
 import type { GuideDoc, Provider, Service, SpecExample } from "../../lib/types";
 import { limitText, matchText, offersOf, priceText } from "../../lib/offers";
 import { CA_PATH, proxyWithToken } from "../../lib/forwardProxy";
+import { CA_BUNDLE_FILE, NO_PROXY } from "./snippets-forward";
 
 /*
  * A Markdown brief an LLM can act on with no other context: where to send
@@ -80,7 +81,7 @@ export function buildBrief({ service, provider, host, token, guide, forwardProxy
     const fwd = proxyWithToken(forwardProxy || host, auth);
     out.push("### Forward proxy", "");
     out.push(
-    `Code that already calls ${ic(service.base_url)} can keep that URL and use Acnologia as its HTTPS proxy instead: set ${ic(`HTTPS_PROXY=${fwd}`)} and trust the Acnologia CA from ${ic(`${host.replace(/\/$/, "")}${CA_PATH}`)} (Node: ${ic("NODE_EXTRA_CA_CERTS=acnologia-ca.pem")} and ${ic("node --use-env-proxy")}; Python: ${ic("REQUESTS_CA_BUNDLE=acnologia-ca.pem")}; curl: ${ic("--cacert acnologia-ca.pem")}). Acnologia adds the key and replaces any key the request carries. Send ${ic(`X-Acnologia-Service: ${service.slug}`)} if another service shares the host.`,
+    `Code that already calls ${ic(service.base_url)} can keep that URL and use Acnologia as its HTTPS proxy instead: set ${ic(`HTTPS_PROXY=${fwd}`)} and trust the Acnologia CA from ${ic(`${host.replace(/\/$/, "")}${CA_PATH}`)} (Node: ${ic("NODE_EXTRA_CA_CERTS=acnologia-ca.pem")} and ${ic("node --use-env-proxy")}; curl: ${ic("--cacert acnologia-ca.pem")}). ${ic("SSL_CERT_FILE")} and ${ic("REQUESTS_CA_BUNDLE")} replace the whole trust store, so point them at a bundle of the system roots plus the CA (${ic(CA_BUNDLE_FILE)}, made by ${ic("acn proxy ca --bundle")}), never at the CA alone. Set ${ic(`NO_PROXY=${NO_PROXY}`)} so local calls skip the proxy. ${ic("acn run -- <command>")} sets all of this for one command. Acnologia adds the key and replaces any key the request carries. Send ${ic(`X-Acnologia-Service: ${service.slug}`)} if another service shares the host.`,
     );
     out.push("");
   }

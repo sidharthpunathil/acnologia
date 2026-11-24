@@ -202,7 +202,8 @@ for (const auto& t : resp.tried()) std::cout << "tried " << t.service << ": " <<
 An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Save the CA and set the environment, then use the app's own HTTP client:
 
 ```cpp
-client.save_forward_proxy_ca();  // writes acnologia-ca.pem
+client.save_forward_proxy_ca();         // writes acnologia-ca.pem
+client.save_forward_proxy_ca_bundle();  // writes acnologia-ca-bundle.pem: the system roots plus the CA
 for (const auto& [name, value] : client.forward_proxy_env()) setenv(name.c_str(), value.c_str(), 1);
 // curl https://serpapi.com/search.json now goes through Acnologia
 ```
@@ -212,7 +213,7 @@ or with libcurl directly:
 ```cpp
 std::string proxy = client.forward_proxy_url();  // http://app:acn_...@host:8888
 curl_easy_setopt(h, CURLOPT_PROXY, proxy.c_str());
-curl_easy_setopt(h, CURLOPT_CAINFO, "acnologia-ca.pem");
+curl_easy_setopt(h, CURLOPT_CAINFO, "acnologia-ca-bundle.pem");
 ```
 
 | Call | Returns |
@@ -220,10 +221,13 @@ curl_easy_setopt(h, CURLOPT_CAINFO, "acnologia-ca.pem");
 | `forward_proxy()` | `ForwardProxy`: `proxy_url`, `proxy_url_with_token` (with an `<app token>` placeholder), `ca_url`, `ca_fingerprint`, `passthrough`, `hosts{host, service, name, path}`, `env`, `service_header` |
 | `forward_proxy_ca()` | The CA as PEM text. Sent without the token |
 | `save_forward_proxy_ca(path)` | Writes the CA to `path` (default `acnologia-ca.pem`) |
+| `save_forward_proxy_ca_bundle(path)` | Writes the system roots plus the CA to `path` (default `acnologia-ca-bundle.pem`). The roots come from `$SSL_CERT_FILE` or the usual system bundles; throws `Error` when there are none, as on Windows |
 | `forward_proxy_url()` | The proxy URL with user `app` and the token as the password |
-| `forward_proxy_env(ca_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `ca_path` |
+| `forward_proxy_env(ca_path, bundle_path)` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `ca_path`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundle_path` (default `acnologia-ca-bundle.pem`), and `NO_PROXY`, `no_proxy` set to `localhost,127.0.0.1,::1` |
 
 `ForwardProxy` and its `operator<<` never hold the token. `forward_proxy_url()` and `forward_proxy_env()` do: keep them out of logs.
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service. The same goes for `CURLOPT_CAINFO`, which is why the libcurl example gives it the bundle.
 
 ## Lease mode
 
