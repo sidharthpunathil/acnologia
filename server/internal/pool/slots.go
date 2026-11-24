@@ -17,24 +17,32 @@ import (
 // restored from the database on start.
 type slots struct {
 	mu       sync.Mutex
-	inflight map[int64]int           // key id -> requests in flight
-	leases   map[string]leaseSlot    // lease id -> held slot
-	wake     map[int64]chan struct{} // service id -> closed when a slot frees up
-	excl     map[int64]string        // key id -> lease id holding it exclusively
+	inflight map[int64]int        // key id -> requests in flight
+	leases   map[string]leaseSlot // lease id -> held slot
+	excl     map[int64]string     // key id -> lease id holding it exclusively
 	// pending counts picks whose usage write has not committed yet, by key
 	// id. Pick writes usage outside the service lock, so least_used adds
 	// these to the stored usage to keep spreading a burst evenly.
 	pending map[int64]int64
+	// appFlight counts the slots each app holds on each service, which the
+	// wait queue uses to share freed slots fairly (fair.go).
+	appFlight map[svcApp]int
+	// queues are the requests waiting for a slot, per service (fair.go).
+	queues map[int64]*svcQueue
 }
+
+type svcApp struct{ svc, app int64 }
 
 type leaseSlot struct {
 	keyID     int64
 	serviceID int64
+	appID     int64
 	expires   time.Time
 }
 
 func newSlots() *slots {
-	return &slots{inflight: map[int64]int{}, leases: map[string]leaseSlot{}, wake: map[int64]chan struct{}{}, excl: map[int64]string{}, pending: map[int64]int64{}}
+	return &slots{inflight: map[int64]int{}, leases: map[string]leaseSlot{}, excl: map[int64]string{}, pending: map[int64]int64{},
+		appFlight: map[svcApp]int{}, queues: map[int64]*svcQueue{}}
 }
 
 func (s *slots) count(keyID int64) int {
@@ -51,9 +59,10 @@ func (s *slots) exclusiveHeld(keyID int64) bool {
 	return ok
 }
 
-func (s *slots) acquire(keyID int64) {
+func (s *slots) acquire(keyID, serviceID, appID int64) {
 	s.mu.Lock()
 	s.inflight[keyID]++
+	s.appFlight[svcApp{serviceID, appID}]++
 	s.mu.Unlock()
 }
 
@@ -83,40 +92,35 @@ func (s *slots) pendingSnapshot() map[int64]int64 {
 	return out
 }
 
-// release frees one slot on the key and wakes waiters for the service.
-func (s *slots) release(keyID, serviceID int64) {
+// release frees one slot on the key and hands it to the next waiter for
+// the service.
+func (s *slots) release(keyID, serviceID, appID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.releaseLocked(keyID, serviceID)
+	s.releaseLocked(keyID, serviceID, appID)
 }
 
-func (s *slots) releaseLocked(keyID, serviceID int64) {
+func (s *slots) releaseLocked(keyID, serviceID, appID int64) {
 	if s.inflight[keyID] > 1 {
 		s.inflight[keyID]--
 	} else {
 		delete(s.inflight, keyID)
 	}
-	if ch, ok := s.wake[serviceID]; ok {
-		close(ch)
-		delete(s.wake, serviceID)
+	sa := svcApp{serviceID, appID}
+	if s.appFlight[sa] > 1 {
+		s.appFlight[sa]--
+	} else {
+		delete(s.appFlight, sa)
+	}
+	if q := s.queues[serviceID]; q != nil {
+		q.gen++
+		s.wakeLocked(serviceID, q, q.gen)
 	}
 }
 
-// waitCh returns a channel closed on the next release in the service.
-func (s *slots) waitCh(serviceID int64) <-chan struct{} {
+func (s *slots) holdLease(id string, keyID, serviceID, appID int64, expires time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	ch, ok := s.wake[serviceID]
-	if !ok {
-		ch = make(chan struct{})
-		s.wake[serviceID] = ch
-	}
-	return ch
-}
-
-func (s *slots) holdLease(id string, keyID, serviceID int64, expires time.Time) {
-	s.mu.Lock()
-	s.leases[id] = leaseSlot{keyID: keyID, serviceID: serviceID, expires: expires}
+	s.leases[id] = leaseSlot{keyID: keyID, serviceID: serviceID, appID: appID, expires: expires}
 	s.mu.Unlock()
 }
 
@@ -129,7 +133,7 @@ func (s *slots) dropLease(id string) {
 		if s.excl[l.keyID] == id {
 			delete(s.excl, l.keyID)
 		}
-		s.releaseLocked(l.keyID, l.serviceID)
+		s.releaseLocked(l.keyID, l.serviceID, l.appID)
 	}
 }
 
@@ -156,7 +160,7 @@ func (s *slots) sweep(now time.Time) int {
 			if s.excl[l.keyID] == id {
 				delete(s.excl, l.keyID)
 			}
-			s.releaseLocked(l.keyID, l.serviceID)
+			s.releaseLocked(l.keyID, l.serviceID, l.appID)
 			n++
 		}
 	}
@@ -179,7 +183,7 @@ func (p *Pool) InFlight() map[int64]int { return p.slots.snapshot() }
 // HoldLease ties the picked key's slot to a lease instead of a request.
 func (p *Pool) HoldLease(pk *Picked, leaseID string, expires time.Time) {
 	pk.once.Do(func() {}) // the lease owns the slot now; Release becomes a no-op
-	p.slots.holdLease(leaseID, pk.Key.ID, pk.Key.ServiceID, expires)
+	p.slots.holdLease(leaseID, pk.Key.ID, pk.svcID, pk.appID, expires)
 	if pk.exclusive {
 		p.slots.mu.Lock()
 		p.slots.excl[pk.Key.ID] = leaseID
@@ -213,8 +217,8 @@ func (p *Pool) RestoreLeases(ctx context.Context) error {
 	}
 	excl, _ := p.Store.ExclusiveLeaseIDs(ctx)
 	for _, l := range ls {
-		p.slots.acquire(l.KeyID)
-		p.slots.holdLease(l.ID, l.KeyID, l.ServiceID, l.ExpiresAt)
+		p.slots.acquire(l.KeyID, l.ServiceID, l.AppID)
+		p.slots.holdLease(l.ID, l.KeyID, l.ServiceID, l.AppID, l.ExpiresAt)
 		if excl[l.ID] {
 			p.slots.mu.Lock()
 			p.slots.excl[l.KeyID] = l.ID
@@ -233,41 +237,4 @@ func (p *Pool) PickWait(ctx context.Context, svc *store.Service, appID int64, al
 // nothing in flight, which no one else is handed until the lease ends.
 func (p *Pool) PickWaitOpts(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, wait time.Duration, exclusive bool) (*Picked, error) {
 	return p.PickFor(ctx, svc, appID, allowHidden, exclude, wait, exclusive, Request{})
-}
-
-// PickFor is PickWaitOpts for a known request, so the provider's offer for
-// that endpoint paces the key. A key at an offer's rate limit counts as busy:
-// the pick tries another key, then waits up to wait for a window to free.
-func (p *Pool) PickFor(ctx context.Context, svc *store.Service, appID int64, allowHidden bool, exclude map[int64]bool, wait time.Duration, exclusive bool, req Request) (*Picked, error) {
-	deadline := time.Now().Add(wait)
-	for {
-		// Grab the wake channel before trying, so a release between the
-		// attempt and the wait is not missed.
-		ch := p.slots.waitCh(svc.ID)
-		pk, err := p.pick(ctx, svc, appID, allowHidden, exclude, exclusive, req)
-		nk, isNoKey := err.(*NoKeyError)
-		if err == nil || !isNoKey || !nk.Busy {
-			return pk, err
-		}
-		left := time.Until(deadline)
-		if left <= 0 {
-			return nil, err
-		}
-		// Expired leases free slots too, so wake up at least once a second.
-		// A paced key frees up at a known time, which may be sooner.
-		next := min(left, time.Second)
-		if nk.Paced && nk.RetryAfter > 0 {
-			next = min(next, nk.RetryAfter)
-		}
-		t := time.NewTimer(next)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return nil, ctx.Err()
-		case <-ch:
-		case <-t.C:
-			p.slots.sweep(time.Now())
-		}
-		t.Stop()
-	}
 }
