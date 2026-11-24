@@ -231,6 +231,14 @@ What to do: Wait until reset_at, or ask an admin to raise the limit. GET /api/v1
 
 Next step: tool `acnologia_whoami`, `/api/v1/me`.
 
+### `bad_meta`
+
+HTTP 400. Retry: no, not without a change.
+
+X-Acnologia-Meta is malformed: more than 5 pairs, a repeated key, or characters outside the allowed set.
+
+What to do: Send at most 5 key=value pairs, comma separated, with short ASCII keys and values.
+
 ### `bad_params`
 
 HTTP 400. Retry: no, not without a change.
@@ -248,6 +256,14 @@ HTTP 400. Retry: no, not without a change.
 A CONNECT reached the proxy over HTTP/2 or later.
 
 What to do: Speak HTTP/1.1 to the forward proxy.
+
+### `denied_by_rule`
+
+HTTP 403. Retry: no, not without a change.
+
+One of the app's deny rules covers this request; rule names it.
+
+What to do: Call a different method, service or path, or ask an admin to change the app's deny rules.
 
 ### `empty_group`
 
@@ -417,6 +433,14 @@ The report could not apply: unknown lease (404), already reported (409), reporte
 
 What to do: Do not retry the same report. Report each lease once, within 10 minutes of expires_at.
 
+### `server_spend_ceiling`
+
+HTTP 503. Retry: yes, after `retry_after_sec` when the error gives one.
+
+The server reached its daily spend ceiling, so every app waits until midnight UTC.
+
+What to do: Wait until reset_at, or ask a superadmin to raise the ceiling (PUT /api/admin/settings/spend-ceiling).
+
 ### `service_not_allowed`
 
 HTTP 403. Retry: no, not without a change.
@@ -436,6 +460,42 @@ The provider keeps failing, so the circuit breaker paused traffic to it.
 What to do: Wait retry_after_sec before trying again. An admin can reset the breaker.
 
 Next step: command `acn breaker <service> --reset`.
+
+### `tag_limit_reached`
+
+HTTP 429. Retry: yes, after `retry_after_sec` when the error gives one.
+
+A caller tag value (X-Acnologia-Meta) used up its tag budget; tag names the value.
+
+What to do: Wait until reset_at, or ask an admin to raise the app's tag budget. GET /api/v1/usage/tags shows use per tag value.
+
+Next step: `/api/v1/usage/tags`.
+
+### `tag_pinned`
+
+HTTP 400. Retry: no, not without a change.
+
+The token is pinned to a value of this tag key, and the request sent a different one.
+
+What to do: Drop the tag from X-Acnologia-Meta, or send the pinned value. GET /api/v1/me shows the token.
+
+### `token_limit_reached`
+
+HTTP 429. Retry: yes, after `retry_after_sec` when the error gives one.
+
+The token used up a request or budget limit of its own.
+
+What to do: Wait until reset_at, or ask an admin to raise the token's limits or the app's per-token default.
+
+Next step: tool `acnologia_whoami`, `/api/v1/me`.
+
+### `too_many_streams`
+
+HTTP 503. Retry: yes, after `retry_after_sec` when the error gives one.
+
+Too many event streams are open on this server, or for this person or app.
+
+What to do: Close a stream you no longer read, then retry after retry_after_sec.
 
 ### `unknown_service`
 
@@ -1164,6 +1224,14 @@ HTTP 400. Retry: no, not without a change.
 A user tried to delete their own account.
 
 What to do: Ask another superadmin to do it.
+
+### `too_many_rules`
+
+HTTP 400. Retry: no, not without a change.
+
+The app already has the most deny rules it can hold.
+
+What to do: Delete a rule you no longer need, or merge rules with a shorter path prefix.
 
 ### `unknown_egress`
 

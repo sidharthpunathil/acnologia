@@ -138,7 +138,6 @@ func upstreamToolName(sv *store.Service, upstreamName string) string {
 	return toolName(sv.Slug, upstreamName)
 }
 
-
 func scrubMCPText(s, secret string) string {
 	if secret == "" || s == "" {
 		return s
