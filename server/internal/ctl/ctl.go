@@ -62,9 +62,12 @@ Forward proxy (apps set Acnologia as HTTPS_PROXY and call provider URLs):
 Connect Claude (MCP):
   mcp [--context name] [--groups g1,g2] [--exclude t1,t2] [--read-only] [--confirm on|off]
                                  stdio MCP server that runs this server as you
-  mcp config [--client claude-code|claude-desktop|cursor|json] [--http] [--show-token]
+  mcp config [--client claude-code|claude-desktop|cursor|codex|json] [--http] [--show-token]
              [--name acnologia] [filters]
                                  print the snippet that adds it to your MCP client
+  mcp install [--client claude-code|cursor|codex|all] [--dry-run] [--name acnologia]
+              [--context name] [filters]
+                                 add it to the agents on this machine (no token in their files)
 
 --json prints the server's JSON instead of a table (whoami, status,
 services, keys, events, usage). ACNOLOGIA_URL and ACNOLOGIA_TOKEN override
@@ -110,6 +113,10 @@ type cli struct {
 	hostname    func() (string, error)
 	// executable is the path written into mcp config snippets.
 	executable func() (string, error)
+	// lookPath and runCmd stand in for exec.LookPath and running a
+	// command, so mcp install can be tested without the agents installed.
+	lookPath func(file string) (string, error)
+	runCmd   func(name string, args ...string) ([]byte, error)
 }
 
 // context is one saved server. Logins through the browser also record who

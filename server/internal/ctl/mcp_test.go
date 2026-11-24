@@ -215,7 +215,7 @@ func TestMCPConfigAsServerCtl(t *testing.T) {
 func TestUsageListsMCP(t *testing.T) {
 	var out bytes.Buffer
 	RunAs("acn", []string{"help"}, strings.NewReader(""), &out, io.Discard)
-	if !strings.Contains(out.String(), "mcp config [--client claude-code|claude-desktop|cursor|json]") {
+	if !strings.Contains(out.String(), "mcp config [--client claude-code|claude-desktop|cursor|codex|json]") {
 		t.Fatalf("usage: %s", out.String())
 	}
 }
