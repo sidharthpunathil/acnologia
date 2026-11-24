@@ -142,15 +142,11 @@ func isHandoverService(sv *store.Service) bool {
 	return sv.PeerLinkID != nil && sv.Provider != providers.PeerSlug
 }
 
-// issueLease picks a key and creates a lease. On keys with a concurrency
+// issueLeaseOpts picks a key and creates a lease. On keys with a concurrency
 // limit the lease holds a slot until it is reported or expires, so set a
-// ttl close to how long you need the key.
-func (s *Server) issueLease(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration) (*leaseDTO, error) {
-	return s.issueLeaseOpts(ctx, a, sv, exclude, ttl, wait, false)
-}
-
-// issueLeaseOpts can also reserve the key exclusively: Acnologia then hands it
-// to no one else, through leases or the proxy, until the lease ends.
+// ttl close to how long you need the key. It can also reserve the key
+// exclusively: Acnologia then hands it to no one else, through leases or the
+// proxy, until the lease ends.
 func (s *Server) issueLeaseOpts(ctx context.Context, a *store.App, sv *store.Service, exclude []int64, ttl, wait time.Duration, exclusive bool) (*leaseDTO, error) {
 	if sv.Provider == providers.PeerSlug {
 		return nil, errPeerLease

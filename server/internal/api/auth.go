@@ -150,14 +150,6 @@ func (f *authFail) write(w http.ResponseWriter) {
 	writeErr(w, f.Status, f.Code, f.Message)
 }
 
-func (s *Server) authApp(r *http.Request) (*store.App, int, string) {
-	a, f := s.authAppFull(r)
-	if f != nil {
-		return nil, f.Status, f.Message
-	}
-	return a, 0, ""
-}
-
 func (s *Server) authAppFull(r *http.Request) (*store.App, *authFail) {
 	unauth := func(msg string) *authFail { return &authFail{Status: 401, Code: "unauthenticated", Message: msg} }
 	if tok, ok := oauthBearer(r); ok {
