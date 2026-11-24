@@ -191,3 +191,31 @@ func TestShapeAnswerPagesAndSelects(t *testing.T) {
 		t.Fatalf("items path: %+v", out)
 	}
 }
+
+// A deny rule on a rotation peer keeps requests off that peer: rotation
+// never routes around a rule.
+func TestRotationSkipsDeniedPeers(t *testing.T) {
+	e, _, _, a, b, _, lb := rotationEnv(t)
+	appID, tok := e.app(map[string]any{"name": "app"})
+	e.do(e.super, "POST", "/api/admin/services/rotation", map[string]any{"services": []any{a.ID, b.ID}, "rotation": "round_robin"}, 200, nil)
+	e.do(e.super, "POST", fmt.Sprintf("/api/admin/apps/%d/deny-rules", appID), map[string]any{"method": "*", "service": "b"}, 201, nil)
+	for i := 0; i < 4; i++ {
+		r, body := call(t, e, "GET", "/proxy/a/~amazon-scraper/products/details", tok)
+		if r.StatusCode != 200 || r.Header.Get("X-Acnologia-Service") != "a" {
+			t.Fatalf("call %d went to %q (%d): %s", i, r.Header.Get("X-Acnologia-Service"), r.StatusCode, body)
+		}
+	}
+	if n := len(lb.all()); n != 0 {
+		t.Fatalf("the denied peer was asked %d times", n)
+	}
+	// Another app without the rule still rotates across both.
+	_, tok2 := e.app(map[string]any{"name": "other"})
+	seen := map[string]int{}
+	for i := 0; i < 4; i++ {
+		r, _ := call(t, e, "GET", "/proxy/a/~amazon-scraper/products/details", tok2)
+		seen[r.Header.Get("X-Acnologia-Service")]++
+	}
+	if seen["b"] == 0 {
+		t.Fatalf("rotation without a rule should reach b: %v", seen)
+	}
+}
