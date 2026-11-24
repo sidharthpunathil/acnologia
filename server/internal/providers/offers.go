@@ -17,7 +17,10 @@ type Offer struct {
 	Name string `json:"name"`
 	// Match says which requests the offer covers. Nil means provider wide.
 	Match *OfferMatch `json:"match,omitempty"`
-	Price *Price      `json:"price,omitempty"`
+	// Model narrows a token price to one model, named in the request body
+	// (or the answer) rather than the path. Empty prices every model.
+	Model string `json:"model,omitempty"`
+	Price *Price `json:"price,omitempty"`
 	// Free means requests under this offer cost nothing (within its limits).
 	Free   bool    `json:"free,omitempty"`
 	Limits []Limit `json:"limits,omitempty"`
@@ -50,6 +53,9 @@ type Price struct {
 	// (Tavily's basic search is 1 credit). Units that are one per call
 	// (request, search, url, check) default to 1.
 	PerRequest float64 `json:"per_request,omitempty"`
+	// OutputAmount is, for unit token, the price of one output token when it
+	// differs from Amount, which then prices input tokens.
+	OutputAmount float64 `json:"output_amount,omitempty"`
 }
 
 // Limit is a published cap: Count units per window.
@@ -137,6 +143,15 @@ func (s *Spec) validateOffers(add func(string, ...any)) {
 			if o.Free && p.Amount > 0 {
 				add("%s: a free offer cannot have a price above 0", label)
 			}
+			if p.OutputAmount < 0 || p.OutputAmount > 1000 || math.IsNaN(p.OutputAmount) {
+				add("%s: price.output_amount must be 0 to 1000", label)
+			}
+			if p.OutputAmount != 0 && p.Unit != "token" {
+				add("%s: price.output_amount applies to unit token only", label)
+			}
+		}
+		if len(o.Model) > 200 {
+			add("%s: model is too long", label)
 		}
 		if len(o.Limits) > 10 {
 			add("%s: at most 10 limits", label)
@@ -315,11 +330,108 @@ func (o *Offer) RequestCost() (float64, bool) {
 // CostFor is the provider's USD cost for one successful request: the
 // matching offer's price, else quota.cost_per_request.
 func (s *Spec) CostFor(method, path string) float64 {
-	if c, ok := s.OffersFor(method, path).Priced().RequestCost(); ok {
-		return c
-	}
-	return s.Quota.CostPerRequest
+	c, _ := s.CostKnown(method, path)
+	return c
 }
+
+// CostKnown is CostFor and whether the price is known: an offer decides it,
+// or quota.cost_per_request is above 0. An unknown price reads as 0, which
+// budgets take as is but the cheapest routing strategy must not take as
+// free.
+func (s *Spec) CostKnown(method, path string) (float64, bool) {
+	if c, ok := s.OffersFor(method, path).Priced().RequestCost(); ok {
+		return c, true
+	}
+	return s.Quota.CostPerRequest, s.Quota.CostPerRequest > 0
+}
+
+// HasTokenPrices reports whether any offer prices tokens in USD.
+func (s *Spec) HasTokenPrices() bool {
+	for i := range s.Offers {
+		if s.Offers[i].tokenPrice() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *Offer) tokenPrice() *Price {
+	p := o.Price
+	if o.Free || p == nil || p.Unit != "token" || (p.Currency != "" && p.Currency != "USD") {
+		return nil
+	}
+	return p
+}
+
+// TokenCost is the USD cost of the tokens one answer used. Of the offers
+// that apply to the request (by method and path, or provider wide) and
+// price tokens, the first whose model is the request's model wins, then the
+// first whose model it is a dated or routed form of (modelVariant), then the
+// first that names no model. ok is false when none prices them.
+func (s *Spec) TokenCost(method, path, model string, in, out int64) (float64, bool) {
+	if len(s.Offers) == 0 || method == "" {
+		return 0, false
+	}
+	if dec, err := url.PathUnescape(path); err == nil {
+		path = dec
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	var exact, variant, anyModel *Price
+	for i := range s.Offers {
+		o := &s.Offers[i]
+		p := o.tokenPrice()
+		if p == nil || (!o.Wide() && !s.offerMatches(o, method, path)) {
+			continue
+		}
+		switch {
+		case o.Model == "":
+			if anyModel == nil {
+				anyModel = p
+			}
+		case exact == nil && strings.EqualFold(strings.TrimSpace(o.Model), strings.TrimSpace(model)):
+			exact = p
+		case variant == nil && modelVariant(o.Model, model):
+			variant = p
+		}
+	}
+	for _, p := range []*Price{exact, variant, anyModel} {
+		if p != nil {
+			return p.tokens(in, out), true
+		}
+	}
+	return 0, false
+}
+
+func (p *Price) tokens(in, out int64) float64 {
+	outPrice := p.Amount
+	if p.OutputAmount > 0 {
+		outPrice = p.OutputAmount
+	}
+	return float64(in)*p.Amount + float64(out)*outPrice
+}
+
+// modelVariant reports whether model is a dated or routed form of the
+// offer's model: claude-x-20261101, gpt-x-2026-11-01, claude-x@20261101,
+// gpt-x-latest or vendor/gpt-x.
+func modelVariant(offer, model string) bool {
+	offer, model = strings.ToLower(strings.TrimSpace(offer)), strings.ToLower(strings.TrimSpace(model))
+	if offer == "" || model == "" {
+		return false
+	}
+	if strings.HasSuffix(model, "/"+offer) {
+		return true
+	}
+	for _, sep := range []string{"-", "@"} {
+		if rest, ok := strings.CutPrefix(model, offer+sep); ok && modelDateRe.MatchString(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+var modelDateRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8}|latest)$`)
 
 // WideConcurrency is the smallest concurrency a provider wide offer sets, or 0.
 func (s *Spec) WideConcurrency() int {

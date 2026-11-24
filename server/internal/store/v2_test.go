@@ -64,6 +64,29 @@ func TestCheckLimitsResets(t *testing.T) {
 	}
 }
 
+// AdmitLimits counts the request itself: the call that would cross a budget
+// is refused instead of overshooting it by its own cost.
+func TestAdmitLimitsCountsTheRequest(t *testing.T) {
+	at := time.Now()
+	budget, reqs := 0.03, int64(3)
+	l := AppLimits{DailyBudget: &budget, DailyRequests: &reqs}
+	if hit := AdmitLimits(l, AppUsage{TodayCost: 0.02, TodayRequests: 2}, at, 0.01); hit != nil {
+		t.Fatalf("0.02 + 0.01 lands on the budget and the third request on the cap: %+v", hit)
+	}
+	if hit := AdmitLimits(l, AppUsage{TodayCost: 0.025}, at, 0.01); hit == nil || hit.Limit != "daily_budget" {
+		t.Fatalf("0.025 + 0.01 would cross 0.03: %+v", hit)
+	}
+	if hit := CheckLimits(l, AppUsage{TodayCost: 0.025}, at); hit != nil {
+		t.Fatalf("the dashboard check still says not reached: %+v", hit)
+	}
+	if hit := AdmitLimits(l, AppUsage{TodayCost: 0.03}, at, 0); hit == nil {
+		t.Fatal("a reached budget refuses a request of unknown price too")
+	}
+	if hit := AdmitLimits(l, AppUsage{TodayRequests: 3}, at, 0); hit == nil || hit.Limit != "daily_requests" {
+		t.Fatalf("a fourth request breaks the cap of 3: %+v", hit)
+	}
+}
+
 func TestGroupsAndSlugNamespace(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

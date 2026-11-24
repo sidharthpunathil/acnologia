@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -88,6 +89,74 @@ func TestOfferCost(t *testing.T) {
 	if eur.CostFor("GET", "/") != 0.003 {
 		t.Fatal("EUR offer should fall back")
 	}
+}
+
+func TestOfferCostKnown(t *testing.T) {
+	s := offerSpec()
+	if c, ok := s.CostKnown("GET", "/search"); !ok || c != 0 {
+		t.Fatalf("a free offer is a known price of 0: %v %v", c, ok)
+	}
+	if c, ok := s.CostKnown("GET", "/other"); !ok || c != 0.01 {
+		t.Fatalf("quota.cost_per_request above 0 is known: %v %v", c, ok)
+	}
+	s.Quota.CostPerRequest = 0
+	if c, ok := s.CostKnown("GET", "/other"); ok || c != 0 {
+		t.Fatalf("no offer price and no cost_per_request is unknown, not free: %v %v", c, ok)
+	}
+	if _, ok := s.CostKnown("POST", "/v1/run"); ok {
+		t.Fatal("a per step price with no per_request does not decide")
+	}
+}
+
+func TestOfferTokenCost(t *testing.T) {
+	s := Spec{Offers: []Offer{
+		{Name: "Search", Match: &OfferMatch{Path: "/search"}, Price: &Price{Amount: 0.01, Unit: "request"}},
+		{Name: "Big", Match: &OfferMatch{Method: "POST", Path: "/v1/chat"}, Model: "big", Price: &Price{Amount: 3e-6, OutputAmount: 15e-6, Unit: "token"}},
+		{Name: "Big preview", Match: &OfferMatch{Method: "POST", Path: "/v1/chat"}, Model: "big-preview", Price: &Price{Amount: 1e-6, Unit: "token"}},
+		{Name: "Any", Match: &OfferMatch{Method: "POST", Path: "/v1/chat"}, Price: &Price{Amount: 1e-7, Unit: "token"}},
+		{Name: "Free", Match: &OfferMatch{Method: "POST", Path: "/v1/chat"}, Model: "tiny", Free: true},
+	}}
+	if errs := s.validateOffersOnly(); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	near := func(a, b float64) bool { return a-b < 1e-12 && b-a < 1e-12 }
+	cases := []struct {
+		model string
+		want  float64
+	}{
+		{"big", 1000*3e-6 + 200*15e-6},
+		{"BIG-20261101", 1000*3e-6 + 200*15e-6}, // a dated variant
+		{"vendor/big", 1000*3e-6 + 200*15e-6},
+		{"big-preview", 1200 * 1e-6}, // an exact match beats the variant rule
+		{"other", 1200 * 1e-7},       // the offer with no model
+		{"", 1200 * 1e-7},
+		{"tiny", 1200 * 1e-7}, // a free offer prices nothing
+	}
+	for _, c := range cases {
+		got, ok := s.TokenCost("POST", "v1/chat", c.model, 1000, 200)
+		if !ok || !near(got, c.want) {
+			t.Errorf("%q: %v %v, want %v", c.model, got, ok, c.want)
+		}
+	}
+	if _, ok := s.TokenCost("POST", "/search", "big", 1000, 200); ok {
+		t.Fatal("an endpoint with no token offer has no token cost")
+	}
+	if _, ok := s.TokenCost("", "/v1/chat", "big", 1000, 200); ok {
+		t.Fatal("a lease never sees tokens")
+	}
+	if !s.HasTokenPrices() {
+		t.Fatal("HasTokenPrices")
+	}
+	bad := Spec{Offers: []Offer{{Name: "x", Price: &Price{Amount: 1, OutputAmount: 2, Unit: "request"}}}}
+	if got := strings.Join(bad.validateOffersOnly(), "\n"); !strings.Contains(got, "output_amount applies to unit token only") {
+		t.Fatalf("validation: %s", got)
+	}
+}
+
+func (s *Spec) validateOffersOnly() []string {
+	var errs []string
+	s.validateOffers(func(f string, a ...any) { errs = append(errs, fmt.Sprintf(f, a...)) })
+	return errs
 }
 
 func TestOfferValidation(t *testing.T) {

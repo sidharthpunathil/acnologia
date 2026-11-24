@@ -124,20 +124,40 @@ type LimitHit struct {
 	ResetAt time.Time `json:"reset_at"`
 }
 
-// CheckLimits reports the first limit the app has reached, or nil.
+// CheckLimits reports the first limit the app has reached, or nil. It is
+// what the dashboard shows; admitting a request uses AdmitLimits.
 func CheckLimits(l AppLimits, u AppUsage, at time.Time) *LimitHit {
+	return checkLimits(l, u, at, 0, 0)
+}
+
+// AdmitLimits reports the first limit one more request would break, or
+// nil. The request counts as one request and est dollars on top of what is
+// used, so the request that would cross a budget is refused rather than let
+// through to overshoot it by its own cost. A budget already reached refuses
+// every request, even one whose price is not known up front (est 0).
+func AdmitLimits(l AppLimits, u AppUsage, at time.Time, est float64) *LimitHit {
+	return checkLimits(l, u, at, 1, max(est, 0))
+}
+
+// budgetSlack absorbs float rounding, so a request that lands exactly on a
+// budget is not refused because 0.1+0.2 > 0.3.
+const budgetSlack = 1e-9
+
+func checkLimits(l AppLimits, u AppUsage, at time.Time, reqs int64, est float64) *LimitHit {
 	at = at.UTC()
 	y, m, d := at.Date()
 	tomorrow := time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC)
 	nextMonth := time.Date(y, m+1, 1, 0, 0, 0, 0, time.UTC)
+	overReqs := func(used, limit int64) bool { return used >= limit || used+reqs > limit }
+	overBudget := func(used, limit float64) bool { return used >= limit || used+est > limit+budgetSlack }
 	switch {
-	case l.DailyRequests != nil && u.TodayRequests >= *l.DailyRequests:
+	case l.DailyRequests != nil && overReqs(u.TodayRequests, *l.DailyRequests):
 		return &LimitHit{"daily_requests", tomorrow}
-	case l.DailyBudget != nil && u.TodayCost >= *l.DailyBudget:
+	case l.DailyBudget != nil && overBudget(u.TodayCost, *l.DailyBudget):
 		return &LimitHit{"daily_budget", tomorrow}
-	case l.MonthlyRequests != nil && u.MonthRequests >= *l.MonthlyRequests:
+	case l.MonthlyRequests != nil && overReqs(u.MonthRequests, *l.MonthlyRequests):
 		return &LimitHit{"monthly_requests", nextMonth}
-	case l.MonthlyBudget != nil && u.MonthCost >= *l.MonthlyBudget:
+	case l.MonthlyBudget != nil && overBudget(u.MonthCost, *l.MonthlyBudget):
 		return &LimitHit{"monthly_budget", nextMonth}
 	}
 	return nil
