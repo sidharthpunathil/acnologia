@@ -360,3 +360,33 @@ func (f *oauthFlow) requestIDFor(t *testing.T, resource string) string {
 	}
 	return loc.Query().Get("request")
 }
+
+func TestControlMCPListsAndRevokesControlConnections(t *testing.T) {
+	e := newEnv(t)
+	c := &ctlClient{e: e, tok: adminToken(e, "admin"), path: "/mcp/control?groups=all"}
+	sc, text, isErr := c.tool("list_control_connections", map[string]any{})
+	if isErr {
+		t.Fatalf("list_control_connections: %s", text)
+	}
+	if _, ok := sc["connections"]; !ok {
+		t.Fatalf("list_control_connections shape: %s", text)
+	}
+	appID, _ := e.app(map[string]any{"name": "mcp-app"})
+	if _, text, isErr := c.tool("list_app_oauth_connections", map[string]any{"app_id": appID}); isErr {
+		t.Fatalf("list_app_oauth_connections: %s", text)
+	}
+	sc, _, _ = c.tool("revoke_control_connection", map[string]any{"grant_id": "nope"})
+	if sc["confirm_required"] != true {
+		t.Fatalf("revoke_control_connection without confirm: %v", sc)
+	}
+}
+
+// Every destructive control tool needs Describe: the confirm step calls it,
+// and a nil one panics the request.
+func TestEveryDestructiveControlToolDescribes(t *testing.T) {
+	for _, tool := range ctlTools {
+		if tool.Kind == ctlDestructive && tool.Describe == nil && tool.Name != "api_request" {
+			t.Errorf("%s is destructive but has no Describe", tool.Name)
+		}
+	}
+}
