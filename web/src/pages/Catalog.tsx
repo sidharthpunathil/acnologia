@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { Tab, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
 import { cx } from "@/utils/cx";
 import { AddServiceModal } from "./AddServiceModal";
+import { GettingStarted } from "./GettingStarted";
 import { Callout, EmptyState, PageHeader } from "@/components/acn";
 import { CARD } from "./service/parts";
 import { FreeOfferChip } from "../components/OfferBits";
@@ -420,6 +421,8 @@ export function CatalogPage() {
         actions={addButton}
         className="mb-0"
       />
+
+      {can.manage(role) && <GettingStarted services={services} onAddService={() => setAdding(true)} />}
 
       {can.manage(role) && families.length === 0 && (
         <SharedKeysCallout services={services} onLinked={() => fetch().catch(() => undefined)} />
