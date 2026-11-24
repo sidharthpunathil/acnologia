@@ -257,6 +257,9 @@ func (c *cli) run(args []string) error {
 		rest = append(rest, a)
 	}
 	args = rest
+	if done, err := c.safety(&args); done { // --dry-run, --idempotency-key, trash, backup, version (safety.go)
+		return err
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprintf(c.out, usage, c.name())
 		return nil
