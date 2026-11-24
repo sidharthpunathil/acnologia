@@ -395,12 +395,7 @@ func (s *Store) RestoreTrash(ctx context.Context, id string) (*TrashItem, error)
 // PurgeTrash deletes an item for good. A service takes the trash entries
 // of its own trashed keys with it.
 func (s *Store) PurgeTrash(ctx context.Context, id string) (*TrashItem, error) {
-	var it *TrashItem
-	err := func() error {
-		var err error
-		it, err = scanTrash(s.DB.QueryRowContext(ctx, `SELECT `+trashCols+` FROM trash WHERE id=?`, id))
-		return err
-	}()
+	it, err := scanTrash(s.DB.QueryRowContext(ctx, `SELECT `+trashCols+` FROM trash WHERE id=?`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -410,28 +405,32 @@ func (s *Store) PurgeTrash(ctx context.Context, id string) (*TrashItem, error) {
 	return it, nil
 }
 
+// trashedTables names each kind's table.
+var trashedTables = map[string]string{TrashKey: "keys", TrashService: "services", TrashApp: "apps"}
+
 func (s *Store) purgeItem(ctx context.Context, it *TrashItem) error {
+	table, ok := trashedTables[it.Kind]
+	if !ok {
+		return ErrNotFound
+	}
+	// Only a row still in the trash goes: ids are never reused, but be sure.
+	var n int
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE id=? AND deleted_at IS NOT NULL`, it.TargetID).Scan(&n); err != nil {
+		return err
+	}
 	var err error
-	switch it.Kind {
-	case TrashKey:
-		// Only a key still in the trash: the id is never reused, but be sure.
-		var n int
-		if s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM keys WHERE id=? AND deleted_at IS NOT NULL`, it.TargetID).Scan(&n); n > 0 {
+	if n > 0 {
+		switch it.Kind {
+		case TrashKey:
 			err = s.DeleteKey(ctx, it.TargetID)
-		}
-	case TrashService:
-		var n int
-		if s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE id=? AND deleted_at IS NOT NULL`, it.TargetID).Scan(&n); n > 0 {
+		case TrashService:
 			err = s.DeleteService(ctx, it.TargetID)
-		}
-		if err == nil {
-			_, err = s.DB.ExecContext(ctx, `DELETE FROM trash WHERE kind='key' AND json_extract(detail,'$.service_id')=?`, it.TargetID)
-		}
-	case TrashApp:
-		var n int
-		if s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM apps WHERE id=? AND deleted_at IS NOT NULL`, it.TargetID).Scan(&n); n > 0 {
+		case TrashApp:
 			err = s.DeleteApp(ctx, it.TargetID)
 		}
+	}
+	if err == nil && it.Kind == TrashService {
+		_, err = s.DB.ExecContext(ctx, `DELETE FROM trash WHERE kind='key' AND json_extract(detail,'$.service_id')=?`, it.TargetID)
 	}
 	if err != nil {
 		return err

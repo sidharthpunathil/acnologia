@@ -199,7 +199,9 @@ func TestTrashKeyConflictsAndOrder(t *testing.T) {
 		t.Fatalf("fingerprint after restore: %q", fp)
 	}
 	// Purging a service takes its own trashed keys' entries along.
-	kItem, _ = s.TrashKeyByID(ctx, f.k1.ID, nil)
+	if _, err := s.TrashKeyByID(ctx, f.k1.ID, nil); err != nil {
+		t.Fatal(err)
+	}
 	svcItem, _ = s.TrashServiceByID(ctx, f.svc.ID, nil)
 	if _, err := s.PurgeTrash(ctx, svcItem.ID); err != nil {
 		t.Fatal(err)

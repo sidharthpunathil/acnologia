@@ -214,7 +214,7 @@ func (s *Server) adminBackup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "backup_failed", "could not make a scratch folder in the data directory: "+err.Error())
 		return
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	path, size, err := s.writeBackup(ctx, dir)
 	if err != nil {
 		writeErr(w, 500, "backup_failed", "could not copy the database: "+err.Error())
