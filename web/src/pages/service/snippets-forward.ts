@@ -11,6 +11,16 @@
 import { CA_FILE, CA_PATH } from "@/lib/forwardProxy";
 import { lits, type MoreLang } from "./snippets-more";
 
+/**
+ * The system roots plus the CA, for SSL_CERT_FILE and REQUESTS_CA_BUNDLE.
+ * Those replace the whole trust store, so the CA alone would break HTTPS to
+ * every other host. NODE_EXTRA_CA_CERTS adds to Node's roots and takes the
+ * CA alone.
+ */
+export const CA_BUNDLE_FILE = "acnologia-ca-bundle.pem";
+/** Local calls stay off the proxy, which refuses hosts that are no service. */
+export const NO_PROXY = "localhost,127.0.0.1,::1";
+
 export type ForwardLang = "curl" | "python" | "typescript" | "go" | MoreLang;
 
 export interface ForwardInput {
@@ -59,17 +69,21 @@ curl -x ${shQ(i.proxy)} --cacert ${CA_FILE} \\
 
 # Or set it for every tool in this shell:
 export HTTPS_PROXY=${shQ(i.proxy)}
+export NO_PROXY=${NO_PROXY}
 curl --cacert ${CA_FILE} ${shQ(i.url)}`,
-    python: `# Run with:
-#   HTTPS_PROXY=${line(shQ(i.proxy))} \\
-#   REQUESTS_CA_BUNDLE=${CA_FILE} python app.py
+    python: `# REQUESTS_CA_BUNDLE replaces the trust store, so give it the system
+# roots plus the CA, never the CA alone:
+#   cat "$(python -m certifi)" ${CA_FILE} > ${CA_BUNDLE_FILE}
+# Run with:
+#   HTTPS_PROXY=${line(shQ(i.proxy))} NO_PROXY=${NO_PROXY} \\
+#   REQUESTS_CA_BUNDLE=${CA_BUNDLE_FILE} python app.py
 import requests
 
 # Acnologia adds a key from the pool. Any key you send is replaced.
 r = requests.get(${lit(i.base)}, params=${pyDict(i.params)})
 print(r.json())`,
     typescript: `// Run with Node 24 or later:
-//   HTTPS_PROXY=${line(shQ(i.proxy))} \\
+//   HTTPS_PROXY=${line(shQ(i.proxy))} NO_PROXY=${NO_PROXY} \\
 //   NODE_EXTRA_CA_CERTS=${CA_FILE} node --use-env-proxy app.js
 
 // Acnologia adds a key from the pool. Any key you send is replaced.

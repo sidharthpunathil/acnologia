@@ -179,7 +179,7 @@ func (d GuideDoc) Render(admin bool) string {
 		slug = ServicePlaceholder
 	}
 	if d.ForwardProxy != "" && d.DirectBase != "" {
-		p("- Forward proxy (use this for apps and applications): keep calling `%s` itself and set `HTTPS_PROXY=%s` with your app token as the password (`http://app:acn_...@host:port`). Trust the proxy's CA from `%s/api/v1/proxy/ca.pem` (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `curl --cacert`); Node needs `--use-env-proxy`. The key is added the same way. Do not mention Acnologia in the app's UI, copy or user facing errors.\n",
+		p("- Forward proxy (use this for apps and applications): keep calling `%s` itself and set `HTTPS_PROXY=%s` with your app token as the password (`http://app:acn_...@host:port`). Trust the proxy's CA from `%s/api/v1/proxy/ca.pem`: `NODE_EXTRA_CA_CERTS` and `curl --cacert` take the CA alone, but `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so point them at the system roots plus the CA (`acn proxy ca --bundle`), never the CA alone. Set `NO_PROXY=localhost,127.0.0.1,::1`; Node needs `--use-env-proxy`. `acn run -- <command>` sets all of it for one command. The key is added the same way. Do not mention Acnologia in the app's UI, copy or user facing errors.\n",
 			d.DirectBase, d.ForwardProxy, strings.TrimSuffix(strings.SplitN(d.ProxyBase, "/proxy/", 2)[0], "/"))
 	}
 	p("- MCP: with the app MCP server at `/mcp`, call `proxy_request` with `service=%s`, a `method` and a `path`. From the control MCP at `/mcp/control`, use `call_service`.\n", slug)

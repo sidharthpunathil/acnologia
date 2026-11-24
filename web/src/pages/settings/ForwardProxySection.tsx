@@ -81,7 +81,7 @@ function SetupCards({ setup, onRotated }: { setup: ForwardProxySetup; onRotated:
       </SettingsCard>
 
       <SettingsCard title="CA certificate">
-        <SettingRow label="Fingerprint" description="Apps trust this CA for HTTPS to service hosts. Node takes NODE_EXTRA_CA_CERTS, Python REQUESTS_CA_BUNDLE, curl --cacert.">
+        <SettingRow label="Fingerprint" description="Apps trust this CA for HTTPS to service hosts. Node takes NODE_EXTRA_CA_CERTS, curl --cacert. SSL_CERT_FILE and REQUESTS_CA_BUNDLE replace the trust store, so they need the system roots plus the CA (acn proxy ca --bundle), never the CA alone.">
           <Mono>{setup.ca_fingerprint}</Mono>
         </SettingRow>
         <SettingRow label="Certificate" description="Rotating makes a new CA. Every app must download and trust it again, or its HTTPS calls fail.">

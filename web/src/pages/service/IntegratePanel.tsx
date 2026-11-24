@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AcnKeyLease, AcnProxy } from "@/components/foundations/icons/acn";
 import { RiDownload2Line, RiGlobalLine } from "@remixicon/react";
 import { moreSnippets, type MoreLang } from "./snippets-more";
-import { forwardSnippets } from "./snippets-forward";
+import { forwardSnippets, NO_PROXY } from "./snippets-forward";
 import { Link } from "react-router-dom";
 import type { Service } from "../../lib/types";
 import { useProviders } from "../../stores/providers";
@@ -421,8 +421,14 @@ function ForwardNote({ service, proxyUrl, known }: { service: Service; proxyUrl:
       <p className="text-pretty">
         Calls to {host ? <code className="font-mono wrap-anywhere text-text-primary">{host}</code> : "this service's host"} get a key from the pool, with the
         same rotation, limits and logs as Proxy mode. Any key the app sends is replaced. HTTPS needs the Acnologia CA trusted: Node takes{" "}
-        <code className="font-mono">NODE_EXTRA_CA_CERTS</code> and <code className="font-mono">--use-env-proxy</code>, Python{" "}
-        <code className="font-mono">REQUESTS_CA_BUNDLE</code>, curl <code className="font-mono">--cacert</code>.
+        <code className="font-mono">NODE_EXTRA_CA_CERTS</code> and <code className="font-mono">--use-env-proxy</code>, curl{" "}
+        <code className="font-mono">--cacert</code>. <code className="font-mono">SSL_CERT_FILE</code> and{" "}
+        <code className="font-mono">REQUESTS_CA_BUNDLE</code> replace the whole trust store, so give them the system roots plus the CA (
+        <code className="font-mono">acn proxy ca --bundle</code>), never the CA alone.
+      </p>
+      <p className="text-pretty">
+        Set <code className="font-mono wrap-anywhere">NO_PROXY={NO_PROXY}</code> so local calls skip the proxy. Or let the CLI set all of it for one
+        command: <code className="font-mono wrap-anywhere">acn run -- {"<command>"}</code>.
       </p>
       <p className="text-pretty">
         When several services share a host, send <code className="font-mono wrap-anywhere">X-Acnologia-Service: {service.slug}</code> to pick this one (or a group).
