@@ -389,6 +389,32 @@ master key, separately. Without the master key the stored keys cannot be
 decrypted, and Acnologia refuses to start against a database with a
 different key.
 
+A superadmin can also take a backup while the server runs, without stopping
+it: **Settings, Version and backup, Download**, `acn backup [-o file]`, or
+`POST /api/admin/backup`. The server copies the database in one consistent
+step (SQLite `VACUUM INTO`, into a scratch file in the data directory that is
+deleted once sent) and streams it as `acnologia-backup-<date and time>.db`.
+The copy leaves out dashboard sessions. It never holds the master key: the
+keys in it stay encrypted, so restoring it needs the same
+`ACNOLOGIA_MASTER_KEY`. Keep the two apart. To restore, stop the server, put
+the file in the data directory as `acnologia.db` (removing any old `-wal` and
+`-shm` files), and start it with the same master key.
+
+The control MCP's `acnologia_backup_database` tool cannot send a file, so it
+writes the copy on the server under `<data dir>/backups/` and answers with its
+path and size. Copy it off the server, and delete old copies there once you
+have them elsewhere.
+
+## Trash
+
+Deleted keys, services and apps go to a trash for 7 days before the server
+deletes them for good (it checks every 10 minutes). Restore them from
+**Settings, Trash**, `acn trash restore <id>`, the control MCP's
+`acnologia_restore_trash`, or `POST /api/admin/trash/{id}/restore`. A
+superadmin can delete one for good sooner. Services and keys that came from
+another server skip the trash, since that server owns them. See
+[the API](api.md#dry-runs-idempotency-and-the-trash).
+
 ## Upgrading
 
 Migrations run automatically on start, all in one transaction: an upgrade

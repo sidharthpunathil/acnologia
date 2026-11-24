@@ -2,7 +2,7 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed), through the forward proxy (set `HTTPS_PROXY` to Acnologia and call provider URLs as they are), or by leasing a key and reporting the outcome.
 
-Contents: starting from a URL, GET /api/v1/me, authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), the forward proxy (HTTPS_PROXY), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, provider rotation, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
+Contents: starting from a URL, GET /api/v1/me, authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), the forward proxy (HTTPS_PROXY), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, safe admin changes (dry runs, the trash, backups), service groups, provider rotation, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
 
 Before calling a service you have not used, fetch its usage guide: `GET /api/v1/services/{slug}/guide` (or the `acnologia_service_guide` MCP tool). It lists the endpoints worth knowing with their parameters, ready curl examples through the proxy, limits and pricing, and how errors are handled. Every entry of `GET /api/v1/services` carries its `guide_url`.
 
@@ -1075,6 +1075,16 @@ Each proxied response then updates the key's quota. When the provider reports 0 
 A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Acnologia-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Acnologia never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `ACNOLOGIA_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
 
 `Idempotency-Key` works on any method. The first final response is stored per token for 10 minutes and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice. Answers of 408, 425, 429 and 5xx are not stored, so a retry after them goes upstream again. A retry that arrives while the first request is still running gets 409 `idempotency_in_progress`, and the same key with a different body gets 422 `idempotency_key_reused`.
+
+## Safe admin changes: dry runs, Idempotency-Key, the trash, backups
+
+These apply to the admin API (`/api/admin`, with a dashboard session or an admin API token), the control MCP and `acn`.
+
+- Dry run: add `?dry_run=1` to any POST, PUT, PATCH or DELETE under `/api/admin`. The route's own permission checks run, the body is checked, the target is looked up, and the answer is `{dry_run: true, method, path, would}` with nothing changed. Errors are the ones the real call would give. Control MCP write tools take `dry_run: true`; `acn --dry-run <command>` prints `Dry run: would ...`.
+- Idempotency-Key on admin writes: the first 2xx or 4xx answer (not 408, 425 or 429) is kept 24 hours per user and token, encrypted, and replayed with `Idempotent-Replayed: true`. Same key with another method, path or body: 422 `idempotency_key_reused`. While the first runs: 409 `idempotency_in_progress` with `Retry-After`. Control MCP write tools take `idempotency_key`; `acn --idempotency-key <key>`. Key reveals and backups are never replayed.
+- Trash: deleting a key, service or app answers `{ok, restore_id, expires_at, trash}` and keeps the item 7 days, invisible to lists, the proxy, leases and MCP. `GET /api/admin/trash` lists (admin), `POST /api/admin/trash/{id}/restore` brings it back as it was (admin; 409 `restore_conflict` or `restore_blocked` with the reason), `DELETE /api/admin/trash/{id}` deletes it for good now (superadmin). Items with hidden keys are for superadmins only. Services and keys from another server skip the trash. Tools: `acnologia_list_trash`, `acnologia_restore_trash`, `acnologia_purge_trash`; `acn trash [restore|purge <id>]`.
+- Version: `GET /api/admin/version` gives `{current, latest, update_available, upgrade_command}`; tool `acnologia_server_version`; `acn version --server`.
+- Backup (superadmin): `POST /api/admin/backup` streams `acnologia-backup-<time>.db`, a consistent copy without sessions; `acn backup [-o file]`. The tool `acnologia_backup_database` writes it on the server under `<data dir>/backups/` and returns `{path, file, bytes}`. Stored keys stay encrypted: the copy never holds `ACNOLOGIA_MASTER_KEY`, and restoring needs the same one.
 
 ## Service groups
 
