@@ -660,11 +660,15 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "key.create", sv.Slug, fmt.Sprintf("%d added, %d skipped", len(created), len(skipped)))
 	// Check new keys in the background so quotas show up without a manual click.
-	go s.checkMany(sv, created)
+	// The check is a job the answer points to (jobs.go).
+	checkJob := s.checkNewKeys(r, sv, created)
 	if len(created) > 0 {
 		go s.syncServiceMCPBackground(sv)
 	}
 	resp := map[string]any{"keys": created, "skipped": skipped}
+	if checkJob != nil {
+		resp["check_job_id"], resp["check_status_url"] = checkJob.ID, jobURL(checkJob.ID)
+	}
 	if parsed != nil {
 		resp["ignored"] = len(parsed.Ignored)
 	}
@@ -1184,28 +1188,66 @@ func maskEvents(r *http.Request, evs []*store.Event) []*store.Event {
 	return out
 }
 
+// listEvents lists events newest first, or with after_id the events after
+// a cursor oldest first. next_cursor is what to pass as after_id next time.
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := store.EventFilter{Kind: q.Get("kind")}
+	f := store.EventFilter{Kind: q.Get("kind"), ExcludeHidden: !isSuper(r)}
 	f.ServiceID, _ = strconv.ParseInt(q.Get("service_id"), 10, 64)
 	f.KeyID, _ = strconv.ParseInt(q.Get("key_id"), 10, 64)
+	f.AppID, _ = strconv.ParseInt(q.Get("app_id"), 10, 64)
+	f.TokenID, _ = strconv.ParseInt(q.Get("token_id"), 10, 64)
 	f.Limit, _ = strconv.Atoi(q.Get("limit"))
+	var ok bool
+	if f.AfterID, f.BeforeID, f.Since, ok = cursorParams(w, r); !ok {
+		return
+	}
 	evs, err := s.Store.ListEvents(r.Context(), f)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"events": maskEvents(r, evs)})
+	ids := make([]int64, len(evs))
+	for i, e := range evs {
+		ids[i] = e.ID
+	}
+	writeJSON(w, 200, map[string]any{"events": maskEvents(r, evs), "next_cursor": nextCursor(f.AfterID, ids)})
 }
 
+// listAudit lists the audit log newest first, or with after_id the rows
+// after a cursor oldest first, filtered by who acted and how.
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	a, err := s.Store.ListAudit(r.Context(), limit)
+	q := r.URL.Query()
+	f := store.AuditFilter{Via: q.Get("via"), Client: q.Get("client"), Action: q.Get("action")}
+	if f.Via != "" && !store.ValidVia(f.Via) {
+		writeErr(w, 400, "invalid", "via is one of dashboard, api, cli, control_mcp, app_mcp, assistant, oauth")
+		return
+	}
+	f.Limit, _ = strconv.Atoi(q.Get("limit"))
+	f.TokenID, _ = strconv.ParseInt(q.Get("token_id"), 10, 64)
+	f.AppID, _ = strconv.ParseInt(q.Get("app_id"), 10, 64)
+	var ok bool
+	if f.AfterID, f.BeforeID, f.Since, ok = cursorParams(w, r); !ok {
+		return
+	}
+	if id, _ := strconv.ParseInt(q.Get("service_id"), 10, 64); id != 0 {
+		sv, err := s.Store.GetService(r.Context(), id)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		f.Target = sv.Slug
+	}
+	a, err := s.Store.ListAuditFiltered(r.Context(), f)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"audit": a})
+	ids := make([]int64, len(a))
+	for i, e := range a {
+		ids[i] = e.ID
+	}
+	writeJSON(w, 200, map[string]any{"audit": a, "next_cursor": nextCursor(f.AfterID, ids)})
 }
 
 // ---- users ----
