@@ -155,6 +155,13 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 | `acn breaker <service> [--reset]` | The service's circuit breaker, or close it. |
 | `acn cache purge <service>` | Drop the service's cached responses. |
 | `acn usage <app-id>` | An app's requests, spend and limits today and this month. |
+| `acn apps` | Apps with their mode, whether they are on, token count and allowed services. |
+| `acn apps create <name> [--mode proxy\|lease\|both] [--services a,b] [--description d]` | Create an app and print its first token, which is shown only this once. Without `--services` the app may use every service. |
+| `acn tokens list --app <id\|name>` | An app's tokens: name, prefix, read only, last use, expiry. Never their values. |
+| `acn tokens create --app <id\|name> [--name ci] [--read-only] [--expires 30]` | Add a token to an app and print it once. The app's other tokens keep working. `--expires` takes days (`30` or `30d`). |
+| `acn api <METHOD> <path> [--data json\|@file\|@-]` | Call any route with the saved admin token and print the JSON answer. See [Any route, any tool](#any-route-any-tool). |
+| `acn tool <name> [key=value ...] [--args json\|@file] [--yes]` | Run any control MCP tool. |
+| `acn tool --list` | The control MCP tools your role can use, with their kind (read, write or destructive). |
 | `acn proxy` | The [forward proxy](api.md#forward-proxy): its URL, the CA fingerprint and the hosts that get keys. |
 | `acn proxy ca [--out file\|-] [--bundle]` | Save the CA certificate apps must trust (`acnologia-ca.pem` by default; `-` prints it). `--bundle` saves the system roots plus the CA instead (`acnologia-ca-bundle.pem`), for `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`. |
 | `acn proxy env [--token acn_...] [--ca file] [--bundle file]` | Print `export` lines (`HTTPS_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS` and the like) for an app to use the forward proxy, with a placeholder where the app token goes unless you pass `--token`. It saves the CA and a bundle of the system roots plus the CA next to the CLI config: `NODE_EXTRA_CA_CERTS` gets the CA alone, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` get the bundle, because they replace the whole trust store. The system roots come from `SSL_CERT_FILE` or the usual Linux and macOS bundle paths; on Windows, or when none is found, it sets `NODE_EXTRA_CA_CERTS` only and says so on stderr. |
@@ -164,12 +171,65 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 | `acn version` | The client's version. |
 | `acn help` | The list of commands. |
 
-`--json` works anywhere on the line for `whoami`, `status`, `services`,
-`keys`, `events` and `usage`.
+`--json` works anywhere on the line. It prints the server's JSON instead of
+a table, and when a command fails it prints the error as JSON on stdout
+(see [Exit codes](#exit-codes)).
 
 What a command may do depends on the token's scope: `read` acts as a
 member, `write` as an admin (add keys, reset breakers, purge caches) and
 `admin` as a superadmin.
+
+### Any route, any tool
+
+`acn api` sends one request with the current server's admin token. The
+path may carry a query string, and `--data` takes inline JSON, `@file` or
+`@-` for stdin:
+
+```sh
+acn api GET /api/admin/checklist
+acn api POST /api/admin/apps --data '{"name":"ci-bot","mode":"proxy"}'
+acn api PUT /api/admin/ai/rules --data @rules.json
+```
+
+`acn tool` runs a [control MCP](api.md#control-mcp-mcpcontrol) tool through
+`/mcp/control`, so every tool there is also a command. Arguments are
+`key=value` pairs. A value that parses as JSON is sent as JSON (`limit=5`,
+`read_only=true`, `keys='["k1","k2"]'`); anything else is sent as text. To
+send a number as text, quote it: `name='"123"'`. `--args` takes a whole
+JSON object, inline, from `@file` or from `@-`. Destructive tools only say
+what they would do until you add `--yes`:
+
+```sh
+acn tool --list
+acn tool list_keys service=weather summary=true
+acn tool set_rotation services='["weather","weather-backup"]' rotation=fallback
+acn tool delete_capability capability=web-search --yes
+```
+
+Every tool group is on for `acn tool`, so the result depends only on your
+role. Results print as indented JSON.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | It worked. |
+| `1` | Any other failure. |
+| `2` | The command was used the wrong way: a missing argument, an unknown flag or command, data that is not JSON, or a tool input the server called invalid. |
+| `3` | Not signed in, or the token may not do this (HTTP 401 or 403). |
+| `4` | Not found (HTTP 404), such as an unknown service, app or key. |
+| `5` | Rate limited or unavailable (HTTP 429 or 503). Retry later. |
+
+With `--json` the error goes to stdout as one object, with every field the
+server sent (`hint` and `fix` too, when it has them), the HTTP `status` and
+the `exit_code`:
+
+```json
+{"error": {"code": "not_found", "message": "not found", "status": 404, "exit_code": 4}}
+```
+
+Without `--json` the message goes to stderr, followed by `hint: ...` when
+the server gave one.
 
 ## Connect Claude
 
@@ -334,6 +394,35 @@ $env:ACNOLOGIA_TOKEN = "acnadm_..."
 acn keys add weather .\new-keys.txt
 acn keys check weather
 ```
+
+### A fresh server with no browser
+
+A CI job or an agent can set up a new server without anyone signing in.
+Make a token yourself and start the server with it and the first user:
+
+```sh
+export ACNOLOGIA_BOOTSTRAP_EMAIL=ci@example.com
+export ACNOLOGIA_BOOTSTRAP_PASSWORD='a long password'
+export ACNOLOGIA_BOOTSTRAP_TOKEN=acnadm_$(openssl rand -hex 24)
+acnologia
+```
+
+On first boot the server creates that superadmin and stores the token's
+hash as their admin API token (scope `admin`, named `bootstrap`). Then:
+
+```sh
+export ACNOLOGIA_URL=http://localhost:8080
+export ACNOLOGIA_TOKEN=$ACNOLOGIA_BOOTSTRAP_TOKEN
+acn api GET /api/admin/checklist
+acn tool quickstart provider=serpapi keys='["your-key"]' --yes
+```
+
+`quickstart` creates the service, adds the keys, creates an app with a
+token and prints the app's MCP config. The checklist lists the four
+Getting started steps with `done` and the next tool, command and dashboard
+URL for each. The token works only on a server that has no users yet; on
+any other the server ignores it and logs a notice. It is never logged.
+Revoke it in Account, API tokens once the job is done.
 
 A valid admin token passes the site lock by itself, so CI needs no site
 password. If `ACNOLOGIA_ACCESS_PASSWORD` is set in the environment, it is
