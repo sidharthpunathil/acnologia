@@ -576,3 +576,56 @@ item has these fields:
 | `build` | for `build` items: a provider build the turn follows, `{run_id, title, status, phase, step, ...}` |
 | `card`, `entities` | a rich result (keys added, a service, a provider) and the services, keys, apps and providers a tool named, with ids |
 | `suggestions` | short follow ups proposed at the end of a turn |
+
+## Demo data
+
+A new server can load sample data so the first call works before anyone owns
+a real key. A superadmin loads it from the Getting started card, or:
+
+| Route | What it does |
+|---|---|
+| `GET /api/admin/demo` | `{loaded, service_id, service_slug, app_id}` |
+| `POST /api/admin/demo` `{force?}` | Makes a service `demo` (Demo provider (sample data)), two keys, and an app `Demo app` that may use only that service. Returns `201 {service, app, token, try: {method, path, curl}}`. The token is shown once. Refused with `409 has_services` when the server already has services, unless `force` is true, and with `409 demo_loaded` when the demo is there already. |
+| `DELETE /api/admin/demo` | Removes exactly what POST made: the service, its keys and the app. |
+
+The demo service's provider is a fake API this server answers itself, at
+`/api/v1/demo/upstream` on the listen port over loopback. It answers only
+requests that carry one of the two demo keys, and nothing while no demo is
+loaded:
+
+- `GET /v1/hello`: a greeting and which demo key served it
+- `GET /v1/models`: two fake models
+- `POST /v1/echo`: the JSON body back
+
+```sh
+curl -H "X-Acnologia-Token: acn_..." https://key.example.com/proxy/demo/v1/hello
+```
+
+The base URL is fixed when the demo is loaded. If the server later listens on
+another port, remove the demo and load it again.
+
+## Try it
+
+`POST /api/admin/services/{id}/try` (admin) sends one request through the
+proxy, the same path an app's request takes, and returns what came back. The
+service page's Try it panel uses it.
+
+```json
+{"method": "GET", "path": "/v1/hello?lang=en", "query": {"limit": "5"}, "body": "", "app_id": 0, "read_only": false}
+```
+
+- `path` may carry a query string; `query` adds to it.
+- `body` is text and must be JSON when set.
+- `app_id` runs the request as that app: its allowed services apply, and it
+  is read-only when its only working tokens are. `0` runs it as the internal
+  `Try it` app, a plain proxy app made on first use (no hidden keys, no
+  lease), which you can limit or turn off on the Apps page.
+- `read_only` runs it as a read-only token would: only GET reaches the
+  provider.
+
+The answer is `{status, latency_ms, headers, content_type, body,
+body_truncated, app: {id, name, read_only}}`. The proxy scrubs keys from the
+headers and body as usual, and the body is cut at 256 KB. A refusal from the
+proxy (`service_not_allowed`, `read_only_token`, `no_key_available`) comes
+back as the status and body of the try, not as an error of this route. Each
+try is recorded as an event of kind `try`.

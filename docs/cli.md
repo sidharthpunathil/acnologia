@@ -374,3 +374,99 @@ The flow follows the OAuth device authorization grant
   `<server>/cli/authorize?code=...` for you to open instead.
 - `acn logout` calls `DELETE /api/admin/tokens/{id}` with the token itself;
   a token may revoke itself and no other token.
+
+## Run a command through the forward proxy
+
+`acn run` starts one command with the forward proxy set for it and the
+processes it starts. Your shell keeps its own environment.
+
+```sh
+export ACN_APP_TOKEN=acn_...      # an app token, from the Apps page
+acn run -- python app.py
+acn run --token acn_... -- node --use-env-proxy server.js
+```
+
+The forward proxy takes app tokens only, so `acn run` reads one from
+`--token` or `ACN_APP_TOKEN`; the admin token from `acn login` does not work
+here. The server is the current context, or `ACNOLOGIA_URL`. Everything after
+`--` belongs to the command, flags like `--json` included.
+
+The command gets:
+
+| Variable | Value |
+|---|---|
+| `HTTPS_PROXY`, `HTTP_PROXY` (and the lowercase names outside Windows) | `http://app:<token>@host:port` |
+| `NO_PROXY`, `no_proxy` | `localhost,127.0.0.1,::1`, so local calls skip the proxy |
+| `NODE_USE_ENV_PROXY` | `1` |
+| `NODE_EXTRA_CA_CERTS` | the Acnologia CA, saved next to the CLI config |
+| `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` | the system roots plus the CA, in one file next to the CLI config |
+| a provider's key variable, such as `OPENAI_API_KEY` | `acn-placeholder` |
+
+`SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store in
+Python, Ruby, OpenSSL and curl, so they get the bundle. With the CA alone,
+HTTPS to every host the proxy tunnels untouched would fail. When the CLI
+finds no system roots file (Windows keeps its roots in the certificate store)
+it leaves both unset and says so; Node still trusts the CA through
+`NODE_EXTRA_CA_CERTS`.
+
+The placeholders are for SDKs that refuse to start without a key. The proxy
+replaces the auth header on every call to a service host, so the value never
+reaches a provider. `acn run` sets one for each provider the app may use
+whose usual variable it knows (OpenAI, Anthropic, Gemini, Groq, Tavily and
+the other built in providers), and never over a variable you already set.
+`--no-placeholders` turns them off.
+
+Standard input, output and error pass straight through, and `acn run` exits
+with the command's exit code (128 plus the signal number when a signal ended
+it). On Linux and macOS it passes SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGUSR1
+and SIGUSR2 on to the command. On Windows, Ctrl+C reaches every process on
+the console, so the command gets it directly. No shell runs in between on
+any platform, so quote arguments the way your own shell needs.
+
+## Find keys you already have
+
+`acn scan` looks for provider API keys in the files where they usually end
+up and prints a preview. It never changes a file and never prints a whole
+key: only the first and last four characters.
+
+```sh
+acn scan                      # the working directory and the usual places in your home
+acn scan ~/code/app .env.prod # these files, or these directories
+acn scan --json
+```
+
+With no paths it reads `.env` and `.env.*` in the working directory, the
+project's `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` and
+`.claude/settings*.json`, and from your home directory the shell start up
+files (`.bashrc`, `.zshrc`, `.profile`, fish and PowerShell profiles),
+`~/.claude.json`, `~/.cursor/mcp.json`, `~/.codex/config.toml`,
+`~/.codex/auth.json`, the Claude desktop config and a few other agent
+configs. A directory you name is searched three levels deep for `.env` files
+and MCP configs, skipping `node_modules`, `.git` and build output.
+
+A key counts when its format names the provider (`sk-ant-`, `sk-proj-`,
+`gsk_`, `tvly-`, `AIza` and others), or when a variable with a known name
+holds something that looks like a key, such as `SERPER_API_KEY=...`. Signed
+in, the server's provider slugs widen the names it knows:
+`<SLUG>_API_KEY`, `<SLUG>_KEY` and `<SLUG>_TOKEN`. Values that only stand in
+for a key (`your-key-here`, `${VAR}`, `acn-placeholder`) are skipped, and a key
+found in two files is listed once.
+
+```
+#  FILE                  LINE  VARIABLE           PROVIDER   KEY          ON SERVER
+1  .env                  1     OPENAI_API_KEY     openai     sk-p...wxyz  likely
+2  ~/.claude.json        7     ANTHROPIC_API_KEY  anthropic  sk-a...9876  no
+```
+
+ON SERVER is `likely` when a key of that provider on the server ends in the
+same four characters. The server stores only a keyed fingerprint of each
+secret, so the CLI cannot be sure; an import skips real duplicates either
+way.
+
+`acn scan --import` asks which rows to upload (all, none, or numbers like
+`1,3`), then asks once more before it sends anything. `--yes` skips both
+questions and takes every row; `--only 1,3` picks rows without the first
+question. Each key goes to the first service of its provider, and when the
+server has none, the CLI makes one from the catalog. Keys are labelled with
+their variable name. Your files stay as they are: once your apps call
+through Acnologia, remove the keys from them yourself.
