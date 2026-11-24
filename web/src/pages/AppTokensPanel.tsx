@@ -19,6 +19,7 @@ import { Callout, EmptyState } from "@/components/acn";
 import { ConfirmButton } from "@/components/acn/confirm-button";
 import { SecretBox } from "@/components/acn/copy-button";
 import { cx } from "@/utils/cx";
+import { OAuthConnections } from "@/components/OAuthConnections";
 
 const EXPIRY: { days: number; label: string }[] = [
   { days: 0, label: "Never" },
@@ -274,6 +275,7 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
           ))}
         </ul>
       )}
+      {app && <OAuthConnections appId={app.id} canEdit={canEdit} />}
       {!canEdit && <p className="mt-3 text-caption-1-regular text-text-secondary">Ask an admin to add or revoke tokens.</p>}
     </div>
   );
