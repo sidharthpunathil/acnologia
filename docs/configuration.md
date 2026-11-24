@@ -155,6 +155,40 @@ provider spec.
 | `max_concurrency` | 0 to 1000 | Default in-flight requests per key; 0 is unlimited. A key can override it. |
 | `queue_timeout_sec` | 0 to 300 | How long a proxied request waits for a free slot. |
 
+## Webhook events
+
+Webhooks are set up on the Webhooks page or with `POST
+/api/admin/webhooks`. A webhook gets the events it lists, or every event
+when it lists none, apart from `key.cooling` and `job.done`: those come
+often, so a webhook gets them only when it lists them. Every event is also
+kept in the event list (for `ACNOLOGIA_EVENT_RETENTION_DAYS`) and sent on the
+[event streams](api.md#event-streams).
+
+| Event | When |
+|---|---|
+| `key.invalid` | The provider rejected a key. |
+| `key.banned` | The provider suspended the account behind a key. |
+| `key.exhausted` | A key ran out of quota. |
+| `key.recovered` | A bad or exhausted key works again. |
+| `key.cooling` | A key started resting after a rate limit. `data.until` says until when. Once per rest; resting keys are looked for every 15 seconds, so a rest shorter than that may not be reported. |
+| `quota.low` | A key has less than 10% of its quota left. |
+| `pool.empty` | A request found no usable key in a service. |
+| `service.down`, `service.up` | A provider kept failing and gets no traffic, or answers again. |
+| `app.limit` | An app reached a request limit or budget. |
+| `app.limit_near` | An app used 80% of a request limit or budget. Once per limit and day (daily limits) or month (monthly ones); `data` has `limit`, `period`, `used`, `max` and `percent`. |
+| `share.expiring` | A share's timer ends within 24 hours, and again within 1 hour; `data.within` is `24h` or `1h` and `data.ends_at` the end. Once each per end time, so extending a share brings new warnings. |
+| `share.created`, `share.redeemed`, `share.paused`, `share.resumed`, `share.revoked`, `share.updated`, `share.expired` | A share to another server or a person changed. |
+| `share.handover`, `share.handover_wiped`, `share.revoke_push` | Keys were handed over to another server, deleted there, or the delete request's result. |
+| `share.claim_link`, `share.claimed`, `share.revealed` | A share with a person: a new claim link, a claim, a key shown (ids only). |
+| `peer.handover_received`, `peer.handover_wiped` | Another server handed keys over to this one, or they were deleted here. |
+| `provider.offers_changed` | The provider refresh published new offers, prices or limits. |
+| `job.done` | A background job finished, done or failed; `data` has `job_id`, `kind`, `status` and `status_url`. |
+
+The same event about the same key, service or app is sent at most once per
+10 minutes. Share, peer, provider and job events are never held back this
+way. `app.limit_near` and `share.expiring` are remembered in the database,
+so a restart does not send them again. Hidden keys never produce events.
+
 ## Running
 
 ```sh

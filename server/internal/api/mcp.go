@@ -120,6 +120,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	ctx = s.mcpAttribution(ctx, r, req, a)
 	result, rerr := s.mcpDispatch(ctx, r, req)
 	resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}
 	if rerr != nil {

@@ -58,6 +58,7 @@ limited time.
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. With `rotate`, `next` is null once the app reached a request or budget limit. A report never changes a key an admin disabled or a suspended (banned) key. |
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. 403 `lease_revoked` ends the lease when the app may no longer hold the key: lease mode or the service was taken away, its hidden key grant or share scope no longer covers the key, or the key was disabled. |
 | `GET /api/v1/capabilities` | The capabilities the app may call: `{capabilities: [{slug, name, description, strategy, params, routes: [{service, mapped}], url}]}`. Empty for a share's token. |
+| `GET /api/v1/events/stream` | The app's events as server sent events, instead of polling: its own requests, leases and errors, its `app.limit` and `app.limit_near` notices, and `key.cooling`, `key.exhausted`, `key.recovered`, `pool.empty`, `service.down` and `service.up` for the services it may use. Never another app's events, key labels or share news; a notice about a service has no key and no message, only `data` (`until` for `key.cooling`). See [event streams](#event-streams). |
 | `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group or a capability (see llms-full.txt, Capabilities). Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` (not for a share's or a person's token), `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. A caller that may not lease the key gets bodies with the key replaced by `[key]`. A share's token reaches only the services it was made with: a slug that now names another service or a group answers 403 `service_not_allowed`. |
 | `GET /api/v1/proxy` | How to use the [forward proxy](#forward-proxy): `{proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts: [{host, service, name, path}], env: {HTTPS_PROXY, HTTP_PROXY, NO_PROXY, no_proxy, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE}, env_notes, ca_bundle: {file, build, note}, service_header}`. `hosts` lists the hosts of the services the token may use; `proxy_url_with_token` has `<app token>` where the token goes. `NODE_EXTRA_CA_CERTS` names the CA alone (`acnologia-ca.pem`), since Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so they name a bundle of the system roots plus the CA (`acnologia-ca-bundle.pem`); `ca_bundle.build` shows how to make it, and `acn proxy env` makes it for you. `passthrough` is false for a share's token and a read-only token. |
 | `GET /api/v1/proxy/ca.pem` | The forward proxy's CA certificate (PEM, `acnologia-ca.pem`). Public: no token, and open behind the access password. |
@@ -230,7 +231,7 @@ lower of its owner's role and its scope.
 | `GET /keys/shared`, `POST /keys/shared/link` | m / a | `{duplicates: [[{key_id, label, service_id, service_slug, service_name}]], suggestions: [{service, service_name, source, source_name, source_keys}]}`: secrets stored in more than one service, and services with no keys that could use a service's keys. The POST links every suggestion and returns `{linked}`. Key lists carry `twins` (the same secret in other services), and a service's key list carries `shared` (the source's keys it uses). Services carry `key_source_id`, `key_source_slug`, `key_source_name` and `key_counts.shared`. |
 | `GET /capabilities`, `GET /capabilities/{id}`, `POST /capabilities`, `PATCH /capabilities/{id}`, `DELETE /capabilities/{id}` | m / a | Capabilities `{slug, name, description, strategy, params: [{name, type, required, description, default}], routes: [{service, method, path, query, body, weight, disabled, output: {items, fields}}]}`, up to 30 params and 20 routes. `strategy` adds `weighted` to the group strategies. Placeholders `{{param}}` must name a declared param. The slug cannot change. |
 | `GET /services/{id}/breaker`, `POST /services/{id}/breaker/reset` | m / a | Circuit breaker state and settings; close it by hand. |
-| `GET /services/{id}/mcp`, `POST /services/{id}/mcp/sync`, `PATCH /services/{id}/mcp/tools` | m / a / a | A service's upstream MCP server and its synced tools. Each tool has `read_only` (what `/mcp` enforces), `upstream_read_only` (the server's own `readOnlyHint`) and `access`. The PATCH takes `{name, access}`: `""` follows the server, `"read"` or `"write"` overrides it for read-only apps and tokens, and a sync keeps the choice. 404 `not_found` for a tool the service does not have. An upstream answer over the app's max result size is an error, logged as an error event and not billed. |
+| `GET /services/{id}/mcp`, `POST /services/{id}/mcp/sync`, `PATCH /services/{id}/mcp/tools` | m / a / a | A service's upstream MCP server and its synced tools. Each tool has `read_only` (what `/mcp` enforces), `upstream_read_only` (the server's own `readOnlyHint`) and `access`. The PATCH takes `{name, access}`: `""` follows the server, `"read"` or `"write"` overrides it for read-only apps and tokens, and a sync keeps the choice. 404 `not_found` for a tool the service does not have. An upstream answer over the app's max result size is an error, logged as an error event and not billed. The sync takes `?async=1` (or `Prefer: respond-async`) to answer 202 with a [job](#jobs). |
 | `GET /services/{id}/rotation` | m | `{service, rotation, matches: [{id, slug, name, provider, rotation, keys, shared, entries}]}`: the services that serve the same endpoints, whatever their mode. `shared` counts the catalog entries they share (or the plain base URL of one provider, shown as `""` in `entries`), and `entries` lists up to 12. |
 | `POST /services/rotation` | a | `{services: [id or slug], rotation: "off" | "fallback" | "round_robin"}` sets one mode on up to 500 services. Returns `{ok, rotation, changed}`. |
 | `POST /services/{id}/cache/purge`, `GET /cache` | a / m | Drop a service's cached responses; cache totals. |
@@ -240,17 +241,19 @@ lower of its owner's role and its scope.
 | `POST /services` | a | Create from a provider's defaults. |
 | `PATCH /services/{id}` | a | Edit. Also takes `egress_id` (0 for direct), `cache_ttl_sec` and `cost_per_request` (-1 for the provider default), and `rotation` (`off`, `fallback` or `round_robin`; see providers, Provider rotation). Changing `base_url`, auth, provider or egress proxy sets `target_trusted=false` unless the request also sends `target_trusted: true`, which only a superadmin may send (403 otherwise, and always 403 from an Assistant tool call). Anyone may send `target_trusted: false`. On a service holding keys another server handed over, those fields follow the owner and a change is refused (409 `handover_service`). |
 | `DELETE /services/{id}` | a | Delete with its keys. Admins cannot delete a service holding hidden keys. |
-| `POST /services/{id}/check` | a | Health check every key in the service. |
+| `POST /services/{id}/check` | a | Health check every key in the service. With `?async=1` (or `Prefer: respond-async`) it answers 202 with a [job](#jobs) instead of waiting. |
 | `GET /services/{id}/keys` | m | Keys (hidden ones only for superadmins). Never includes secrets. A key this server handed over to another server has `handed_over: [{share_id, share_name, peer_id, peer_name, live, handed_at, valid_until, wiped_at, reported_status}]`; a key a reveal share showed to a person has `revealed_to: [{share_id, share_name, label, revealed_at}]` (for good: revoke cannot take it back); a key another server handed over to this one has `peer_link_id`, `peer_valid_until` (deleted then unless renewed) and `peer_remote_key_id`. |
-| `POST /services/{id}/keys` | a | Add up to 5000 keys: `{keys: [{secret, label, tier, hidden, restricted, app_ids, weight, priority, notes, quota_limit, max_concurrency, account_name, account_email, account_phone, account_ref}]}`, or `{text}` with pasted keys for the server to parse. Returns 201 `{keys, skipped}`; keys already in the service are skipped. New keys are health checked in the background. `hidden` needs a superadmin. |
+| `POST /services/{id}/keys` | a | Add up to 5000 keys: `{keys: [{secret, label, tier, hidden, restricted, app_ids, weight, priority, notes, quota_limit, max_concurrency, account_name, account_email, account_phone, account_ref}]}`, or `{text}` with pasted keys for the server to parse. Returns 201 `{keys, skipped}`; keys already in the service are skipped. New keys are health checked in the background, as a [job](#jobs): the answer carries `check_job_id` and `check_status_url` when the provider has a way to check keys. `hidden` needs a superadmin. |
 | `GET /keys` | m | All keys across services, with filters `q`, `service_id`, `validity` and `sort`. |
 | `GET /keys/{id}/insights` | m | One key with recent events and 14 days of activity. |
 | `PATCH /keys/{id}` | a | Edit a key (including its account fields) or replace its secret. `egress_id` routes it through a proxy (0 falls back to the service's); only a superadmin can set it on hidden keys. On a key another server handed over, `secret`, `hidden` and `egress_id` are refused (403 `handed_over`). |
 | `DELETE /keys/{id}` | a | Delete a key. |
 | `POST /keys/{id}/check`, `POST /keys/{id}/reset` | a | Health check now; reset to active and clear errors. |
-| `POST /keys/check-all` | a | Health check every key. |
+| `POST /keys/check-all` | a | Health check every key. It waits up to 3 minutes; with `?async=1` (or `Prefer: respond-async`) it answers 202 with a [job](#jobs) at once and the job runs for up to 15 minutes. |
 | `POST /keys/{id}/reveal` | s | Return the secret. Audited: the secret is returned only once the audit row is stored, else 503 `audit_unavailable`. Refused (403) for a share token (`share_token`) and for a key another server handed over (`handed_over`). |
-| `GET /events` | m | Request and health events, filters `service_id`, `key_id`, `kind`, `limit` (max 500). |
+| `GET /events` | m | Request and health events and notifications, newest first: `{events, next_cursor}`. Filters `service_id`, `key_id`, `app_id`, `token_id`, `kind`, `since`, `limit` (max 500). `after_id` reads forward from a cursor, oldest first, and `before_id` pages back; see [reading events and the audit log](#reading-events-and-the-audit-log). |
+| `GET /events/stream` | m | The same events as server sent events, with the same filters. See [event streams](#event-streams). |
+| `GET /jobs`, `GET /jobs/{id}` | m | Background [jobs](#jobs): yours, or everyone's for a superadmin. |
 | `GET /apps` | m | Apps (not those backing a share; their changes answer 409 `share_app`). Each carries `token_count` (tokens neither revoked nor expired) and `last_used_at` (the latest use by any of its tokens). Token values are never returned. |
 | `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the first token once as `token`, with its record (named `Default`) as `app_token`. |
 | `GET /mcp/control` | m | The control MCP for the Connect Claude card: `{url, groups: [{id, label, default}], tools: [{name, title, description, group, kind, available}]}`. `kind` is `read`, `write` or `destructive`; `available` is false when your role cannot use the tool. `url` uses `ACNOLOGIA_PUBLIC_URL`, else the request host. See [Control MCP](#control-mcp-mcpcontrol). |
@@ -316,12 +319,102 @@ lower of its owner's role and its scope.
 | `GET /peers` | a | Shares other servers gave this one: status, `mode`, `local_services`, imported `providers`, `last_sync_at`, `last_error`, the owner's `fingerprint`. A handover link adds `handover {keys: [{key_id, remote_key_id, service, label, valid_until, status}]}`: the keys held here and when each is deleted unless renewed. Never carries the token or a key. |
 | `POST /peers/preview` | s | `{invite, trusted}`: fetch the owner's identity and what the invite shares, without redeeming it. |
 | `POST /peers` | s | `{invite, prefix, trusted, owner_id}`: redeem the invite and create the local services. `owner_id` makes the call fail if the server at the URL is not the one previewed. |
-| `POST /peers/{id}/sync` | s | Read the owner's manifest now. |
+| `POST /peers/{id}/sync` | s | Read the owner's manifest now. With `?async=1` (or `Prefer: respond-async`) it answers 202 with a [job](#jobs). |
 | `GET /peers/{id}/providers` | a | Provider specs imported through the link: `{providers: [{provider, name, kind: shared\|dependency, for_services, services (remote slug to local id), imported_version, remote_version, local_version, imported_at, edited_here, update_available, base_url, remote_base_url, missing}]}`. Versions named `imported` and `remote` are the owner's; `local_version` is this server's right after the import. |
 | `POST /peers/{id}/providers/{slug}/pull` | s | Update an imported provider to the owner's current spec: `{allow_base_url_change}`. 409 `base_url_changes` (with `from` and `to`) when the new spec moves the base URL and `allow_base_url_change` is not set; 409 `edited_here` when the provider was edited on this server since the import. Audited as `provider.pulled`. Returns the same list as the GET. |
 | `DELETE /peers/{id}` | s | Disconnect: delete any handed over keys, tell the owner, delete the token and the local services' key. On a link already disconnected or revoked, remove it from the list. |
 | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` | s | User management. A password reset ends that user's sessions; the last active superadmin cannot be removed. |
-| `GET /audit` | s | Audit log (max 1000 rows). |
+| `GET /audit` | s | Audit log, newest first: `{audit, next_cursor}` (max 1000 rows). Each row has `user_email`, `action`, `target`, `detail` and who acted beyond the person: `via`, `token_id`, `app_id` and `client`. Filters `via`, `token_id`, `app_id`, `client` (a part of it, any case), `action`, `service_id` (the service and its keys), `since`, `after_id`, `before_id` and `limit`. |
+
+### Reading events and the audit log
+
+`GET /events` and `GET /audit` answer the newest rows first, as they always
+did, plus `next_cursor`. To read new rows as they come, pass `next_cursor`
+back as `after_id`: the answer then holds the rows after it, oldest first,
+and a new `next_cursor`. When nothing is new the answer is empty and
+`next_cursor` stays the same. `after_id=0` reads from the oldest row kept.
+`before_id` pages back through older rows, newest first. `since` takes RFC
+3339, Unix seconds, or a duration back from now such as `15m` or `24h`. A
+bad `since`, `after_id` or `before_id` answers 400 `invalid`.
+
+Events are also where notifications are kept. A notification's kind has a
+dot (`key.cooling`, `app.limit_near`, `job.done`; see
+[webhook events](configuration.md#webhook-events)), its `detail` is the
+message and its `data` holds the structured fields. Plain events (`proxy`,
+`lease`, `rate_limited`, `health` and the rest) have none. Events of an app
+carry `token_id`, the app token that made the call. Members and admins
+never see the events of hidden keys.
+
+Every audit row says how the change came in:
+
+| `via` | Meaning | `token_id` |
+|---|---|---|
+| `dashboard` | A signed in browser session. | none |
+| `assistant` | The dashboard's Assistant, during a chat turn. | none |
+| `api` | An admin API token, or an app token outside MCP. | the admin token, or the app token |
+| `cli` | The `acn` command line (it sends `X-Requested-With: acnologia-ctl`). | the admin token |
+| `control_mcp` | The control MCP. | the admin token |
+| `app_mcp` | An app's MCP with an app token. | the app token |
+| `oauth` | An app's MCP with an OAuth access token. | none |
+
+`client` is the MCP client's `name/version` from `initialize` (remembered
+for the calls after it), else the `User-Agent`, cut to 120 characters.
+`app_id` is set for app calls. Rows the server writes on its own (timers,
+background work) have an empty `via`.
+
+### Event streams
+
+`GET /api/admin/events/stream` (a session or an admin API token) and `GET
+/api/v1/events/stream` (an app token) send events as server sent events, so
+an agent can wait for them instead of polling. Each message is one event:
+
+```text
+id: 4182
+data: {"id":4182,"ts":"2026-11-25T10:00:00Z","kind":"key.cooling","service_id":1,"service_slug":"serpapi","data":{"until":"2026-11-25T10:01:00Z","reason":"rate_limited"}}
+```
+
+The admin stream sends the same JSON as `GET /events` and takes its filters
+(`service_id`, `key_id`, `app_id`, `token_id`, `kind`). A new stream starts
+after the newest event; `?after_id=` starts it after a cursor. On reconnect
+the client sends `Last-Event-ID` (EventSource does this on its own) and gets
+every event it missed, as far back as event retention keeps them. A comment
+line (`: ping`) comes every 25 seconds to keep proxies from closing the
+connection, and the server closes a stream after an hour, so the client
+reconnects with its cursor. Notifications arrive as soon as they are
+recorded; other events within about a second. A server holds at most 64
+open streams and 4 per person or app; past that it answers 503
+`too_many_streams` with `Retry-After`. Streams end when the server shuts
+down.
+
+### Jobs
+
+Slow admin operations can run in the background: `POST /keys/check-all`,
+`POST /services/{id}/check`, `POST /peers/{id}/sync` and `POST
+/services/{id}/mcp/sync` take `?async=1` or the header `Prefer:
+respond-async`. They answer 202 at once:
+
+```json
+{"job_id": 12, "status": "queued", "status_url": "/api/admin/jobs/12", "job": {...}}
+```
+
+with `Location` set to `status_url`. Without the flag they wait and answer
+as before. `GET /api/admin/jobs/{id}` answers `{job, status_url}`, where the
+job is `{id, kind, target, status, done, total, result, error, created_by,
+created_by_email, via, created_at, started_at, finished_at}`. `status` is
+`queued`, `running`, `done` or `failed`. `done` and `total` count keys for
+the key checks. `result` is what the call would have answered without the
+flag; a call that would have failed makes a failed job with its message in
+`error`. Kinds are `keys.check_all`, `keys.check`, `keys.check_new` (the
+check after adding keys), `peer.sync` and `service.mcp_sync`.
+
+A second request for the same work while yours is queued or running joins
+it and gets the same job. Two jobs run at a time and the rest wait. A job
+cut off by a restart is marked failed. `GET /api/admin/jobs` lists jobs
+newest first without their results, with filters `kind`, `status`, `limit`
+(max 200) and, for a superadmin, `mine=1`. Each person sees their own jobs;
+a superadmin sees every job. Finished jobs are kept for a week. When a job
+ends, a `job.done` event with `{job_id, kind, target, status, status_url}`
+reaches the event streams and the webhooks that list it.
 
 ### Control MCP (`/mcp/control`)
 

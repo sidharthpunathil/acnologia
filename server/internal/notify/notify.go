@@ -63,6 +63,18 @@ const (
 	// ProviderOffersChanged is a provider refresh publishing new offers.
 	// Never dropped as a repeat.
 	ProviderOffersChanged = "provider.offers_changed"
+	// ShareExpiring warns 24 hours and 1 hour before a share's timer ends,
+	// once each.
+	ShareExpiring = "share.expiring"
+	// AppLimitNear is an app past 80% of a request limit or budget, once
+	// per limit and period.
+	AppLimitNear = "app.limit_near"
+	// KeyCooling is a key that started resting after a rate limit, with
+	// until in its data.
+	KeyCooling = "key.cooling"
+	// JobDone is a background job that finished, done or failed. Never
+	// dropped as a repeat.
+	JobDone = "job.done"
 )
 
 // Types lists every event a webhook can subscribe to, with a description.
@@ -95,7 +107,16 @@ var Types = []struct {
 	{PeerHandoverReceived, "Another server handed keys over to this one"},
 	{PeerHandoverWiped, "Keys another server handed over were deleted here, with the reason"},
 	{ProviderOffersChanged, "A provider refresh published new offers, prices or limits"},
+	{ShareExpiring, "A share's timer ends within 24 hours, and again within 1 hour (once each)"},
+	{AppLimitNear, "An app used 80% of a request limit or budget (once per limit and period)"},
+	{KeyCooling, "A key started resting after a rate limit, until the time in its data"},
+	{JobDone, "A background job (check all keys, peer sync, MCP sync) finished"},
 }
+
+// OptIn are the frequent events a webhook gets only when it lists them: a
+// webhook that takes every event (no list) does not get them, so adding
+// them did not flood existing channels. The event streams always carry them.
+var OptIn = map[string]bool{KeyCooling: true, JobDone: true}
 
 func ValidType(t string) bool {
 	for _, x := range Types {
@@ -139,11 +160,16 @@ type Notifier struct {
 	Quiet time.Duration
 
 	queue chan Event
-	mu    sync.Mutex
-	seen  map[string]time.Time
-	hooks []*store.Webhook
-	when  time.Time
-	now   func() time.Time
+	// wakeCh is closed when an event is recorded, waking event streams;
+	// done is closed when Run returns, ending them.
+	wakeCh   chan struct{}
+	done     chan struct{}
+	doneOnce sync.Once
+	mu       sync.Mutex
+	seen     map[string]time.Time
+	hooks    []*store.Webhook
+	when     time.Time
+	now      func() time.Time
 	// sleep waits between retries; it returns early with an error when ctx ends.
 	sleep func(context.Context, time.Duration) error
 }
@@ -153,7 +179,8 @@ const hookQueue = 64
 
 func New(s *store.Store, box *crypto.Box, c *http.Client) *Notifier {
 	return &Notifier{Store: s, Box: box, Client: c, Quiet: 10 * time.Minute,
-		queue: make(chan Event, 512), seen: map[string]time.Time{}, now: time.Now, sleep: sleepCtx}
+		queue: make(chan Event, 512), seen: map[string]time.Time{}, now: time.Now, sleep: sleepCtx,
+		wakeCh: make(chan struct{}), done: make(chan struct{})}
 }
 
 // Emit queues an event. It is safe on a nil Notifier and never blocks.
@@ -169,7 +196,7 @@ func (n *Notifier) Emit(e Event) {
 		delete(n.seen, t+"|"+e.subject())
 	}
 	k := e.Type + "|" + e.subject()
-	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet && !strings.HasPrefix(e.Type, "share.") && !strings.HasPrefix(e.Type, "peer.") && !strings.HasPrefix(e.Type, "provider.") {
+	if last, ok := n.seen[k]; ok && n.now().Sub(last) < n.Quiet && !strings.HasPrefix(e.Type, "share.") && !strings.HasPrefix(e.Type, "peer.") && !strings.HasPrefix(e.Type, "provider.") && !strings.HasPrefix(e.Type, "job.") {
 		n.mu.Unlock()
 		return
 	}
@@ -180,6 +207,41 @@ func (n *Notifier) Emit(e Event) {
 	default:
 		slog.Warn("webhook queue full, dropping event", "type", e.Type)
 	}
+}
+
+// record keeps the event in the events table, where the event list and the
+// event streams read it, and wakes the streams. Test events are not kept.
+func (n *Notifier) record(ctx context.Context, e Event) {
+	if n.Store == nil || e.Type == Test {
+		return
+	}
+	n.Store.AddEvent(context.WithoutCancel(ctx), store.NewEvent{Kind: e.Type, ServiceID: e.ServiceID, KeyID: e.KeyID,
+		AppID: e.AppID, Detail: e.Message, Data: e.Data})
+	n.mu.Lock()
+	close(n.wakeCh)
+	n.wakeCh = make(chan struct{})
+	n.mu.Unlock()
+}
+
+// Wake returns a channel closed when the next event is recorded. On a nil
+// Notifier it never closes.
+func (n *Notifier) Wake() <-chan struct{} {
+	if n == nil {
+		return nil
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.wakeCh
+}
+
+// Done returns a channel closed once Run has returned: the server is
+// shutting down and long lived streams should end. On a nil Notifier, or
+// before Run starts, it stays open.
+func (n *Notifier) Done() <-chan struct{} {
+	if n == nil {
+		return nil
+	}
+	return n.done
 }
 
 // Invalidate makes the next delivery reload webhooks from the database.
@@ -234,18 +296,20 @@ type hookWorker struct {
 func (n *Notifier) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	defer n.doneOnce.Do(func() { close(n.done) })
 	workers := map[int64]*hookWorker{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case e := <-n.queue:
+			n.record(ctx, e)
 			hooks, ok := n.loadHooks(ctx)
 			if ok {
 				stopGone(workers, hooks)
 			}
 			for _, h := range hooks {
-				if !h.Active || !h.Wants(e.Type) {
+				if !h.Active || !h.Wants(e.Type) || (len(h.Events) == 0 && OptIn[e.Type]) {
 					continue
 				}
 				w, ok := workers[h.ID]

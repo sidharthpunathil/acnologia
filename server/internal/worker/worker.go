@@ -34,6 +34,8 @@ type Worker struct {
 	Sharing interface{ Tick(context.Context) }
 
 	lastPrune time.Time
+	// cooling is the rest each key was last reported for (alerts.go).
+	cooling map[int64]time.Time
 }
 
 // Run does housekeeping every 30 seconds. Health checks run in their own
@@ -58,6 +60,9 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 	if w.Sharing != nil {
 		wg.Go(func() { w.runSharing(ctx) })
+	}
+	if w.Pool != nil && w.Pool.Notify != nil {
+		wg.Go(func() { w.runAlerts(ctx) })
 	}
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -152,6 +157,10 @@ func (w *Worker) tick(ctx context.Context) {
 		} else {
 			w.lastPrune = time.Now()
 		}
+		// Finished jobs are kept a week; notification marks outlive the
+		// longest period they guard (a month).
+		_ = w.Store.PruneJobs(ctx, 7*24*time.Hour)
+		_ = w.Store.PruneMarks(ctx, 62*24*time.Hour)
 	}
 }
 

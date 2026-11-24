@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
@@ -175,6 +176,7 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 	sum := checkSummary{Keys: []*store.Key{}}
 	spec := providers.Get(sv.Provider)
 	if spec.Health == nil && providers.ResolveMCPURL(sv.BaseURL, sv.MCPURL, spec.MCP) == "" {
+		countKeys(ctx, len(keys))
 		sum.Skipped = len(keys)
 		sum.Message = pool.ErrNoHealthCheck.Error()
 		return sum
@@ -187,6 +189,7 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 			mu.Lock()
 			sum.Skipped++
 			mu.Unlock()
+			countKeys(ctx, 1)
 			continue
 		}
 		wg.Add(1)
@@ -194,6 +197,7 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 		go func(k *store.Key) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer countKeys(ctx, 1)
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			start := time.Now()
 			err := s.Pool.Check(cctx, sv, k)
@@ -203,8 +207,12 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 			if gerr != nil {
 				nk = nil
 			}
-			s.Store.AddEvent(context.Background(), store.NewEvent{Kind: "health", ServiceID: sv.ID, KeyID: k.ID,
-				LatencyMS: latency, Detail: healthDetail(err, nk)})
+			// No event for a key deleted meanwhile (a hidden key's would
+			// outlive it), nor for the quiet check of keys just added.
+			if gerr == nil && ctx.Value(quietHealthKey{}) == nil {
+				s.Store.AddEvent(context.Background(), store.NewEvent{Kind: "health", ServiceID: sv.ID, KeyID: k.ID,
+					LatencyMS: latency, Detail: healthDetail(err, nk)})
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			sum.Checked++
@@ -229,7 +237,38 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 	return sum
 }
 
+// quietHealthKey marks a check that records no health events: the check of
+// keys just added, which never did, and which can race the key's delete.
+type quietHealthKey struct{}
+
+// keyCount is a job's progress in keys checked (see jobProgress).
+type keyCount struct {
+	done  atomic.Int64
+	total int
+}
+
+type keyCountKey struct{}
+
+// withKeyCount starts counting checked keys toward total.
+func withKeyCount(ctx context.Context, total int) context.Context {
+	jobProgress(ctx, 0, total)
+	return context.WithValue(ctx, keyCountKey{}, &keyCount{total: total})
+}
+
+// countKeys counts n more keys checked or skipped.
+func countKeys(ctx context.Context, n int) {
+	if c, ok := ctx.Value(keyCountKey{}).(*keyCount); ok {
+		jobProgress(ctx, int(c.done.Add(int64(n))), c.total)
+	}
+}
+
+// checkServiceKeys checks a service's keys, or with ?async=1 starts a job
+// that does (jobs.go).
 func (s *Server) checkServiceKeys(w http.ResponseWriter, r *http.Request) {
+	s.asyncable("keys.check", s.checkServiceKeysNow)(w, r)
+}
+
+func (s *Server) checkServiceKeysNow(w http.ResponseWriter, r *http.Request) {
 	sv, ok := s.loadService(w, r)
 	if !ok {
 		return
@@ -241,27 +280,44 @@ func (s *Server) checkServiceKeys(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	sum := s.checkKeys(ctx, sv, keys)
+	sum := s.checkKeys(withKeyCount(ctx, len(keys)), sv, keys)
 	s.Store.AddAudit(r.Context(), userFrom(r), "keys.check", sv.Slug, sum.Message)
 	writeJSON(w, 200, sum)
 }
 
+// checkAllKeys checks every key, or with ?async=1 starts a job that does
+// (jobs.go). The synchronous call stops after 3 minutes; a job has 15.
 func (s *Server) checkAllKeys(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	s.asyncable("keys.check_all", s.checkAllKeysNow)(w, r)
+}
+
+func (s *Server) checkAllKeysNow(w http.ResponseWriter, r *http.Request) {
+	limit := 3 * time.Minute
+	if _, ok := r.Context().Value(jobProgressKey{}).(progressFunc); ok {
+		limit = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), limit)
 	defer cancel()
 	svcs, err := s.Store.ListServices(ctx)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	total := checkSummary{Keys: []*store.Key{}}
-	for _, sv := range svcs {
+	byService := make([][]*store.Key, len(svcs))
+	n := 0
+	for i, sv := range svcs {
 		keys, err := s.Store.ListKeys(ctx, sv.ID, isSuper(r))
 		if err != nil {
 			writeStoreErr(w, err)
 			return
 		}
-		sum := s.checkKeys(ctx, sv, keys)
+		byService[i] = keys
+		n += len(keys)
+	}
+	ctx = withKeyCount(ctx, n)
+	total := checkSummary{Keys: []*store.Key{}}
+	for i, sv := range svcs {
+		sum := s.checkKeys(ctx, sv, byService[i])
 		total.Checked += sum.Checked
 		total.Valid += sum.Valid
 		total.Invalid += sum.Invalid
@@ -271,7 +327,7 @@ func (s *Server) checkAllKeys(w http.ResponseWriter, r *http.Request) {
 		total.Keys = append(total.Keys, sum.Keys...)
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		total.Message = "Stopped after 3 minutes. "
+		total.Message = fmt.Sprintf("Stopped after %d minutes. ", int(limit.Minutes()))
 	}
 	total.Message += checkMessage(total)
 	if total.Skipped > 0 {

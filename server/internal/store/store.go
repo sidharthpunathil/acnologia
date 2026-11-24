@@ -406,6 +406,9 @@ func migrate(db *sql.DB) error {
 	if err := migrateEndpointStats(db); err != nil {
 		return err
 	}
+	if err := migrateObservability(db); err != nil {
+		return err
+	}
 	return migrateIndexes(db)
 }
 

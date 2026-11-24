@@ -58,7 +58,7 @@ func fromAssistant(r *http.Request) bool {
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && store.IsAdminToken(tok) {
-			s.tokenUser(w, r, tok, next)
+			s.tokenUser(w, r, tok, attributeAdminToken(next))
 			return
 		}
 		sess := sessionFrom(r)
@@ -81,6 +81,7 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), userKey, u)
 		ctx = context.WithValue(ctx, sessionHashKey, h)
+		ctx = store.WithAttribution(ctx, sessionAttribution(r))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -199,6 +200,7 @@ func (s *Server) requireApp(next http.Handler) http.Handler {
 			return
 		}
 		ctx := store.WithAppToken(context.WithValue(r.Context(), appKey, a), a.TokenID)
+		ctx = store.WithAttribution(ctx, appAttribution(r, a))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
