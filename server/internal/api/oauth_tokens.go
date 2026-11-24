@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/keyscrub"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
@@ -143,7 +144,7 @@ func (s *Server) oauthTokenCall(ctx context.Context, cfg *providers.OAuthConfig,
 	resp, err := s.oauthHTTP().Do(req)
 	if err != nil {
 		// The transport error quotes the URL only; the form is not in it.
-		return nil, fmt.Errorf("token endpoint unreachable: %s", scrub(err.Error(), cl.Secret))
+		return nil, fmt.Errorf("token endpoint unreachable: %s", keyscrub.Text(err.Error(), cl.Secret))
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -161,7 +162,7 @@ func (s *Server) oauthTokenCall(ctx context.Context, cfg *providers.OAuthConfig,
 	if resp.StatusCode >= 400 || t.Error != "" || t.AccessToken == "" {
 		e := &oauthTokenError{Status: resp.StatusCode, Code: t.Error, Description: t.ErrorDescription}
 		// A description may quote what was sent; never let a secret through.
-		e.Description = scrub(scrub(scrub(e.Description, cl.Secret), form.Get("refresh_token")), form.Get("code"))
+		e.Description = keyscrub.Text(keyscrub.Text(keyscrub.Text(e.Description, cl.Secret), form.Get("refresh_token")), form.Get("code"))
 		if e.Code == "" && resp.StatusCode < 400 {
 			e.Code = "no_access_token"
 		}

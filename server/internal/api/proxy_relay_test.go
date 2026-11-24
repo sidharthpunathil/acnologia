@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"testing/iotest"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/peer"
 )
@@ -115,34 +113,6 @@ func TestProxyCacheHitHidesKeyID(t *testing.T) {
 		if i == 1 && resp.Header.Get("X-Acnologia-Cache") != "hit" {
 			t.Fatalf("second share call not a cache hit: %v", resp.Header)
 		}
-	}
-}
-
-// TestScrubReaderSplitKey: a key split across reads is still replaced, and
-// bytes that cannot start the key are released at once.
-func TestScrubReaderSplitKey(t *testing.T) {
-	in := "a " + echoSecret + " b " + url.QueryEscape(echoSecret) + " c " + url.PathEscape(echoSecret) + " sk/ end"
-	got, err := io.ReadAll(newScrubReader(iotest.OneByteReader(strings.NewReader(in)), echoSecret))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "a [key] b [key] c [key] sk/ end"; string(got) != want {
-		t.Fatalf("got %q want %q", got, want)
-	}
-	// Mid stream, only a tail that may start the key is held back.
-	r := &scrubReader{forms: keyForms(echoSecret)}
-	r.pending = []byte("data: x\n\n")
-	r.release(false)
-	if string(r.out) != "data: x\n\n" || len(r.pending) != 0 {
-		t.Fatalf("held %q released %q", r.pending, r.out)
-	}
-	r.out, r.pending = nil, []byte("data: sk/a")
-	r.release(false)
-	if string(r.out) != "data: " || string(r.pending) != "sk/a" {
-		t.Fatalf("held %q released %q", r.pending, r.out)
-	}
-	if b := scrubBytes([]byte("x"+echoSecret), keyForms(echoSecret)); !bytes.Equal(b, []byte("x[key]")) {
-		t.Fatalf("scrubBytes %q", b)
 	}
 }
 

@@ -14,7 +14,7 @@ Security and design rules the code enforces. Do not break one without the develo
 lives, so check there first.
 
 - Proxy mode never hands the key out. The proxy puts the pool key on the upstream request and scrubs it (raw, query
-  and path escaped) from relayed headers and bodies, streams included (`api/proxy.go`, `api/proxy_scrub.go`).
+  and path escaped) from relayed headers and bodies, streams included (`api/proxy.go`, `internal/keyscrub`).
 - App tokens never reach a provider: `X-Acnologia-Token`, `acn_token` query params and a Bearer app token are
   stripped before forwarding, with the hop headers (`buildUpstream` in `api/proxy.go`).
 - A request that carries a key never follows a redirect (`CheckRedirect` returns `ErrUseLastResponse` in

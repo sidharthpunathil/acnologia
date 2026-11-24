@@ -20,6 +20,7 @@ import (
 
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
 	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/keyscrub"
 	"github.com/sidharthpunathil/acnologia/server/internal/notify"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
@@ -732,7 +733,7 @@ func cacheable(resp *http.Response, body []byte, k *store.Key, secret string) bo
 	if strings.Contains(cc, "no-store") || strings.Contains(cc, "private") {
 		return false
 	}
-	if at, _ := firstForm(body, keyForms(secret)); at >= 0 {
+	if keyscrub.Contains(body, keyscrub.Forms(secret)) {
 		return false
 	}
 	return true

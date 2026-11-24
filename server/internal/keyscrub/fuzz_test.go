@@ -1,21 +1,16 @@
-package api
+package keyscrub
 
 import (
 	"bytes"
-	"context"
 	"io"
-	"net/http"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
-// Guards for the streamed key scrubbing of proxy only and share apps, and for
-// the pooled relay buffer: a key split across upstream reads at any offset is
-// still replaced, the reused buffers change no output, and a pooled buffer
-// never carries a scrubbed relay.
+// Guards for the streamed key scrubbing of proxy only and share apps: a key
+// split across upstream reads at any offset is still replaced, and the
+// reused buffers change no output.
 
 // scrubSecrets have characters that each escaping changes (so every form
 // differs), repeat their own start (so a partial match can begin inside a
@@ -30,7 +25,7 @@ var scrubSecrets = []string{
 // scrubBody holds every form of secret: alone, back to back, cut short (a
 // prefix the stream must hold back and then release), and at both ends.
 func scrubBody(secret string, filler []byte) []byte {
-	forms := keyForms(secret)
+	forms := Forms(secret)
 	var b bytes.Buffer
 	for _, f := range forms {
 		b.Write(f)
@@ -147,7 +142,7 @@ func hasAnyForm(b []byte, forms [][]byte) bool {
 func checkScrubSplit(t testing.TB, secret string, body []byte, chunks [][]byte, size int) {
 	t.Helper()
 	got := checkScrubStream(t, secret, chunks, size)
-	if whole := scrubBytes(body, keyForms(secret)); !bytes.Equal(got, whole) {
+	if whole := Bytes(body, Forms(secret)); !bytes.Equal(got, whole) {
 		t.Fatalf("secret %q chunks %q: streamed %q, whole body %q", secret, chunks, got, whole)
 	}
 }
@@ -159,8 +154,8 @@ func checkScrubStream(t testing.TB, secret string, chunks [][]byte, size int) []
 		copy(c, chunks)
 		return c
 	}
-	forms := keyForms(secret)
-	got := readAllBy(t, newScrubReader(&chunkedReader{clone()}, secret), size)
+	forms := Forms(secret)
+	got := readAllBy(t, NewReader(&chunkedReader{clone()}, secret), size)
 	want := readAllBy(t, &legacyScrubReader{r: &chunkedReader{clone()}, forms: forms, buf: make([]byte, 32<<10)}, size)
 	if hasAnyForm(got, forms) {
 		t.Fatalf("secret %q leaked with chunks %q: %q", secret, chunks, got)
@@ -215,7 +210,7 @@ func TestScrubReaderBuffersBounded(t *testing.T) {
 	body := bytes.Repeat([]byte("a"), 1<<20)
 	p := make([]byte, 32<<10)
 	scrubAll := func() {
-		r := newScrubReader(bytes.NewReader(body), echoSecret)
+		r := NewReader(bytes.NewReader(body), echoSecret)
 		for {
 			if _, err := r.Read(p); err != nil {
 				return
@@ -249,7 +244,7 @@ func FuzzScrubReader(f *testing.F) {
 		if secret == "" || len(secret) > 64 || len(filler) > 256 || strings.ContainsAny(secret, "[]") {
 			t.Skip()
 		}
-		for _, f := range keyForms(secret) {
+		for _, f := range Forms(secret) {
 			if bytes.Contains(scrubMark, f) {
 				t.Skip()
 			}
@@ -258,144 +253,6 @@ func FuzzScrubReader(f *testing.F) {
 		i, j := int(a)%(len(body)+1), int(b)%(len(body)+1)
 		checkScrubStream(t, secret, splitAt(body, min(i, j), max(i, j)), int(size)%64+1)
 	})
-}
-
-// splitUpstream echoes every form of the key it was called with, in two
-// writes flushed apart at the offset given by ?at=.
-type splitUpstream struct{ secret string }
-
-func (u splitUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !strings.Contains(r.Header.Get("Authorization"), u.secret) {
-		w.WriteHeader(401)
-		return
-	}
-	body := scrubBody(u.secret, []byte(`","`))
-	at, _ := strconv.Atoi(r.URL.Query().Get("at"))
-	at = min(max(at, 0), len(body))
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(200)
-	_, _ = w.Write(body[:at])
-	w.(http.Flusher).Flush()
-	time.Sleep(time.Millisecond)
-	_, _ = w.Write(body[at:])
-}
-
-// TestProxyOnlyAppNeverSeesSplitKey: through the HTTP proxy, a proxy only app
-// never reads the key wherever the upstream splits its echo, while an app
-// that may lease the key gets the body byte for byte (the pooled relay).
-func TestProxyOnlyAppNeverSeesSplitKey(t *testing.T) {
-	up := splitUpstream{secret: echoSecret}
-	e := newHPEnvWith(t, up, echoSecret)
-	ponly := e.proxyOnlyApp(t)
-	body := scrubBody(echoSecret, []byte(`","`))
-	forms := keyForms(echoSecret)
-	get := func(token string, at int) []byte {
-		req, _ := http.NewRequest("GET", e.srv.URL+"/proxy/gen/echo?at="+strconv.Itoa(at), nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := e.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode != 200 {
-			t.Fatalf("at %d: %d %s", at, resp.StatusCode, b)
-		}
-		return b
-	}
-	for at := 0; at <= len(body); at++ {
-		if got := get(ponly, at); hasAnyForm(got, forms) || !bytes.Equal(got, scrubBytes(body, forms)) {
-			t.Fatalf("split at %d: proxy only app read %q", at, got)
-		}
-		if got := get(e.token, at); !bytes.Equal(got, body) {
-			t.Fatalf("split at %d: leasing app read %q", at, got)
-		}
-	}
-}
-
-// relayRecorder is a ResponseWriter that runs check on every Write.
-type relayRecorder struct {
-	h     http.Header
-	code  int
-	body  bytes.Buffer
-	check func(p []byte)
-}
-
-func (r *relayRecorder) Header() http.Header { return r.h }
-func (r *relayRecorder) WriteHeader(c int)   { r.code = c }
-func (r *relayRecorder) Write(p []byte) (int, error) {
-	r.check(p)
-	return r.body.Write(p)
-}
-
-func relayResponse(chunks ...string) *http.Response {
-	var c [][]byte
-	for _, s := range chunks {
-		c = append(c, []byte(s))
-	}
-	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(&chunkedReader{c})}
-}
-
-func sameBacking(a, b []byte) bool { return len(a) > 0 && len(b) > 0 && &a[0] == &b[0] }
-
-// TestRelayPooledBufferOnlyUnscrubbed: a scrubbed relay never writes from a
-// pooled buffer; an unscrubbed one gives its buffer back only after the last
-// Write, cleared.
-func TestRelayPooledBufferOnlyUnscrubbed(t *testing.T) {
-	s := &Server{}
-	_, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	v := relayView{keyID: 1, attempts: 1}
-
-	// A scrubbed relay: seed the pool, and fail if the seeded buffer (or
-	// any pooled one) is what the body is written from.
-	for range 20 {
-		seed := relayBufs.Get().(*[]byte)
-		relayBufs.Put(seed)
-		w := &relayRecorder{h: http.Header{}, check: func(p []byte) {
-			if sameBacking(p, *seed) {
-				t.Fatal("a scrubbed relay wrote from a pooled buffer")
-			}
-		}}
-		s.deliver(w, relayResponse("a "+echoSecret, " b"), nil, v, cancel, echoSecret, true, capture{})
-		if w.body.String() != "a [key] b" {
-			t.Fatalf("scrubbed relay wrote %q", w.body.String())
-		}
-	}
-
-	// An unscrubbed relay: while it writes, its buffer is not in the pool.
-	reused := false
-	for range 20 {
-		var inUse []byte
-		w := &relayRecorder{h: http.Header{}}
-		w.check = func(p []byte) {
-			inUse = p[:cap(p)]
-			other := relayBufs.Get().(*[]byte)
-			if sameBacking(*other, p) {
-				t.Fatal("the relay's buffer was pooled before its last Write")
-			}
-			relayBufs.Put(other)
-		}
-		s.deliver(w, relayResponse("first ", echoSecret, " last"), nil, v, cancel, echoSecret, false, capture{})
-		if w.body.String() != "first "+echoSecret+" last" {
-			t.Fatalf("unscrubbed relay wrote %q", w.body.String())
-		}
-		// Back in the pool (sync.Pool may drop it, so look a few times),
-		// with the bytes it carried cleared.
-		for range 4 {
-			b := relayBufs.Get().(*[]byte)
-			if sameBacking(*b, inUse) {
-				reused = true
-				if bytes.Contains(*b, []byte(echoSecret)) || bytes.Contains(*b, []byte("first")) {
-					t.Fatal("a pooled relay buffer kept response bytes")
-				}
-			}
-			defer relayBufs.Put(b)
-		}
-	}
-	if !reused {
-		t.Fatal("the unscrubbed relay never returned its buffer to the pool")
-	}
 }
 
 // BenchmarkScrubReader1MiB scrubs a 1 MiB stream read 32 KiB at a time, with
@@ -416,11 +273,11 @@ func BenchmarkScrubReader1MiB(b *testing.B) {
 		}
 	}
 	b.Run("current", func(b *testing.B) {
-		run(b, func() io.Reader { return newScrubReader(bytes.NewReader(body), echoSecret) })
+		run(b, func() io.Reader { return NewReader(bytes.NewReader(body), echoSecret) })
 	})
 	b.Run("legacy", func(b *testing.B) {
 		run(b, func() io.Reader {
-			return &legacyScrubReader{r: bytes.NewReader(body), forms: keyForms(echoSecret), buf: make([]byte, 32<<10)}
+			return &legacyScrubReader{r: bytes.NewReader(body), forms: Forms(echoSecret), buf: make([]byte, 32<<10)}
 		})
 	})
 }

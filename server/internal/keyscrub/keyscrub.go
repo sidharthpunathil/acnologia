@@ -1,4 +1,6 @@
-package api
+// Package keyscrub replaces a secret, in every spelling an upstream may
+// echo it, in proxied headers, bodies and streams.
+package keyscrub
 
 import (
 	"bytes"
@@ -8,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 )
 
@@ -16,13 +19,25 @@ import (
 // read it that way, so the proxy replaces it in the relayed body as well as
 // in the headers.
 
-// scrubMark replaces an echoed key.
-var scrubMark = []byte("[key]")
+// Mark replaces an echoed key.
+const Mark = "[key]"
 
-// keyForms are the spellings of a secret an upstream may echo: raw, query
+var scrubMark = []byte(Mark)
+
+// Text replaces the secret, and each part of a multi part or OAuth secret,
+// in msg. It is for messages and header values; bodies use Bytes or
+// NewReader, which also catch the escaped spellings.
+func Text(msg, secret string) string {
+	for _, v := range providers.SecretVariants(secret) {
+		msg = crypto.Scrub(msg, v)
+	}
+	return msg
+}
+
+// Forms are the spellings of a secret an upstream may echo: raw, query
 // escaped and path escaped, for the secret and each of its parts (an OAuth
 // key's access token and extra fields, a multi part key's values).
-func keyForms(secret string) [][]byte {
+func Forms(secret string) [][]byte {
 	if secret == "" {
 		return nil
 	}
@@ -57,8 +72,14 @@ func firstForm(b []byte, forms [][]byte) (int, int) {
 	return at, n
 }
 
-// scrubBytes replaces every form of the secret in b.
-func scrubBytes(b []byte, forms [][]byte) []byte {
+// Contains reports whether b holds any of forms.
+func Contains(b []byte, forms [][]byte) bool {
+	at, _ := firstForm(b, forms)
+	return at >= 0
+}
+
+// Bytes replaces every form of the secret in b.
+func Bytes(b []byte, forms [][]byte) []byte {
 	if len(forms) == 0 {
 		return b
 	}
@@ -112,8 +133,10 @@ type scrubReader struct {
 	err     error
 }
 
-func newScrubReader(r io.Reader, secret string) io.Reader {
-	forms := keyForms(secret)
+// NewReader returns r with every form of secret replaced by Mark. With no
+// secret it returns r itself.
+func NewReader(r io.Reader, secret string) io.Reader {
+	forms := Forms(secret)
 	if len(forms) == 0 {
 		return r
 	}

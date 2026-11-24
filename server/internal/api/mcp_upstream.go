@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/keyscrub"
 	"github.com/sidharthpunathil/acnologia/server/internal/mcpclient"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
@@ -144,7 +145,7 @@ func scrubMCPText(s, secret string) string {
 	}
 	for _, v := range providers.SecretVariants(secret) {
 		if v != "" {
-			s = scrub(s, v)
+			s = keyscrub.Text(s, v)
 		}
 	}
 	return s
@@ -159,7 +160,7 @@ func scrubMCPValue(v any, secret string) any {
 		return v
 	}
 	for _, variant := range providers.SecretVariants(secret) {
-		b = scrubBytes(b, keyForms(variant))
+		b = keyscrub.Bytes(b, keyscrub.Forms(variant))
 	}
 	var out any
 	if json.Unmarshal(b, &out) == nil {

@@ -117,7 +117,7 @@ file in the next section.
 | Sharing with people (claim links) | `people.go` |
 | Consumer API | `consumer.go` |
 | Proxy: retries and resends, idempotency, key affinity | `proxy.go`, `proxy_resend.go`, `proxy_idem.go`, `proxy_affinity.go` |
-| Proxy, and scrubbing keys an upstream echoes back | `proxy.go`, `proxy_extras.go`, `proxy_scrub.go` |
+| Proxy, and scrubbing keys an upstream echoes back (with `internal/keyscrub`) | `proxy.go`, `proxy_extras.go` |
 | Forward proxy (apps set Acnologia as `HTTPS_PROXY`): routing by host, its CA, setup routes | `forward.go`, `forward_ca.go`, `forward_api.go` |
 | App MCP | `mcp.go`, `mcp_v2.go` (tools, resources, prompts), `mcp_catalog.go` (service tools from provider examples and guide endpoints, tool modes, `acnologia_search_tools` and `acnologia_call_tool`), `mcp_notify.go` (the `GET /mcp` list changed stream), `mcp_admin.go` |
 | Control MCP for admin tokens | `mcp_control.go`, `mcp_control_tools.go` (tool table), `mcp_control_flex.go` (search, batch, result shaping) |

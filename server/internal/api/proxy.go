@@ -20,8 +20,8 @@ import (
 
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
-	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/keyscrub"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
@@ -499,7 +499,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		if err != nil {
 			cancel()
 			picked.Release()
-			msg := scrub(err.Error(), picked.Secret)
+			msg := keyscrub.Text(err.Error(), picked.Secret)
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + msg})
 			blocked := strings.Contains(msg, catalog.ErrMetadataAddr)
 			// Once the headers were written the upstream may have acted on
@@ -579,7 +579,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		picked.Release()
 		res := prov.Classify(resp.StatusCode, resp.Header, rb)
 		if !mayReadKey(a, sv) {
-			rb = scrubBytes(rb, keyForms(picked.Secret))
+			rb = keyscrub.Bytes(rb, keyscrub.Forms(picked.Secret))
 		}
 		if sv.Provider == providers.PeerSlug && sv.PeerLinkID != nil && resp.StatusCode == 403 {
 			// The owner says the share is revoked, paused or expired: mark
@@ -590,7 +590,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 				s.peers.MarkRemoteState(context.WithoutCancel(r.Context()), *sv.PeerLinkID, st)
 			}
 		}
-		res.Message = scrub(res.Message, picked.Secret)
+		res.Message = keyscrub.Text(res.Message, picked.Secret)
 		if !res.Outcome.Rotates() {
 			out.mayHaveRun = true // anything but a refusal may have done the work
 		}
@@ -632,7 +632,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Key, v relayView, cancel context.CancelFunc, secret string, scrubBody bool, cap capture) {
 	if scrubBody {
 		defer resp.Body.Close()
-		resp.Body = readCloser{newScrubReader(resp.Body, secret), resp.Body}
+		resp.Body = readCloser{keyscrub.NewReader(resp.Body, secret), resp.Body}
 	}
 	useCache := cap.cacheKey != "" && s.Cache.Enabled()
 	if (!useCache && cap.idem == nil) || isEventStream(resp) {
@@ -668,7 +668,7 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 	}
 	resp.Body.Close()
 	// A scrubbed body may have had the key in it, which rules out sharing it.
-	if useCache && len(buf) <= maxCachedBody && (!scrubBody || !bytes.Contains(buf, scrubMark)) && cacheable(resp, buf, k, secret) {
+	if useCache && len(buf) <= maxCachedBody && (!scrubBody || !bytes.Contains(buf, []byte(keyscrub.Mark))) && cacheable(resp, buf, k, secret) {
 		s.Cache.Set(cap.cacheKey, &respcache.Entry{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: buf, KeyID: k.ID}, cap.ttl)
 		setHeader(w.Header(), "Cache", "miss")
 	} else if useCache {
@@ -824,7 +824,7 @@ func sanitizeUpstreamHeaders(h http.Header, secret string, fromPeer bool) {
 			continue
 		}
 		for i, v := range vs {
-			vs[i] = scrub(v, secret)
+			vs[i] = keyscrub.Text(v, secret)
 		}
 		h[k] = vs
 	}
@@ -841,16 +841,6 @@ func errorCodeOf(body []byte) string {
 		return ""
 	}
 	return e.Error.Code
-}
-
-// scrub removes the secret from upstream messages before they are stored.
-// scrub replaces the secret, and each part of a multi part or OAuth secret,
-// in msg.
-func scrub(msg, secret string) string {
-	for _, v := range providers.SecretVariants(secret) {
-		msg = crypto.Scrub(msg, v)
-	}
-	return msg
 }
 
 // hopHeader counts the Acnologia servers a proxied request passed through.
