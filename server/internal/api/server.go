@@ -437,6 +437,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/", s.v1Index) // the agent index (agent_index.go), open to anyone
 		// me checks the token itself, so a share token whose share stopped
 		// still learns why.
 		r.Get("/me", s.v1Me)
@@ -817,19 +818,25 @@ func etagMatches(header, etag string) bool {
 
 // helpers
 
-type apiError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
+// apiError, the error envelope, lives in errors.go with the registry.
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	// An error envelope written directly (not through writeErr) still gets
+	// the response's request id and Retry-After.
+	if m, ok := v.(map[string]any); ok {
+		if e, ok := m["error"].(apiError); ok {
+			m["error"] = withResponse(w, e)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeErr writes {"error": {code, message, hint, fix, doc_url, request_id,
+// retry_after_sec}}. Set a Retry-After header first to fill retry_after_sec.
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, map[string]any{"error": apiError{Code: code, Message: msg}})
+	writeJSON(w, status, map[string]any{"error": envelopeError(w, code, msg)})
 }
 
 func writeStoreErr(w http.ResponseWriter, err error) {
@@ -841,7 +848,7 @@ func writeStoreErr(w http.ResponseWriter, err error) {
 	case err != nil && strings.Contains(err.Error(), "UNIQUE"):
 		writeErr(w, 409, "duplicate", "already exists")
 	default:
-		slog.Error("internal error", "err", err)
+		slog.Error("internal error", "err", err, "request_id", requestID(w))
 		writeErr(w, 500, "internal", "internal error")
 	}
 }

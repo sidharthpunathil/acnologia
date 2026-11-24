@@ -712,23 +712,31 @@ func TestClaimAndMeShowLogos(t *testing.T) {
 		t.Fatalf("redeem: %d %s", st, raw)
 	}
 	tok := rd["token"].(string)
-	req, _ := http.NewRequest("GET", e.srv.URL+"/api/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	var me struct {
+	type meLogos struct {
 		Services []struct {
 			Slug    string  `json:"slug"`
 			LogoURL *string `json:"logo_url"`
 		} `json:"services"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
-		t.Fatal(err)
+	getMe := func(path string) meLogos {
+		req, _ := http.NewRequest("GET", e.srv.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var me meLogos
+		if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+			t.Fatal(err)
+		}
+		return me
 	}
-	if len(me.Services) != 1 || me.Services[0].LogoURL == nil || *me.Services[0].LogoURL != want {
+	// Logos are inlined only when asked for.
+	if me := getMe("/api/v1/me"); len(me.Services) != 1 || me.Services[0].LogoURL != nil {
+		t.Fatalf("me without logos=1 inlined a logo: %+v", me.Services)
+	}
+	if me := getMe("/api/v1/me?logos=1"); len(me.Services) != 1 || me.Services[0].LogoURL == nil || *me.Services[0].LogoURL != want {
 		t.Fatalf("me services %+v", me.Services)
 	}
 

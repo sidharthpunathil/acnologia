@@ -144,6 +144,7 @@ var leaseOutput = outObj(map[string]any{
 }, "lease_id", "secret")
 
 var toolOutputs = map[string]map[string]any{
+	"whoami":        outObj(map[string]any{"app": anyOf("The app: id, name, mode, read_only"), "token": anyOf("The credential: kind (app or oauth), id, name, read_only, expires_at"), "mode": typed("string", "proxy, lease or both"), "mcp": anyOf("tool_sets, tool_mode and read_only of this MCP server"), "limits": anyOf("The app's limits, null where none"), "remaining": anyOf("What is left of each limit, null where none"), "usage": anyOf("Requests and cost today and this month"), "services": listOf(outObj(map[string]any{"slug": typed("string", "Service slug")}, "slug"), "Services this app may call"), "share": anyOf("The share behind a share's token, else null")}, "app", "token", "services"),
 	"list_services": outObj(withPage(map[string]any{"services": listOf(serviceItem, "Services on this page")}), "services"),
 	"pool_status":   serviceItem,
 	"get_key":       leaseOutput,

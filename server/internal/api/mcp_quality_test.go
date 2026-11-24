@@ -200,6 +200,7 @@ func TestMCPResultsMatchOutputSchemas(t *testing.T) {
 		name string
 		args map[string]any
 	}{
+		{"whoami", nil},
 		{"list_services", nil},
 		{"pool_status", map[string]any{"service": "serpapi"}},
 		{"get_key", map[string]any{"service": "serpapi", "exclusive": true}},

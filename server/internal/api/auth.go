@@ -73,9 +73,9 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 		}
 		if u == nil {
 			if sess == "" {
-				writeErr(w, 401, "unauthenticated", "sign in first")
+				writeErr(w, 401, "unauthenticated", "sign in first: a dashboard session, or an admin API token in Authorization: Bearer acnadm_...")
 			} else {
-				writeErr(w, 401, "unauthenticated", "session expired")
+				writeErr(w, 401, "unauthenticated", "session expired: sign in again")
 			}
 			return
 		}
@@ -89,12 +89,26 @@ func (s *Server) requireRole(role store.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if u := userFrom(r); u == nil || !u.Role.AtLeast(role) {
-				writeErr(w, 403, "forbidden", "your role cannot do this")
+				writeErr(w, 403, "forbidden", forbiddenMsg(r, role))
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// forbiddenMsg names the role a route needs and what the caller has: its
+// role, and for an API token, the token's scope, which caps the role.
+func forbiddenMsg(r *http.Request, need store.Role) string {
+	msg := "this needs the " + string(need) + " role"
+	u := userFrom(r)
+	if u == nil {
+		return msg + "; sign in first"
+	}
+	if t, ok := r.Context().Value(tokenKey).(*store.AdminToken); ok {
+		return msg + "; this API token acts as " + string(u.Role) + " (scope " + t.Scope + "). Use a token with a wider scope, at most your own role"
+	}
+	return msg + "; you are " + string(u.Role) + ". Ask a superadmin to raise your role"
 }
 
 // appToken reads the app token from the Authorization header, X-Acnologia-Token
@@ -171,7 +185,7 @@ func (s *Server) authAppFull(r *http.Request) (*store.App, *authFail) {
 		return nil, unauth("app token expired")
 	}
 	if !a.Active {
-		return nil, &authFail{Status: 403, Code: "unauthenticated", Message: "app is disabled"}
+		return nil, &authFail{Status: 403, Code: "unauthenticated", Message: "app is disabled; an admin can enable it on the Apps page"}
 	}
 	s.Store.TouchAppToken(r.Context(), a.ID, t.ID)
 	return a, nil

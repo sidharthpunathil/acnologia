@@ -89,20 +89,20 @@ func (s *Server) v1Capabilities(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serviceForApp(w http.ResponseWriter, r *http.Request, slug string) (*store.Service, bool) {
 	a := appFrom(r)
 	if !a.CanUse(slug) {
-		writeErr(w, 403, "service_not_allowed", "this app cannot use service "+slug)
+		writeErr(w, 403, "service_not_allowed", s.notAllowedMsg(r.Context(), a, slug))
 		return nil, false
 	}
 	sv, err := s.Store.GetServiceBySlug(r.Context(), slug)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, 404, "unknown_service", "no service named "+slug)
+			writeErr(w, 404, "unknown_service", s.unknownServiceMsg(r.Context(), a, slug))
 		} else {
 			writeStoreErr(w, err)
 		}
 		return nil, false
 	}
 	if !s.sharedAs(r.Context(), a, sv) {
-		writeErr(w, 403, "service_not_allowed", "this app cannot use service "+slug)
+		writeErr(w, 403, "service_not_allowed", s.notAllowedMsg(r.Context(), a, slug))
 		return nil, false
 	}
 	return sv, true

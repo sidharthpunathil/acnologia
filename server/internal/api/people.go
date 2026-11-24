@@ -587,10 +587,12 @@ type meShare struct {
 	Owner     meOwner    `json:"owner"`
 }
 
-// v1Me tells an app token holder about its own access: limits and use,
-// the services it may call, and for a share, the share's state. A share
-// token whose share is paused, expired or revoked still learns that state
-// here (and nothing it could use).
+// v1Me tells an app token holder about its own access: the token itself,
+// the app's mode and MCP tool sets, limits, use and what is left, the
+// services it may call, and for a share, the share's state. A share token
+// whose share is paused, expired or revoked still learns that state here
+// (and nothing it could use). Logos come inlined only with ?logos=1: each
+// can be tens of kilobytes, and an agent rarely wants them.
 func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
@@ -607,50 +609,93 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		}
 		a = a2
 	}
-	out := map[string]any{"app": map[string]any{"id": a.ID, "name": a.Name, "read_only": a.TokenReadOnly}, "read_only": a.TokenReadOnly, "services": []meService{}, "share": nil}
+	out, err := s.meFacts(ctx, r, a, meOpts{usable: f == nil, logos: truthy(r.URL.Query().Get("logos"))})
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+// meOpts says how much meFacts tells.
+type meOpts struct {
+	// usable is false for a share token whose share stopped: it learns the
+	// share's state and no services.
+	usable bool
+	// logos inlines each service's logo as a data: URI.
+	logos bool
+	// readOnly is the connection's own read-only mode (an MCP connection
+	// may ask for it), on top of the token's.
+	readOnly bool
+}
+
+// meFacts is what /api/v1/me and the acnologia_whoami tool tell a token
+// holder about itself. Nothing in it is a secret.
+func (s *Server) meFacts(ctx context.Context, r *http.Request, a *store.App, o meOpts) (map[string]any, error) {
+	ro := a.TokenReadOnly || o.readOnly
+	out := map[string]any{
+		"app":       map[string]any{"id": a.ID, "name": a.Name, "read_only": ro, "mode": a.Mode},
+		"read_only": ro,
+		"mode":      a.Mode,
+		"token":     s.tokenFacts(ctx, r, a),
+		"services":  []meService{},
+		"share":     nil,
+	}
+	st, err := s.Store.GetMCPSettings(ctx, a.ID)
+	if err == nil {
+		out["mcp"] = mcpFacts(a, st, ro)
+	}
 	limits, _ := s.Store.GetAppLimits(ctx, a.ID)
 	out["limits"] = limits
 	usage := meUsage{}
 	if u, err := s.Store.GetAppUsage(ctx, a.ID, time.Now()); err == nil {
 		usage = meUsage{TodayRequests: u.TodayRequests, TodayCost: u.TodayCost, MonthRequests: u.MonthRequests, MonthCost: u.MonthCost,
 			LimitHit: store.CheckLimits(limits, u, time.Now())}
+		out["remaining"] = limitsLeft(limits, u)
+	} else {
+		out["remaining"] = limitsLeft(limits, store.AppUsage{})
 	}
 	if fresh, err := s.Store.GetApp(ctx, a.ID); err == nil {
 		usage.LastUsedAt = fresh.LastUsedAt
 	}
 	out["usage"] = usage
 	out["limit_hit"] = usage.LimitHit
+	logo := func(sv *store.Service) *string {
+		if !o.logos {
+			return nil
+		}
+		return s.logoDataURI(ctx, sv)
+	}
 	if a.ShareID != nil {
 		sh, err := s.Store.GetShare(ctx, *a.ShareID)
 		if err != nil {
-			writeStoreErr(w, err)
-			return
+			return nil, err
 		}
 		self, _, _ := s.selfIdentity(r)
-		out["app"] = map[string]any{"id": a.ID, "name": sh.Name}
+		out["app"] = map[string]any{"id": a.ID, "name": sh.Name, "read_only": ro, "mode": a.Mode}
 		out["share"] = meShare{ID: sh.ID, Name: sh.Name, OwnerName: self.Name, OwnerID: self.ID, Recipient: sh.Recipient, Label: sh.Label,
 			Status: sh.Status, Mode: sh.Mode, EndsAt: sh.ExpiresAt, Owner: meOwner{Name: self.Name, ID: self.ID}}
-		if f == nil {
+		if o.usable {
 			svcs := []meService{}
 			for _, ms := range s.buildManifest(ctx, sh).Services {
-				var logo *string
-				if sv, err := s.Store.GetServiceBySlug(ctx, ms.Slug); err == nil {
-					logo = s.logoDataURI(ctx, sv)
+				var l *string
+				if o.logos {
+					if sv, err := s.Store.GetServiceBySlug(ctx, ms.Slug); err == nil {
+						l = logo(sv)
+					}
 				}
-				svcs = append(svcs, meService{Slug: ms.Slug, Name: ms.Name, Provider: ms.Provider, Category: ms.Category, Available: ms.Available, LogoURL: logo})
+				svcs = append(svcs, meService{Slug: ms.Slug, Name: ms.Name, Provider: ms.Provider, Category: ms.Category, Available: ms.Available, LogoURL: l})
 			}
 			out["services"] = svcs
 		}
-		writeJSON(w, 200, out)
-		return
+		return out, nil
 	}
 	svcs, err := s.Store.ListServices(ctx)
 	if err == nil {
 		err = s.Store.FillStats(ctx, svcs, a.LeaseHidden, s.Pool.InFlight())
 	}
 	if err != nil {
-		writeStoreErr(w, err)
-		return
+		return nil, err
 	}
 	list := []meService{}
 	for _, sv := range svcs {
@@ -661,11 +706,88 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		if sv.KeyCounts.Available > sv.KeyCounts.Busy {
 			avail = 1
 		}
-		list = append(list, meService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category, Available: avail,
-			LogoURL: s.logoDataURI(ctx, sv)})
+		list = append(list, meService{Slug: sv.Slug, Name: sv.Name, Provider: sv.Provider, Category: sv.Category, Available: avail, LogoURL: logo(sv)})
 	}
 	out["services"] = list
-	writeJSON(w, 200, out)
+	return out, nil
+}
+
+// meToken is the credential the request came with.
+type meToken struct {
+	// Kind is app (an acn_ app token, a share's token included) or oauth
+	// (an acno_ access token an MCP client got by signing in).
+	Kind      string     `json:"kind"`
+	ID        int64      `json:"id,omitempty"`
+	Name      string     `json:"name,omitempty"`
+	Prefix    string     `json:"prefix,omitempty"`
+	ReadOnly  bool       `json:"read_only"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	// Client is the MCP client an OAuth token was issued to.
+	Client string `json:"client,omitempty"`
+}
+
+func (s *Server) tokenFacts(ctx context.Context, r *http.Request, a *store.App) meToken {
+	if r != nil {
+		if tok, ok := oauthBearer(r); ok {
+			t := meToken{Kind: "oauth", ReadOnly: a.TokenReadOnly}
+			if _, ti, _, err := s.Store.AppByOAuthToken(ctx, crypto.SHA256(tok)); err == nil {
+				exp := ti.ExpiresAt
+				t.ID, t.ExpiresAt = ti.ID, &exp
+				if ti.Grant != nil {
+					t.Client, t.Name = ti.Grant.ClientName, ti.Grant.ClientName
+				}
+			}
+			return t
+		}
+	}
+	t := meToken{Kind: "app", ID: a.TokenID, ReadOnly: a.TokenReadOnly}
+	if a.TokenID != 0 {
+		if at, err := s.Store.GetAppToken(ctx, a.ID, a.TokenID); err == nil {
+			t.Name, t.Prefix, t.ExpiresAt = at.Name, at.Prefix, at.ExpiresAt
+		}
+	}
+	return t
+}
+
+// mcpFacts is what /mcp offers this token: the tool sets on, the tool
+// listing mode and whether the connection is read only.
+func mcpFacts(a *store.App, st store.MCPSettings, ro bool) map[string]any {
+	if a.ShareID != nil {
+		st.Insights, st.Manage = false, false
+	}
+	sets := []string{}
+	for _, s := range []struct {
+		on   bool
+		name string
+	}{{st.Core, setCore}, {st.ServiceTools && a.AllowsProxy(), setService}, {st.Insights, setInsights}, {st.Manage, setManage}} {
+		if s.on {
+			sets = append(sets, s.name)
+		}
+	}
+	return map[string]any{"tool_sets": sets, "tool_mode": orDefault(st.ToolMode, "auto"), "read_only": ro || st.ReadOnly,
+		"resources": st.Resources, "prompts": st.Prompts}
+}
+
+// limitsLeft is what is left of each limit; null where there is none.
+func limitsLeft(l store.AppLimits, u store.AppUsage) map[string]any {
+	left := func(limit *int64, used int64) any {
+		if limit == nil {
+			return nil
+		}
+		return max(*limit-used, 0)
+	}
+	leftCost := func(limit *float64, used float64) any {
+		if limit == nil {
+			return nil
+		}
+		return max(*limit-used, 0)
+	}
+	return map[string]any{
+		"daily_requests":   left(l.DailyRequests, u.TodayRequests),
+		"monthly_requests": left(l.MonthlyRequests, u.MonthRequests),
+		"daily_budget":     leftCost(l.DailyBudget, u.TodayCost),
+		"monthly_budget":   leftCost(l.MonthlyBudget, u.MonthCost),
+	}
 }
 
 // maxInlineLogo caps a logo inlined into a claim or My access answer. The

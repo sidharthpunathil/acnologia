@@ -13,6 +13,7 @@ import (
 
 	"github.com/sidharthpunathil/acnologia/server/internal/config"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
+	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // The access gate: one shared password in front of the whole site, for an
@@ -28,7 +29,10 @@ import (
 // Locked: everything that carries data or lets someone act. That is /api/*
 // (setup and sign in included) except the consumer API and the gate's own
 // routes, the docs markdown and assets, /llms.txt and /llms-full.txt, and any
-// request that is not a GET or HEAD. Open: the SPA shell and its static files
+// request that is not a GET or HEAD. The docs (gateDocs) also open to any
+// valid app token, MCP access token or admin token: they are the generic
+// product docs, and an agent that holds only the server's URL and a token
+// must be able to read how to use it. Open: the SPA shell and its static files
 // (they carry no data, and the lock screen is part of them), /healthz,
 // /robots.txt, /api/gate*, the CLI sign in's create and poll calls
 // (/api/cli/device and /api/cli/device/token), the consumer routes (/proxy/*, /api/v1/*,
@@ -182,6 +186,51 @@ func (s *Server) gatePasses(r *http.Request) bool {
 	return s.gate.authorised(r) || (s.gate.on() && s.validAdminToken(r))
 }
 
+// gateDocs reports whether a path is one of the docs: the llms files, the
+// Markdown pages and their images, and the docs index. They hold no server
+// data (llms.txt only fills in the request's own base URL).
+func gateDocs(p string) bool {
+	switch {
+	case p == "/llms.txt", p == "/llms-full.txt", p == "/api/docs":
+		return true
+	case strings.HasPrefix(p, "/docs/") && (strings.HasSuffix(p, ".md") || strings.HasPrefix(p, "/docs/assets/")):
+		return true
+	}
+	return false
+}
+
+// docsTokenPasses reports whether a docs read carries a live token of any
+// kind: an app token (header, or the acn_token query parameter), an OAuth
+// access token from an MCP sign in, or an admin API token. An OAuth token
+// is checked like on /mcp except for its resource, since the docs are not
+// a resource it acts on. Nothing is touched or recorded.
+func (s *Server) docsTokenPasses(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if s.validAdminToken(r) {
+		return true
+	}
+	ctx := r.Context()
+	if tok, ok := oauthBearer(r); ok {
+		a, ti, u, err := s.Store.AppByOAuthToken(ctx, crypto.SHA256(tok))
+		return err == nil && ti.Grant != nil && ti.Grant.RevokedAt == nil && ti.ExpiresAt.After(time.Now()) &&
+			!u.Disabled && u.Role.AtLeast(store.RoleAdmin) && a.Active && a.ShareID == nil
+	}
+	tok := appToken(r)
+	if tok == "" || !store.IsAppToken(tok) {
+		return false
+	}
+	a, t, err := s.Store.AppByToken(ctx, crypto.SHA256(tok))
+	if err != nil || !t.Usable(time.Now()) || !a.Active {
+		return false
+	}
+	if a.ShareID != nil {
+		return s.shareGate(ctx, *a.ShareID) == nil
+	}
+	return true
+}
+
 // tryUnlock checks one guess from client, from the lock screen or the
 // header, against the limits. Checking, comparing and counting happen under
 // one lock, so a burst of parallel guesses cannot all slip past the check
@@ -281,13 +330,17 @@ func (s *Server) gateRequests(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if gateOpen(r) || s.gatePasses(r) {
+		if gateOpen(r) || s.gatePasses(r) || (gateDocs(r.URL.Path) && s.docsTokenPasses(r)) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		if (r.Method != http.MethodGet && r.Method != http.MethodHead) || gateData(r.URL.Path) {
-			writeErr(w, http.StatusUnauthorized, "locked", "this Acnologia instance is private: unlock it with its access password")
+			msg := "this Acnologia instance is private: send its access password in the " + accessHeader + " header, or an admin API token (Authorization: Bearer acnadm_...)"
+			if gateDocs(r.URL.Path) {
+				msg += "; the docs also open to a valid app token (Authorization: Bearer acn_...) or MCP access token"
+			}
+			writeErr(w, http.StatusUnauthorized, "locked", msg+". GET /api/v1 is open and lists the endpoints")
 			return
 		}
 		s.serveWeb(w, r)

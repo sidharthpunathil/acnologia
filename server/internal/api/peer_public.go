@@ -78,7 +78,8 @@ func (s *Server) wellKnown(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, 200, id)
+	// The identity's fields stay at the top level, as peers read them.
+	writeJSON(w, 200, wellKnownDoc{Identity: id, Agent: s.agentIndex(r)})
 }
 
 // shareGate refuses a share token whose share is not active. Expiry is

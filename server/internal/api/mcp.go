@@ -248,30 +248,69 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 // gave it (isError included), any other tool's as text and
 // structuredContent.
 func (s *Server) toolCallResult(ctx context.Context, r *http.Request, a *store.App, st store.MCPSettings, t *mcpTool, args json.RawMessage) map[string]any {
+	// Errors are shaped for the tool the client called: call_tool's, not
+	// the target's, since the client checks against the called tool.
+	called := *t
 	if t.Name == "call_tool" {
 		target, inner, err := s.resolveCallTool(ctx, a, st, args)
 		if err != nil {
-			return toolErrorResult(err)
+			return toolErrorResult(err, called)
 		}
 		t, args = target, inner
 	}
 	if t.upstreamMCP {
 		res, err := s.callUpstreamMCPTool(ctx, r, a, st, t, args)
 		if err != nil {
-			return toolErrorResult(err)
+			return toolErrorResult(err, called)
 		}
 		return res
 	}
 	out, err := s.runTool(ctx, r, a, st, t, args)
 	if err != nil {
-		return toolErrorResult(err)
+		return toolErrorResult(err, called)
 	}
 	b, _ := json.Marshal(out)
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}
 }
 
-func toolErrorResult(err error) map[string]any {
-	return map[string]any{"content": []map[string]any{{"type": "text", "text": publicText(err.Error())}}, "isError": true}
+// toolErrorResult is an isError result: the message and the registry's
+// hint as text, for clients that read only text, and {code, message, hint,
+// fix, doc_url, retry_after_sec} under _meta["acnologia/error"]. The same
+// object is the structuredContent when the called tool declares no output
+// schema with required fields: clients check structuredContent against the
+// schema even on an error, and an error object would fail it.
+func toolErrorResult(err error, called mcpTool) map[string]any {
+	info := toolErrorInfo(err)
+	text := info["message"].(string)
+	if h, ok := info["hint"].(string); ok && h != "" {
+		text += "\n\nHint (" + info["code"].(string) + "): " + h
+	}
+	res := map[string]any{
+		"content": []map[string]any{{"type": "text", "text": text}},
+		"isError": true,
+		"_meta":   map[string]any{"acnologia/error": info},
+	}
+	if schemaAcceptsError(presentTools([]mcpTool{called})[0].OutputSchema) {
+		res["structuredContent"] = info
+	}
+	return res
+}
+
+// schemaAcceptsError reports whether an error object passes a tool's output
+// schema: there is none, or it requires no field.
+func schemaAcceptsError(schema map[string]any) bool {
+	if schema == nil {
+		return true
+	}
+	switch req := schema["required"].(type) {
+	case []string:
+		return len(req) == 0
+	case []any:
+		return len(req) == 0
+	case nil:
+		return true
+	}
+	return false
 }
 
 func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw json.RawMessage) (map[string]any, error) {
@@ -301,23 +340,25 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments: %v", err)
+			return nil, toolErrf("invalid_arguments", "invalid arguments: %v", err)
 		}
 	}
 	svcFor := func() (*store.Service, error) {
 		if !a.CanUse(args.Service) {
-			return nil, fmt.Errorf("this app cannot use service %q; list_services shows the services it can use", args.Service)
+			return nil, toolErrf("service_not_allowed", "%s; list_services shows them all", s.notAllowedMsg(ctx, a, args.Service))
 		}
 		sv, err := s.Store.GetServiceBySlug(ctx, args.Service)
 		if err != nil {
-			return nil, fmt.Errorf("no service named %q; list_services shows the services this app can use", args.Service)
+			return nil, toolErrf("unknown_service", "%s; list_services shows the services this app can use", s.unknownServiceMsg(ctx, a, args.Service))
 		}
 		if !s.sharedAs(ctx, a, sv) {
-			return nil, fmt.Errorf("this app cannot use service %q; list_services shows the services this app can use", args.Service)
+			return nil, toolErrf("service_not_allowed", "%s; list_services shows them all", s.notAllowedMsg(ctx, a, args.Service))
 		}
 		return sv, nil
 	}
 	switch name {
+	case "whoami":
+		return s.meFacts(ctx, r, a, meOpts{usable: true, readOnly: ro})
 	case "list_services", "pool_status":
 		svcs, err := s.Store.ListServices(ctx)
 		if err != nil {
@@ -336,7 +377,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		}
 		if name == "pool_status" {
 			if len(list) == 0 {
-				return nil, fmt.Errorf("no service named %q for this app; list_services shows the services it can use", args.Service)
+				return nil, toolErrf("unknown_service", "%s for this app; list_services shows the services it can use", s.unknownServiceMsg(ctx, a, args.Service))
 			}
 			return list[0], nil
 		}
@@ -344,10 +385,10 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		return pg.into(map[string]any{"services": page}), nil
 	case "get_key":
 		if ro {
-			return nil, errors.New("read-only mode cannot lease raw API keys")
+			return nil, toolErrf("read_only_token", "read-only mode cannot lease raw API keys")
 		}
 		if !a.AllowsLease() {
-			return nil, errors.New("this app is proxy only, use proxy_request")
+			return nil, toolErrf("lease_not_allowed", "this app is proxy only, use proxy_request")
 		}
 		sv, err := svcFor()
 		if err != nil {
@@ -355,7 +396,8 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		}
 		hit, release := s.admitApp(ctx, a, costPerRequest(sv, providers.Get(sv.Provider), "", ""))
 		if hit != nil {
-			return nil, fmt.Errorf("this app reached its %s limit, it resets %s", strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339))
+			return nil, &toolErr{code: "app_limit_reached", msg: fmt.Sprintf("this app reached its %s limit, it resets %s", strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339)),
+				retryAfter: max(int(math.Ceil(time.Until(hit.ResetAt).Seconds())), 0)}
 		}
 		defer release()
 		st, _ := s.Store.GetMCPSettings(ctx, a.ID)
@@ -367,14 +409,19 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			var nk *pool.NoKeyError
 			if errors.As(err, &nk) {
-				return nil, fmt.Errorf("%s, retry in %.0f seconds", nk.Error(), math.Ceil(nk.RetryAfter.Seconds()))
+				code := "no_key_available"
+				if nk.Busy {
+					code = "all_keys_busy"
+				}
+				retry := int(math.Ceil(nk.RetryAfter.Seconds()))
+				return nil, &toolErr{code: code, msg: fmt.Sprintf("%s, retry in %d seconds", nk.Error(), retry), retryAfter: retry}
 			}
 			return nil, err
 		}
 		return toMap(l), nil
 	case "renew_key":
 		if ro {
-			return nil, errors.New("read-only mode cannot renew key leases")
+			return nil, toolErrf("read_only_token", "read-only mode cannot renew key leases")
 		}
 		exp, err := s.renewLease(ctx, a, args.LeaseID, time.Duration(args.TTLSec)*time.Second)
 		if err != nil {
@@ -383,11 +430,18 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		return map[string]any{"ok": true, "expires_at": exp}, nil
 	case "report_key":
 		if ro {
-			return nil, errors.New("read-only mode cannot report key leases")
+			return nil, toolErrf("read_only_token", "read-only mode cannot report key leases")
 		}
-		next, _, err := s.report(ctx, a, args.LeaseID, reportInput{Outcome: args.Outcome, RetryAfterSec: args.RetryAfterSec, Message: args.Message, Rotate: args.Rotate})
+		next, status, err := s.report(ctx, a, args.LeaseID, reportInput{Outcome: args.Outcome, RetryAfterSec: args.RetryAfterSec, Message: args.Message, Rotate: args.Rotate})
 		if err != nil {
-			return nil, err
+			if errors.Is(err, errReadOnlyLease) || status >= 500 {
+				return nil, err
+			}
+			code := "report_failed"
+			if status == 400 {
+				code = "invalid_arguments"
+			}
+			return nil, toolErrf(code, "%s", err.Error())
 		}
 		res := map[string]any{"ok": true, "next": nil}
 		if next != nil {
@@ -404,7 +458,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if ro {
 			m := strings.ToUpper(strings.TrimSpace(args.Method))
 			if m != "" && m != http.MethodGet && m != http.MethodHead {
-				return nil, errors.New("this connection is read-only; only GET and HEAD requests are allowed")
+				return nil, toolErrf("read_only_token", "this connection is read-only; only GET and HEAD requests are allowed")
 			}
 		}
 		sv, err := svcFor()
@@ -417,7 +471,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		}
 		return s.mcpProxy(withResolvedService(ctx, sv), r, args.Service, args.Method, args.Path, args.Query, args.Body, hdr)
 	}
-	return nil, fmt.Errorf("unknown tool %q", name)
+	return nil, toolErrf("unknown_tool", "unknown tool %q", name)
 }
 
 // mcpDrainMax is how far past the result limit an MCP proxy call keeps

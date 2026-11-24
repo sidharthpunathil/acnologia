@@ -222,7 +222,7 @@ export function meView(m: MeResponse): MeView {
 export async function fetchMe(token: string): Promise<MeResponse> {
   let res: Response;
   try {
-    res = await fetch("/api/v1/me", { method: "GET", credentials: "omit", headers: { Accept: "application/json", Authorization: `Bearer ${token}` } });
+    res = await fetch("/api/v1/me?logos=1", { method: "GET", credentials: "omit", headers: { Accept: "application/json", Authorization: `Bearer ${token}` } });
   } catch {
     throw new ApiError(0, "network", "Cannot reach the server.");
   }

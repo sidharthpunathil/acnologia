@@ -19,7 +19,7 @@ const tokenKey ctxKey = 100
 func (s *Server) tokenUser(w http.ResponseWriter, r *http.Request, tok string, next http.Handler) {
 	t, owner, err := s.Store.TokenByHash(r.Context(), crypto.SHA256(tok))
 	if err != nil {
-		writeErr(w, 401, "unauthenticated", "API token is invalid, expired or revoked")
+		writeErr(w, 401, "unauthenticated", "this admin API token is invalid, expired or revoked; run acn login for a new one")
 		return
 	}
 	role, _ := store.ScopeRole(t.Scope)

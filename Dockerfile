@@ -18,7 +18,7 @@ COPY --from=web /src/server/internal/webui/dist ./internal/webui/dist
 COPY docs/llms.txt ./internal/llmstxt/llms.txt
 COPY docs/llms-full.txt ./internal/llmstxt/llms-full.txt
 COPY README.md ./internal/docsmd/files/overview.md
-COPY docs/architecture.md docs/flows.md docs/security.md docs/configuration.md docs/api.md docs/cli.md docs/sdks.md docs/providers.md docs/development.md docs/deploy.md docs/deploy-railway.md docs/deploy-vps.md docs/mcp-oauth.md ./internal/docsmd/files/
+COPY docs/architecture.md docs/flows.md docs/security.md docs/configuration.md docs/api.md docs/cli.md docs/sdks.md docs/providers.md docs/development.md docs/deploy.md docs/deploy-railway.md docs/deploy-vps.md docs/mcp-oauth.md docs/errors.md ./internal/docsmd/files/
 COPY docs/screenshots/*.png docs/brand/logo.png ./internal/docsmd/assets/
 ARG VERSION=docker
 ARG TARGETOS TARGETARCH

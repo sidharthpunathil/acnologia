@@ -116,6 +116,9 @@ func withTitles(ts []mcpTool) []mcpTool {
 }
 
 var coreTools = withTitles([]mcpTool{
+	{Name: "whoami", Set: setCore, Annotations: readOnly("Who am I"),
+		Description: "What this connection may do: the token (kind, name, expiry, read-only), the app's mode (proxy, lease or both) and MCP tool sets, its limits with what is left of each, and the services it may call. Call it first when a call is refused, or to plan around limits.",
+		InputSchema: obj(map[string]any{})},
 	{Name: "list_services", Set: setCore, Annotations: readOnly("List services"),
 		Description: "List the API services this app can use and whether each has a key available right now. Use a service's slug with service_guide, proxy_request and the other tools. Pages with limit and offset; has_more says when to ask for the next page.",
 		InputSchema: obj(map[string]any{
@@ -152,11 +155,11 @@ var coreTools = withTitles([]mcpTool{
 	{Name: "proxy_request", Set: setCore, Annotations: hints("Call a service", true, false, true),
 		Description: "Call any endpoint of a service through Acnologia. Acnologia picks a key, injects it, and retries with the next key on rate limits. The key is never shown to you. Read service_guide first for the service's paths and parameters.",
 		InputSchema: obj(map[string]any{
-			"service": str("Service slug"),
-			"method":  map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "PATCH", "DELETE"}, "default": "GET"},
-			"path":    str("Path on the provider, for example /v1/search"),
-			"query":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
-			"body":    map[string]any{"description": "JSON body for POST, PUT or PATCH"},
+			"service":         str("Service slug"),
+			"method":          map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "PATCH", "DELETE"}, "default": "GET"},
+			"path":            str("Path on the provider, for example /v1/search"),
+			"query":           map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+			"body":            map[string]any{"description": "JSON body for POST, PUT or PATCH"},
 			"idempotency_key": str(idempotencyArgDesc),
 		}, "service", "path")},
 })
@@ -397,7 +400,7 @@ func capabilityMCPTools(cs []*store.Capability, taken []mcpTool) []mcpTool {
 			capability:  c.Slug,
 			routes:      routes,
 			routeCalls:  calls,
-			keywords:   strings.Join(append([]string{c.Slug, c.Name}, routes...), " "),
+			keywords:    strings.Join(append([]string{c.Slug, c.Name}, routes...), " "),
 			searchText:  c.Description,
 		})
 	}
