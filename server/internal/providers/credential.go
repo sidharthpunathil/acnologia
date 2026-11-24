@@ -3,6 +3,7 @@ package providers
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -40,13 +41,17 @@ type AuthField struct {
 	// Public parts (a login, an app id) are not secret on their own; the
 	// form shows them in plain text. The key is still stored encrypted.
 	Public bool `json:"public,omitempty"`
+	// Optional parts may be left empty, and are then not sent. Only oauth2
+	// auth has optional fields.
+	Optional bool `json:"optional,omitempty"`
 }
 
 // CredentialPart is one input of the add key form.
 type CredentialPart struct {
-	Key    string `json:"key"`
-	Label  string `json:"label"`
-	Public bool   `json:"public,omitempty"`
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	Public   bool   `json:"public,omitempty"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 var fieldKeyRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
@@ -69,14 +74,14 @@ func (a Auth) Parts() []CredentialPart {
 			}
 		}
 		return []CredentialPart{{Key: "login", Label: login, Public: true}, {Key: "password", Label: password}}
-	case "fields":
+	case "fields", AuthOAuth2:
 		out := make([]CredentialPart, 0, len(a.Fields))
 		for _, f := range a.Fields {
 			l := f.Label
 			if l == "" {
 				l = f.Key
 			}
-			out = append(out, CredentialPart{Key: f.Key, Label: l, Public: f.Public})
+			out = append(out, CredentialPart{Key: f.Key, Label: l, Public: f.Public, Optional: f.Optional && a.Type == AuthOAuth2})
 		}
 		return out
 	}
@@ -115,8 +120,13 @@ func (a Auth) validate(add func(string, ...any)) {
 				add("auth.fields[%d].name is required", i)
 			}
 		}
+	case AuthOAuth2:
+		a.validateOAuth(add)
 	default:
-		add("auth.type must be query, header, bearer, basic or fields")
+		add("auth.type must be query, header, bearer, basic, fields or oauth2")
+	}
+	if a.Type != AuthOAuth2 && a.OAuth != nil {
+		add("auth.oauth is only for oauth2 auth")
 	}
 }
 
@@ -124,6 +134,10 @@ func (a Auth) validate(add func(string, ...any)) {
 // auth stores. parts, when given, are the form's inputs by part key and win
 // over raw. Single key auth returns raw trimmed.
 func (a Auth) NormalizeSecret(raw string, parts map[string]string) (string, error) {
+	if a.Type == AuthOAuth2 {
+		// An OAuth key holds a connection, made by signing in to the account.
+		return "", ErrOAuthKey
+	}
 	raw = strings.TrimSpace(raw)
 	if !a.MultiPart() {
 		if raw == "" && len(parts) > 0 {
@@ -278,6 +292,9 @@ func (a Auth) SecretParts(secret string) map[string]string {
 	return map[string]string{"secret": secret}
 }
 
+// ErrOAuthKey refuses a pasted key for an oauth2 provider.
+var ErrOAuthKey = errors.New("this provider signs in with OAuth: add an account with Connect account on the service (or the oauth_connect_url tool, or acn oauth connect)")
+
 // SecretHint is the "...abcd" shown for a stored secret: the last part's
 // last four characters, so a JSON secret does not show as "...\"}".
 func (a Auth) SecretHint(secret string) string {
@@ -336,6 +353,13 @@ func (a Auth) applyQuery(q url.Values, secret string) {
 				q.Set(f.Name, f.Prefix+parts[f.Key])
 			}
 		}
+	case AuthOAuth2:
+		parts := OAuthWireParts(secret)
+		for _, f := range a.Fields {
+			if f.In == "query" && parts[f.Key] != "" {
+				q.Set(f.Name, f.Prefix+parts[f.Key])
+			}
+		}
 	}
 }
 
@@ -366,6 +390,15 @@ func (a Auth) ApplyHeaders(h http.Header, secret string) {
 				h.Set(f.Name, f.Prefix+parts[f.Key])
 			}
 		}
+	case AuthOAuth2:
+		parts := OAuthWireParts(secret)
+		name, prefix := a.oauthHeader()
+		h.Set(name, prefix+parts["access_token"])
+		for _, f := range a.Fields {
+			if f.In == "header" && parts[f.Key] != "" {
+				h.Set(f.Name, f.Prefix+parts[f.Key])
+			}
+		}
 	default:
 		h.Set(a.Name, a.Prefix+secret)
 	}
@@ -384,8 +417,12 @@ func (a Auth) HeaderNames() []string {
 			return []string{"Authorization"}
 		}
 		return []string{a.Name}
-	case "fields":
+	case "fields", AuthOAuth2:
 		out := []string{}
+		if a.Type == AuthOAuth2 {
+			name, _ := a.oauthHeader()
+			out = append(out, name)
+		}
 		for _, f := range a.Fields {
 			if f.In == "header" {
 				out = append(out, f.Name)
@@ -401,7 +438,7 @@ func (a Auth) QueryNames() []string {
 	switch a.Type {
 	case "query":
 		return []string{a.Name}
-	case "fields":
+	case "fields", AuthOAuth2:
 		out := []string{}
 		for _, f := range a.Fields {
 			if f.In == "query" {

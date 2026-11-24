@@ -283,6 +283,9 @@ func (a Auth) Value(secret string) string {
 		return "Basic " + base64.StdEncoding.EncodeToString([]byte(secret))
 	case "fields":
 		return secret
+	case AuthOAuth2:
+		_, prefix := a.oauthHeader()
+		return prefix + OAuthWireParts(secret)["access_token"]
 	}
 	return a.Prefix + secret
 }
@@ -484,7 +487,7 @@ func (s *Spec) Normalize() {
 	if s.Defaults.MaxAttempts == 0 {
 		s.Defaults.MaxAttempts = 5
 	}
-	if s.Auth.Type == "bearer" && s.Auth.Name == "" {
+	if (s.Auth.Type == "bearer" || s.Auth.Type == AuthOAuth2) && s.Auth.Name == "" {
 		s.Auth.Name = "Authorization"
 	}
 	if s.Rules == nil {

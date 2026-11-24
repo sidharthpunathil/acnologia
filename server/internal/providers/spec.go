@@ -112,18 +112,22 @@ type GuideParam struct {
 }
 
 type Auth struct {
-	Type   string `json:"type"` // query | header | bearer | basic | fields
+	Type   string `json:"type"` // query | header | bearer | basic | fields | oauth2
 	Name   string `json:"name"`
 	Prefix string `json:"prefix"`
 	// Fields are the parts of a fields credential (several values, each in
 	// its own header or query param), or the labels of a basic one's login
-	// and password. See credential.go.
+	// and password. See credential.go. For oauth2 they are extra values a
+	// connected account sends with its access token, such as a developer
+	// token header.
 	Fields []AuthField `json:"fields,omitempty"`
+	// OAuth describes the sign in of an oauth2 provider (oauth.go).
+	OAuth *OAuthConfig `json:"oauth,omitempty"`
 }
 
 // Equal reports whether two auth blocks place credentials the same way.
 func (a Auth) Equal(b Auth) bool {
-	if a.Type != b.Type || a.Name != b.Name || a.Prefix != b.Prefix || len(a.Fields) != len(b.Fields) {
+	if a.Type != b.Type || a.Name != b.Name || a.Prefix != b.Prefix || len(a.Fields) != len(b.Fields) || !equalOAuth(a.OAuth, b.OAuth) {
 		return false
 	}
 	for i := range a.Fields {
