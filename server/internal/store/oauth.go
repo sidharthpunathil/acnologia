@@ -5,16 +5,67 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
 
-// OAuth for the MCP endpoint (api/oauth.go). Hosted MCP clients register
-// (oauth_clients), a signed in person approves a connection that acts as one
-// app (oauth_codes, then oauth_grants), and the client holds an access and a
-// refresh token (oauth_tokens). Only the SHA-256 of a code or token is kept,
+// OAuth for the MCP endpoints (api/oauth.go). Hosted MCP clients register
+// (oauth_clients), a signed in person approves a connection (oauth_codes,
+// then oauth_grants), and the client holds an access and a refresh token
+// (oauth_tokens). A connection to /mcp acts as one app. A connection to
+// /mcp/control has no app: it acts as the person who approved it, with the
+// admin scope in access (read, write or admin). Only the SHA-256 of a code or token is kept,
 // as with app tokens. A grant is one token family: refresh tokens rotate on
 // every use, and a spent one coming back revokes the whole grant.
+
+// The table definitions sit apart from schemaOAuth so the migration that
+// lets a grant have no app (a control MCP connection acts as a person, not
+// an app) rebuilds the tables from the same text.
+const (
+	oauthCodesDDL = `CREATE TABLE IF NOT EXISTS oauth_codes(
+  hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_only INTEGER NOT NULL DEFAULT 0,
+  access TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  grant_id TEXT
+);`
+	oauthGrantsDDL = `CREATE TABLE IF NOT EXISTS oauth_grants(
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  client_name TEXT NOT NULL DEFAULT '',
+  app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_only INTEGER NOT NULL DEFAULT 0,
+  access TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT '',
+  resource TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked_at INTEGER
+);`
+	oauthTokensDDL = `CREATE TABLE IF NOT EXISTS oauth_tokens(
+  id INTEGER PRIMARY KEY,
+  hash TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  spent_at INTEGER
+);`
+	oauthIndexes = `CREATE INDEX IF NOT EXISTS oauth_grants_app ON oauth_grants(app_id);
+CREATE INDEX IF NOT EXISTS oauth_grants_user ON oauth_grants(user_id);
+CREATE INDEX IF NOT EXISTS oauth_tokens_grant ON oauth_tokens(grant_id);`
+)
 
 const schemaOAuth = `
 CREATE TABLE IF NOT EXISTS oauth_clients(
@@ -25,50 +76,56 @@ CREATE TABLE IF NOT EXISTS oauth_clients(
   created_at INTEGER NOT NULL,
   fetched_at INTEGER
 );
-CREATE TABLE IF NOT EXISTS oauth_codes(
-  hash TEXT PRIMARY KEY,
-  client_id TEXT NOT NULL,
-  redirect_uri TEXT NOT NULL,
-  code_challenge TEXT NOT NULL,
-  resource TEXT NOT NULL,
-  scope TEXT NOT NULL DEFAULT '',
-  app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  read_only INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL,
-  used_at INTEGER,
-  grant_id TEXT
-);
-CREATE TABLE IF NOT EXISTS oauth_grants(
-  id TEXT PRIMARY KEY,
-  client_id TEXT NOT NULL,
-  client_name TEXT NOT NULL DEFAULT '',
-  app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  read_only INTEGER NOT NULL DEFAULT 0,
-  scope TEXT NOT NULL DEFAULT '',
-  resource TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  last_used_at INTEGER,
-  revoked_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS oauth_grants_app ON oauth_grants(app_id);
-CREATE TABLE IF NOT EXISTS oauth_tokens(
-  id INTEGER PRIMARY KEY,
-  hash TEXT NOT NULL UNIQUE,
-  kind TEXT NOT NULL,
-  grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
-  created_at INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL,
-  spent_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS oauth_tokens_grant ON oauth_tokens(grant_id);
-`
+` + oauthCodesDDL + "\n" + oauthGrantsDDL + "\n" + oauthTokensDDL
 
 func migrateOAuth(db *sql.DB) error {
-	_, err := db.Exec(schemaOAuth)
+	if _, err := db.Exec(schemaOAuth); err != nil {
+		return err
+	}
+	if err := migrateOAuthControl(db); err != nil {
+		return err
+	}
+	_, err := db.Exec(oauthIndexes)
 	return err
+}
+
+// migrateOAuthControl lets oauth_codes and oauth_grants hold a connection
+// with no app, for the control MCP, and adds the access column. SQLite
+// cannot drop a NOT NULL, so tables made before it are rebuilt. Foreign keys
+// stay on inside the migration's transaction and dropping oauth_grants would
+// cascade into oauth_tokens, so the tokens wait in a plain copy while their
+// parent is rebuilt.
+func migrateOAuthControl(db *sql.DB) error {
+	var strict int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('oauth_grants') WHERE name='app_id' AND "notnull"=1`).Scan(&strict); err != nil {
+		return err
+	}
+	if strict == 0 {
+		return nil
+	}
+	const grantCols = `id,client_id,client_name,app_id,user_id,read_only,scope,resource,created_at,last_used_at,revoked_at`
+	const tokenCols = `id,hash,kind,grant_id,created_at,expires_at,spent_at`
+	const codeCols = `hash,client_id,redirect_uri,code_challenge,resource,scope,app_id,user_id,read_only,created_at,expires_at,used_at,grant_id`
+	for _, q := range []string{
+		`CREATE TABLE oauth_tokens_keep AS SELECT ` + tokenCols + ` FROM oauth_tokens`,
+		`DROP TABLE oauth_tokens`,
+		strings.Replace(oauthGrantsDDL, "oauth_grants(", "oauth_grants_next(", 1),
+		`INSERT INTO oauth_grants_next(` + grantCols + `) SELECT ` + grantCols + ` FROM oauth_grants`,
+		`DROP TABLE oauth_grants`,
+		`ALTER TABLE oauth_grants_next RENAME TO oauth_grants`,
+		strings.Replace(oauthCodesDDL, "oauth_codes(", "oauth_codes_next(", 1),
+		`INSERT INTO oauth_codes_next(` + codeCols + `) SELECT ` + codeCols + ` FROM oauth_codes`,
+		`DROP TABLE oauth_codes`,
+		`ALTER TABLE oauth_codes_next RENAME TO oauth_codes`,
+		oauthTokensDDL,
+		`INSERT INTO oauth_tokens(` + tokenCols + `) SELECT ` + tokenCols + ` FROM oauth_tokens_keep`,
+		`DROP TABLE oauth_tokens_keep`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Token kinds in oauth_tokens.
@@ -141,12 +198,23 @@ type OAuthCode struct {
 	CodeChallenge string
 	Resource      string
 	Scope         string
-	AppID         int64
-	UserID        int64
-	ReadOnly      bool
-	ExpiresAt     time.Time
+	// AppID is 0 for a control MCP connection, which acts as UserID.
+	AppID    int64
+	UserID   int64
+	ReadOnly bool
+	// Access is a control MCP connection's admin scope: read, write or admin.
+	Access    string
+	ExpiresAt time.Time
 	// GrantID is set once the code was exchanged.
 	GrantID string
+}
+
+// appRef stores an app id, or NULL for a connection with no app.
+func appRef(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
 }
 
 // CreateOAuthCode stores a new code and drops codes that expired an hour ago.
@@ -155,9 +223,9 @@ func (s *Store) CreateOAuthCode(ctx context.Context, c *OAuthCode) error {
 	if _, err := s.DB.ExecContext(ctx, `DELETE FROM oauth_codes WHERE expires_at<?`, t-3600); err != nil {
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO oauth_codes(hash,client_id,redirect_uri,code_challenge,resource,scope,app_id,user_id,read_only,created_at,expires_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		c.Hash, c.ClientID, c.RedirectURI, c.CodeChallenge, c.Resource, c.Scope, c.AppID, c.UserID, b2i(c.ReadOnly), t, c.ExpiresAt.Unix())
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO oauth_codes(hash,client_id,redirect_uri,code_challenge,resource,scope,app_id,user_id,read_only,access,created_at,expires_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.Hash, c.ClientID, c.RedirectURI, c.CodeChallenge, c.Resource, c.Scope, appRef(c.AppID), c.UserID, b2i(c.ReadOnly), c.Access, t, c.ExpiresAt.Unix())
 	return err
 }
 
@@ -168,9 +236,9 @@ func (s *Store) GetOAuthCode(ctx context.Context, hash string) (*OAuthCode, bool
 	var exp int64
 	var used sql.NullInt64
 	var grant sql.NullString
-	err := s.DB.QueryRowContext(ctx, `SELECT hash,client_id,redirect_uri,code_challenge,resource,scope,app_id,user_id,read_only,expires_at,used_at,grant_id
+	err := s.DB.QueryRowContext(ctx, `SELECT hash,client_id,redirect_uri,code_challenge,resource,scope,COALESCE(app_id,0),user_id,read_only,access,expires_at,used_at,grant_id
 		FROM oauth_codes WHERE hash=?`, hash).
-		Scan(&c.Hash, &c.ClientID, &c.RedirectURI, &c.CodeChallenge, &c.Resource, &c.Scope, &c.AppID, &c.UserID, &ro, &exp, &used, &grant)
+		Scan(&c.Hash, &c.ClientID, &c.RedirectURI, &c.CodeChallenge, &c.Resource, &c.Scope, &c.AppID, &c.UserID, &ro, &c.Access, &exp, &used, &grant)
 	if err != nil {
 		return nil, false, notFound(err)
 	}
@@ -180,16 +248,21 @@ func (s *Store) GetOAuthCode(ctx context.Context, hash string) (*OAuthCode, bool
 	return &c, used.Valid, nil
 }
 
-// OAuthGrant is one approved connection: a client acting as an app, for the
-// person who approved it. Its tokens form one family.
+// OAuthGrant is one approved connection: a client acting as an app for the
+// person who approved it, or, with no app, as that person on the control
+// MCP. Its tokens form one family.
 type OAuthGrant struct {
-	ID         string     `json:"id"`
-	ClientID   string     `json:"client_id"`
-	ClientName string     `json:"client_name"`
-	AppID      int64      `json:"app_id"`
-	UserID     int64      `json:"user_id"`
-	UserEmail  string     `json:"user_email"`
-	ReadOnly   bool       `json:"read_only"`
+	ID         string `json:"id"`
+	ClientID   string `json:"client_id"`
+	ClientName string `json:"client_name"`
+	// AppID is 0 for a control MCP connection.
+	AppID     int64  `json:"app_id"`
+	UserID    int64  `json:"user_id"`
+	UserEmail string `json:"user_email"`
+	ReadOnly  bool   `json:"read_only"`
+	// Access is a control MCP connection's admin scope (read, write or
+	// admin), empty for an app connection.
+	Access     string     `json:"access"`
 	Scope      string     `json:"scope"`
 	Resource   string     `json:"resource"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -250,8 +323,8 @@ func (s *Store) RedeemOAuthCode(ctx context.Context, codeHash string, g *OAuthGr
 		}
 		return ErrOAuthUsed
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO oauth_grants(id,client_id,client_name,app_id,user_id,read_only,scope,resource,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		g.ID, g.ClientID, g.ClientName, g.AppID, g.UserID, b2i(g.ReadOnly), g.Scope, g.Resource, t); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO oauth_grants(id,client_id,client_name,app_id,user_id,read_only,access,scope,resource,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		g.ID, g.ClientID, g.ClientName, appRef(g.AppID), g.UserID, b2i(g.ReadOnly), g.Access, g.Scope, g.Resource, t); err != nil {
 		return err
 	}
 	if err := s.insertPair(ctx, tx, g.ID, p); err != nil {
@@ -260,7 +333,7 @@ func (s *Store) RedeemOAuthCode(ctx context.Context, codeHash string, g *OAuthGr
 	return tx.Commit()
 }
 
-const grantCols = `g.id, g.client_id, g.client_name, g.app_id, g.user_id, COALESCE(u.email,''), g.read_only, g.scope, g.resource, g.created_at, g.last_used_at, g.revoked_at`
+const grantCols = `g.id, g.client_id, g.client_name, COALESCE(g.app_id,0), g.user_id, COALESCE(u.email,''), g.read_only, g.access, g.scope, g.resource, g.created_at, g.last_used_at, g.revoked_at`
 
 type grantScan struct {
 	g             OAuthGrant
@@ -271,7 +344,7 @@ type grantScan struct {
 
 func (s *grantScan) dests() []any {
 	g := &s.g
-	return []any{&g.ID, &g.ClientID, &g.ClientName, &g.AppID, &g.UserID, &g.UserEmail, &s.ro, &g.Scope, &g.Resource, &s.created, &s.last, &s.revoked}
+	return []any{&g.ID, &g.ClientID, &g.ClientName, &g.AppID, &g.UserID, &g.UserEmail, &s.ro, &g.Access, &g.Scope, &g.Resource, &s.created, &s.last, &s.revoked}
 }
 
 func (s *grantScan) finish() *OAuthGrant {
@@ -309,6 +382,52 @@ func (s *Store) ListOAuthGrants(ctx context.Context, appID int64) ([]*OAuthGrant
 		out = append(out, gs.finish())
 	}
 	return out, rows.Err()
+}
+
+// ListControlGrants lists control MCP connections (grants with no app) with
+// the given scope: one person's, or everyone's for userID 0. Live ones
+// first, newest first.
+func (s *Store) ListControlGrants(ctx context.Context, scope string, userID int64) ([]*OAuthGrant, error) {
+	rows, err := s.r.QueryContext(ctx, `SELECT `+grantCols+` FROM oauth_grants g LEFT JOIN users u ON u.id=g.user_id
+		WHERE g.app_id IS NULL AND g.scope=? AND (?=0 OR g.user_id=?) ORDER BY g.revoked_at IS NOT NULL, g.created_at DESC, g.id`, scope, userID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*OAuthGrant{}
+	for rows.Next() {
+		var gs grantScan
+		if err := rows.Scan(gs.dests()...); err != nil {
+			return nil, err
+		}
+		out = append(out, gs.finish())
+	}
+	return out, rows.Err()
+}
+
+// UserByOAuthToken finds the person a control MCP access token acts as,
+// with the token's grant. Like AppByOAuthToken it returns expired tokens,
+// revoked grants and grants that have an app; the caller decides. Nothing
+// is cached, so a role change or a disabled account shows at once.
+func (s *Store) UserByOAuthToken(ctx context.Context, hash string) (*User, *OAuthTokenInfo, error) {
+	var ti OAuthTokenInfo
+	var exp int64
+	var spent sql.NullInt64
+	var gs grantScan
+	err := s.r.QueryRowContext(ctx, `SELECT t.id, t.kind, t.expires_at, t.spent_at, `+grantCols+`
+		FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id LEFT JOIN users u ON u.id=g.user_id
+		WHERE t.hash=? AND t.kind=?`, hash, OAuthAccess).Scan(append([]any{&ti.ID, &ti.Kind, &exp, &spent}, gs.dests()...)...)
+	if err != nil {
+		return nil, nil, notFound(err)
+	}
+	ti.ExpiresAt = time.Unix(exp, 0).UTC()
+	ti.Spent = spent.Valid
+	ti.Grant = gs.finish()
+	u, err := s.GetUser(ctx, ti.Grant.UserID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return u, &ti, nil
 }
 
 // RevokeOAuthGrant revokes a grant and so every token in its family.
