@@ -78,13 +78,33 @@ See [architecture](architecture.md) for how the packages fit together.
 | Go SDK | `cd sdk/go && go test ./...` | Client, leases, `WithKey`, secret hygiene. |
 | TypeScript SDK | `cd sdk/typescript && pnpm install && pnpm test && pnpm typecheck` | The same for TypeScript. |
 | Python SDK | `cd sdk/python && pip install -e '.[test]' && pytest` | The same for Python. |
-| Dashboard | `cd web && pnpm typecheck` | Type check. `pnpm build` type checks and builds. |
+| Dashboard | `cd web && pnpm typecheck && pnpm test` | Type check, then the Vitest unit tests (`web/src/**/*.test.ts(x)`): the key paste parser against the shared cases in `server/internal/keyparse/testdata/cases.json`, the MCP paste parser, the format and URL helpers, and `StatusPill` rendered with Testing Library in jsdom. `pnpm build` type checks and builds. |
+| Lint | `make lint` | `gofmt -l`, `go vet` and golangci-lint on the server, set up in `server/.golangci.yml`. |
+| Secret scan | `make secrets` | gitleaks over the commits not on `origin/main` yet (`SECRETS_RANGE=<from>..<to>` for others), with `.github/gitleaks.toml`. |
 | Dashboard screens | `make test-screens` | Full page screenshots of every dashboard page, see [Screenshot tests](#screenshot-tests). |
 | Live provider checks | `cd server && ACNOLOGIA_LIVE_PROVIDERS=1 go test ./internal/providers -run TestInferenceLiveNoKey -v` | Calls the real LLM APIs with an invalid key. Needs the network but no secrets; skipped without the variable. See [providers](providers.md#testing-against-the-real-apis). |
 
 The API tests start the real router on `httptest` with a temporary SQLite
 database, so they exercise middleware, auth and the proxy the way production
 does.
+
+A Vitest file runs in Node unless it starts with `// @vitest-environment
+jsdom`, which component tests need. Keep tests to pure logic in `web/src/lib`
+and small components; the screenshot suite covers whole pages.
+
+### Before pushing
+
+`make check` runs what the go and dashboard CI jobs run on a push: the
+`gofmt` check, `go vet`, golangci-lint, the server tests (without `-race`),
+then the dashboard type check and unit tests. It needs `web/node_modules`, so
+run `pnpm install` in `web/` once. golangci-lint and gitleaks are pinned to the
+versions CI uses and run through `go run`, which builds each once and caches
+it, so there is nothing else to install.
+
+The linters are staticcheck, govet, errcheck (not in tests), ineffassign and
+unused. Fix a finding rather than silencing it. When a finding is wrong, add
+a narrow rule under `exclusions` in `server/.golangci.yml` (a path and the
+finding's text) with a comment saying why.
 
 ### CI
 
@@ -108,14 +128,30 @@ A push runs on Linux only, without `-race`. A manual run is the full check:
 the macOS and Windows legs, `-race` (except on Windows), and the windows
 build job. Run one before a release or after an OS specific change.
 
+The secret scan starts from the same last passing commit as the `changes`
+job, so commits from a run that was cancelled or failed, and docs only
+pushes that ran nothing, are scanned by the next run. `.github/gitleaks.toml`
+keeps the default gitleaks rules and allows only the fake keys the repo uses
+on purpose: Go test files under `server/internal`, the key paste cases,
+`web/src` test files, and the `acn_your_app_token` style placeholders in the
+docs and dashboard examples. A real looking key anywhere else fails the run;
+replace it with an obvious placeholder rather than widening the allowlist.
+
+Dependabot (`.github/dependabot.yml`) checks Go modules in `server/`, npm in
+`web/` and the GitHub Actions every Monday. Version updates are grouped into
+one pull request per ecosystem (npm majors come on their own) and target
+`stage`, so they reach CI with the next merge into `main`. Security updates
+open against `main` as soon as an advisory lands.
+
 | Job | On a push | Manual run adds | What |
 |---|---|---|---|
-| go | Linux | macOS, Windows, `-race` | `go vet`, server and CLI tests, and on Linux a Windows arm64 cross compile and vet |
+| go | Linux | macOS, Windows, `-race` | `go vet`, server and CLI tests, and on Linux a `gofmt -l` check, golangci-lint (`server/.golangci.yml`, cached by the action) and a Windows arm64 cross compile and vet |
 | embedded docs | Linux | | The docs tests alone, when the copies in `server/internal/docsmd` or `llmstxt` changed but no server Go code did (the go job runs them anyway) |
 | go, python, ruby, c, cpp, haskell, zig, typescript sdk | Linux | macOS, Windows | Each SDK's own tests, when its folder under `sdk/` changed |
 | elixir sdk | Linux (two Elixir and OTP versions) | Windows | `mix test` |
 | lua sdk | Linux (Lua 5.1 and 5.4) | macOS | `busted` |
-| dashboard build | Linux | | `pnpm build` |
+| dashboard | Linux | | `pnpm test`, then `pnpm build`, when `web/` or the shared key paste cases changed |
+| secret scan | Linux, every run | | gitleaks with `.github/gitleaks.toml` over the commits since the last passing run, or the whole history on a manual run or a push it cannot diff |
 | windows build | (manual only) | Windows | Parses `install.ps1`, `setup.ps1` and `scripts/build.ps1` in PowerShell 5.1 and 7, builds both binaries with `build.ps1` and runs them, when the build tooling changed |
 
 ### Releases
