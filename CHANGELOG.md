@@ -2,6 +2,108 @@
 
 ## Unreleased
 
+### Errors and discovery for agents
+
+- Every API error keeps `code` and `message` and adds `hint`, `fix`
+  (a tool, command or URL), `doc_url`, `request_id` and, when a retry
+  helps, `retry_after_sec`. Every code is listed in `docs/errors.md`,
+  generated from the same registry so the two can't drift. MCP tool errors
+  carry the same fields.
+- `GET /api/v1` and `/.well-known/acnologia` are an index for agents:
+  version, setup state, every endpoint URL and where to start.
+  `GET /api/openapi.json` is an OpenAPI 3.1 spec of every route.
+- On a server behind the access password, the docs and `llms.txt` open to
+  any valid app, OAuth or admin token. The dashboard stays locked.
+- `/api/v1/me` and the new `acnologia_whoami` tool describe the token, its
+  limits and what is left. Service logos only come with `?logos=1`.
+
+### Control MCP and acn
+
+- The control MCP has a tool for every dashboard feature: capabilities,
+  rotation, shared keys, AI rules and prices, share analytics, logos, the
+  Assistant, access controls, jobs, demo data and Try it. Results are capped
+  at 64 KB, list tools take `summary: true`, and errors keep their code.
+- `acn api`, `acn tool <name>` (every control tool), `acn apps`,
+  `acn tokens`, `acn limits`, `acn deny`, `acn tags`, `acn ceiling`,
+  `acn events --follow`, `acn audit`, `acn jobs`, `acn demo`, `acn try`,
+  `acn trash`, `acn backup`, `acn oauth`, `acn run -- <cmd>` (one command
+  through the forward proxy) and `acn scan` (find keys in env and agent
+  config files, preview, then import). With `--json` an error prints as
+  JSON and the exit code says what happened: 2 usage, 3 auth, 4 not found,
+  5 retry later.
+- `ACNOLOGIA_BOOTSTRAP_TOKEN` gives a fresh server an admin API token on
+  first boot, so CI and agents can set it up without a browser.
+  `GET /api/admin/checklist` and the `quickstart` tool set up a service,
+  keys, an app and a token in one step.
+
+### Observability
+
+- Audit rows record the token, the channel (dashboard, api, cli,
+  control_mcp, app_mcp, assistant, oauth) and the client (the MCP client
+  name, or the User-Agent).
+- Events and the audit log take `after_id`, `since`, `app_id` and other
+  filters and return `next_cursor`. `GET /api/admin/events/stream` and
+  `GET /api/v1/events/stream` send events as they happen.
+- New notifications: `key.cooling`, `app.limit_near` and `share.expiring`.
+- Check-all, service checks, peer sync and MCP sync take `?async=1` and
+  return a job to poll at `GET /api/admin/jobs/{id}`.
+
+### Keys and calls
+
+- Idempotency answers are stored encrypted in the database for 24 hours and
+  survive a restart. An answer over 4 MB or a stream can't be replayed
+  (422 `idempotency_unreplayable`).
+- Key affinity: a job or file created on one key is used with that key.
+  Specs declare `affinity` rules; OpenAI files, batches and fine tuning
+  jobs have them built in. `X-Acnologia-Key-Affinity` pins a run of
+  requests to one key.
+- A busy service shares freed slots fairly between apps, and a request
+  waits for a key whose cooldown ends before the queue timeout.
+- Measured evidence: success rate and latency per endpoint over 7 days,
+  shown in search results and guides, and a `reliable` routing strategy.
+- The built-in LLM offers carry per-model token prices, so budgets count
+  their token spend. A verified example keeps a short sample of its answer
+  for agents to read.
+
+### Limits and access
+
+- Limits per token, and a per-token default for each app.
+- Caller tags: `X-Acnologia-Meta: customer=...` records use per tag value,
+  tag budgets are enforced before the call, and a token can be pinned to
+  a tag value.
+- Deny rules per app by method, service or host, and path prefix, on the
+  proxy, the forward proxy, capabilities, rotation and upstream MCP tools.
+- `ACNOLOGIA_DAILY_SPEND_CEILING_USD` stops every app once the server's
+  estimated spend for the day reaches it.
+
+### Provider sign in
+
+- Services can use OAuth accounts instead of API keys: Google (Search
+  Console, GA4, YouTube, Sheets), Google Ads and Microsoft Graph are built
+  in, and custom specs can use `auth: oauth2`. Each connected account is a
+  pooled key whose access token refreshes itself; a lease hands out only
+  the access token.
+
+### Safer admin changes
+
+- Admin writes take `Idempotency-Key` and `?dry_run=1`.
+- Deleting a key, service or app moves it to the trash for 7 days, from
+  where it can be restored (Settings, `acn trash`, control MCP).
+- `GET /api/admin/version` and `POST /api/admin/backup`.
+
+### Getting started
+
+- Load demo data from the Getting started card for a first call with no
+  real key, and try any service from its Integrate tab.
+- Every SDK's forward proxy env points `SSL_CERT_FILE` at a bundle with the
+  system roots and sets `NO_PROXY`.
+
+### Development
+
+- CI adds golangci-lint, a gofmt check, web unit tests and a secret scan;
+  dependabot opens weekly updates against `stage`. `make check` runs the
+  same checks locally.
+
 ### Sign in to MCP with OAuth
 
 - `/mcp` is an OAuth 2.1 authorization server for MCP clients: claude.ai and
