@@ -45,3 +45,6 @@ lives, so check there first.
   (or one named header), never from headers a client controls (`internal/clientip`).
 - Schema changes go in a numbered migration step appended to `migrations`, never in the frozen baseline: `migrate`
   and the `schema` constant (`store/store.go`; see "Changing the schema" in `docs/development.md`).
+- The key handling packages (`store`, `pool`, `crypto`, `providers`, `catalog`, `egress`, `redact`, `respcache`,
+  `breaker`) and the leaves taken out of `api` (`apierr`, `clientip`, `keyscrub`, `tokenmeter`) never import
+  `internal/api`, `internal/agent` or `net/http/httptest` outside tests, even indirectly (`internal/boundary`).
