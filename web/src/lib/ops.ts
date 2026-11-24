@@ -68,7 +68,7 @@ export interface ServiceGroup {
   created_at: string;
 }
 
-export type RoutingStrategy = "priority" | "round_robin" | "random" | "weighted" | "cheapest" | "most_keys";
+export type RoutingStrategy = "priority" | "round_robin" | "random" | "weighted" | "cheapest" | "most_keys" | "reliable";
 
 /** How each strategy picks, for selects and cards. */
 export const STRATEGIES: Record<RoutingStrategy, { label: string; hint: string }> = {
@@ -78,6 +78,7 @@ export const STRATEGIES: Record<RoutingStrategy, { label: string; hint: string }
   weighted: { label: "Weighted", hint: "Random, in proportion to each route's weight." },
   cheapest: { label: "Cheapest", hint: "Lowest price per request first, from the providers' offers." },
   most_keys: { label: "Most free keys", hint: "The provider with the most keys free right now first." },
+  reliable: { label: "Most reliable", hint: "Highest measured success rate over the last 7 days first; providers with too few calls go last." },
 };
 
 export interface CapabilityParam {

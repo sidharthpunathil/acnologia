@@ -124,6 +124,9 @@ func offerFields(a, b providers.Offer) []FieldChange {
 		return s
 	}
 	add("match", normMatch(a.Match), normMatch(b.Match), js)
+	// A model offer's model picks which requests its token price covers,
+	// like match does; a proposal that drops it changes what is priced.
+	add("model", strings.TrimSpace(a.Model), strings.TrimSpace(b.Model), plain)
 	add("price", normPrice(a.Price), normPrice(b.Price), js)
 	add("free", a.Free, b.Free, plain)
 	add("limits", normLimits(a.Limits), normLimits(b.Limits), js)
@@ -240,10 +243,14 @@ func offerKey(o providers.Offer) string { return strings.ToLower(strings.TrimSpa
 
 // priceWithin reports whether a price moved within maxAutoRatio and kept
 // its unit, currency and per request use. A price appearing, vanishing or
-// leaving zero is not within.
+// leaving zero is not within, and neither is a token price whose output
+// price does so: a structured token price is never dropped on its own.
 func priceWithin(a, b *providers.Price) bool {
 	a, b = normPrice(a), normPrice(b)
 	if a == nil || b == nil || a.Unit != b.Unit || a.Currency != b.Currency || a.PerRequest != b.PerRequest {
+		return false
+	}
+	if a.OutputAmount != b.OutputAmount && !ratioWithin(a.OutputAmount, b.OutputAmount) {
 		return false
 	}
 	return ratioWithin(a.Amount, b.Amount)

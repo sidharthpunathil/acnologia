@@ -297,7 +297,12 @@ func (s *Server) liveCheckProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad_spec", err.Error())
 		return
 	}
-	writeJSON(w, 200, catalog.LiveCheck(r.Context(), spec, strings.TrimSpace(body.Secret)))
+	secret := strings.TrimSpace(body.Secret)
+	rep := catalog.LiveCheck(r.Context(), spec, secret)
+	// A safe example that answered becomes the provider's sample response,
+	// shown in its guides (scrubbed of the key in every spelling).
+	rep.SaveSample(r.Context(), s.Store, p.Slug, secret)
+	writeJSON(w, 200, rep)
 }
 
 // ---- logos ----

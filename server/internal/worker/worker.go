@@ -48,6 +48,8 @@ func (w *Worker) Run(ctx context.Context) {
 	// Always running: the interval can be turned on from the Settings page
 	// without a restart. A pass with the interval off does nothing.
 	wg.Go(func() { w.runHealth(ctx) })
+	// Folds proxied calls into per endpoint evidence (endpoint_stats.go).
+	wg.Go(func() { w.runEndpointStats(ctx) })
 	if w.Peers != nil && w.PeerInterval > 0 {
 		wg.Go(func() { w.runPeers(ctx) })
 	}

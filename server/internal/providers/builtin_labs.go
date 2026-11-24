@@ -1,6 +1,9 @@
 package providers
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // llmChecked is the date the LLM provider pages behind these offers were read.
 const llmChecked = "2026-11-03"
@@ -8,17 +11,26 @@ const llmChecked = "2026-11-03"
 // llmDefaults suit model APIs: rotate on a limit, cool a minute, try up to five keys.
 var llmDefaults = Defaults{Strategy: "round_robin", CooldownSec: 60, MaxAttempts: 5}
 
-// tokenOffer is one model's token prices. The model is named in the request
-// body, not the path, so a provider's model offers share their endpoint's
-// match and only the first one ever selects a request; they describe prices
-// for people and the AI tools. Token prices never decide a request's cost,
-// so cost tracking stays on quota.cost_per_request.
+// tokenOffer is one model's token prices, in USD per million tokens as the
+// provider publishes them. The model is named in the request body, not the
+// path, so a provider's model offers share their endpoint's match and only
+// the first one ever selects a request by path. The structured price (per
+// token, with Model) is what Spec.TokenCost reads: once an answer's tokens
+// are metered, the offer naming the request's model prices them, so app
+// budgets count token spend. A token price never decides a request's
+// up front cost, which stays on quota.cost_per_request.
 func tokenOffer(name, method, path, model, in, out, extra, src string) Offer {
 	notes := fmt.Sprintf("Model %s: $%s input and $%s output per million tokens.", model, in, out)
 	if extra != "" {
 		notes += " " + extra
 	}
-	return Offer{Name: name, Match: &OfferMatch{Method: method, Path: path}, Notes: notes, SourceURL: src, CheckedAt: llmChecked}
+	o := Offer{Name: name, Match: &OfferMatch{Method: method, Path: path}, Model: model, Notes: notes, SourceURL: src, CheckedAt: llmChecked}
+	inP, err1 := strconv.ParseFloat(in, 64)
+	outP, err2 := strconv.ParseFloat(out, 64)
+	if err1 == nil && err2 == nil && inP > 0 && outP > 0 {
+		o.Price = &Price{Amount: inP / 1e6, Currency: "USD", Unit: "token", OutputAmount: outP / 1e6}
+	}
+	return o
 }
 
 // retryHeader is a rate limit rule that honors the Retry-After header.

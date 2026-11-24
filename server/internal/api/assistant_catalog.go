@@ -854,10 +854,10 @@ func reachHost(ctx context.Context, hostURL string) catalogVerify {
 // liveCheckHost makes one safe GET on a host through the proxy: an example
 // on it, or a guide endpoint that needs no params.
 func (cs *chatSession) liveCheckHost(ctx context.Context, app *store.App, svc *store.Service, spec *providers.Spec, h providers.Host) catalogVerify {
-	path, query := "", map[string]string{}
+	path, query, sampleName := "", map[string]string{}, ""
 	for _, ex := range spec.Examples {
 		if underHost(ex.Path, h.Name) && strings.EqualFold(orDefault(ex.Method, "GET"), "GET") && !pathParamRe.MatchString(ex.Path) {
-			path = ex.Path
+			path, sampleName = ex.Path, ex.Name
 			for k, v := range ex.Query {
 				query[k] = v
 			}
@@ -875,7 +875,7 @@ func (cs *chatSession) liveCheckHost(ctx context.Context, app *store.App, svc *s
 					continue eps
 				}
 			}
-			path = ep.Path
+			path, sampleName = ep.Path, "GET "+ep.Path
 			break
 		}
 	}
@@ -883,7 +883,7 @@ func (cs *chatSession) liveCheckHost(ctx context.Context, app *store.App, svc *s
 		return catalogVerify{Status: "no_test_call", Detail: "no example or parameterless GET endpoint on this entry; add one to test it live"}
 	}
 	actx := store.WithAppToken(context.WithValue(ctx, appKey, app), app.TokenID)
-	rec, err := cs.s.proxyCapture(actx, cs.r, svc.Slug, http.MethodGet, path, query, nil, nil, 4<<10)
+	rec, err := cs.s.proxyCapture(actx, cs.r, svc.Slug, http.MethodGet, path, query, nil, nil, 64<<10)
 	if err != nil {
 		return catalogVerify{Status: "error", Detail: err.Error(), Live: true}
 	}
@@ -893,6 +893,11 @@ func (cs *chatSession) liveCheckHost(ctx context.Context, app *store.App, svc *s
 	switch {
 	case code >= 200 && code < 300:
 		v.Status = "ok"
+		// The answer becomes the entry's sample response in the guides. The
+		// proxy scrubbed the key for an app that may not read it; the store
+		// scrubs every pool key again before and after cutting it to 4KB.
+		_ = cs.s.Store.SaveExampleResponse(ctx, store.ExampleResponse{Provider: svc.Provider, Example: sampleName,
+			Method: http.MethodGet, Path: path, Status: code, ContentType: rec.Header().Get("Content-Type")}, rec.Body.Bytes())
 	case code == 429:
 		v.Status = "rate_limited"
 	case code == 402:

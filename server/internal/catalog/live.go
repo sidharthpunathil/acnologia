@@ -31,7 +31,27 @@ type LiveReport struct {
 		Status  int    `json:"status"`
 		Outcome string `json:"outcome"`
 		Detail  string `json:"detail"`
+		// Name, Method and Path say which example ran.
+		Name   string `json:"name,omitempty"`
+		Method string `json:"method,omitempty"`
+		Path   string `json:"path,omitempty"`
+		// Sample is the answer's body (up to 64KB, the key already
+		// replaced) and its content type, for SaveSample. Never sent.
+		Sample      []byte `json:"-"`
+		ContentType string `json:"-"`
 	} `json:"example"`
+}
+
+// SaveSample stores the example's answer as the provider's sample response
+// for it, when the example ran and succeeded. The store scrubs every form
+// of secret, and every pool key, before and after cutting it to 4KB.
+func (r *LiveReport) SaveSample(ctx context.Context, st *store.Store, provider, secret string) {
+	ex := r.Example
+	if st == nil || !ex.Ran || !ex.OK || provider == "" || ex.Name == "" {
+		return
+	}
+	_ = st.SaveExampleResponse(ctx, store.ExampleResponse{Provider: provider, Example: ex.Name, Method: ex.Method, Path: ex.Path,
+		Status: ex.Status, ContentType: ex.ContentType}, ex.Sample, secret)
 }
 
 // LiveCheck runs the health check and the first safe example with a real key.
@@ -86,17 +106,29 @@ func liveCheck(ctx context.Context, c *http.Client, spec *providers.Spec, secret
 			continue
 		}
 		rep.Example.Ran = true
-		status, outcome, detail := runExample(ctx, c, spec, ex, secret)
+		status, outcome, detail, sample, ct := runExample(ctx, c, spec, ex, secret)
 		rep.Example.Status, rep.Example.Outcome, rep.Example.Detail = status, outcome, detail
 		rep.Example.OK = status > 0 && status < 400
+		rep.Example.Name, rep.Example.Method, rep.Example.Path = ex.Name, strings.ToUpper(orGet(ex.Method)), ex.Path
+		if rep.Example.OK {
+			rep.Example.Sample, rep.Example.ContentType = sample, ct
+		}
 		break
 	}
 	rep.OK = rep.Health.OK && (!rep.Example.Ran || rep.Example.OK)
 	return rep
 }
 
-// runExample sends one example request with a real key and classifies the answer.
-func runExample(ctx context.Context, c *http.Client, spec *providers.Spec, ex providers.Example, secret string) (int, string, string) {
+func orGet(m string) string {
+	if strings.TrimSpace(m) == "" {
+		return http.MethodGet
+	}
+	return m
+}
+
+// runExample sends one example request with a real key and classifies the
+// answer. It also returns the body, the key replaced, and its content type.
+func runExample(ctx context.Context, c *http.Client, spec *providers.Spec, ex providers.Example, secret string) (int, string, string, []byte, string) {
 	q := url.Values{}
 	for k, v := range ex.Query {
 		q.Set(k, v)
@@ -112,7 +144,7 @@ func runExample(ctx context.Context, c *http.Client, spec *providers.Spec, ex pr
 	}
 	req, err := http.NewRequestWithContext(ctx, method, spec.BaseURL+ex.Path, body)
 	if err != nil {
-		return 0, "", err.Error()
+		return 0, "", err.Error(), nil, ""
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -121,7 +153,7 @@ func runExample(ctx context.Context, c *http.Client, spec *providers.Spec, ex pr
 	req.URL.RawQuery = q.Encode()
 	resp, err := c.Do(req)
 	if err != nil {
-		return 0, "", scrub(err.Error(), secret)
+		return 0, "", scrub(err.Error(), secret), nil, ""
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -138,7 +170,7 @@ func runExample(ctx context.Context, c *http.Client, spec *providers.Spec, ex pr
 	if strings.Contains(detail, "json") || strings.HasPrefix(strings.TrimSpace(preview), "{") {
 		detail += "\n" + preview
 	}
-	return resp.StatusCode, string(res.Outcome), scrub(detail, secret)
+	return resp.StatusCode, string(res.Outcome), scrub(detail, secret), []byte(scrub(string(rb), secret)), resp.Header.Get("Content-Type")
 }
 
 // liveHealthOK reports whether a health check may run with a real key: the

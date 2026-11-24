@@ -261,6 +261,7 @@ func (c *Catalog) Boot(ctx context.Context) error {
 	for _, b := range providers.Builtins() {
 		if cur, err := c.Store.GetProvider(ctx, b.Slug); err == nil {
 			c.backfillOffers(ctx, cur, b)
+			c.backfillTokenPrices(ctx, cur, b)
 			c.backfillGuide(ctx, b)
 			// Already seeded: only fill in a logo that is still missing, so
 			// existing installs get logos added in newer releases.
