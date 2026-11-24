@@ -557,6 +557,11 @@ How the test key stays on that domain:
 | Assistant | 24 model steps and 15 minutes per message, messages up to 1 MB (a dropped file of keys), one message at a time per chat |
 
 The client IP comes from the socket unless `ACNOLOGIA_TRUST_PROXY_HEADERS=true`.
+Then it is the `X-Forwarded-For` entry `ACNOLOGIA_TRUSTED_PROXY_HOPS` (default
+1) from the right, the one your own proxy appended, or the single header
+`ACNOLOGIA_CLIENT_IP_HEADER` names. `True-Client-IP`, `X-Real-IP` and the
+left part of `X-Forwarded-For` are the client's to write, so they are
+ignored, and a value that is no IP address falls back to the socket.
 Behind a reverse proxy, enable it, or every client shares one budget on each
 per address limit: sign in, the lock screen, the CLI sign in, invites, claim
 links and revoke pushes. An IPv6 address counts by its /64.

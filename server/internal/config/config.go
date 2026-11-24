@@ -18,7 +18,14 @@ type Config struct {
 	SecureCookies bool
 	// TrustProxyHeaders takes the client IP from X-Forwarded-For and friends.
 	// Enable it only behind a reverse proxy that overwrites those headers.
-	TrustProxyHeaders  bool
+	TrustProxyHeaders bool
+	// TrustedProxyHops is how many proxies the operator runs in front of the
+	// server: the client IP is that many entries from the right of
+	// X-Forwarded-For. Entries further left are the client's own and ignored.
+	TrustedProxyHops int
+	// ClientIPHeader names one header the edge sets to the client IP (such
+	// as Fly-Client-IP). When set, it is read instead of X-Forwarded-For.
+	ClientIPHeader     string
 	EventRetentionDays int
 	HealthInterval     time.Duration
 	MaxBodyBytes       int64
@@ -106,6 +113,8 @@ func Load(version string) Config {
 		PublicURL:             strings.TrimRight(Getenv("ACNOLOGIA_PUBLIC_URL"), "/"),
 		SecureCookies:         envBool("ACNOLOGIA_SECURE_COOKIES", false),
 		TrustProxyHeaders:     envBool("ACNOLOGIA_TRUST_PROXY_HEADERS", false),
+		TrustedProxyHops:      max(envInt("ACNOLOGIA_TRUSTED_PROXY_HOPS", 1), 1),
+		ClientIPHeader:        strings.TrimSpace(Getenv("ACNOLOGIA_CLIENT_IP_HEADER")),
 		EventRetentionDays:    envInt("ACNOLOGIA_EVENT_RETENTION_DAYS", 30),
 		HealthInterval:        envDuration("ACNOLOGIA_HEALTH_INTERVAL", 6*time.Hour),
 		MaxBodyBytes:          int64(envInt("ACNOLOGIA_MAX_BODY_MB", 50)) << 20,

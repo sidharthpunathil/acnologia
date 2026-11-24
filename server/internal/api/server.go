@@ -177,9 +177,10 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	s.static.Store(newStaticSite(s.WebFS))
 	// Client IP headers are attacker controlled unless a proxy sets them, and
-	// the login limiter keys on the client IP.
+	// the login limiter keys on the client IP. realIP (clientip.go) reads only
+	// what the operator's own proxies wrote.
 	if s.Cfg.TrustProxyHeaders {
-		r.Use(middleware.RealIP)
+		r.Use(realIP(s.Cfg.TrustedProxyHops, s.Cfg.ClientIPHeader))
 	}
 	// privateSite runs before the gate so a locked answer is no-index too.
 	r.Use(middleware.Recoverer, requestLog, s.privateSite, s.gateRequests)

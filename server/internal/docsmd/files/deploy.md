@@ -218,7 +218,7 @@ kills it:
 | `ACNOLOGIA_MASTER_KEY` | 32 bytes, base64 or hex: `openssl rand -base64 32` or `acnologia gen-master-key`. If unset, a key is generated into `/data/master.key` on first boot. |
 | `ACNOLOGIA_PUBLIC_URL` | The address people use, such as `https://key.example.com`, no trailing slash. Needed for sharing with other servers and for `acn login`. |
 | `ACNOLOGIA_SECURE_COOKIES` | `true` behind HTTPS. |
-| `ACNOLOGIA_TRUST_PROXY_HEADERS` | `true` only behind a proxy that overwrites `X-Forwarded-For`. Every platform on this page does. |
+| `ACNOLOGIA_TRUST_PROXY_HEADERS` | `true` only behind a proxy that sets or appends to `X-Forwarded-For`. Every platform on this page does. Acnologia reads the last entry (`ACNOLOGIA_TRUSTED_PROXY_HOPS`, default `1`, counts from the right), or the one header `ACNOLOGIA_CLIENT_IP_HEADER` names, such as `Fly-Client-IP`. |
 | `ANTHROPIC_API_KEY` | Optional: turns on the Assistant, the provider builder, Fill with AI and the provider refresh. |
 
 Leave `ACNOLOGIA_ADDR` unset on Railway and Render: the server listens on

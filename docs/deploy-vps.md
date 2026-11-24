@@ -149,9 +149,14 @@ published ports skip `ufw` rules, so a host firewall alone does not close it.
 With `--no-tls` a new install writes `ACNOLOGIA_SECURE_COOKIES=false` and
 `ACNOLOGIA_TRUST_PROXY_HEADERS=false`. Change them in `/opt/acnologia/.env`:
 
-- `ACNOLOGIA_TRUST_PROXY_HEADERS=true` only if your proxy **overwrites**
-  `X-Forwarded-For`. If it passes a client supplied header through, clients
-  can spoof their address and dodge the sign in rate limits.
+- `ACNOLOGIA_TRUST_PROXY_HEADERS=true` only if your proxy **sets or appends
+  to** `X-Forwarded-For` (Caddy, Traefik and nginx with
+  `$proxy_add_x_forwarded_for` do). Acnologia reads the last entry, the one
+  your proxy wrote, and ignores what the client sent before it. With two
+  proxies in a row (a CDN, then your proxy), also set
+  `ACNOLOGIA_TRUSTED_PROXY_HOPS=2`. A proxy that passes the header through
+  untouched would let clients pick their address and dodge the sign in rate
+  limits.
 - `ACNOLOGIA_SECURE_COOKIES=true` if the proxy serves HTTPS.
 
 Then apply them:
