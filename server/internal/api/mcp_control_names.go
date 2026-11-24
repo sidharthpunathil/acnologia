@@ -98,6 +98,7 @@ func ctlInstructions() string {
 		"Read tools take fields and filter to cut big results down, and the guide tools take format: markdown. Results are capped at 64 KB. " +
 		"A failed call has isError and structuredContent {code, message, status, hint}: branch on code. " +
 		"On a new server, checklist says what is left to set up and quickstart does it in one call. " +
+		"Slow checks and syncs take async: true and answer with a job id that get_job reads. " +
 		"Destructive tools (deletes, revokes, rotate, disconnect) do nothing on the first call: they say what would happen, then run when called again with confirm: true. Ask the user before confirming. " +
 		"The app side, where an app's token leases keys and proxies calls, is the separate /mcp endpoint.")
 }
@@ -188,10 +189,30 @@ func pageResult(res map[string]any, in map[string]any, p *ctlPage) map[string]an
 	}
 	items, info := paginate(matched, argInt(in, "offset"), argInt(in, "limit"), def, p.Max)
 	fields := argStrings(in, "fields")
+	// A route's next_cursor covers every row it answered; a page holds only
+	// some of them, so the cursor is worked out again over the rows up to
+	// the end of this page. Calling again with after_id set to it then
+	// misses nothing the page did not show.
+	_, hasCursor := m["next_cursor"]
+	after, _ := argNum(in, "after_id")
+	cursor := func(end int) int64 {
+		next := max(after, 0)
+		for _, x := range matched[:end] {
+			if row, ok := x.(map[string]any); ok {
+				if id, ok := row["id"].(float64); ok && int64(id) > next {
+					next = int64(id)
+				}
+			}
+		}
+		return next
+	}
 	render := func(items []any, info pageInfo) []byte {
 		out := make(map[string]any, len(m))
 		for k, v := range m {
 			out[k] = v
+		}
+		if hasCursor {
+			out["next_cursor"] = cursor(info.offset + info.count)
 		}
 		out[p.List] = items
 		if len(fields) > 0 {
