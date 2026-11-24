@@ -53,6 +53,7 @@ var pages = []page{
 	{"deploy-railway", "deploy-railway.md", "docs/deploy-railway.md", ""},
 	{"deploy-vps", "deploy-vps.md", "docs/deploy-vps.md", ""},
 	{"api", "api.md", "docs/api.md", ""},
+	{"mcp-oauth", "mcp-oauth.md", "docs/mcp-oauth.md", ""},
 	{"cli", "cli.md", "docs/cli.md", ""},
 	{"sdks", "sdks.md", "docs/sdks.md", ""},
 	{"providers", "providers.md", "docs/providers.md", ""},

@@ -145,6 +145,9 @@ func (s *Server) authApp(r *http.Request) (*store.App, int, string) {
 
 func (s *Server) authAppFull(r *http.Request) (*store.App, *authFail) {
 	unauth := func(msg string) *authFail { return &authFail{Status: 401, Code: "unauthenticated", Message: msg} }
+	if tok, ok := oauthBearer(r); ok {
+		return s.authOAuth(r, tok)
+	}
 	tok := appToken(r)
 	if tok == "" {
 		return nil, unauth("missing app token: send Authorization: Bearer acn_...")

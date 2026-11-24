@@ -95,7 +95,7 @@ func (s *Server) mcpStream(w http.ResponseWriter, r *http.Request) {
 	}
 	a, f := s.authAppFull(r)
 	if f != nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="acnologia"`)
+		s.mcpChallenge(w, r, f.Status)
 		f.write(w)
 		return
 	}

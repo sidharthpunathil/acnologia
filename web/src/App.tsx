@@ -39,6 +39,7 @@ const SharingAnalyticsPage = lazyPage(() => import("./pages/sharing/Analytics").
 const UsagePage = lazyPage(() => import("./pages/Usage").then((m) => m.UsagePage));
 const AssistantPage = lazyPage(() => import("./pages/Assistant").then((m) => m.AssistantPage));
 const CliAuthorizePage = lazyPage(() => import("./pages/CliAuthorize").then((m) => m.CliAuthorizePage));
+const OAuthConsentPage = lazyPage(() => import("./pages/OAuthConsent").then((m) => m.OAuthConsentPage));
 const IconGalleryPage = lazyPage(() => import("./pages/dev/IconGallery").then((m) => m.IconGalleryPage));
 const IllustrationGallery = lazyPage(() => import("./components/foundations/illustrations/gallery").then((m) => m.IllustrationGallery));
 
@@ -47,6 +48,7 @@ const IllustrationGallery = lazyPage(() => import("./components/foundations/illu
 // first render instead of before it.
 const PAGES: readonly PageRoute[] = [
   ["/cli/authorize", CliAuthorizePage],
+  ["/oauth/consent", OAuthConsentPage],
   ["/docs", DocsPage],
   ["/docs/:slug", DocPage],
   ["/", CatalogPage],
@@ -133,6 +135,7 @@ export function App() {
       <Routes>
         <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="/cli/authorize" element={<CliAuthorizePage />} />
+        <Route path="/oauth/consent" element={<OAuthConsentPage />} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/docs/:slug" element={<DocPage />} />
         <Route element={<Layout />}>
