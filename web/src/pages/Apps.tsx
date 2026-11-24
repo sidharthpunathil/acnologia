@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
-import { RiAddLine, RiPencilLine, RiPlugLine } from "@remixicon/react";
+import { RiAddLine, RiPencilLine, RiPlugLine, RiShieldKeyholeLine } from "@remixicon/react";
 import { AcnAppToken } from "@/components/foundations/icons/acn";
 import { Focusable } from "react-aria-components";
 import { useTitle } from "../hooks/useTitle";
@@ -7,6 +7,7 @@ import { useApps } from "../stores/apps";
 import { enabledCount, useMcp } from "../stores/mcp";
 import { AppMcpPanel } from "./AppMcpPanel";
 import { AppTokensPanel } from "./AppTokensPanel";
+import { AppAccessPanel } from "./AppAccessPanel";
 import { useServices } from "../stores/services";
 import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
@@ -478,6 +479,7 @@ export function AppsPage() {
   const [token, setToken] = useState<AppWithToken | null>(null);
   const [mcpApp, setMcpApp] = useState<App | null>(null);
   const [tokensApp, setTokensApp] = useState<App | null>(null);
+  const [accessApp, setAccessApp] = useState<App | null>(null);
 
   useEffect(() => {
     fetch().catch(() => undefined);
@@ -570,6 +572,9 @@ export function AppsPage() {
                   <Button size="small" variant="ghost" leadingIcon={AcnAppToken} onClick={() => setTokensApp(a)} aria-label={`Tokens for ${a.name}`}>
                     Tokens
                   </Button>
+                  <Button size="small" variant="ghost" leadingIcon={RiShieldKeyholeLine} onClick={() => setAccessApp(a)} aria-label={`Access controls for ${a.name}`}>
+                    Access
+                  </Button>
                   {/* Kept together so a narrow row wraps as a group, not one icon at a time. */}
                   <div className="flex items-center gap-1.5">
                     <Switch
@@ -625,6 +630,7 @@ export function AppsPage() {
       />
       <AppMcpPanel app={mcpApp} canEdit={manage} onClose={() => setMcpApp(null)} />
       <AppTokensPanel app={tokensApp} canEdit={manage} onClose={() => setTokensApp(null)} />
+      <AppAccessPanel app={accessApp} canEdit={manage} onClose={() => setAccessApp(null)} />
       <TokenModal result={token} onClose={() => setToken(null)} />
     </div>
   );

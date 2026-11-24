@@ -20,6 +20,73 @@ import { ConfirmButton } from "@/components/acn/confirm-button";
 import { SecretBox } from "@/components/acn/copy-button";
 import { cx } from "@/utils/cx";
 import { OAuthConnections } from "@/components/OAuthConnections";
+import {
+  BLANK_LIMITS_DRAFT,
+  LIMIT_FIELDS,
+  LIMIT_FIELD_LABEL,
+  anyLimit,
+  limitsDraft,
+  limitsText,
+  parseLimitsDraft,
+  parseTags,
+  tagsText,
+  type LimitsDraft,
+} from "../lib/accessControls";
+import type { TokenLimits } from "../lib/types";
+
+/** A token's own limits and pinned tags, as typed in the form. */
+function TokenControlsFields({
+  limits,
+  setLimits,
+  tags,
+  setTags,
+  error,
+}: {
+  limits: LimitsDraft;
+  setLimits: (d: LimitsDraft) => void;
+  tags: string;
+  setTags: (v: string) => void;
+  error: string | null;
+}) {
+  return (
+    <fieldset className="flex flex-col gap-3">
+      <legend className="mb-1 text-body-medium text-text-primary">Limits for this token</legend>
+      <p className="text-caption-1-regular text-text-secondary">Counted on top of the app's limits. Leave a field empty to use the app's per-token default.</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {LIMIT_FIELDS.map((k) => (
+          <Input
+            key={k}
+            label={LIMIT_FIELD_LABEL[k]}
+            inputMode={k.endsWith("_budget") ? "decimal" : "numeric"}
+            value={limits[k]}
+            onChange={(v) => setLimits({ ...limits, [k]: v })}
+            placeholder="default"
+            inputClassName="font-mono tabular-nums"
+          />
+        ))}
+      </div>
+      <Input
+        label="Pinned tags"
+        value={tags}
+        onChange={setTags}
+        placeholder="customer=cust_A"
+        hint="Every call with this token carries these tags, and cannot send other values for them."
+        inputClassName="font-mono"
+        autoComplete="off"
+      />
+      {error && <Callout tone="error">{error}</Callout>}
+    </fieldset>
+  );
+}
+
+/** Parses the controls fields, or returns what is wrong. */
+function parseControls(limits: LimitsDraft, tags: string): { limits: TokenLimits; pinned: Record<string, string> } | string {
+  const l = parseLimitsDraft(limits);
+  if (typeof l === "string") return l;
+  const t = parseTags(tags);
+  if (typeof t === "string") return t;
+  return { limits: l, pinned: t };
+}
 
 const EXPIRY: { days: number; label: string }[] = [
   { days: 0, label: "Never" },
@@ -40,7 +107,21 @@ function statusOf(t: AppToken, now: number): Status {
 const META = "font-mono text-caption-1-regular text-text-secondary";
 
 /** One token: name and status, then prefix, created, last use and expiry. */
-function TokenRow({ app, t, now, canEdit, onRevoked }: { app: App; t: AppToken; now: number; canEdit: boolean; onRevoked: (t: AppToken) => void }) {
+function TokenRow({
+  app,
+  t,
+  now,
+  canEdit,
+  onRevoked,
+  onEdit,
+}: {
+  app: App;
+  t: AppToken;
+  now: number;
+  canEdit: boolean;
+  onRevoked: (t: AppToken) => void;
+  onEdit: (t: AppToken) => void;
+}) {
   const status = statusOf(t, now);
   const live = status === "active";
   return (
@@ -66,6 +147,16 @@ function TokenRow({ app, t, now, canEdit, onRevoked }: { app: App; t: AppToken; 
               expired
             </Chip>
           )}
+          {anyLimit(t.limits) && (
+            <Chip variant="caption" color="neutral" className="font-mono" title="This token's own limits">
+              {limitsText(t.limits)}
+            </Chip>
+          )}
+          {Object.keys(t.pinned_tags ?? {}).length > 0 && (
+            <Chip variant="caption" color="neutral" className="font-mono wrap-anywhere" title="Pinned tags">
+              {tagsText(t.pinned_tags)}
+            </Chip>
+          )}
         </div>
         <div className={cx(META, "mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums")}>
           <span dir="ltr">{t.prefix}</span>
@@ -79,7 +170,10 @@ function TokenRow({ app, t, now, canEdit, onRevoked }: { app: App; t: AppToken; 
         </div>
       </div>
       {canEdit && live && (
-        <div className="shrink-0">
+        <div className="flex shrink-0 items-center gap-1">
+          <Button size="small" variant="ghost" onClick={() => onEdit(t)} aria-label={`Limits and tags for ${t.name}`}>
+            Limits
+          </Button>
           <ConfirmButton
             label="Revoke"
             confirmLabel="Revoke"
@@ -101,19 +195,24 @@ function TokenRow({ app, t, now, canEdit, onRevoked }: { app: App; t: AppToken; 
 
 /**
  * An app's tokens: list, add and revoke. Each token works on its own, so a
- * leaked or retired one can go without breaking the rest. Requests, spend
- * and limits are still counted per app.
+ * leaked or retired one can go without breaking the rest. Requests and
+ * spend count toward the app; a token may also have limits of its own and
+ * pinned caller tags.
  */
 export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; canEdit: boolean; onClose: () => void }) {
   const now = useNow(30000);
   const refreshApps = useApps((s) => s.fetch);
   const [tokens, setTokens] = useState<AppToken[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"list" | "new">("list");
+  const [view, setView] = useState<"list" | "new" | "edit">("list");
   const [name, setName] = useState("");
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [days, setDays] = useState(0);
   const [readOnly, setReadOnly] = useState(false);
+  const [limits, setLimits] = useState<LimitsDraft>(BLANK_LIMITS_DRAFT);
+  const [tags, setTags] = useState("");
+  const [controlsErr, setControlsErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState<AppToken | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{ token: string; info: AppToken } | null>(null);
   const id = app?.id;
@@ -142,8 +241,43 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
     setNameErr(null);
     setDays(0);
     setReadOnly(false);
+    setLimits(BLANK_LIMITS_DRAFT);
+    setTags("");
+    setControlsErr(null);
     setCreated(null);
     setView("new");
+  };
+
+  const startEdit = (t: AppToken) => {
+    setEditing(t);
+    setLimits(limitsDraft(t.limits));
+    setTags(tagsText(t.pinned_tags));
+    setControlsErr(null);
+    setView("edit");
+  };
+
+  const saveEdit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!app || !editing) return;
+    const c = parseControls(limits, tags);
+    if (typeof c === "string") {
+      setControlsErr(c);
+      return;
+    }
+    setBusy(true);
+    try {
+      const t = await api.updateAppToken(app.id, editing.id, {
+        limits: anyLimit(c.limits) ? c.limits : null,
+        pinned_tags: Object.keys(c.pinned).length ? c.pinned : null,
+      });
+      setTokens((list) => (list ?? []).map((x) => (x.id === t.id ? t : x)));
+      toast.success(`Saved ${t.name}`);
+      setView("list");
+    } catch (err) {
+      setControlsErr(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submit = async (e: FormEvent) => {
@@ -154,11 +288,18 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
       setNameErr("Name the token after where it will live, such as staging or ci.");
       return;
     }
+    const c = parseControls(limits, tags);
+    if (typeof c === "string") {
+      setControlsErr(c);
+      return;
+    }
     setBusy(true);
     try {
-      const body: { name: string; expires_in_days?: number; read_only?: boolean } = { name: n };
+      const body: Parameters<typeof api.createAppToken>[1] = { name: n };
       if (days) body.expires_in_days = days;
       if (readOnly) body.read_only = true;
+      if (anyLimit(c.limits)) body.limits = c.limits;
+      if (Object.keys(c.pinned).length) body.pinned_tags = c.pinned;
       const res = await api.createAppToken(app.id, body);
       setCreated({ token: res.token, info: res.app_token });
       setTokens((list) => [res.app_token, ...(list ?? [])]);
@@ -253,7 +394,48 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
           <Switch isSelected={readOnly} onChange={setReadOnly} aria-label="Read-only token" className="mt-0.5 shrink-0" />
         </div>
       </div>
+      <TokenControlsFields
+        limits={limits}
+        setLimits={(d) => {
+          setLimits(d);
+          setControlsErr(null);
+        }}
+        tags={tags}
+        setTags={(v) => {
+          setTags(v);
+          setControlsErr(null);
+        }}
+        error={controlsErr}
+      />
     </form>
+  );
+
+  const editBody = (
+    <form id="app-token-edit-form" onSubmit={saveEdit} noValidate className="flex flex-col gap-4">
+      <TokenControlsFields
+        limits={limits}
+        setLimits={(d) => {
+          setLimits(d);
+          setControlsErr(null);
+        }}
+        tags={tags}
+        setTags={(v) => {
+          setTags(v);
+          setControlsErr(null);
+        }}
+        error={controlsErr}
+      />
+    </form>
+  );
+  const editFooter = (
+    <>
+      <Button variant="ghost" onClick={() => setView("list")}>
+        Back
+      </Button>
+      <Button variant="primary" type="submit" form="app-token-edit-form" disabled={busy} leadingIcon={busy ? ButtonSpinner : undefined}>
+        Save
+      </Button>
+    </>
   );
 
   const listBody = (
@@ -271,7 +453,7 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
       ) : (
         <ul aria-label={`Tokens for ${appName}`} className="divide-y divide-separator-border overflow-hidden rounded-2xl border border-border-button-default">
           {(tokens ?? []).map((t) => (
-            <TokenRow key={t.id} app={app!} t={t} now={now} canEdit={canEdit} onRevoked={onRevoked} />
+            <TokenRow key={t.id} app={app!} t={t} now={now} canEdit={canEdit} onRevoked={onRevoked} onEdit={startEdit} />
           ))}
         </ul>
       )}
@@ -280,29 +462,40 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
     </div>
   );
 
+  const editingView = view === "edit" && !!editing;
   return (
     <Modal
       open={!!app}
       onClose={onClose}
       wide
-      title={creating ? (created ? `Token ${created.info.name} created` : `New token for ${appName}`) : `Tokens for ${appName}`}
+      title={
+        editingView
+          ? `Limits for ${editing.name}`
+          : creating
+            ? created
+              ? `Token ${created.info.name} created`
+              : `New token for ${appName}`
+            : `Tokens for ${appName}`
+      }
       description={
-        creating
-          ? created
-            ? undefined
-            : "The app's other tokens keep working. Requests and spend still count toward its limits."
-          : "Give each place that calls this app its own token, so you can revoke one without breaking the rest."
+        editingView
+          ? "Calls with this token count toward these limits and the app's."
+          : creating
+            ? created
+              ? undefined
+              : "The app's other tokens keep working. Requests and spend still count toward its limits."
+            : "Give each place that calls this app its own token, so you can revoke one without breaking the rest."
       }
       headerAction={
-        !creating && tokens ? (
+        !creating && !editingView && tokens ? (
           <Chip variant="caption" color="neutral" className="font-mono">
             {plural(live, "active token")}
           </Chip>
         ) : undefined
       }
-      footer={creating ? newFooter : listFooter}
+      footer={editingView ? editFooter : creating ? newFooter : listFooter}
     >
-      {creating ? newBody : listBody}
+      {editingView ? editBody : creating ? newBody : listBody}
     </Modal>
   );
 }
