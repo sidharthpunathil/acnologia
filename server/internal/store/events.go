@@ -74,7 +74,10 @@ type EventFilter struct {
 const eventCols = `e.id, e.ts, e.kind, e.service_id, COALESCE(s.slug,''), e.key_id, COALESCE(k.label,''), COALESCE(k.hidden,0),
 		e.app_id, COALESCE(a.name,''), e.status_code, e.latency_ms, e.detail, e.token_id, e.data`
 
-const eventFrom = ` FROM events e LEFT JOIN services s ON s.id=e.service_id LEFT JOIN keys k ON k.id=e.key_id LEFT JOIN apps a ON a.id=e.app_id`
+// A trashed service or app reads like a deleted one: its events stay,
+// without its name. Keys join whether trashed or not, so a trashed hidden
+// key's events stay hidden.
+const eventFrom = ` FROM events e LEFT JOIN services s ON s.id=e.service_id AND s.deleted_at IS NULL LEFT JOIN keys k ON k.id=e.key_id LEFT JOIN apps a ON a.id=e.app_id AND a.deleted_at IS NULL`
 
 func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]*Event, error) {
 	q := `SELECT ` + eventCols + eventFrom + ` WHERE 1=1`
@@ -450,7 +453,7 @@ type CoolingKey struct {
 // their notifications would tell people who may not see them that they exist.
 func (s *Store) CoolingKeys(ctx context.Context, t time.Time) ([]CoolingKey, error) {
 	rows, err := s.rd.QueryContext(ctx, `SELECT k.id, k.service_id, sv.slug, k.label, k.cooldown_until FROM keys k
-		JOIN services sv ON sv.id=k.service_id WHERE k.cooldown_until>? AND k.status=? AND k.hidden=0`, t.Unix(), StatusActive)
+		JOIN services sv ON sv.id=k.service_id WHERE k.cooldown_until>? AND k.status=? AND k.hidden=0 AND k.deleted_at IS NULL AND sv.deleted_at IS NULL`, t.Unix(), StatusActive)
 	if err != nil {
 		return nil, err
 	}

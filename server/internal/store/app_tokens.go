@@ -256,7 +256,7 @@ func (s *Store) RevokeOtherAppTokens(ctx context.Context, appID, keepID int64) (
 // appByTokenQ reads a token and its app in one statement, so both come
 // from one snapshot and auth costs one read instead of two.
 var appByTokenQ = `SELECT ` + appTokenCols + `, ` + appColsAs("a") + `
-FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by JOIN apps a ON a.id=t.app_id WHERE t.hash=?`
+FROM app_tokens t LEFT JOIN users u ON u.id=t.created_by JOIN apps a ON a.id=t.app_id WHERE t.hash=? AND a.deleted_at IS NULL`
 
 // AppByToken finds the app a token hash belongs to, and the token itself.
 // It returns revoked and expired tokens too, and inactive apps; the caller

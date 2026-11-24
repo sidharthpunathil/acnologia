@@ -114,6 +114,7 @@ var apiDocs = map[string]apiDoc{
 	"GET /api/admin/settings/spend-ceiling":           {Summary: "Server spend ceiling", Desc: "The server's daily spend ceiling in USD, where it comes from, and today's spend.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "settings"},
 	"PUT /api/admin/settings/spend-ceiling":           {Summary: "Set the server spend ceiling", Desc: "An amount in USD, 0 for off, or null to fall back to ACNOLOGIA_DAILY_SPEND_CEILING_USD.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "settings", Body: map[string]any{"usd": anyObj}},
 	"POST /api/admin/services/{id}/try":               {Summary: "Try it", Desc: "Send one request through the proxy as a chosen app, or the internal Try it app, and get status, headers, latency and body. Logged as a try event.", Auth: "admin", Role: store.RoleAdmin, Tag: "services", Body: map[string]any{"method": sProp("HTTP method"), "path": sProp("Path on the service"), "query": anyObj, "body": anyObj, "app_id": iProp("App to try as"), "read_only": map[string]any{"type": "boolean"}}},
+	"POST /api/admin/backup":                          {Summary: "Download a backup", Desc: "A consistent copy of the database as a file (acnologia-backup-<time>.db), streamed. Stored keys stay encrypted: restoring it needs the same ACNOLOGIA_MASTER_KEY, which is never in the copy. Dashboard sessions are left out. The control tool acnologia_backup_database writes the copy on the server instead.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "settings", Produces: "application/vnd.sqlite3"},
 	"GET /api/admin/demo":                             {Summary: "Demo data state", Desc: "Whether demo data is loaded, and what it made.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "services"},
 	"POST /api/admin/demo":                            {Summary: "Load demo data", Desc: "Add a demo service backed by a built-in fake provider, two keys, an app and a token, for a first call with no real key. Refused on a server with services unless force is true.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "services", Body: map[string]any{"force": map[string]any{"type": "boolean"}}},
 	"DELETE /api/admin/demo":                          {Summary: "Remove demo data", Desc: "Delete exactly what POST /api/admin/demo made.", Auth: "admin", Role: store.RoleSuperadmin, Tag: "services"},
@@ -313,7 +314,7 @@ func toolBody(t *ctlTool) (map[string]any, []string) {
 	}
 	names := t.Body
 	if len(names) == 0 && t.Prepare != nil {
-		skip := map[string]bool{"confirm": true}
+		skip := map[string]bool{"confirm": true, "dry_run": true, "idempotency_key": true}
 		for _, m := range routeParamRe.FindAllString(t.Path, -1) {
 			skip[m[1:len(m)-1]] = true
 		}
@@ -401,6 +402,9 @@ func toolOp(t *ctlTool, method, specP string) map[string]any {
 		"x-role":      string(t.Role),
 		"x-kind":      t.Kind,
 	}
+	if isWriteMethod(method) && strings.HasPrefix(specP, "/api/admin/") {
+		params = append(params, safetyParams()...)
+	}
 	if len(params) > 0 {
 		op["parameters"] = params
 	}
@@ -446,6 +450,9 @@ func docOp(d apiDoc, method, specP string) map[string]any {
 	if desc != "" {
 		op["description"] = desc
 	}
+	if isWriteMethod(method) && strings.HasPrefix(specP, "/api/admin/") {
+		params = append(params, safetyParams()...)
+	}
 	if len(params) > 0 {
 		op["parameters"] = params
 	}
@@ -453,6 +460,15 @@ func docOp(d apiDoc, method, specP string) map[string]any {
 		op["requestBody"] = jsonBody(d.Body, d.Required, d.Form)
 	}
 	return op
+}
+
+// safetyParams are what every admin write takes: a dry run and an
+// Idempotency-Key (dryrun.go, admin_idem.go).
+func safetyParams() []map[string]any {
+	return []map[string]any{
+		{"name": "dry_run", "in": "query", "description": "1 says what the call would do and changes nothing", "schema": map[string]any{"type": "string", "enum": []string{"1"}}},
+		{"name": "Idempotency-Key", "in": "header", "description": "A retry with the same key within 24 hours gets the first answer back instead of running again", "schema": map[string]any{"type": "string", "maxLength": adminIdemMaxKey}},
+	}
 }
 
 func opID(method, p string) string {

@@ -197,7 +197,7 @@ func (s *Store) SetServiceMCPToolAccess(ctx context.Context, serviceID int64, na
 // whose keys all rest comes back without a query per tool.
 func (s *Store) KeysRestingUntil(ctx context.Context) (map[int64]time.Time, error) {
 	rows, err := s.r.QueryContext(ctx, `SELECT service_id, MIN(cooldown_until) FROM keys
-		WHERE hidden=0 AND status=? AND cooldown_until>? GROUP BY service_id`, StatusActive, now())
+		WHERE hidden=0 AND deleted_at IS NULL AND status=? AND cooldown_until>? GROUP BY service_id`, StatusActive, now())
 	if err != nil {
 		return nil, err
 	}

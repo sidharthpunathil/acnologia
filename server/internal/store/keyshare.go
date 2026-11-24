@@ -28,8 +28,9 @@ func (s *Store) ClearKeySourcesOf(ctx context.Context, sourceID int64) error {
 // active, neither hidden nor restricted to some apps, and not the same
 // secret as one of the linked service's own keys.
 func (s *Store) SharedCandidateKeys(ctx context.Context, sourceID, serviceID int64) ([]*Key, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM keys WHERE service_id=? AND status='active' AND hidden=0 AND restricted=0
-		AND secret_fp NOT IN (SELECT secret_fp FROM keys WHERE service_id=?)`, sourceID, serviceID)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM keys WHERE service_id=? AND status='active' AND hidden=0 AND restricted=0 AND deleted_at IS NULL
+		AND EXISTS (SELECT 1 FROM services WHERE id=keys.service_id AND deleted_at IS NULL)
+		AND secret_fp NOT IN (SELECT secret_fp FROM keys WHERE service_id=? AND deleted_at IS NULL)`, sourceID, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +59,8 @@ func (s *Store) FillTwins(ctx context.Context, keys []*Key, includeHidden bool) 
 		args = append(args, k.ID)
 	}
 	q := `SELECT k.id, t.id, t.label, sv.id, sv.slug, sv.name FROM keys k
-		JOIN keys t ON t.secret_fp=k.secret_fp AND t.service_id<>k.service_id
-		JOIN services sv ON sv.id=t.service_id
+		JOIN ` + liveKeys + ` t ON t.secret_fp=k.secret_fp AND t.service_id<>k.service_id
+		JOIN ` + liveServices + ` sv ON sv.id=t.service_id
 		WHERE k.id IN (` + placeholders(len(args)) + `)`
 	if !includeHidden {
 		q += ` AND t.hidden=0`
@@ -85,8 +86,8 @@ func (s *Store) FillTwins(ctx context.Context, keys []*Key, includeHidden bool) 
 // DuplicateKeyGroups lists secrets stored in more than one service, as the
 // keys that hold them. Hidden keys are left out.
 func (s *Store) DuplicateKeyGroups(ctx context.Context) ([][]KeyTwin, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT k.id, k.label, k.secret_fp, sv.id, sv.slug, sv.name FROM keys k JOIN services sv ON sv.id=k.service_id
-		WHERE k.hidden=0 AND k.secret_fp IN (SELECT secret_fp FROM keys WHERE hidden=0 GROUP BY secret_fp HAVING COUNT(DISTINCT service_id)>1)
+	rows, err := s.r.QueryContext(ctx, `SELECT k.id, k.label, k.secret_fp, sv.id, sv.slug, sv.name FROM `+liveKeys+` k JOIN `+liveServices+` sv ON sv.id=k.service_id
+		WHERE k.hidden=0 AND k.secret_fp IN (SELECT secret_fp FROM keys WHERE hidden=0 AND deleted_at IS NULL GROUP BY secret_fp HAVING COUNT(DISTINCT service_id)>1)
 		ORDER BY k.secret_fp, sv.id`)
 	if err != nil {
 		return nil, err
@@ -120,7 +121,7 @@ func (s *Store) DistinctKeyStats(ctx context.Context, serviceIDs []int64, includ
 	for _, id := range serviceIDs {
 		args = append(args, id)
 	}
-	q := `SELECT secret_fp, status, cooldown_until, quota_remaining FROM keys WHERE service_id IN (` + placeholders(len(args)) + `)`
+	q := `SELECT secret_fp, status, cooldown_until, quota_remaining FROM keys WHERE deleted_at IS NULL AND service_id IN (` + placeholders(len(args)) + `)`
 	if !includeHidden {
 		q += ` AND hidden=0`
 	}

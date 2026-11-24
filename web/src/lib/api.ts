@@ -54,6 +54,7 @@ import type { ForwardProxySetup } from "./types";
 import type { ControlMcpView, MCPSettingsInput, MCPView, ServiceFamily, ServiceMCPView, SharedKeysReport } from "./types";
 import type { ServiceMCPToolAccess } from "./types";
 import type { OAuthClientInput, OAuthConnectState, OAuthSettings } from "./types";
+import type { ServerVersion, TrashItem } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -344,6 +345,43 @@ export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return "Something went wrong. Try again.";
 }
+
+/** The trash, the server's version and backups (Settings, Server and Trash). */
+export const safetyApi = {
+  /** Admins; items holding hidden keys are listed for superadmins only. */
+  listTrash: () => request<{ items: TrashItem[]; ttl_days: number }>("GET", "/api/admin/trash"),
+  restore: (id: string) => request<{ ok: boolean; restored: TrashItem }>("POST", `/api/admin/trash/${encodeURIComponent(id)}/restore`),
+  /** Superadmin: delete for good now. */
+  purge: (id: string) => request<{ ok: boolean; purged: TrashItem }>("DELETE", `/api/admin/trash/${encodeURIComponent(id)}`),
+  version: () => request<ServerVersion>("GET", "/api/admin/version"),
+  /** Superadmin: POST /api/admin/backup answers with the file. */
+  async downloadBackup(): Promise<{ blob: Blob; filename: string }> {
+    let res: Response;
+    try {
+      res = await fetch("/api/admin/backup", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-Requested-With": "acnologia" },
+      });
+    } catch {
+      throw new ApiError(0, "network", "Cannot reach the Acnologia server.");
+    }
+    if (!res.ok) {
+      let message = `Backup failed (${res.status})`;
+      let code = `http_${res.status}`;
+      try {
+        const data = (await res.json()) as { error?: { code?: string; message?: string } };
+        message = data.error?.message || message;
+        code = data.error?.code || code;
+      } catch {
+        // not JSON
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    const m = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "");
+    return { blob: await res.blob(), filename: m?.[1] ?? "acnologia-backup.db" };
+  },
+};
 
 /** Per app MCP settings. Reading needs any signed in user; saving needs admin. */
 export const mcpApi = {

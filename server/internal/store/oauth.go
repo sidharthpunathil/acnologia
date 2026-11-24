@@ -408,7 +408,7 @@ func (s *Store) AppByOAuthToken(ctx context.Context, hash string) (*App, *OAuthT
 	dests = append(dests, as.dests()...)
 	err := s.r.QueryRowContext(ctx, `SELECT t.id, t.kind, t.expires_at, t.spent_at, `+grantCols+`, u.role, u.disabled, `+appColsAs("a")+`
 		FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id JOIN users u ON u.id=g.user_id JOIN apps a ON a.id=g.app_id
-		WHERE t.hash=? AND t.kind=?`, hash, OAuthAccess).Scan(dests...)
+		WHERE t.hash=? AND t.kind=? AND a.deleted_at IS NULL`, hash, OAuthAccess).Scan(dests...)
 	if err != nil {
 		return nil, nil, nil, notFound(err)
 	}

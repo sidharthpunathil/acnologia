@@ -416,18 +416,35 @@ func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := s.Store.DeleteService(r.Context(), sv.ID); err != nil {
-		writeStoreErr(w, err)
-		return
+	// A service of another server (share tokens, handed over keys) is that
+	// server's: it goes at once, as it always did. Anything else goes to the
+	// trash, with its keys, for seven days (trash.go).
+	var it *store.TrashItem
+	if sv.PeerLinkID != nil {
+		if err := s.Store.DeleteService(r.Context(), sv.ID); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		// Services that used its keys go back to their own.
+		_ = s.Store.ClearKeySourcesOf(r.Context(), sv.ID)
+	} else {
+		var err error
+		if it, err = s.Store.TrashServiceByID(r.Context(), sv.ID, userFrom(r)); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
 	}
-	// SQLite may hand the id to the next service: its cached answers go now.
+	// Its cached answers and upstream MCP sessions go now.
 	s.Cache.PurgePrefix(servicePrefix(sv.ID))
 	s.mcpSessions.deleteService(sv.ID)
-	// Services that used its keys go back to their own.
-	_ = s.Store.ClearKeySourcesOf(r.Context(), sv.ID)
-	s.Store.AddAudit(r.Context(), userFrom(r), "service.delete", sv.Slug, "")
 	s.forgetRotating()
-	writeJSON(w, 200, map[string]any{"ok": true})
+	if it == nil {
+		s.Store.AddAudit(r.Context(), userFrom(r), "service.delete", sv.Slug, "")
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "service.delete", sv.Slug, trashDetail(it, fmt.Sprintf("%d keys", it.Keys)))
+	writeJSON(w, 200, trashAnswer(it))
 }
 
 // ---- keys ----
@@ -881,12 +898,25 @@ func (s *Server) deleteKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteKey(r.Context(), k.ID); err != nil {
+	// A key another server handed over, or a share token of a service of
+	// another server, is that server's: it goes at once, as it always did.
+	// Any other key goes to the trash for seven days (trash.go).
+	if k.IsHandedOver() || sv.PeerLinkID != nil {
+		if err := s.Store.DeleteKey(r.Context(), k.ID); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		s.Store.AddAudit(r.Context(), userFrom(r), "key.delete", fmt.Sprintf("%s/%s", sv.Slug, k.Label), k.Hint)
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+	it, err := s.Store.TrashKeyByID(r.Context(), k.ID, userFrom(r))
+	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "key.delete", fmt.Sprintf("%s/%s", sv.Slug, k.Label), k.Hint)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	s.Store.AddAudit(r.Context(), userFrom(r), "key.delete", fmt.Sprintf("%s/%s", sv.Slug, k.Label), trashDetail(it, k.Hint))
+	writeJSON(w, 200, trashAnswer(it))
 }
 
 func (s *Server) revealKey(w http.ResponseWriter, r *http.Request) {
@@ -1135,18 +1165,17 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a, err := s.Store.GetApp(r.Context(), id)
-	if err == nil {
-		err = s.Store.DeleteApp(r.Context(), id)
-	}
+	// The app goes to the trash for seven days (trash.go); its tokens stop
+	// working until it is restored.
+	it, err := s.Store.TrashAppByID(r.Context(), id, userFrom(r))
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	// The id may be reused, so the app's idempotent replays go with it.
+	// Its idempotent proxy replays go now.
 	s.Cache.PurgePrefix(idempotencyPrefix(id))
-	s.Store.AddAudit(r.Context(), userFrom(r), "app.delete", a.Name, "")
-	writeJSON(w, 200, map[string]any{"ok": true})
+	s.Store.AddAudit(r.Context(), userFrom(r), "app.delete", it.Name, trashDetail(it, ""))
+	writeJSON(w, 200, trashAnswer(it))
 }
 
 // rotateAppToken predates multiple tokens per app. It still means "replace

@@ -840,5 +840,5 @@ func buildCtlTools() []ctlTool {
 	}
 	tools = append(append(append(append(tools, ctlFlexTools()...), ctlParityTools()...), ctlAgentTools()...), ctlOAuthCredTools()...)
 	withAsync(tools)
-	return tools
+	return withSafetyTools(tools)
 }

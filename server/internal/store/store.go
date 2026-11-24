@@ -421,6 +421,12 @@ func migrate(db *sql.DB) error {
 	if err := migrateOAuthCredentials(db); err != nil {
 		return err
 	}
+	if err := migrateTrash(db); err != nil {
+		return err
+	}
+	if err := migrateAdminIdem(db); err != nil {
+		return err
+	}
 	return migrateIndexes(db)
 }
 

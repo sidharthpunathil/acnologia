@@ -46,7 +46,7 @@ func scanKey(row interface{ Scan(...any) error }) (*Key, error) {
 // queryKeys reads keys with a where clause built by the caller, and their
 // app lists. The SQL varies, so it is not kept prepared.
 func (s *Store) queryKeys(ctx context.Context, where string, args ...any) ([]*Key, error) {
-	rows, err := s.rd.QueryContext(ctx, `SELECT `+keyCols+` FROM keys `+where, args...)
+	rows, err := s.rd.QueryContext(ctx, `SELECT `+keyCols+` FROM `+liveKeys+` keys `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -60,14 +60,14 @@ func (s *Store) queryKeys(ctx context.Context, where string, args ...any) ([]*Ke
 // Key app lists for queryKeysPrep, selected by the same arguments as the keys.
 const (
 	keyAppsByID      = `SELECT key_id, app_id FROM key_apps WHERE key_id=?`
-	keyAppsByService = `SELECT ka.key_id, ka.app_id FROM key_apps ka JOIN keys k ON k.id=ka.key_id WHERE k.service_id=?`
+	keyAppsByService = `SELECT ka.key_id, ka.app_id FROM key_apps ka JOIN keys k ON k.id=ka.key_id WHERE k.service_id=? AND k.deleted_at IS NULL`
 )
 
 // queryKeysPrep is queryKeys for a constant where clause: both statements
 // stay prepared. appsQ reads the app lists of (at least) the same keys with
 // the same args.
 func (s *Store) queryKeysPrep(ctx context.Context, where, appsQ string, args ...any) ([]*Key, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM keys `+where, args...)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM `+liveKeys+` keys `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func (s *Store) GetKey(ctx context.Context, id int64) (*Key, error) {
 // lists, since the admin UI shows them; TestCandidateKeysAppListsOnlyWhenRestricted
 // fails if AllowsApp starts reading them for an unrestricted key.
 func (s *Store) CandidateKeys(ctx context.Context, serviceID int64) ([]*Key, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM keys WHERE service_id=? AND status='active'`, serviceID)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+keyCols+` FROM keys WHERE service_id=? AND status='active' AND deleted_at IS NULL`, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +340,7 @@ func (s *Store) UpdateKey(ctx context.Context, id int64, p KeyPatch) error {
 	}
 	defer tx.Rollback()
 	set := func(q string, args ...any) error {
-		_, err := tx.ExecContext(ctx, `UPDATE keys SET `+q+` WHERE id=?`, append(args, id)...)
+		_, err := tx.ExecContext(ctx, `UPDATE keys SET `+q+` WHERE id=? AND deleted_at IS NULL`, append(args, id)...)
 		if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 			return ErrDuplicate
 		}
@@ -437,7 +437,7 @@ func (s *Store) DeleteKey(ctx context.Context, id int64) error {
 // CountKeys returns the number of stored keys.
 func (s *Store) CountKeys(ctx context.Context) (int, error) {
 	var n int
-	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM keys`).Scan(&n)
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM keys WHERE deleted_at IS NULL`).Scan(&n)
 	return n, err
 }
 
@@ -465,7 +465,7 @@ func (s *Store) AppsExist(ctx context.Context, ids []int64) (bool, error) {
 		args = append(args, id)
 	}
 	var n int
-	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM apps WHERE id IN (`+placeholders(len(args))+`)`, args...).Scan(&n); err != nil {
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM apps WHERE deleted_at IS NULL AND id IN (`+placeholders(len(args))+`)`, args...).Scan(&n); err != nil {
 		return false, err
 	}
 	return n == len(seen), nil

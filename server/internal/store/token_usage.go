@@ -86,7 +86,7 @@ const appActivitySQL = `SELECT COALESCE(e.service_id,0), COALESCE(sv.slug,''), s
 	SUM((e.kind='proxy' AND e.status_code>=400) OR e.kind='error'),
 	COALESCE(SUM(e.cost),0), COALESCE(SUM(CASE WHEN e.kind='proxy' THEN e.latency_ms END),0), SUM(e.kind='proxy'),
 	MIN(e.ts), MAX(e.ts)
-	FROM events e LEFT JOIN services sv ON sv.id=e.service_id
+	FROM events e LEFT JOIN services sv ON sv.id=e.service_id AND sv.deleted_at IS NULL
 	WHERE e.app_id=? AND e.ts>=? AND e.kind IN ('proxy','cache_hit','lease','error')
 	GROUP BY 1, 3, 4`
 

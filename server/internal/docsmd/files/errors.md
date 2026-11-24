@@ -1093,6 +1093,14 @@ A key reveal could not be written to the audit log, so the key was not shown.
 
 What to do: Try again.
 
+### `backup_failed`
+
+HTTP 500. Retry: yes, after `retry_after_sec` when the error gives one.
+
+The server could not copy its database, usually for lack of disk space in the data directory.
+
+What to do: Free some space in the data directory and try again. The server log has the cause.
+
 ### `bad_app`
 
 HTTP 400. Retry: no, not without a change.
@@ -1334,6 +1342,26 @@ HTTP 502. Retry: yes, after `retry_after_sec` when the error gives one.
 The provider refresh failed.
 
 What to do: Retry later; the run's log says why.
+
+### `restore_blocked`
+
+HTTP 409. Retry: no, not without a change.
+
+A trashed item needs something else first: a key whose service is in the trash too, or a service whose provider was deleted.
+
+What to do: Restore the service first (it is in the trash list), or add the provider again, then restore.
+
+Next step: tool `acnologia_list_trash`, command `acn trash`.
+
+### `restore_conflict`
+
+HTTP 409. Retry: no, not without a change.
+
+A trashed item cannot come back because its place was taken: another service now has its slug, or its service has another key with the same secret.
+
+What to do: Rename or delete the item that took its place, then restore again.
+
+Next step: tool `acnologia_list_trash`, command `acn trash`.
 
 ### `self_delete`
 
