@@ -565,7 +565,7 @@ sequenceDiagram
     M->>R: DELETE /api/admin/services/{id} (same token, X-Requested-With)
     R->>R: role check, audit
     R-->>M: {"ok": true}
-    M-->>Cl: result (structuredContent, capped at 512 KB)
+    M-->>Cl: result (structuredContent, capped at 64 KB)
     Cl->>M: tools/call acnologia_call_service {service, path, query}
     M->>P: run the proxy as the Control MCP app
     P-->>M: provider answer (key injected, rotated on 429)

@@ -22,7 +22,7 @@ Each surface takes its own kind of credential:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/api/v1` (the agent index), `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate`, `/api/public/github`, `/api/v1/proxy/ca.pem` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/api/v1`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` and `/api/public/github` stay open; the llms files, `/docs/*` and `/api/docs` also open to any valid app token, MCP access token or admin token) |
+| Public | `/healthz`, `/api/v1` (the agent index), `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/api/openapi.json`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate`, `/api/public/github`, `/api/v1/proxy/ca.pem` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/api/v1`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` and `/api/public/github` stay open; the llms files, `/docs/*` and `/api/docs` also open to any valid app token, MCP access token or admin token) |
 | Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`), a share token (`manifest`, `leave`, `providers/{slug}/logo`, `keys`, `report`) or the owner's signature (`revoke`); see [Sharing between servers](#sharing-between-servers) |
 | Claim links | `/api/claim/v1` | a claim code (`acnclaim_...`) from a share with a person; see [Sharing with people](#sharing-with-people) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
@@ -34,6 +34,13 @@ App and agent authors get a fuller guide to the consumer API in
 [llms-full.txt](llms-full.txt), served at `/llms-full.txt` with a summary at
 `/llms.txt`. This page is the reference: the consumer routes and the status
 codes an app should handle, then the dashboard API.
+
+`GET /api/openapi.json` describes every route as OpenAPI 3.1, with no auth
+needed (behind the access password, like the docs). The `/api/admin` routes
+carry the control MCP tool that calls them (`x-mcp-tool`), the role they
+need (`x-role`) and their typed request bodies, and the consumer, proxy, MCP
+and OAuth routes are there too. A test walks the router, so a route missing
+from the spec fails the build.
 
 ## Consumer API
 
@@ -205,6 +212,7 @@ lower of its owner's role and its scope.
 | Route | Role | Purpose |
 |---|:-:|---|
 | `GET /me`, `PATCH /me` | m | Own profile; changing the password needs `current_password` and ends other sessions. `PATCH` needs a dashboard session, not an API token. |
+| `GET /checklist` | m | The first run checklist the dashboard's Getting started card shows: `{steps: [{id, title, done, next: {tool, command, url}}], done, total, complete}`. The steps are `service` (a service with a key), `app_token` (an app other than the control MCP's own), `agent` (one of your admin tokens or apps was used) and `first_call` (requests in the last 90 days). `next` names the control MCP tool, the `acn` command and the dashboard page for the step. |
 | `GET /overview` | m | Key totals (including `banned`), in-flight count, 24 h requests, rate limits, cache hits and spend, cache stats, recent events. |
 | `GET /tokens`, `POST /tokens`, `DELETE /tokens/{id}` | m | Your admin API tokens: `{name, scope: read\|write\|admin, expires_in_days}`, scope capped at your role. Create returns the token once. Session only, except that a token may `DELETE` itself (`acn logout`). Superadmins can list everyone's with `?all=1`. |
 | `GET /webhooks` | m | Webhooks (URL shown only as a host hint), event types and formats. |
@@ -351,8 +359,19 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
   count. `confirm=off` turns the step off for clients that ask the user
   themselves.
 - **Results.** The route's JSON as text, plus `structuredContent` when it is
-  an object. A route error comes back as `isError: true` with its status and
-  message. Results are capped at 512 KB.
+  an object. Results are capped at 64 KB, so they fit in an agent's context.
+  A list tool's page is cut to the items that fit, with `trimmed` saying so
+  and `next_offset` set; any other result over the cap is cut with a note
+  that suggests `fields`, `filter`, `limit` or `summary`.
+- **Errors.** A failed call has `isError: true`. The text starts `HTTP
+  <status> <code>: <message>` (then `Hint: ...` when the route gave one),
+  and `structuredContent` holds every field of the route's error object
+  (`code`, `message`, and `hint` or `fix` where the route sets them) plus
+  `status`, so an agent can branch on `code`. A problem found before the
+  route runs has `{code, message}` too: `invalid` for a missing input,
+  `forbidden` when the role or connection cannot use the tool. Tools that
+  declare an `outputSchema` keep these fields in the text only, since
+  clients check `structuredContent` against the schema.
 - **Shaping.** Every read tool, `api_request` and each `batch` call take:
   - `fields`: dot paths to keep, from the top. Lists pass through, so
     `services.slug` keeps every service's slug.
@@ -363,13 +382,14 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
 
   A filtered or paged result adds `_matched: {list: count}`, the matches
   before paging. List tools page instead (below). Shaping runs before the
-  512 KB cap, so it can bring a big result under it. `provider_guide` and
+  64 KB cap, so it can bring a big result under it. `provider_guide` and
   `service_guide` take `format: markdown` for the Markdown alone.
 - **Paging.** The list tools (`list_services`, `list_keys`, `list_events`,
   `list_apps`, `list_app_tokens`, `list_providers`, `list_ai_runs`,
   `list_webhooks`, `list_egress`, `list_groups`, `list_shares`,
   `list_peers`, `list_users`, `list_audit`, `list_refresh_runs`,
-  `list_refresh_reviews` and `search`) return one page of their list with
+  `list_refresh_reviews`, `list_capabilities`, `assistant_threads`,
+  `list_routes` and `search`) return one page of their list with
   `total`, `count`, `offset`, `has_more` and, when more follow,
   `next_offset`: pass it as `offset` for the next page. `limit` is the page
   size, 100 by default and at most 500; `list_providers` pages 25 (at most
@@ -377,7 +397,10 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
   `search` 50 (at most 200). `filter` runs before paging, so `total` counts
   the matches, and `fields` keeps the paging fields. `list_events` pages
   through the newest 500 events and `list_audit` through the newest 1,000
-  entries.
+  entries. `summary: true` returns counts instead of the whole list:
+  `summarized: true`, `counts` by fields such as `status`, `kind`, `mode`
+  and `provider` over every match, and only the first 5 rows (or `limit`
+  rows), with the paging fields.
 - **Output schemas.** `whoami`, `search` and the list tools except
   `list_ai_runs`, `list_peers` and the refresh lists declare an
   `outputSchema` that their `structuredContent` matches: the paging fields,
@@ -397,7 +420,9 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
     (role, groups, read only and the confirm step), and a batch cannot
     contain `batch`.
   - `list_routes` `{contains}` lists every `/api/admin` route with the tool
-    that covers it, for `api_request`.
+    that covers it, the role it needs, its query parameters and its JSON
+    body schema, for `api_request`. It reads the same descriptions as
+    `/api/openapi.json` and pages like a list tool.
 - **Calling providers.** `call_service` `{service, method, path, query,
   body, headers}` runs the request through the proxy as an app named
   `Control MCP`, created on first use (mode proxy, all services). Key
@@ -418,22 +443,50 @@ both are set:
 
 | Group | Tools |
 |---|---|
-| `overview` | `overview`, `usage_report`, `list_events`, `settings_summary`, `whoami` |
-| `services` | `list_services`, `get_service`, `create_service`, `update_service`, `delete_service`, `service_breaker`, `reset_breaker`, `cache_stats`, `purge_cache`, `check_service_keys` |
-| `keys` | `list_keys`, `key_details`, `add_keys`, `update_key`, `delete_key`, `check_key`, `check_all_keys`, `reset_key` |
-| `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp` |
-| `providers` | `list_providers`, `get_provider`, `provider_guide`, `write_provider_guide`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `check_provider_offers` |
+| `overview` | `overview`, `checklist`, `usage_report`, `list_events`, `settings_summary`, `whoami`, `health_settings`, `update_health_settings` |
+| `services` | `list_services`, `get_service`, `create_service`, `update_service`, `delete_service`, `quickstart`, `service_breaker`, `reset_breaker`, `cache_stats`, `purge_cache`, `check_service_keys`, `get_service_mcp`, `sync_service_mcp`, `set_service_mcp_tool_access`, `service_rotation`, `set_rotation`, `fetch_service_logo`, `set_service_logo`, `delete_service_logo`, `fill_service_logos` |
+| `keys` | `list_keys`, `key_details`, `add_keys`, `update_key`, `delete_key`, `check_key`, `check_all_keys`, `reset_key`, `shared_keys`, `link_service_keys`, `link_all_shared_keys`, `link_service_family` |
+| `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `rename_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp` |
+| `providers` | `list_providers`, `get_provider`, `provider_guide`, `write_provider_guide`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `set_provider_logo`, `delete_provider_logo`, `check_provider_offers` |
 | `call` | `call_service`, `service_guide`, `list_service_examples`, `forward_proxy_setup`, `rotate_forward_proxy_ca` |
-| `ai` | `ai_status`, `ai_models`, `ai_assist`, `start_provider_build`, `list_ai_runs`, `get_ai_run`, `cancel_ai_run`, `publish_ai_run`, `delete_ai_run` |
-| `routing` | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `test_webhook`, `list_egress`, `create_egress`, `update_egress`, `delete_egress`, `test_egress`, `list_groups`, `create_group`, `update_group`, `delete_group` |
-| `sharing` | `get_identity`, `update_identity`, `list_shares`, `get_share`, `create_share`, `update_share`, `pause_share`, `resume_share`, `revoke_share`, `extend_share`, `share_invite`, `share_claim_link`, `list_peers`, `preview_peer`, `connect_peer`, `sync_peer`, `disconnect_peer`, `list_peer_providers`, `pull_peer_provider` |
-| `refresh` | `refresh_settings`, `update_refresh_settings`, `run_refresh`, `list_refresh_runs`, `list_refresh_reviews`, `apply_refresh_review`, `dismiss_refresh_review` |
+| `ai` | `ai_status`, `ai_models`, `update_ai_models`, `set_ai_price`, `reset_ai_price`, `ai_rules`, `update_ai_rules`, `ai_assist`, `start_provider_build`, `list_ai_runs`, `get_ai_run`, `cancel_ai_run`, `publish_ai_run`, `delete_ai_run`, `clear_ai_runs`, and the Assistant: `assistant_threads`, `assistant_thread`, `assistant_new_thread`, `assistant_send`, `assistant_confirm`, `assistant_answer`, `assistant_steer`, `assistant_stop`, `assistant_compact`, `delete_assistant_thread` |
+| `routing` | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `test_webhook`, `list_egress`, `create_egress`, `update_egress`, `delete_egress`, `test_egress`, `list_groups`, `create_group`, `update_group`, `delete_group`, `list_capabilities`, `get_capability`, `create_capability`, `update_capability`, `delete_capability`, `try_capability` |
+| `sharing` | `get_identity`, `update_identity`, `list_shares`, `get_share`, `share_analytics`, `create_share`, `update_share`, `pause_share`, `resume_share`, `revoke_share`, `extend_share`, `share_invite`, `share_claim_link`, `list_peers`, `preview_peer`, `connect_peer`, `sync_peer`, `disconnect_peer`, `list_peer_providers`, `pull_peer_provider` |
+| `refresh` | `refresh_settings`, `update_refresh_settings`, `run_refresh`, `list_refresh_runs`, `get_refresh_run`, `list_refresh_reviews`, `apply_refresh_review`, `dismiss_refresh_review` |
 | `admin` (off by default) | `list_users`, `create_user`, `update_user`, `delete_user`, `list_audit` |
 | `secrets` (off by default) | `reveal_key` |
 | `raw` (off by default) | `api_request` `{method, path, query, body}` for any `/api/admin/...` route not covered above |
 
 `api_request` refuses paths outside `/api/admin/`, and also refuses
-`/api/admin/tokens`, `PATCH /api/admin/me` and the Assistant's chat routes.
+`/api/admin/tokens`, `PATCH /api/admin/me` and the Assistant's chat routes,
+which have their own tools.
+
+Some of the tools in more detail:
+
+- `quickstart` `{provider, slug, keys, text, app_name, mode}` (admin,
+  destructive) sets up a catalog provider in one call. It creates the
+  service, or uses the one with that slug when it is for the same provider,
+  adds the keys (strings or `{secret, label}` objects, or pasted `text`),
+  creates an app allowed to use the service, and returns `{service, keys:
+  {added, skipped}, app, token, proxy_url, mcp: {url, claude_code, config}}`.
+  The token is shown once. Each step goes through its route, and a failed
+  step returns the error with `step` and what was already `done`.
+- `checklist` reads `GET /api/admin/checklist`.
+- `try_capability` `{slug, params, service, raw}` calls a capability through
+  the proxy as the `Control MCP` app and returns the status, the service that
+  answered, the services tried and the body.
+- `assistant_send` `{thread_id, text, wait_sec}` sends a message to the
+  dashboard Assistant (a new chat when `thread_id` is empty) and waits up to
+  `wait_sec` (default 60, at most 240) for its answer. It returns
+  `{thread_id, done, turn, items}` with the items added since the message.
+  When the Assistant asks to confirm an action (an item with `kind:
+  confirm`) or asks a question (`kind: ask`), `next` says to answer with
+  `assistant_confirm` or `assistant_answer`, which wait the same way. The
+  Assistant runs as you, with the same token, so its own tool calls have
+  your role and scope.
+- `set_service_mcp_tool_access` `{service, name, access}` marks one synced
+  upstream MCP tool as read only (`read`), as a write (`write`), or back to
+  the upstream's own hint (`""`).
 
 **Resources:** `acnologia://overview`, `acnologia://services`,
 `acnologia://llms-full.txt`, and `acnologia://docs/{slug}` for each page under

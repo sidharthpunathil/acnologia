@@ -52,6 +52,21 @@ Commands:
   breaker <service> [--reset]    circuit breaker state, or close it
   cache purge <service>          drop cached responses of a service
   usage <app-id>                 an app's requests, spend and limits
+  apps                           apps with their mode and token count
+  apps create <name> [--mode proxy|lease|both] [--services a,b] [--description d]
+                                 create an app; prints its token once
+  tokens list --app <id|name>    an app's tokens (never their values)
+  tokens create --app <id|name> [--name ci] [--read-only] [--expires 30]
+                                 add a token to an app (expires in days); prints it once
+
+Everything else (agents and scripts):
+  api <METHOD> <path> [--data json|@file|@-]
+                                 call any route with the saved admin token, such as
+                                 %[1]s api GET /api/admin/checklist
+  tool <name> [key=value ...] [--args json|@file] [--yes]
+                                 run any control MCP tool; values are JSON when they parse
+                                 (count=3, keys='["a","b"]'), text otherwise; --yes confirms
+  tool --list                    every control MCP tool your role can use
 
 Forward proxy (apps set Acnologia as HTTPS_PROXY and call provider URLs):
   proxy                          proxy URL, CA fingerprint and the hosts that get keys
@@ -69,9 +84,12 @@ Connect Claude (MCP):
               [--context name] [filters]
                                  add it to the agents on this machine (no token in their files)
 
---json prints the server's JSON instead of a table (whoami, status,
-services, keys, events, usage). ACNOLOGIA_URL and ACNOLOGIA_TOKEN override
-the saved server for one command, for CI.
+--json prints the server's JSON instead of a table. On failure it prints
+{"error": {code, message, status, ...}} to stdout instead of text on stderr.
+Exit codes: 0 ok, 1 other failure, 2 usage, 3 not signed in or not allowed,
+4 not found, 5 rate limited or unavailable (retry later).
+ACNOLOGIA_URL and ACNOLOGIA_TOKEN override the saved server for one command,
+for CI.
 `
 
 // Run executes a ctl command as `acnologia ctl` and returns the process exit
@@ -88,13 +106,24 @@ func RunAs(prog string, args []string, stdin io.Reader, stdout, stderr io.Writer
 	return c.exec(args)
 }
 
+// exec runs a command and turns its error into an exit code (exitCode in
+// agent.go): 2 usage, 3 auth, 4 not found, 5 retryable, 1 anything else.
+// With --json the error goes to stdout as JSON, for scripts and agents.
 func (c *cli) exec(args []string) int {
-	stderr := c.err
-	if err := c.run(args); err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-		return 1
+	err := c.run(args)
+	if err == nil {
+		return 0
 	}
-	return 0
+	if c.json {
+		b, _ := json.MarshalIndent(map[string]any{"error": errorJSON(err)}, "", "  ")
+		fmt.Fprintln(c.out, string(cleanJSON(b)))
+	} else {
+		fmt.Fprintln(c.err, "error:", err)
+		if h := errorHint(err); h != "" {
+			fmt.Fprintln(c.err, "hint:", clean(h))
+		}
+	}
+	return exitCode(err)
 }
 
 type cli struct {
@@ -260,8 +289,16 @@ func (c *cli) run(args []string) error {
 		return c.mcp(args[1:])
 	case "proxy":
 		return c.proxy(args[1:])
+	case "api":
+		return c.apiCmd(args[1:])
+	case "tool":
+		return c.toolCmd(args[1:])
+	case "apps":
+		return c.apps(args[1:])
+	case "tokens":
+		return c.tokens(args[1:])
 	}
-	return fmt.Errorf("unknown command %q; run %s help", args[0], c.name())
+	return usageErrorf("unknown command %q; run %s help", args[0], c.name())
 }
 
 // ---- HTTP ----
@@ -275,12 +312,14 @@ type apiErr struct {
 	Interval int `json:"interval"`
 }
 
-// httpError is a server answer of 400 or more.
+// httpError is a server answer of 400 or more. Fields holds every field of
+// the answer's error object (code, message, hint, fix and the rest).
 type httpError struct {
 	Status   int
 	Code     string
 	Message  string
 	Interval int
+	Fields   map[string]any
 }
 
 func (e *httpError) Error() string {
@@ -328,7 +367,11 @@ func (c *cli) callWith(ctx context, method, path string, body, out any) error {
 	if resp.StatusCode >= 400 {
 		var e apiErr
 		_ = json.Unmarshal(b, &e)
-		return &httpError{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message, Interval: e.Interval}
+		var raw struct {
+			Error map[string]any `json:"error"`
+		}
+		_ = json.Unmarshal(b, &raw)
+		return &httpError{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message, Interval: e.Interval, Fields: raw.Error}
 	}
 	if raw, ok := out.(*json.RawMessage); ok {
 		*raw = append((*raw)[:0], b...)

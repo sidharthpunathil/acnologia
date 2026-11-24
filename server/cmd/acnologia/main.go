@@ -299,12 +299,27 @@ func checkMasterKey(st *store.Store, box *crypto.Box) error {
 }
 
 // bootstrap creates the first superadmin from env vars for headless installs.
+// With ACNOLOGIA_BOOTSTRAP_TOKEN it also stores that token's hash as the
+// superadmin's admin API token (store/bootstrap.go). The token is never
+// logged, and is ignored once the server has users.
 func bootstrap(ctx context.Context, cfg config.Config, st *store.Store) error {
+	tok := cfg.BootstrapToken
+	if tok != "" {
+		if err := store.CheckBootstrapToken(tok); err != nil {
+			return err
+		}
+	}
 	if cfg.BootstrapEmail == "" || cfg.BootstrapPassword == "" {
+		if tok != "" {
+			slog.Warn("ACNOLOGIA_BOOTSTRAP_TOKEN is ignored: it needs ACNOLOGIA_BOOTSTRAP_EMAIL and ACNOLOGIA_BOOTSTRAP_PASSWORD to create the first user")
+		}
 		return nil
 	}
 	n, err := st.CountUsers(ctx)
 	if err != nil || n > 0 {
+		if err == nil && tok != "" {
+			slog.Info("ACNOLOGIA_BOOTSTRAP_TOKEN is ignored: this server already has users; make tokens in Settings or with acn login")
+		}
 		return err
 	}
 	h, err := bcrypt.GenerateFromPassword([]byte(cfg.BootstrapPassword), bcrypt.DefaultCost)
@@ -317,5 +332,11 @@ func bootstrap(ctx context.Context, cfg config.Config, st *store.Store) error {
 	}
 	st.AddAudit(ctx, u, "bootstrap", u.Email, "created superadmin from environment")
 	slog.Info("created bootstrap superadmin", "email", u.Email)
+	if tok != "" {
+		if _, err := st.AddBootstrapToken(ctx, u, crypto.SHA256(tok), tok); err != nil {
+			return err
+		}
+		slog.Info("stored ACNOLOGIA_BOOTSTRAP_TOKEN as an admin API token", "email", u.Email)
+	}
 	return nil
 }

@@ -37,8 +37,12 @@ type Config struct {
 	WebhookAllowPrivate bool
 	BootstrapEmail      string
 	BootstrapPassword   string
-	Version             string
-	AnthropicAPIKey     string
+	// BootstrapToken (ACNOLOGIA_BOOTSTRAP_TOKEN) becomes an admin API token
+	// of the bootstrap superadmin when that user is created on a fresh
+	// server, so CI and agents can set it up with no browser. Never logged.
+	BootstrapToken  string
+	Version         string
+	AnthropicAPIKey string
 	// AIModel is ACNOLOGIA_AI_MODEL, empty when unset. It is the fallback:
 	// the model saved on the Settings page wins, and with neither set the
 	// agent uses its built in default (agent.BuiltinModel).
@@ -123,6 +127,7 @@ func Load(version string) Config {
 		EgressEchoURL:         env("ACNOLOGIA_EGRESS_ECHO_URL", "https://www.cloudflare.com/cdn-cgi/trace"),
 		BootstrapEmail:        Getenv("ACNOLOGIA_BOOTSTRAP_EMAIL"),
 		BootstrapPassword:     Getenv("ACNOLOGIA_BOOTSTRAP_PASSWORD"),
+		BootstrapToken:        strings.TrimSpace(Getenv("ACNOLOGIA_BOOTSTRAP_TOKEN")),
 		Version:               version,
 		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:               strings.TrimSpace(Getenv("ACNOLOGIA_AI_MODEL")),

@@ -56,6 +56,9 @@ type ctlTool struct {
 	// Page is set for list tools (ctlPaging in mcp_control_names.go): they
 	// return one page of their list with the paging block.
 	Page *ctlPage
+	// BodyDoc describes the route's JSON body for the OpenAPI spec and
+	// list_routes when Prepare builds a body unlike the tool's inputs.
+	BodyDoc map[string]any
 }
 
 // ctlGroup is a tool group as the dashboard shows it.
@@ -812,5 +815,5 @@ func buildCtlTools() []ctlTool {
 				return "send " + strings.ToUpper(argStr(in, "method")) + " " + argStr(in, "path"), nil
 			}},
 	}
-	return append(tools, ctlFlexTools()...)
+	return append(append(tools, ctlFlexTools()...), ctlParityTools()...)
 }

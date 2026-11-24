@@ -35,6 +35,7 @@ not parse falls back to the default.
 | `ACNOLOGIA_DATA_DIR` | `./data`; `%LocalAppData%\Acnologia` on Windows | Holds `acnologia.db` (plus WAL files), `master.key` when no env key is set, and a generated `access-password`. Created with mode 0700. Windows ignores the mode and relies on the folder's ACL, see [Windows](#windows). |
 | `ACNOLOGIA_MASTER_KEY` | empty | 32 bytes, base64 or hex, that encrypt stored keys. Generate one with `acnologia gen-master-key`. When empty, `master.key` in the data dir is used, or created on first boot. |
 | `ACNOLOGIA_BOOTSTRAP_EMAIL`, `ACNOLOGIA_BOOTSTRAP_PASSWORD` | empty | Create the first superadmin on boot instead of through the setup screen. Used only while there are no users. |
+| `ACNOLOGIA_BOOTSTRAP_TOKEN` | empty | An admin API token you make (`acnadm_` and at least 32 more characters, such as `acnadm_$(openssl rand -hex 24)`). When the bootstrap email and password create the first superadmin, its hash is stored as that user's admin scope token, so CI and agents can drive a fresh server with no browser (see [CLI, a fresh server](cli.md#a-fresh-server-with-no-browser)). A server that already has users ignores it and logs a notice; without the email and password it is ignored with a warning. A malformed token stops the server from starting. The token is never logged. |
 
 ### Locking a public deploy
 
