@@ -6,7 +6,10 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 // GuideMeta is the provider's catalog entry, as the guide shows it.
@@ -68,6 +71,92 @@ type GuideDoc struct {
 	Errors   []string       `json:"errors"`
 	Notes    []string       `json:"notes"`
 	Markdown string         `json:"markdown,omitempty"`
+	// Evidence is what this server measured per endpoint over the last 7
+	// days, for endpoints with enough calls. Only a service's guide has it.
+	Evidence []GuideEvidence `json:"evidence,omitempty"`
+	// Responses are sample answers a live check or catalog verify got from
+	// safe calls, cut and scrubbed of keys, so a reader learns the response
+	// fields without a probe call.
+	Responses []GuideResponse `json:"responses,omitempty"`
+}
+
+// GuideEvidence is one endpoint's measured record.
+type GuideEvidence struct {
+	Method      string     `json:"method"`
+	Path        string     `json:"path"`
+	Calls       int64      `json:"calls"`
+	SuccessRate float64    `json:"success_rate"`
+	P50MS       int64      `json:"p50_ms"`
+	P95MS       int64      `json:"p95_ms"`
+	LastOK      *time.Time `json:"last_ok,omitempty"`
+	LastFail    *time.Time `json:"last_fail,omitempty"`
+}
+
+// GuideResponse is a stored sample answer.
+type GuideResponse struct {
+	Example     string    `json:"example"`
+	Method      string    `json:"method"`
+	Path        string    `json:"path"`
+	Status      int       `json:"status"`
+	ContentType string    `json:"content_type,omitempty"`
+	Body        string    `json:"body"`
+	VerifiedAt  time.Time `json:"verified_at"`
+}
+
+// guideSampleMax caps a sample shown in the Markdown guide.
+const guideSampleMax = 2000
+
+func (d GuideDoc) evidenceFor(method, path string) *GuideEvidence {
+	t := TemplatePath(path)
+	for i := range d.Evidence {
+		if e := &d.Evidence[i]; strings.EqualFold(e.Method, method) && e.Path == t {
+			return e
+		}
+	}
+	return nil
+}
+
+// responseFor finds a sample of a call under the endpoint's template.
+func (d GuideDoc) responseFor(method, path string) *GuideResponse {
+	for i := range d.Responses {
+		r := &d.Responses[i]
+		if strings.EqualFold(r.Method, method) && (TemplatePath(r.Path) == TemplatePath(path) || MatchesTemplate(path, r.Path)) {
+			return r
+		}
+	}
+	return nil
+}
+
+func (e *GuideEvidence) line() string {
+	s := fmt.Sprintf("Measured here over the last 7 days (%d calls): %s success, p50 %d ms, p95 %d ms", e.Calls, pct(e.SuccessRate), e.P50MS, e.P95MS)
+	if e.LastOK != nil {
+		s += ", last success " + e.LastOK.Format("2006-01-02")
+	}
+	if e.LastFail != nil {
+		s += ", last failure " + e.LastFail.Format("2006-01-02")
+	}
+	return s + "."
+}
+
+func pct(r float64) string {
+	s := strconv.FormatFloat(r*100, 'f', 1, 64)
+	return strings.TrimSuffix(s, ".0") + "%"
+}
+
+func (r *GuideResponse) block() string {
+	body := r.Body
+	if len(body) > guideSampleMax {
+		cut := guideSampleMax
+		for cut > 0 && !utf8.RuneStart(body[cut]) {
+			cut--
+		}
+		body = body[:cut] + "\n..."
+	}
+	lang := ""
+	if t := strings.TrimSpace(body); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+		lang = "json"
+	}
+	return fmt.Sprintf("Sample response (HTTP %d, verified %s, shortened):\n\n```%s\n%s\n```\n\n", r.Status, r.VerifiedAt.Format("2006-01-02"), lang, strings.ReplaceAll(body, "```", "` ` `"))
 }
 
 // GuideExample is a spec example with a ready curl command through the proxy.
@@ -155,6 +244,7 @@ func RenderGuide(in GuideInput) string {
 func (d GuideDoc) Render(admin bool) string {
 	var b strings.Builder
 	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
+	shown := map[*GuideResponse]bool{}
 	title := d.Name
 	if title == "" {
 		title = d.Provider
@@ -251,6 +341,13 @@ func (d GuideDoc) Render(admin bool) string {
 			if s := strings.TrimSpace(e.Response); s != "" {
 				p("Response: %s\n\n", s)
 			}
+			if ev := d.evidenceFor(method, e.Path); ev != nil {
+				p("%s\n\n", ev.line())
+			}
+			if r := d.responseFor(method, e.Path); r != nil {
+				shown[r] = true
+				b.WriteString(r.block())
+			}
 		}
 	}
 
@@ -258,6 +355,12 @@ func (d GuideDoc) Render(admin bool) string {
 		p("## Examples\n\n")
 		for _, ex := range d.Examples {
 			p("%s:\n\n```sh\n%s\n```\n\n", ex.Name, ex.Curl)
+			for i := range d.Responses {
+				if r := &d.Responses[i]; r.Example == ex.Name && !shown[r] {
+					shown[r] = true
+					b.WriteString(r.block())
+				}
+			}
 		}
 	}
 

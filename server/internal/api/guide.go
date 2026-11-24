@@ -35,6 +35,8 @@ func (s *Server) serviceGuide(ctx context.Context, sv *store.Service, publicURL 
 		in.Ctx.ForwardProxy, in.Ctx.DirectBase = s.forwardProxyURL(authorityOf(publicURL)), sv.BaseURL
 	}
 	doc := providers.BuildGuide(in)
+	s.guideEvidence(ctx, &doc, sv)
+	s.guideResponses(ctx, &doc, sv.DocProvider())
 	if endpoint, _, _ := serviceMCPInfo(sv); endpoint != "" {
 		if sm, err := s.Store.GetServiceMCP(ctx, sv.ID); err == nil && len(sm.Tools) > 0 {
 			var b strings.Builder
@@ -122,7 +124,9 @@ func (s *Server) providerGuide(w http.ResponseWriter, r *http.Request) {
 		}
 		gc.Service, gc.ServiceName = sv.Slug, sv.Name
 	}
-	writeGuide(w, r, providers.BuildGuide(providers.GuideInput{Meta: guideMeta(p), Spec: spec, Ctx: gc}), true)
+	doc := providers.BuildGuide(providers.GuideInput{Meta: guideMeta(p), Spec: spec, Ctx: gc})
+	s.guideResponses(r.Context(), &doc, p.Slug)
+	writeGuide(w, r, doc, true)
 }
 
 // adminServiceGuide is GET /api/admin/services/{id}/guide.
