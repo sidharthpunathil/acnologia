@@ -25,6 +25,17 @@ CREATE TABLE IF NOT EXISTS app_mcp(
 );
 CREATE TABLE IF NOT EXISTS lease_exclusive(
   lease_id TEXT PRIMARY KEY REFERENCES leases(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS service_mcp(
+  service_id INTEGER PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+  server_name TEXT NOT NULL DEFAULT '',
+  server_version TEXT NOT NULL DEFAULT '',
+  protocol_version TEXT NOT NULL DEFAULT '',
+  instructions TEXT NOT NULL DEFAULT '',
+  tools_json TEXT NOT NULL DEFAULT '[]',
+  tool_count INTEGER NOT NULL DEFAULT 0,
+  synced_at INTEGER,
+  last_error TEXT NOT NULL DEFAULT ''
 );`)
 	if err == nil {
 		mcpSchemaReady.Store(s.DB, struct{}{})
@@ -40,6 +51,9 @@ type MCPSettings struct {
 	ServiceTools bool `json:"service_tools"`
 	Insights     bool `json:"insights"`
 	Manage       bool `json:"manage"`
+	// ReadOnly restricts this app's MCP server to read-only tools and GET/HEAD
+	// proxy requests; blocks key leasing, key management and mutating tools.
+	ReadOnly bool `json:"read_only"`
 	// Resources and prompts.
 	Resources bool `json:"resources"`
 	Prompts   bool `json:"prompts"`

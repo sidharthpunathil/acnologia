@@ -132,6 +132,10 @@ type Service struct {
 	Rotation      string `json:"rotation"`
 	KeySourceSlug string `json:"key_source_slug,omitempty"`
 	KeySourceName string `json:"key_source_name,omitempty"`
+	// MCPURL is the upstream Streamable HTTP MCP endpoint for this service
+	// (an absolute http(s) URL or a path resolved against BaseURL). Empty
+	// falls back to the provider spec's MCP config.
+	MCPURL string `json:"mcp_url,omitempty"`
 }
 
 // PublicOnly reports whether connections for this service must go to public
@@ -291,6 +295,9 @@ type App struct {
 	TokenCount int `json:"token_count"`
 	// TokenID is the token the current request authenticated with.
 	TokenID int64 `json:"-"`
+	// TokenReadOnly is true when the current request authenticated with a
+	// read-only app token.
+	TokenReadOnly bool `json:"-"`
 	// ShareID is set on an app that backs a share to another server. Such
 	// apps are managed on the Sharing page, not the Apps page.
 	ShareID *string `json:"share_id,omitempty"`

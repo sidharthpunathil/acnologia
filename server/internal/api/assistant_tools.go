@@ -446,15 +446,16 @@ func init() {
 		{
 			Name: "create_service", Role: store.RoleAdmin, Required: []string{"provider"},
 			Props: map[string]any{
-				"provider": map[string]any{"type": "string", "description": "provider slug from list_providers"},
+				"provider": map[string]any{"type": "string", "description": "provider slug from list_providers (use mcp for any standalone Streamable HTTP MCP server)"},
 				"slug":     map[string]any{"type": "string", "description": "optional; defaults from the provider"},
 				"name":     map[string]any{"type": "string"},
 				"base_url": map[string]any{"type": "string", "description": "only for generic providers or overrides"},
+				"mcp_url":  map[string]any{"type": "string", "description": "optional upstream Streamable HTTP MCP endpoint URL or path (e.g. https://scrapebox.cofount.dev/mcp/ or /mcp/)"},
 			},
-			Desc: "Create a service from a provider, using its defaults.",
+			Desc: "Create a service from a provider, using its defaults. Pass provider=\"mcp\" and mcp_url to connect any upstream Streamable HTTP MCP server.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				body := map[string]any{"provider": argStr(in, "provider")}
-				for _, k := range []string{"slug", "name", "base_url"} {
+				for _, k := range []string{"slug", "name", "base_url", "mcp_url"} {
 					if v := argStr(in, k); v != "" {
 						body[k] = v
 					}
@@ -468,7 +469,7 @@ func init() {
 				ent := chatEntity{Type: "service", ID: id, Slug: slug, Name: argStr(out, "name")}
 				return toolOut{OK: true, Summary: "Created service " + slug, Link: fmt.Sprintf("/services/%v", out["id"]),
 					Card: &chatCard{Type: "service", Service: &ent, Extra: map[string]any{"provider": out["provider"]}}, Entities: []chatEntity{ent},
-					Model: asJSON(pick(out, "id", "slug", "name", "provider", "base_url", "auth_type", "auth_name", "strategy"))}
+					Model: asJSON(pick(out, "id", "slug", "name", "provider", "base_url", "mcp_url", "auth_type", "auth_name", "strategy"))}
 			},
 		},
 		{
@@ -478,6 +479,7 @@ func init() {
 				"name":              map[string]any{"type": "string"},
 				"description":       map[string]any{"type": "string"},
 				"base_url":          map[string]any{"type": "string"},
+				"mcp_url":           map[string]any{"type": "string", "description": "upstream Streamable HTTP MCP endpoint URL or path; empty clears override"},
 				"strategy":          map[string]any{"type": "string", "enum": []string{"round_robin", "fill_first", "least_used", "most_quota", "random"}},
 				"cooldown_sec":      map[string]any{"type": "integer"},
 				"max_attempts":      map[string]any{"type": "integer"},
@@ -488,18 +490,18 @@ func init() {
 				"cost_per_request":  map[string]any{"type": "number", "description": "cost of one request, used for app budgets"},
 				"rotation":          map[string]any{"type": "string", "enum": []string{"off", "fallback", "round_robin"}, "description": "provider rotation: share requests with other services that serve the same endpoint (set_rotation sets it on several at once)"},
 			},
-			Desc:      "Change a service's settings: name, base URL, rotation strategy, cooldown, attempts, concurrency, egress proxy, response cache and cost per request. A new base URL or egress proxy needs the user's Confirm.",
-			ConfirmIf: hasAny("base_url", "auth_type", "auth_name", "provider", "egress_id", "target_trusted"),
+			Desc:      "Change a service's settings: name, base URL, upstream MCP URL, rotation strategy, cooldown, attempts, concurrency, egress proxy, response cache and cost per request. A new base URL, MCP URL or egress proxy needs the user's Confirm.",
+			ConfirmIf: hasAny("base_url", "mcp_url", "auth_type", "auth_name", "provider", "egress_id", "target_trusted"),
 			Describe:  describeServiceTarget,
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				sv, err := cs.resolveService(argStr(in, "service"))
 				if err != nil {
 					return toolFail(err.Error())
 				}
-				body := pick(in, "name", "description", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
+				body := pick(in, "name", "description", "base_url", "mcp_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
 					"egress_id", "cache_ttl_sec", "cost_per_request", "rotation")
 				return cs.simple("PATCH", fmt.Sprintf("/api/admin/services/%d", sv.ID), body, "Updated service "+sv.Slug, func(m map[string]any) any {
-					return pick(m, "id", "slug", "name", "base_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
+					return pick(m, "id", "slug", "name", "base_url", "mcp_url", "strategy", "cooldown_sec", "max_attempts", "max_concurrency", "queue_timeout_sec",
 						"target_trusted", "egress_id", "cache_ttl_sec", "cost_per_request", "rotation")
 				})
 			},
@@ -782,11 +784,11 @@ func init() {
 		{
 			Name: "list_app_tokens", Role: store.RoleMember, Required: []string{"app_id"},
 			Props: map[string]any{"app_id": map[string]any{"type": "integer"}},
-			Desc:  "An app's tokens: id, name, prefix hint, created, last used, expiry and whether revoked. Token values are never shown.",
+			Desc: "An app's tokens: id, name, prefix hint, read_only scope, created, last used, expiry and whether revoked. Token values are never shown.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "app_id")
 				return cs.simple("GET", fmt.Sprintf("/api/admin/apps/%d/tokens", id), nil, fmt.Sprintf("Listed tokens of app %d", id), func(m map[string]any) any {
-					return rows(m["tokens"], "id", "name", "prefix", "created_at", "created_by_email", "last_used_at", "expires_at", "revoked_at")
+					return rows(m["tokens"], "id", "name", "prefix", "read_only", "created_at", "created_by_email", "last_used_at", "expires_at", "revoked_at")
 				})
 			},
 		},
@@ -794,20 +796,21 @@ func init() {
 			Name: "create_app_token", Role: store.RoleAdmin, Required: []string{"app_id", "name"},
 			Props: map[string]any{
 				"app_id":          map[string]any{"type": "integer"},
-				"name":            map[string]any{"type": "string", "description": "what the token is for, such as ci or staging"},
+				"name":            map[string]any{"type": "string", "description": "what the token is for, such as ci, staging or a teammate's name"},
 				"expires_in_days": map[string]any{"type": "integer", "description": "optional; omit for a token that does not expire"},
+				"read_only":       map[string]any{"type": "boolean", "description": "when true, the token can only make GET/HEAD proxy calls and use read-only MCP tools (cannot lease raw keys)"},
 			},
-			Desc: "Add a named token to an app; its other tokens keep working. The token is shown to the user once; you never see it.",
+			Desc: "Add a named token to an app; its other tokens keep working. Set read_only=true when an app or teammate only needs read-only access. The token is shown to the user once; you never see it.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "app_id")
-				code, out, msg := cs.api("POST", fmt.Sprintf("/api/admin/apps/%d/tokens", id), pick(in, "name", "expires_in_days"))
+				code, out, msg := cs.api("POST", fmt.Sprintf("/api/admin/apps/%d/tokens", id), pick(in, "name", "expires_in_days", "read_only"))
 				if code >= 400 {
 					return toolFail(msg)
 				}
 				tok, _ := out["token"].(string)
 				meta, _ := out["app_token"].(map[string]any)
 				return toolOut{OK: true, Secret: tok, Summary: fmt.Sprintf("Created token %s for app %d", argStr(meta, "name"), id), Link: "/apps",
-					Model: asJSON(map[string]any{"app_token": pick(meta, "id", "name", "prefix", "expires_at"),
+					Model: asJSON(map[string]any{"app_token": pick(meta, "id", "name", "prefix", "read_only", "expires_at"),
 						"token": "shown to the user once in the chat; tell them to copy it now"})}
 			},
 		},
@@ -883,6 +886,14 @@ func describeServiceTarget(cs *chatSession, in map[string]any) (string, error) {
 	if v, ok := in["base_url"].(string); ok {
 		base = strings.TrimRight(strings.TrimSpace(v), "/")
 	}
+	mcpURL := sv.MCPURL
+	if v, ok := in["mcp_url"].(string); ok {
+		mcpURL = strings.TrimSpace(v)
+	}
+	target := base
+	if mcpURL != "" && mcpURL != base {
+		target += " (MCP: " + mcpURL + ")"
+	}
 	eid := int64(0)
 	if sv.EgressID != nil {
 		eid = *sv.EgressID
@@ -891,7 +902,7 @@ func describeServiceTarget(cs *chatSession, in map[string]any) (string, error) {
 		eid = v
 	}
 	return fmt.Sprintf("Send the keys of service %s to %s through %s. Hidden keys pause until a superadmin confirms the target in the service's edit form",
-		sv.Slug, base, cs.egressName(eid, "no egress proxy")), nil
+		sv.Slug, target, cs.egressName(eid, "no egress proxy")), nil
 }
 
 // describeAppAccess states an app's resulting mode and services in full.

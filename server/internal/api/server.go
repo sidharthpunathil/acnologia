@@ -114,6 +114,8 @@ type Server struct {
 	keyCounts keyCounts
 	// rotating caches the services with provider rotation on.
 	rotating rotating
+	// mcpSessions caches upstream Streamable HTTP MCP sessions per service+key.
+	mcpSessions mcpSessionCache
 	// static serves WebFS (serveWeb); Router builds it.
 	static atomic.Pointer[staticSite]
 }
@@ -283,6 +285,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/providers/{slug}", s.getProvider)
 		r.Get("/providers/{slug}/guide", s.providerGuide)
 		r.Get("/services/{id}/guide", s.adminServiceGuide)
+		r.Get("/services/{id}/mcp", s.getServiceMCP)
 		r.Get("/services/{id}/rotation", s.serviceRotation)
 		r.Post("/providers/validate", s.validateProvider)
 		r.Get("/ai/status", s.aiStatus)
@@ -310,6 +313,7 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.requireRole(store.RoleAdmin))
 			r.Post("/services", s.createService)
 			r.Patch("/services/{id}", s.updateService)
+			r.Post("/services/{id}/mcp/sync", s.syncServiceMCP)
 			r.Post("/services/rotation", s.setServicesRotation)
 			r.Delete("/services/{id}", s.deleteService)
 			r.Post("/services/{id}/keys", s.createKeys)

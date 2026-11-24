@@ -250,6 +250,18 @@ function SettingsTab({
 
   return (
     <div className="flex flex-col gap-6">
+      <Group title="Access">
+        <Row>
+          <SwitchRow
+            checked={draft.read_only}
+            onChange={(v) => edit({ read_only: v })}
+            label="Read-only mode"
+            description="Only exposes read-only tools: hides raw key leasing, key management, and mutating or write endpoints (including non-read-only upstream MCP tools). You can also issue a per-token read-only key under Tokens or append ?read_only=1 to the MCP URL."
+            disabled={readOnly}
+          />
+        </Row>
+      </Group>
+
       <Group title="Tool sets">
         {SETS.map((s) => (
           <Row key={s.id}>
@@ -369,6 +381,11 @@ function ToolsTab({
 
   return (
     <div className="flex flex-col gap-6">
+      {draft.read_only && (
+        <Callout tone="info">
+          Read-only mode is on. Non-read-only tools are hidden from clients and blocked from running.
+        </Callout>
+      )}
       <ListingLine view={view} draft={draft} />
       {SETS.map(({ id, label }) => {
         const tools = bySet[id];
@@ -393,22 +410,34 @@ function ToolsTab({
                 {!savedOn
                   ? "Save to see the tools in this set."
                   : id === "service_tools"
-                    ? "No ready-made tools yet. They appear when a service's provider documents endpoints or example calls."
+                    ? "No ready-made tools yet. They appear when a service connects an upstream MCP server or its provider documents endpoints or example calls."
                     : "No tools in this set."}
               </div>
             ) : (
               <ul className="divide-y divide-separator-border rounded-2xl border border-border-button-default">
                 {tools.map((t) => {
+                  const blockedByReadOnly = draft.read_only && t.read_only === false;
                   const checked = toolOn(draft, t);
                   // On, but left out of tools/list: the agent finds it with acnologia_search_tools.
                   const searchOnly = t.enabled && t.listed === false;
                   const shown = t.public_name || t.name;
                   return (
-                    <li key={t.name} className="flex items-start gap-3 px-4 py-3">
+                    <li key={t.name} className={cx("flex items-start gap-3 px-4 py-3", blockedByReadOnly && "opacity-60")}>
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-baseline gap-x-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <span className="break-all font-mono text-body-2-regular text-text-primary">{shown}</span>
-                          {searchOnly && <span className="text-caption-1-regular text-text-tertiary">via search</span>}
+                          {t.upstream_mcp && (
+                            <Chip variant="caption" color="purple" className="font-mono">
+                              MCP
+                            </Chip>
+                          )}
+                          {t.read_only === true && (
+                            <Chip variant="caption" color="neutral" className="font-mono">
+                              read-only
+                            </Chip>
+                          )}
+                          {blockedByReadOnly && <span className="text-caption-1-regular text-text-tertiary">hidden in read-only mode</span>}
+                          {!blockedByReadOnly && searchOnly && <span className="text-caption-1-regular text-text-tertiary">via search</span>}
                         </div>
                         {t.description && <p className="mt-0.5 text-caption-1-regular text-text-secondary">{t.description}</p>}
                       </div>
@@ -416,7 +445,7 @@ function ToolsTab({
                         size="sm"
                         isSelected={checked}
                         onChange={(v) => setTool(t.name, v)}
-                        isDisabled={readOnly}
+                        isDisabled={readOnly || blockedByReadOnly}
                         aria-label={`${shown} ${checked ? "on" : "off"}`}
                         className="mt-0.5 shrink-0"
                       />
@@ -444,9 +473,10 @@ function ConnectTab({ app, endpoint }: { app: App; endpoint: string }) {
   return (
     <div className="flex flex-col gap-4">
       <Callout tone="info">
-        Replace <code className="font-mono">{TOKEN}</code> with this app's token, which starts with{" "}
-        <code className="break-all font-mono">{app.token_prefix}</code>. Acnologia showed the full token once, when the app was created. Lost it? An admin can
-        rotate it from the app's actions to get a new one. The old token stops working right away.
+        Replace <code className="font-mono">{TOKEN}</code> with any token for this app (such as one starting with{" "}
+        <code className="break-all font-mono">{app.token_prefix}</code>). Give each app or teammate their own token under{" "}
+        <strong>Tokens</strong> — mark it <strong>read-only</strong> if they only need to look, and revoke it any time. You can also append{" "}
+        <code className="font-mono">?read_only=1</code> to the MCP URL for a read-only session.
       </Callout>
       <Tabs selectedKey={client} onSelectionChange={(k) => setClient(k as Client)} className="gap-3">
         <ScrollTabs>
@@ -578,9 +608,16 @@ export function AppMcpPanel({ app, onClose, canEdit }: { app: App | null; onClos
       description="Choose what an AI agent using this app's token can see and do."
       headerAction={
         onCount !== null ? (
-          <Chip variant="caption" color="purple" className="font-mono">
-            {plural(onCount, "tool")} on
-          </Chip>
+          <div className="flex items-center gap-1.5">
+            {view?.settings.read_only && (
+              <Chip variant="caption" color="yellow" className="font-mono">
+                read-only
+              </Chip>
+            )}
+            <Chip variant="caption" color="purple" className="font-mono">
+              {plural(onCount, "tool")} on
+            </Chip>
+          </div>
         ) : undefined
       }
       footer={

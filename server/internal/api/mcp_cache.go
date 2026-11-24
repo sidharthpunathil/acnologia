@@ -52,7 +52,7 @@ type toolView struct {
 	allowed []bool
 }
 
-func catalogKey(svcs []*store.Service, caps []*store.Capability) string {
+func catalogKey(svcs []*store.Service, caps []*store.Capability, svcMCP map[int64]*store.ServiceMCP) string {
 	h := sha256.New()
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], uint64(providers.Version()))
@@ -62,9 +62,22 @@ func catalogKey(svcs []*store.Service, caps []*store.Capability) string {
 		if sv.PeerLinkID != nil {
 			peer = "p"
 		}
-		h.Write([]byte(strings.Join([]string{"s", sv.Slug, sv.Name, sv.Provider, sv.PeerProvider, sv.Category, sv.Description, peer}, "\x00")))
+		h.Write([]byte(strings.Join([]string{"s", sv.Slug, sv.Name, sv.Provider, sv.PeerProvider, sv.Category, sv.Description, sv.MCPURL, peer}, "\x00")))
 		binary.LittleEndian.PutUint64(b[:], uint64(sv.ID))
 		h.Write(b[:])
+	}
+	if len(svcMCP) > 0 {
+		ids := make([]int64, 0, len(svcMCP))
+		for id := range svcMCP {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		for _, id := range ids {
+			binary.LittleEndian.PutUint64(b[:], uint64(id))
+			h.Write(b[:])
+			mb, _ := json.Marshal(svcMCP[id])
+			h.Write(mb)
+		}
 	}
 	cb, _ := json.Marshal(caps)
 	h.Write(cb)
@@ -97,7 +110,8 @@ func (s *Server) toolCatalog(ctx context.Context) *toolCatalog {
 		return &toolCatalog{byName: map[string]int{}, views: map[string]*toolView{}}
 	}
 	caps, _ := s.Store.ListCapabilities(ctx)
-	key := catalogKey(svcs, caps)
+	svcMCP, _ := s.Store.ListServiceMCP(ctx)
+	key := catalogKey(svcs, caps, svcMCP)
 	if c != nil && c.key == key {
 		// Nothing changed: trust it again. A fresh value, so readers of the
 		// old pointer never race with this write.
@@ -115,7 +129,7 @@ func (s *Server) toolCatalog(ctx context.Context) *toolCatalog {
 		s.toolCatMu.Unlock()
 		return next
 	}
-	tools := buildServiceTools(svcs, caps)
+	tools := buildServiceTools(svcs, caps, svcMCP)
 	byName := make(map[string]int, len(tools))
 	for i, t := range tools {
 		byName[t.Name] = i

@@ -79,6 +79,7 @@ func (s *Server) createAppToken(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name          string `json:"name"`
 		ExpiresInDays *int   `json:"expires_in_days"`
+		ReadOnly      bool   `json:"read_only"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -98,7 +99,7 @@ func (s *Server) createAppToken(w http.ResponseWriter, r *http.Request) {
 		exp = &t
 	}
 	tok, prefix, hash := newAppToken()
-	t, err := s.Store.CreateAppToken(r.Context(), a.ID, name, store.TokenPrefixHint(prefix), hash, userID(r), exp)
+	t, err := s.Store.CreateAppTokenWithScope(r.Context(), a.ID, name, store.TokenPrefixHint(prefix), hash, userID(r), exp, in.ReadOnly)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -112,6 +113,9 @@ func (s *Server) createAppToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	detail := "token " + name
+	if in.ReadOnly {
+		detail += ", read-only"
+	}
 	if exp != nil {
 		detail += ", expires " + exp.Format(time.DateOnly)
 	}

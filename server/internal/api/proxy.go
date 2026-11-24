@@ -209,6 +209,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 405, "method_not_allowed", "the proxy forwards GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS")
 		return
 	}
+	if a.TokenReadOnly && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		writeErr(w, 403, "read_only_token", "this token is read-only and may only make GET, HEAD or OPTIONS requests")
+		return
+	}
 	slug := chi.URLParam(r, "service")
 	hops := requestHops(r)
 	if hops > maxPeerHops {

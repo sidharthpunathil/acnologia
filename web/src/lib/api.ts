@@ -44,7 +44,7 @@ import type {
   GenerateGuideResult,
 } from "./types";
 import type { ForwardProxySetup } from "./types";
-import type { ControlMcpView, MCPSettingsInput, MCPView, ServiceFamily, SharedKeysReport } from "./types";
+import type { ControlMcpView, MCPSettingsInput, MCPView, ServiceFamily, ServiceMCPView, SharedKeysReport } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -190,6 +190,8 @@ export const api = {
   updateService: (id: number, body: Partial<ServiceInput>) =>
     request<Service>("PATCH", `/api/admin/services/${id}`, body),
   deleteService: (id: number) => request<unknown>("DELETE", `/api/admin/services/${id}`),
+  getServiceMcp: (id: number) => request<ServiceMCPView>("GET", `/api/admin/services/${id}/mcp`),
+  syncServiceMcp: (id: number) => request<ServiceMCPView>("POST", `/api/admin/services/${id}/mcp/sync`, {}),
   setServiceLogo: (id: number, body: LogoUpload) => request<unknown>("PUT", `/api/admin/services/${id}/logo`, body),
   deleteServiceLogo: (id: number) => request<unknown>("DELETE", `/api/admin/services/${id}/logo`),
 
@@ -262,7 +264,7 @@ export const api = {
   deleteApp: (id: number) => request<unknown>("DELETE", `/api/admin/apps/${id}`),
   rotateAppToken: (id: number) => request<AppWithToken>("POST", `/api/admin/apps/${id}/rotate-token`),
   listAppTokens: (id: number) => request<{ tokens: AppToken[] }>("GET", `/api/admin/apps/${id}/tokens`),
-  createAppToken: (id: number, body: { name: string; expires_in_days?: number }) =>
+  createAppToken: (id: number, body: { name: string; expires_in_days?: number; read_only?: boolean }) =>
     request<{ token: string; app_token: AppToken }>("POST", `/api/admin/apps/${id}/tokens`, body),
   renameAppToken: (id: number, tokenId: number, name: string) =>
     request<AppToken>("PATCH", `/api/admin/apps/${id}/tokens/${tokenId}`, { name }),

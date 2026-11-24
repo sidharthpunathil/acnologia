@@ -34,7 +34,46 @@ func (s *Server) serviceGuide(ctx context.Context, sv *store.Service, publicURL 
 	if sv.PeerLinkID == nil && sv.Provider != providers.PeerSlug {
 		in.Ctx.ForwardProxy, in.Ctx.DirectBase = s.forwardProxyURL(authorityOf(publicURL)), sv.BaseURL
 	}
-	return providers.BuildGuide(in)
+	doc := providers.BuildGuide(in)
+	if endpoint, _, _ := serviceMCPInfo(sv); endpoint != "" {
+		if sm, err := s.Store.GetServiceMCP(ctx, sv.ID); err == nil && len(sm.Tools) > 0 {
+			var b strings.Builder
+			if strings.TrimSpace(doc.Markdown) != "" {
+				b.WriteString(strings.TrimSpace(doc.Markdown))
+				b.WriteString("\n\n")
+			}
+			b.WriteString("## Upstream MCP tools\n\n")
+			if sm.ServerName != "" {
+				b.WriteString("Connected MCP server: **")
+				b.WriteString(sm.ServerName)
+				b.WriteString("**")
+				if sm.ServerVersion != "" {
+					b.WriteString(" (" + sm.ServerVersion + ")")
+				}
+				b.WriteString(".\n\n")
+			}
+			if strings.TrimSpace(sm.Instructions) != "" {
+				b.WriteString(strings.TrimSpace(sm.Instructions))
+				b.WriteString("\n\n")
+			}
+			for _, ut := range sm.Tools {
+				pub := upstreamToolName(sv, ut.Name)
+				b.WriteString("- `")
+				b.WriteString(pub)
+				b.WriteString("`")
+				if upstreamToolReadOnly(ut.Annotations) {
+					b.WriteString(" _(read-only)_")
+				}
+				if strings.TrimSpace(ut.Description) != "" {
+					b.WriteString(" — ")
+					b.WriteString(strings.TrimSpace(ut.Description))
+				}
+				b.WriteString("\n")
+			}
+			doc.Markdown = strings.TrimSpace(b.String())
+		}
+	}
+	return doc
 }
 
 func writeGuide(w http.ResponseWriter, r *http.Request, d providers.GuideDoc, admin bool) {
