@@ -186,7 +186,7 @@ func (s *Spec) EndpointKey(method, path string) (template string, matched bool) 
 }
 
 var (
-	idSegment  =regexp.MustCompile(`^([0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`)
+	idSegment  = regexp.MustCompile(`^([0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`)
 	hasDigit   = regexp.MustCompile(`[0-9]`)
 	hasLetters = regexp.MustCompile(`[A-Za-z]`)
 )
