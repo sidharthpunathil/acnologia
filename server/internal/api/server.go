@@ -26,6 +26,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/agent"
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
+	"github.com/sidharthpunathil/acnologia/server/internal/clientip"
 	"github.com/sidharthpunathil/acnologia/server/internal/config"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/egress"
@@ -179,10 +180,10 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	s.static.Store(newStaticSite(s.WebFS))
 	// Client IP headers are attacker controlled unless a proxy sets them, and
-	// the login limiter keys on the client IP. realIP (clientip.go) reads only
+	// the login limiter keys on the client IP. clientip.Middleware reads only
 	// what the operator's own proxies wrote.
 	if s.Cfg.TrustProxyHeaders {
-		r.Use(realIP(s.Cfg.TrustedProxyHops, s.Cfg.ClientIPHeader))
+		r.Use(clientip.Middleware(s.Cfg.TrustedProxyHops, s.Cfg.ClientIPHeader))
 	}
 	// privateSite runs before the gate so a locked answer is no-index too.
 	r.Use(middleware.Recoverer, requestLog, s.privateSite, s.gateRequests)

@@ -42,6 +42,6 @@ lives, so check there first.
   session cookie (`jsonOnly` in `api/server.go`). Routes are locked by the access gate unless listed open
   (`api/gate.go`), and admin routes sit in the right `requireRole` group (`api/server.go`).
 - The client IP comes from the socket, or with `ACNOLOGIA_TRUST_PROXY_HEADERS` from the right of `X-Forwarded-For`
-  (or one named header), never from headers a client controls (`api/clientip.go`).
+  (or one named header), never from headers a client controls (`internal/clientip`).
 - Schema changes go in a numbered migration step appended to `migrations`, never in the frozen baseline: `migrate`
   and the `schema` constant (`store/store.go`; see "Changing the schema" in `docs/development.md`).

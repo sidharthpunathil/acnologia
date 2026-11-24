@@ -1,4 +1,6 @@
-package api
+// Package clientip finds the client IP behind a reverse proxy without
+// trusting headers a client controls.
+package clientip
 
 import (
 	"net"
@@ -28,9 +30,9 @@ import (
 // A value that is no IP address, or a chain shorter than the hop count,
 // leaves the socket's address in place.
 
-// forwardedClientIP returns the client IP the proxy headers name, or ""
-// when they name none that can be trusted.
-func forwardedClientIP(h http.Header, hops int, header string) string {
+// Forwarded returns the client IP the proxy headers name, or "" when they
+// name none that can be trusted.
+func Forwarded(h http.Header, hops int, header string) string {
 	if header != "" {
 		return parseIP(h.Get(header))
 	}
@@ -71,13 +73,13 @@ func parseIP(v string) string {
 	return ""
 }
 
-// realIP replaces RemoteAddr with the client IP the trusted proxy headers
-// name, as chi's RealIP did, so clientIP reads it the same way.
-func realIP(hops int, header string) func(http.Handler) http.Handler {
+// Middleware replaces RemoteAddr with the client IP the trusted proxy
+// headers name, as chi's RealIP did, so the server reads it the same way.
+func Middleware(hops int, header string) func(http.Handler) http.Handler {
 	header = http.CanonicalHeaderKey(strings.TrimSpace(header))
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if ip := forwardedClientIP(r.Header, hops, header); ip != "" {
+			if ip := Forwarded(r.Header, hops, header); ip != "" {
 				r.RemoteAddr = ip
 			}
 			next.ServeHTTP(w, r)
