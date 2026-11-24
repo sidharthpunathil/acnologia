@@ -256,8 +256,11 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Route("/api/admin", func(r chi.Router) {
-		r.Use(jsonOnly, s.requireUser, s.catalogNotify)
+		// Idempotency-Key (admin_idem.go), then the dry run gate, which must
+		// come last (dryrun.go).
+		r.Use(jsonOnly, s.requireUser, s.catalogNotify, s.adminIdempotency, s.adminDryRun)
 		r.Get("/me", s.me)
+		r.Get("/version", s.adminVersion) // server_admin.go
 		// Account and token management need a real sign-in, not an API token.
 		r.With(s.sessionOnly).Patch("/me", s.updateMe)
 		r.With(s.sessionOnly).Get("/tokens", s.listTokens)
@@ -406,6 +409,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/services/{id}/breaker/reset", s.resetServiceBreaker)
 			r.Post("/services/{id}/cache/purge", s.purgeServiceCache)
 			r.Post("/services/{id}/try", s.tryService) // the service page's Try it panel (tryit.go)
+			// The trash (trash.go): deleted keys, services and apps.
+			r.Get("/trash", s.listTrash)
+			r.Post("/trash/{id}/restore", s.restoreTrash)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(store.RoleSuperadmin))
@@ -442,7 +448,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/peers/{id}/sync", s.asyncable("peer.sync", s.syncPeer))
 			r.Post("/peers/{id}/providers/{slug}/pull", s.pullPeerProvider)
 			r.Delete("/peers/{id}", s.disconnectPeer)
-			r.HandleFunc("/demo", s.demo) // GET, POST and DELETE: sample data (demo.go)
+			r.HandleFunc("/demo", s.demo)         // GET, POST and DELETE: sample data (demo.go)
+			r.Delete("/trash/{id}", s.purgeTrash) // delete for good now (trash.go)
+			r.Post("/backup", s.adminBackup)      // a copy of the database (server_admin.go)
 		})
 	})
 
