@@ -88,7 +88,32 @@ func (c *cli) httpClient(timeout time.Duration) *http.Client {
 		}
 		return nil
 	}
+	hc.Transport = agentTransport{base: hc.Transport}
 	return hc
+}
+
+// Version is this client's version, sent in its User-Agent as
+// acn/<version>. The acn and acnologia commands set it at start.
+var Version = "dev"
+
+// userAgent is what every request of the client sends, so the server's
+// audit log records the CLI and its version.
+func userAgent() string { return "acn/" + Version }
+
+// agentTransport sets the User-Agent on every request the client sends,
+// redirects included, unless the request set one itself.
+type agentTransport struct{ base http.RoundTripper }
+
+func (t agentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if req.Header.Get("User-Agent") == "" {
+		req = req.Clone(req.Context())
+		req.Header.Set("User-Agent", userAgent())
+	}
+	return base.RoundTrip(req)
 }
 
 // clean makes text that came from a server or a peer safe to print to a

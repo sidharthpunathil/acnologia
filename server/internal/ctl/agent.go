@@ -529,6 +529,9 @@ func (c *cli) tokens(args []string) error {
 	name := fs.String("name", "cli", "what the token is for, such as ci or staging")
 	readOnly := fs.Bool("read-only", false, "the token can only make GET calls and use read only MCP tools")
 	expires := fs.String("expires", "", "days until it expires, such as 30 or 30d; empty never expires")
+	lf := addLimitFlags(fs)
+	pins := pinFlags{}
+	fs.Var(pins, "pin", "pin a caller tag on the token, key=value (repeat for more)")
 	pos, err := parseInterleaved(fs, args[1:])
 	if err != nil {
 		return err
@@ -550,6 +553,16 @@ func (c *cli) tokens(args []string) error {
 			return usageErrorf("--expires takes days, such as 30 or 30d")
 		}
 		body["expires_in_days"] = days
+	}
+	l, set, err := lf.read()
+	if err != nil {
+		return err
+	}
+	if set {
+		body["limits"] = l
+	}
+	if len(pins) > 0 {
+		body["pinned_tags"] = map[string]string(pins)
 	}
 	var raw json.RawMessage
 	if err := c.call(http.MethodPost, fmt.Sprintf("/api/admin/apps/%d/tokens", id), body, &raw); err != nil {

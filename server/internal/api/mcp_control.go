@@ -418,6 +418,10 @@ func (c *ctlCtx) buildPath(t *ctlTool, in map[string]any) (string, error) {
 	q := url.Values{}
 	for _, name := range t.Query {
 		v := argStr(in, name)
+		if b, ok := in[name].(bool); ok && b {
+			// A true flag (async, mine) goes as 1; false is left out.
+			v = "1"
+		}
 		if v == "" {
 			continue
 		}

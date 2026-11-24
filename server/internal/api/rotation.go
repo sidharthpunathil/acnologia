@@ -198,6 +198,22 @@ func (s *Server) rotationTargets(r *http.Request, a *store.App, sv *store.Servic
 	}
 	ctx := r.Context()
 	peers := s.rotationPeers(ctx, sv, path, func(c *store.Service) bool { return a.CanUse(c.Slug) })
+	// A peer one of the app's deny rules covers drops out, so rotation never
+	// routes around a rule. Rules that cannot be read keep the request on its
+	// own service.
+	if len(peers) > 0 {
+		rules, err := s.Store.DenyRules(ctx, a.ID)
+		if err != nil {
+			return self
+		}
+		kept := peers[:0]
+		for _, t := range peers {
+			if store.MatchDeny(rules, denyTarget(r.Method, sv.Slug, t.sv, t.path)) == nil {
+				kept = append(kept, t)
+			}
+		}
+		peers = kept
+	}
 	if len(peers) == 0 {
 		return self
 	}

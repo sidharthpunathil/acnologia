@@ -257,6 +257,8 @@ func (s *Server) authOAuth(r *http.Request, tok string) (*store.App, *authFail) 
 		return nil, &authFail{Status: 403, Code: "unauthenticated", Message: "app is disabled"}
 	}
 	s.Store.TouchOAuthGrant(a.ID, g.ID)
+	// Attribution names the grant, since an OAuth call has no app token id.
+	a.OAuthGrantID = g.ID
 	return a, nil
 }
 
