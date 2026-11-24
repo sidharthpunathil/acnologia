@@ -58,6 +58,10 @@ Forward proxy (apps set Acnologia as HTTPS_PROXY and call provider URLs):
   proxy ca [--out file|-]        save the CA certificate apps must trust (acnologia-ca.pem)
   proxy env [--token acn_...] [--ca file]
                                  export lines: HTTPS_PROXY, NODE_EXTRA_CA_CERTS and friends
+  run [--token acn_...] -- <cmd> [args]
+                                 run one command through the forward proxy ($ACN_APP_TOKEN)
+  scan [paths...] [--import [--yes]]
+                                 find provider keys in .env, shell and agent config files
 
 Connect Claude (MCP):
   mcp [--context name] [--groups g1,g2] [--exclude t1,t2] [--read-only] [--confirm on|off]
@@ -91,6 +95,9 @@ func RunAs(prog string, args []string, stdin io.Reader, stdout, stderr io.Writer
 func (c *cli) exec(args []string) int {
 	stderr := c.err
 	if err := c.run(args); err != nil {
+		if code, ok := err.(exitCode); ok { // acn run: the command's own exit code
+			return int(code)
+		}
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
 	}
@@ -208,6 +215,9 @@ func (c *cli) name() string {
 }
 
 func (c *cli) run(args []string) error {
+	if len(args) > 0 && args[0] == "run" { // before --json: the command's flags are its own
+		return c.runChild(args[1:])
+	}
 	// --json may sit anywhere on the line.
 	rest := args[:0:0]
 	for _, a := range args {
@@ -260,6 +270,8 @@ func (c *cli) run(args []string) error {
 		return c.mcp(args[1:])
 	case "proxy":
 		return c.proxy(args[1:])
+	case "scan":
+		return c.scan(args[1:])
 	}
 	return fmt.Errorf("unknown command %q; run %s help", args[0], c.name())
 }
