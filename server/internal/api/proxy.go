@@ -168,6 +168,8 @@ var hopHeaders = []string{
 	"X-Forwarded-For", "X-Real-Ip", "Content-Length",
 	// The hop count goes only to another Acnologia, set in proxyService.
 	hopHeader,
+	// The caller's key affinity is Acnologia's (proxy_affinity.go).
+	affinityHeader,
 	// Let the Go transport negotiate gzip so error bodies can be classified.
 	"Accept-Encoding",
 }
@@ -362,7 +364,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(failErr, errUpstreamUnreachable):
 		writeErr(w, 502, "upstream_unreachable", "could not reach "+targets[len(targets)-1].sv.Name)
 	case failErr != nil:
-		if !writeNoKey(w, failErr) {
+		if !writeKeyUnavailable(w, failErr) && !writeNoKey(w, failErr) {
 			writeStoreErr(w, failErr)
 		}
 	default:
@@ -417,8 +419,15 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 	}()
 	cost := costPerRequest(sv, prov, r.Method, "/"+path)
 	// An Idempotency-Key pins the key, so a retry reaches the same vendor
-	// account and the provider's own idempotency sees the same caller.
-	pr := pool.Request{Method: r.Method, Path: "/" + path, Pin: cap.idemKey}
+	// account and the provider's own idempotency sees the same caller. A
+	// resource created on one key, or the caller's affinity value, binds
+	// the request to that key alone (proxy_affinity.go).
+	aff := s.keyAffinityFor(r.Context(), r, a, sv, prov, path, body)
+	pr := pool.Request{Method: r.Method, Path: "/" + path, Pin: cap.idemKey, Key: aff.key}
+	if pr.Pin == "" && aff.header != "" {
+		// The first requests with a new value agree on a key.
+		pr.Pin = aff.header
+	}
 	tried := map[int64]bool{}
 	queue := time.Duration(sv.QueueTimeoutSec) * time.Second
 	for attempt := 1; attempt <= sv.MaxAttempts; attempt++ {
@@ -540,11 +549,14 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 				meter = &tokenMeter{rc: resp.Body}
 				resp.Body = meter
 			}
+			grab := grabFor(&aff, resp)
 			func() {
 				defer picked.Release()
 				defer cancel()
 				s.deliver(w, resp, k, view(a, k.ID, attempt), cancel, picked.Secret, !mayReadKey(a, sv), cap)
 			}()
+			s.recordResources(r.Context(), sv, &aff, grab, k.ID)
+			s.affinityAnswered(r.Context(), sv, &aff, k.ID)
 			if meter != nil {
 				// Settle: the request's price was the estimate; the tokens the
 				// answer used are added once they are known, so a USD budget
@@ -593,6 +605,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		// rb was scrubbed above, right after it was classified.
 		out.resp, out.body, out.keyID, out.attempts, out.outcome, out.err = resp, rb, k.ID, len(tried), res.Outcome, nil
 		if !res.Outcome.Rotates() {
+			s.affinityAnswered(r.Context(), sv, &aff, k.ID)
 			return out
 		}
 	}
