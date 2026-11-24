@@ -283,6 +283,9 @@ func (c *cli) run(args []string) error {
 		rest = append(rest, a)
 	}
 	args = rest
+	if done, err := c.safety(&args); done { // --dry-run, --idempotency-key, trash, backup, version (safety.go)
+		return err
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprintf(c.out, usage, c.name())
 		return nil
@@ -351,6 +354,8 @@ func (c *cli) run(args []string) error {
 		return c.demo(args[1:])
 	case "try":
 		return c.try(args[1:])
+	case "oauth":
+		return c.oauth(args[1:])
 	}
 	return usageErrorf("unknown command %q; run %s help", args[0], c.name())
 }

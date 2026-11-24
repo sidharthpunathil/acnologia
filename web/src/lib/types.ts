@@ -31,7 +31,7 @@ export interface KeyCounts {
 
 /** Provider slug. Built-ins are serpapi, elevenlabs and generic; AI or manual providers add more. */
 export type ProviderSlug = string;
-export type AuthType = "query" | "header" | "bearer" | "basic" | "fields";
+export type AuthType = "query" | "header" | "bearer" | "basic" | "fields" | "oauth2";
 
 /** One part of a credential made of several values (a login and a password). */
 export interface CredentialPart {
@@ -1278,4 +1278,91 @@ export interface ControlMcpView {
   url: string;
   groups: ControlToolGroup[];
   tools: ControlTool[];
+}
+
+/** One account connected to an OAuth service (GET /api/admin/services/{id}/oauth). Never a token. */
+export interface OAuthConnection {
+  key_id: number;
+  label: string;
+  account: string;
+  status: string;
+  hidden: boolean;
+  scopes: string[];
+  expires_at?: string;
+  refreshed_at?: string;
+  connected_at: string;
+  last_error?: string;
+  needs_reconnect: boolean;
+}
+
+/** An OAuth service's sign in settings: the client (never its secret), the redirect URI and the accounts. */
+export interface OAuthSettings {
+  service_id: number;
+  service: string;
+  provider: string;
+  configured: boolean;
+  client_id: string;
+  has_client_secret: boolean;
+  scopes: string[];
+  default_scopes: string[];
+  allowed_scopes: string[];
+  redirect_uri: string;
+  public_url_set: boolean;
+  pkce: boolean;
+  authorize_url: string;
+  fields: { key: string; label: string; public?: boolean; optional?: boolean }[];
+  connections: OAuthConnection[];
+}
+
+export interface OAuthClientInput {
+  client_id: string;
+  client_secret?: string;
+  scopes?: string[];
+}
+
+/** A sign in in progress: open url, then poll status_url. */
+export interface OAuthConnectState {
+  connect_id: string;
+  service_id: number;
+  service?: string;
+  status: "pending" | "exchanging" | "done" | "failed" | "expired";
+  url?: string;
+  redirect_uri: string;
+  expires_at: string;
+  status_url: string;
+  key_id?: number;
+  account?: string;
+  error?: string;
+}
+
+/** One deleted key, service or app in the trash (GET /api/admin/trash). Never a secret. */
+export interface TrashItem {
+  id: string;
+  kind: "key" | "service" | "app";
+  target_id: number;
+  /** A key's label, a service's slug or an app's name. */
+  name: string;
+  /** The service a key belongs to. */
+  service?: string;
+  hint?: string;
+  /** Keys a service took with it. */
+  keys?: number;
+  /** Is or holds a hidden key: superadmins only. */
+  hidden: boolean;
+  deleted_by: string;
+  deleted_at: string;
+  expires_at: string;
+}
+
+/** GET /api/admin/version. */
+export interface ServerVersion {
+  current: string;
+  /** Null when the release check got no answer. */
+  latest: string | null;
+  release_url: string | null;
+  /** Null when either version is not a release number (a dev build). */
+  update_available: boolean | null;
+  upgrade_command: string;
+  upgrade_doc: string;
+  checked_at: string;
 }

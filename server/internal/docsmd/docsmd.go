@@ -54,6 +54,7 @@ var pages = []page{
 	{"deploy-vps", "deploy-vps.md", "docs/deploy-vps.md", ""},
 	{"api", "api.md", "docs/api.md", ""},
 	{"mcp-oauth", "mcp-oauth.md", "docs/mcp-oauth.md", ""},
+	{"oauth-credentials", "oauth-credentials.md", "docs/oauth-credentials.md", ""},
 	{"errors", "errors.md", "docs/errors.md", ""},
 	{"cli", "cli.md", "docs/cli.md", ""},
 	{"sdks", "sdks.md", "docs/sdks.md", ""},

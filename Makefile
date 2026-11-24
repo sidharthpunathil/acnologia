@@ -14,7 +14,7 @@ llms:
 	cp README.md server/internal/docsmd/files/overview.md
 	cp docs/architecture.md docs/flows.md docs/security.md docs/configuration.md \
 		docs/api.md docs/providers.md docs/cli.md docs/sdks.md docs/development.md \
-		docs/deploy.md docs/deploy-railway.md docs/deploy-vps.md docs/mcp-oauth.md docs/errors.md \
+		docs/deploy.md docs/deploy-railway.md docs/deploy-vps.md docs/mcp-oauth.md docs/oauth-credentials.md docs/errors.md \
 		server/internal/docsmd/files/
 	cp docs/screenshots/*.png docs/brand/logo.png server/internal/docsmd/assets/
 

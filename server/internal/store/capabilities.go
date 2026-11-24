@@ -147,7 +147,7 @@ func (s *Store) DeleteCapability(ctx context.Context, id int64) error {
 // left out. Routing uses it to try a provider with keys before one without.
 func (s *Store) AvailableKeyCounts(ctx context.Context) (map[int64]int, error) {
 	rows, err := s.r.QueryContext(ctx, `SELECT service_id, COUNT(*) FROM keys
-		WHERE hidden=0 AND status=? AND (cooldown_until IS NULL OR cooldown_until<=?) AND (quota_remaining IS NULL OR quota_remaining>0)
+		WHERE hidden=0 AND deleted_at IS NULL AND status=? AND (cooldown_until IS NULL OR cooldown_until<=?) AND (quota_remaining IS NULL OR quota_remaining>0)
 		GROUP BY service_id`, StatusActive, now())
 	if err != nil {
 		return nil, err
@@ -168,7 +168,7 @@ func (s *Store) AvailableKeyCounts(ctx context.Context) (map[int64]int, error) {
 	// A service linked to a key source can use the source's free keys too.
 	// Counted roughly (a secret in both is counted twice): routing only needs
 	// to know a provider has keys at all.
-	links, err := s.r.QueryContext(ctx, `SELECT id, key_source_id FROM services WHERE key_source_id IS NOT NULL`)
+	links, err := s.r.QueryContext(ctx, `SELECT id, key_source_id FROM services WHERE key_source_id IS NOT NULL AND deleted_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}

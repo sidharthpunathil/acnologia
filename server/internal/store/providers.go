@@ -47,8 +47,8 @@ type ProviderVersion struct {
 
 const providerCols = `p.slug, p.name, p.category, p.description, p.website, p.docs_url, p.color, p.status, p.builtin, p.source,
 p.version, p.spec, p.created_at, p.updated_at, p.logo IS NOT NULL, p.logo_rev,
-(SELECT COUNT(*) FROM services s WHERE s.provider=p.slug),
-(SELECT COUNT(*) FROM keys k JOIN services s ON s.id=k.service_id WHERE s.provider=p.slug AND k.hidden=0)`
+(SELECT COUNT(*) FROM services s WHERE s.provider=p.slug AND s.deleted_at IS NULL),
+(SELECT COUNT(*) FROM keys k JOIN services s ON s.id=k.service_id WHERE s.provider=p.slug AND k.hidden=0 AND k.deleted_at IS NULL AND s.deleted_at IS NULL)`
 
 func scanProvider(row interface{ Scan(...any) error }) (*Provider, error) {
 	var p Provider

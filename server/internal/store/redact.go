@@ -43,6 +43,11 @@ func (s *Store) SecretBlobs(ctx context.Context) ([][]byte, error) {
 		`SELECT secret_enc FROM webhooks WHERE secret_enc IS NOT NULL`,
 		`SELECT url_enc FROM egress_proxies`,
 		`SELECT token_enc FROM peer_links WHERE token_enc IS NOT NULL`,
+		// OAuth credentials: the client secrets and every connected
+		// account's refresh and access tokens.
+		`SELECT client_secret_enc FROM service_oauth_clients WHERE client_secret_enc IS NOT NULL`,
+		`SELECT refresh_enc FROM oauth_credentials WHERE refresh_enc IS NOT NULL`,
+		`SELECT access_enc FROM oauth_credentials WHERE access_enc IS NOT NULL`,
 	} {
 		rows, err := s.DB.QueryContext(ctx, q)
 		if err != nil {

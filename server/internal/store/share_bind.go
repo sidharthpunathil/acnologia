@@ -62,7 +62,7 @@ func bindServiceIDs(ctx context.Context, q queryer, slugs []string, old map[stri
 			continue
 		}
 		var id int64
-		err := q.QueryRowContext(ctx, `SELECT id FROM services WHERE slug=?`, slug).Scan(&id)
+		err := q.QueryRowContext(ctx, `SELECT id FROM services WHERE slug=? AND deleted_at IS NULL`, slug).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

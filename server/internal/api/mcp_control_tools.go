@@ -838,7 +838,7 @@ func buildCtlTools() []ctlTool {
 				return "send " + strings.ToUpper(argStr(in, "method")) + " " + argStr(in, "path"), nil
 			}},
 	}
-	tools = append(append(append(tools, ctlFlexTools()...), ctlParityTools()...), ctlAgentTools()...)
+	tools = append(append(append(append(tools, ctlFlexTools()...), ctlParityTools()...), ctlAgentTools()...), ctlOAuthCredTools()...)
 	withAsync(tools)
-	return tools
+	return withSafetyTools(tools)
 }

@@ -585,3 +585,42 @@ question. Each key goes to the first service of its provider, and when the
 server has none, the CLI makes one from the catalog. Keys are labelled with
 their variable name. Your files stay as they are: once your apps call
 through Acnologia, remove the keys from them yourself.
+
+## Safe changes: dry runs, retries, the trash and backups
+
+Two flags work with every command that changes something on the server, and
+anywhere on the line:
+
+- `--dry-run` asks the server what the command would do and changes nothing.
+  The server runs its checks (your role, the body, the target) and answers
+  with what would happen, for example
+  `acn --dry-run api DELETE /api/admin/services/3` answers
+  `"would": "move service serpapi (SerpApi) and its 4 keys to the trash for 7 days ..."`.
+  `acn mcp install --dry-run` keeps its own meaning: it prints the files it
+  would write.
+- `--idempotency-key <key>` sends an `Idempotency-Key`. Run the same command
+  with the same key again within 24 hours and you get the first answer back
+  instead of a second write, so a script can retry after a timeout without
+  making two apps or adding keys twice. Use a new key for each change.
+
+```sh
+acn --dry-run apps create ci-bot --mode proxy
+acn apps create ci-bot --mode proxy --idempotency-key ci-bot-2026-11-25
+```
+
+| Command | What it does |
+|---|---|
+| `acn trash` | Deleted keys, services and apps, kept 7 days: id, kind, name, who deleted it and when it goes for good. |
+| `acn trash restore <id>` | Bring one back as it was. A key rejoins its pool, a service comes back with its keys, an app's tokens work again. |
+| `acn trash purge <id>` | Delete one for good now (superadmin). |
+| `acn backup [-o file]` | Download a copy of the database (superadmin), streamed to `acnologia-backup-<time>.db` or the file you name. It never overwrites a file. |
+| `acn version --server` | The server's version, the newest release and, when there is an update, the command that upgrades it. |
+
+Deleting a key, a service or an app prints its `restore_id`; `acn trash
+restore <restore_id>` undoes it. A backup holds the stored keys encrypted
+with the server's `ACNOLOGIA_MASTER_KEY` and never the master key itself, so
+keep the two apart and restore the file with the same master key (see
+[Backups](configuration.md#backups)).
+
+In `acn tool`, pass `dry_run=true` or `idempotency_key=<key>` to any write
+tool instead of the flags.

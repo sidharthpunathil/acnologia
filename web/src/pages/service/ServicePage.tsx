@@ -46,6 +46,7 @@ import { LlmBriefButton } from "./LlmBrief";
 import { ServiceSettings } from "./ServiceSettings";
 import { ServiceMcpPanel } from "./ServiceMcpPanel";
 import { ServiceChat } from "./ServiceChat";
+import { OAuthAccountsPanel, OAuthConnectButton } from "./OAuthAccountsPanel";
 import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
 import { ActionIcon, CARD } from "./parts";
@@ -307,7 +308,8 @@ export function ServicePage() {
                 {checking ? "Checking" : "Check all"}
               </Button>
             )}
-            {perms.manage && (
+            {perms.manage && service.auth_type === "oauth2" && <OAuthConnectButton onClick={() => setTab("keys")} className="flex-1 sm:flex-none" />}
+            {perms.manage && service.auth_type !== "oauth2" && (
               <Button variant="primary" leadingIcon={RiAddLine} onClick={() => setAdding(true)} className="flex-1 sm:flex-none">
                 Add keys
               </Button>
@@ -391,6 +393,7 @@ export function ServicePage() {
 
         {/* Only the selected panel mounts, so each switch settles in with fade-up instead of swapping in place. */}
         <TabPanel id="keys" className="fade-up">
+          {service.auth_type === "oauth2" && <OAuthAccountsPanel service={service} canManage={perms.manage} onChange={() => void fetchKeys(service.id).catch(() => undefined)} />}
           <KeySourcePanel
             service={service}
             shared={sharedKeys}
@@ -403,7 +406,7 @@ export function ServicePage() {
           />
           {!keysLoaded ? (
             rowSkeleton("Loading keys")
-          ) : keys.length === 0 && service.key_source_id ? null : keys.length === 0 ? (
+          ) : keys.length === 0 && (service.key_source_id || service.auth_type === "oauth2") ? null : keys.length === 0 ? (
             <EmptyState
               art={KeyRingArt}
               as="h2"

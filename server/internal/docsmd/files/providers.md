@@ -115,7 +115,7 @@ A shortened spec, modeled on the built in `serpapi` one:
 | Part | What it controls |
 |---|---|
 | `base_url` | Default base URL for new services. Existing services keep their own. |
-| `auth` | `query` (parameter `name`), `header` (header `name`) or `bearer` (`Authorization: Bearer`, or `name` with `prefix`). The proxy applies `prefix` when the service still uses the spec's placement, and leases return it in `auth.prefix`. |
+| `auth` | `query` (parameter `name`), `header` (header `name`) or `bearer` (`Authorization: Bearer`, or `name` with `prefix`). The proxy applies `prefix` when the service still uses the spec's placement, and leases return it in `auth.prefix`. `oauth2` signs accounts in instead of taking pasted keys; see [OAuth providers](#oauth-providers). |
 | `defaults` | Strategy, cooldown, attempts and concurrency for new services. |
 | `quota` | The unit shown in the dashboard, whether each successful request uses one unit, `headers` to read remaining quota from every response, and `cost_per_request` in USD for app budgets and the Usage page when no offer prices a request. |
 | `offers` | Optional. Prices, free allowances and published limits per product or endpoint. See [Offers](#offers). |
@@ -638,7 +638,43 @@ same value (per app) uses one key, for 30 minutes after the last answer,
 with the same 503 when that key cannot serve. The header never reaches the
 provider.
 
-## Validation rules
+## OAuth providers
+
+A provider whose API is called as a signed in account, with an access token
+a refresh token renews, has `auth.type` `oauth2` and an `oauth` block. Its
+services take no pasted keys: each account connected with Connect account
+becomes a key. The whole flow, the redirect URI and the agent tools are in
+[OAuth credentials](oauth-credentials.md).
+
+```jsonc
+"auth": {
+  "type": "oauth2",
+  "name": "Authorization",            // the token's header; "Bearer " is the default prefix
+  "fields": [                          // optional extra values per account, sent with the token
+    { "key": "developer_token", "label": "Developer token", "in": "header", "name": "developer-token" },
+    { "key": "login_customer_id", "label": "Manager account ID", "in": "header",
+      "name": "login-customer-id", "public": true, "optional": true }
+  ],
+  "oauth": {
+    "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "scopes": ["openid", "email", "https://www.googleapis.com/auth/adwords"],
+    "allowed_scopes": [],              // optional: the only scopes a service may ask for
+    "scope_separator": " ",            // optional; a space by default
+    "client_auth": "body",             // body (client_id and client_secret in the form) or basic
+    "authorize_params": { "access_type": "offline", "prompt": "consent" },
+    "pkce": true,                      // send an S256 code challenge
+    "userinfo_url": "",                // optional: names the account when there is no id_token
+    "account_field": "email"           // the id_token claim or userinfo field that names it
+  }
+}
+```
+
+The client id and secret are never in the spec: each server registers its
+own OAuth app and enters them on the service. A service may set its own
+scopes; with `allowed_scopes` set, only those are accepted. Extra fields are
+required unless marked `optional`, and are sent only when set.
+
 
 - `slug`: lowercase letters, digits and hyphens.
 - `base_url`: http(s) with a host. `website` and `docs_url`: empty or
@@ -667,12 +703,17 @@ provider.
   fragment), an `id` JSON path, and 1 to 20 `follow` requests. A follow
   path holds `{id}` exactly once as a whole segment, or sets `body` and has
   no `{id}`.
+- OAuth: `authorize_url` and `token_url` are http(s) URLs, `client_auth`
+  is `body` or `basic`, `authorize_params` cannot set the parameters the
+  server sets (`client_id`, `redirect_uri`, `state`, `scope`,
+  `response_type` and the PKCE ones), and extra fields have a key other than
+  `access_token`, a name, and `in` header or query.
 - Rule regexes are RE2, so they cannot backtrack catastrophically. JSON paths
   are depth limited.
 
 ## Built in providers
 
-Twenty seven specs ship with the server. They are seeded on first boot and
+Thirty specs ship with the server. They are seeded on first boot and
 edited like any other provider. Every health check below spends no quota.
 Without one, a key's validity is learned from real traffic.
 
@@ -704,6 +745,9 @@ Without one, a key's validity is learned from real traffic.
 | Fireworks AI (`fireworks`) | LLM | `https://api.fireworks.ai/inference` | `Authorization: Bearer` | `GET /v1/models` | no |
 | Cerebras (`cerebras`) | LLM | `https://api.cerebras.ai` | `Authorization: Bearer` | `GET /v1/models` | no |
 | OpenRouter (`openrouter`) | LLM | `https://openrouter.ai/api` | `Authorization: Bearer` | `GET /v1/key` | credit limit and remaining, USD, for keys with a limit |
+| Google APIs (`google`) | Analytics | `https://www.googleapis.com`, with hosts for Search Console, GA4, YouTube and Sheets | OAuth, a signed in Google account | `GET /oauth2/v3/userinfo` | no |
+| Google Ads (`google-ads`) | Marketing | `https://googleads.googleapis.com` | OAuth, plus a developer token per account | none | no |
+| Microsoft Graph (`microsoft-graph`) | Productivity | `https://graph.microsoft.com` | OAuth, a signed in Microsoft account | `GET /v1.0/me` | no |
 | Custom API (`generic`) | Other | your API's | a header, a bearer token or a query parameter, set per service | none | no |
 
 Live quota comes from the health check's account endpoint. The exception is

@@ -281,6 +281,10 @@ var gateOpenExact = map[string]bool{
 	"/oauth/register":  true,
 	"/oauth/token":     true,
 	"/oauth/revoke":    true,
+	// A provider sends the browser of the account being connected here
+	// (oauth_connect.go). The single use state is the credential, and
+	// the account's owner may not have the access password.
+	"/oauth/callback": true,
 }
 
 // gateOpen reports whether a path is reachable while locked. Both the decoded

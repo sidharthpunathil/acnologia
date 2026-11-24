@@ -149,6 +149,7 @@ const AUTH_TYPES: Array<{ id: AuthType; label: string }> = [
   { id: "bearer", label: "bearer token" },
   { id: "basic", label: "login and password (Basic)" },
   { id: "fields", label: "several fields (from the provider)" },
+  { id: "oauth2", label: "OAuth sign in (from the provider)" },
 ];
 
 const LEGEND = "mb-3 font-mono text-caption-2-semibold uppercase text-text-tertiary";
@@ -277,6 +278,8 @@ export function ServiceForm({
               ? "Each key is a login and a password, sent as Authorization: Basic."
               : value.auth_type === "fields"
                 ? "The provider's spec says where each part of the key goes."
+                : value.auth_type === "oauth2"
+                  ? "Accounts sign in with Connect account; the access token goes in this header."
                 : undefined
           }
           value={value.auth_type === "fields" ? "" : value.auth_name}

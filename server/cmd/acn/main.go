@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"slices"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/ctl"
 )
@@ -27,7 +28,8 @@ func main() {
 			v = bi.Main.Version
 		}
 	}
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
+	// acn version --server asks the server instead (ctl/safety.go).
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") && !slices.Contains(os.Args[2:], "--server") {
 		fmt.Println("acn", v)
 		return
 	}

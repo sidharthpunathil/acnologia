@@ -396,10 +396,10 @@ func (s *Store) serviceAppUsage(ctx context.Context, since int64, hid string) ([
 		})
 		return out, nil
 	}
-	bySvc, err := finish(svc, `SELECT id, slug, name FROM services`, true)
+	bySvc, err := finish(svc, `SELECT id, slug, name FROM services WHERE deleted_at IS NULL`, true)
 	if err != nil {
 		return nil, nil, err
 	}
-	byApp, err := finish(app, `SELECT id, name, name FROM apps`, false)
+	byApp, err := finish(app, `SELECT id, name, name FROM apps WHERE deleted_at IS NULL`, false)
 	return bySvc, byApp, err
 }
