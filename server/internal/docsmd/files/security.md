@@ -35,7 +35,9 @@ tokens that reach them.
 
 - A lease (an app in `lease` or `both` mode, or the MCP `acnologia_get_key` tool)
   returns the plain secret to the app.
-- A superadmin can reveal a key in the dashboard. Each reveal is audited.
+- A superadmin can reveal a key in the dashboard. Each reveal is audited:
+  the secret is returned only after the audit row is stored, and a failed
+  write answers 503 `audit_unavailable` without the secret.
 - A handover share sends keys to another server, and a reveal share shows
   them to a person. Neither can be taken back: rotate those keys at the
   provider when the share ends.

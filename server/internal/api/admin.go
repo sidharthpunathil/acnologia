@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -900,9 +901,21 @@ func (s *Server) revealKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "decrypt_failed", "cannot decrypt, check ACNOLOGIA_MASTER_KEY")
 		return
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "key.reveal", fmt.Sprintf("%s/%s", sv.Slug, k.Label), k.Hint)
+	// Every reveal is audited, so the secret goes out only once its row is
+	// stored. The write does not follow the request's cancellation (a caller
+	// that hangs up still leaves a row), but it is bounded.
+	actx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), revealAuditTimeout)
+	defer cancel()
+	if err := s.Store.AddAuditErr(actx, userFrom(r), "key.reveal", fmt.Sprintf("%s/%s", sv.Slug, k.Label), k.Hint); err != nil {
+		slog.Error("key reveal: audit write failed, secret withheld", "key", k.ID, "err", err)
+		writeErr(w, 503, "audit_unavailable", "the reveal could not be recorded in the audit log, so the key was not shown; try again")
+		return
+	}
 	writeJSON(w, 200, map[string]any{"secret": secret})
 }
+
+// revealAuditTimeout bounds the audit write a key reveal waits for.
+const revealAuditTimeout = 5 * time.Second
 
 func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 	k, sv, ok := s.loadKey(w, r)

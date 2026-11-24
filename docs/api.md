@@ -216,7 +216,7 @@ lower of its owner's role and its scope.
 | `DELETE /keys/{id}` | a | Delete a key. |
 | `POST /keys/{id}/check`, `POST /keys/{id}/reset` | a | Health check now; reset to active and clear errors. |
 | `POST /keys/check-all` | a | Health check every key. |
-| `POST /keys/{id}/reveal` | s | Return the secret. Audited. Refused (403) for a share token (`share_token`) and for a key another server handed over (`handed_over`). |
+| `POST /keys/{id}/reveal` | s | Return the secret. Audited: the secret is returned only once the audit row is stored, else 503 `audit_unavailable`. Refused (403) for a share token (`share_token`) and for a key another server handed over (`handed_over`). |
 | `GET /events` | m | Request and health events, filters `service_id`, `key_id`, `kind`, `limit` (max 500). |
 | `GET /apps` | m | Apps (not those backing a share; their changes answer 409 `share_app`). Each carries `token_count` (tokens neither revoked nor expired) and `last_used_at` (the latest use by any of its tokens). Token values are never returned. |
 | `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the first token once as `token`, with its record (named `Default`) as `app_token`. |

@@ -123,14 +123,23 @@ func (s *Store) CountEvents(ctx context.Context, since time.Time, includeHidden 
 	return n, err
 }
 
+// AddAudit writes an audit row and ignores a failure. Use AddAuditErr where
+// the action must not go ahead without its row.
 func (s *Store) AddAudit(ctx context.Context, u *User, action, target, detail string) {
+	_ = s.AddAuditErr(ctx, u, action, target, detail)
+}
+
+// AddAuditErr writes an audit row and reports whether it was stored. A
+// secret shown to a person is returned only after this succeeds.
+func (s *Store) AddAuditErr(ctx context.Context, u *User, action, target, detail string) error {
 	var uid any
 	email := "system"
 	if u != nil {
 		uid, email = u.ID, u.Email
 	}
-	_, _ = s.w.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
+	_, err := s.w.ExecContext(ctx, `INSERT INTO audit(ts,user_id,user_email,action,target,detail) VALUES(?,?,?,?,?,?)`,
 		now(), uid, email, action, s.Scrub(ctx, target), s.Scrub(ctx, detail))
+	return err
 }
 
 func (s *Store) ListAudit(ctx context.Context, limit int) ([]*AuditEntry, error) {
