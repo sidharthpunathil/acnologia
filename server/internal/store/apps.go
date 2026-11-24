@@ -324,8 +324,8 @@ func (s *Store) ClaimLeaseOutcome(ctx context.Context, id, outcome string) error
 const pruneBatch = 1000
 
 // Prune deletes expired sessions, leases older than a week and events older
-// than eventRetention (zero or less keeps events forever), then refreshes
-// planner statistics.
+// than eventRetention (zero or less keeps events forever), expired
+// idempotency records and key affinities, then refreshes planner statistics.
 func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 	t := time.Now()
 	if _, err := s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at<?`, t.Unix()); err != nil {
@@ -340,6 +340,9 @@ func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 			t.Add(-eventRetention).Unix()); err != nil {
 			return err
 		}
+	}
+	if err := s.pruneExpiring(ctx, t); err != nil {
+		return err
 	}
 	optimize(ctx, s.DB)
 	s.warnLargeWAL(ctx)

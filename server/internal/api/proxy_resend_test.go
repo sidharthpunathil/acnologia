@@ -401,13 +401,17 @@ func TestEventStreamIsNeverBuffered(t *testing.T) {
 		return 200, map[string]string{"Content-Type": "text/event-stream"}, "data: hello\n\n"
 	}
 	_, tok := e.app(map[string]any{"name": "x"})
-	for range 2 {
-		r, body := call(t, e, "POST", "/proxy/sse/stream", tok, "Idempotency-Key", "s1")
-		if r.StatusCode != 200 || body != "data: hello\n\n" || r.Header.Get("Idempotent-Replayed") != "" {
-			t.Fatalf("stream: %d %q replayed=%q", r.StatusCode, body, r.Header.Get("Idempotent-Replayed"))
-		}
+	r, body := call(t, e, "POST", "/proxy/sse/stream", tok, "Idempotency-Key", "s1")
+	if r.StatusCode != 200 || body != "data: hello\n\n" || r.Header.Get("Idempotent-Replayed") != "" {
+		t.Fatalf("stream: %d %q replayed=%q", r.StatusCode, body, r.Header.Get("Idempotent-Replayed"))
 	}
-	if up.total.Load() != 2 {
-		t.Fatalf("an event stream is relayed, not stored for replay: %d calls", up.total.Load())
+	// The stream ran but was not kept: a retry with the key is refused
+	// instead of running the request a second time.
+	r, body = call(t, e, "POST", "/proxy/sse/stream", tok, "Idempotency-Key", "s1")
+	if r.StatusCode != 422 || !strings.Contains(body, "idempotency_unreplayable") || up.total.Load() != 1 {
+		t.Fatalf("a retry of a stream: %d %s calls=%d", r.StatusCode, body, up.total.Load())
+	}
+	if r, body := call(t, e, "POST", "/proxy/sse/stream", tok, "Idempotency-Key", "s2"); r.StatusCode != 200 || body != "data: hello\n\n" || up.total.Load() != 2 {
+		t.Fatalf("a new key runs it again: %d %q", r.StatusCode, body)
 	}
 }

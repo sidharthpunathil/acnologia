@@ -168,6 +168,8 @@ var hopHeaders = []string{
 	"X-Forwarded-For", "X-Real-Ip", "Content-Length",
 	// The hop count goes only to another Acnologia, set in proxyService.
 	hopHeader,
+	// The caller's key affinity is Acnologia's (proxy_affinity.go).
+	affinityHeader,
 	// Let the Go transport negotiate gzip so error bodies can be classified.
 	"Accept-Encoding",
 }
@@ -250,25 +252,18 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	// An Idempotency-Key is answered from its stored response before any
 	// limit applies: the request was paid for when it first ran, and a
 	// replay records no usage. While the first request with the key is
-	// still running, a second one gets 409 instead of a second upstream call.
-	idemKey, idemFP := idempotencyKey(r, a, slug, path), ""
+	// still running, a second one gets 409 instead of a second upstream
+	// call (proxy_idem.go).
+	idemKey := idempotencyKey(r, a, slug, path)
+	var idem *idemClaim
 	if idemKey != "" {
-		idemFP = bodyFingerprint(body)
-		if s.replayIdempotent(w, a, idemKey, idemFP) {
+		var answered bool
+		if idem, answered = s.beginIdempotent(w, r, a, idemKey, bodyFingerprint(body)); answered {
 			return
 		}
-		unclaim, ok := s.Cache.Claim(idemKey)
-		if !ok {
-			w.Header().Set("Retry-After", "1")
-			writeErr(w, 409, "idempotency_in_progress", "a request with this Idempotency-Key is still running, retry shortly")
-			return
-		}
-		// Released last, after the answer is stored, and on a panic too.
-		defer unclaim()
-		// The holder may have stored its answer between the check and the claim.
-		if s.replayIdempotent(w, a, idemKey, idemFP) {
-			return
-		}
+		// Released last, after the answer is stored, and on a panic too: a
+		// request that ends without an answer worth keeping frees the key.
+		defer idem.release()
 	}
 	var targets []proxyTarget
 	if group != nil {
@@ -324,7 +319,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 			failErr = &serviceDownError{Service: sv.Name, RetryAfter: ra}
 			continue
 		}
-		res := s.proxyService(w, r, a, sv, prov, t.path, body, bcfg, capture{cacheKey: cacheKey, ttl: ttl, idemKey: idemKey, idemFP: idemFP}, resend)
+		res := s.proxyService(w, r, a, sv, prov, t.path, body, bcfg, capture{cacheKey: cacheKey, ttl: ttl, idemKey: idemKey, idem: idem}, resend)
 		ran = ran || res.mayHaveRun
 		if res.served {
 			_ = s.Store.RecordAppUsage(r.Context(), a.ID, res.cost, false)
@@ -353,9 +348,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	if last != nil {
 		_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, false)
 		setHeader(w.Header(), "Service", last.service)
-		if idemKey != "" && idemStorable(last.resp.StatusCode) {
-			s.Cache.Set(idemKey, &respcache.Entry{Status: last.resp.StatusCode, Header: last.resp.Header.Clone(), Body: last.body, KeyID: last.keyID, Fingerprint: idemFP}, idempotencyTTL)
-		}
+		idem.settle(last.resp.StatusCode, last.resp.Header, last.body, last.keyID)
 		relay(w, last.resp, view(a, last.keyID, last.attempts), last.body)
 		return
 	}
@@ -371,7 +364,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(failErr, errUpstreamUnreachable):
 		writeErr(w, 502, "upstream_unreachable", "could not reach "+targets[len(targets)-1].sv.Name)
 	case failErr != nil:
-		if !writeNoKey(w, failErr) {
+		if !writeKeyUnavailable(w, failErr) && !writeNoKey(w, failErr) {
 			writeStoreErr(w, failErr)
 		}
 	default:
@@ -396,15 +389,14 @@ type serviceResult struct {
 	mayHaveRun bool
 }
 
-// capture says which caches a successful response should be stored in.
+// capture says where a successful response should be stored: the response
+// cache, and the request's Idempotency-Key record.
 type capture struct {
 	cacheKey string
 	ttl      time.Duration
 	idemKey  string
-	idemFP   string // the request body's fingerprint, stored with the idempotent entry
+	idem     *idemClaim
 }
-
-func (c capture) any() bool { return c.cacheKey != "" || c.idemKey != "" }
 
 var errUpstreamUnreachable = errors.New("upstream unreachable")
 
@@ -427,8 +419,15 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 	}()
 	cost := costPerRequest(sv, prov, r.Method, "/"+path)
 	// An Idempotency-Key pins the key, so a retry reaches the same vendor
-	// account and the provider's own idempotency sees the same caller.
-	pr := pool.Request{Method: r.Method, Path: "/" + path, Pin: cap.idemKey}
+	// account and the provider's own idempotency sees the same caller. A
+	// resource created on one key, or the caller's affinity value, binds
+	// the request to that key alone (proxy_affinity.go).
+	aff := s.keyAffinityFor(r.Context(), r, a, sv, prov, path, body)
+	pr := pool.Request{Method: r.Method, Path: "/" + path, Pin: cap.idemKey, Key: aff.key}
+	if pr.Pin == "" && aff.header != "" {
+		// The first requests with a new value agree on a key.
+		pr.Pin = aff.header
+	}
 	tried := map[int64]bool{}
 	queue := time.Duration(sv.QueueTimeoutSec) * time.Second
 	for attempt := 1; attempt <= sv.MaxAttempts; attempt++ {
@@ -550,11 +549,14 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 				meter = &tokenMeter{rc: resp.Body}
 				resp.Body = meter
 			}
+			grab := grabFor(&aff, resp)
 			func() {
 				defer picked.Release()
 				defer cancel()
 				s.deliver(w, resp, k, view(a, k.ID, attempt), cancel, picked.Secret, !mayReadKey(a, sv), cap)
 			}()
+			s.recordResources(r.Context(), sv, &aff, grab, k.ID)
+			s.affinityAnswered(r.Context(), sv, &aff, k.ID)
 			if meter != nil {
 				// Settle: the request's price was the estimate; the tokens the
 				// answer used are added once they are known, so a USD budget
@@ -603,6 +605,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		// rb was scrubbed above, right after it was classified.
 		out.resp, out.body, out.keyID, out.attempts, out.outcome, out.err = resp, rb, k.ID, len(tried), res.Outcome, nil
 		if !res.Outcome.Rotates() {
+			s.affinityAnswered(r.Context(), sv, &aff, k.ID)
 			return out
 		}
 	}
@@ -611,8 +614,11 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 
 // deliver sends a successful upstream response to the client. When the
 // response may be cached it is buffered (up to maxCachedBody) and stored;
-// larger bodies stream through untouched. An event stream is never
-// buffered: it is relayed as it arrives and not stored for replay. While
+// an answer to a request with an Idempotency-Key is buffered up to
+// idemMaxBody and stored for replay. Larger bodies stream through
+// untouched. An event stream is never buffered: it is relayed as it arrives
+// and not stored. An idempotent answer that is not stored is recorded as
+// unreplayable, so a retry is refused rather than run twice. While
 // buffering, an upstream that goes quiet for proxyIdleTimeout is cut off as
 // it is when streaming.
 //
@@ -623,12 +629,20 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 		defer resp.Body.Close()
 		resp.Body = readCloser{newScrubReader(resp.Body, secret), resp.Body}
 	}
-	if !cap.any() || !s.Cache.Enabled() || isEventStream(resp) {
+	useCache := cap.cacheKey != "" && s.Cache.Enabled()
+	if (!useCache && cap.idem == nil) || isEventStream(resp) {
+		if cap.idem != nil {
+			cap.idem.unreplayable(resp.StatusCode, k.ID)
+		}
 		relayStream(w, resp, v, cancel, !scrubBody)
 		return
 	}
+	limit := maxCachedBody
+	if cap.idem != nil {
+		limit = idemMaxBody
+	}
 	idle := time.AfterFunc(proxyIdleTimeout, cancel)
-	buf, err := io.ReadAll(io.LimitReader(idleReader{resp.Body, idle}, maxCachedBody+1))
+	buf, err := io.ReadAll(io.LimitReader(idleReader{resp.Body, idle}, int64(limit)+1))
 	if stopped := idle.Stop(); err != nil && !stopped {
 		// The upstream went quiet and the read was cut off. Nothing has
 		// been written yet, so the caller gets a clear error, not half a body.
@@ -636,26 +650,27 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 		writeErr(w, 504, "upstream_idle", "the provider stopped sending its answer")
 		return
 	}
-	if err != nil || len(buf) > maxCachedBody {
+	if err != nil || len(buf) > limit {
+		if cap.idem != nil {
+			cap.idem.unreplayable(resp.StatusCode, k.ID)
+		}
 		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
-		setHeader(w.Header(), "Cache", "bypass")
+		if useCache {
+			setHeader(w.Header(), "Cache", "bypass")
+		}
 		relayStream(w, resp, v, cancel, !scrubBody)
 		return
 	}
 	resp.Body.Close()
-	entry := &respcache.Entry{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: buf, KeyID: k.ID}
 	// A scrubbed body may have had the key in it, which rules out sharing it.
-	if cap.cacheKey != "" && (!scrubBody || !bytes.Contains(buf, scrubMark)) && cacheable(resp, buf, k, secret) {
-		s.Cache.Set(cap.cacheKey, entry, cap.ttl)
+	if useCache && len(buf) <= maxCachedBody && (!scrubBody || !bytes.Contains(buf, scrubMark)) && cacheable(resp, buf, k, secret) {
+		s.Cache.Set(cap.cacheKey, &respcache.Entry{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: buf, KeyID: k.ID}, cap.ttl)
 		setHeader(w.Header(), "Cache", "miss")
-	} else if cap.cacheKey != "" {
+	} else if useCache {
 		setHeader(w.Header(), "Cache", "bypass")
 	}
-	if cap.idemKey != "" && idemStorable(resp.StatusCode) {
-		// A copy: Set stamps the expiry, and the cached entry keeps its own.
-		ie := *entry
-		ie.Fingerprint = cap.idemFP
-		s.Cache.Set(cap.idemKey, &ie, idempotencyTTL)
+	if cap.idem != nil {
+		cap.idem.settle(resp.StatusCode, resp.Header, buf, k.ID)
 	}
 	relay(w, resp, v, buf)
 }

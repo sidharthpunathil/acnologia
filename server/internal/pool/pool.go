@@ -47,6 +47,9 @@ type NoKeyError struct {
 	// Paced is set when some usable key is held back by a rate limit its
 	// provider publishes in offers, rather than by a concurrency slot.
 	Paced bool
+	// Pinned is set when the request had to use one key (Request.Key) and
+	// that key cannot take it now.
+	Pinned bool
 }
 
 func (e *NoKeyError) Error() string {
@@ -141,6 +144,8 @@ type Picked struct {
 	once      sync.Once
 	release   func()
 	exclusive bool
+	// svcID and appID are what the slot was taken for.
+	svcID, appID int64
 }
 
 // Release frees the key's concurrency slot. Safe to call more than once.
@@ -213,6 +218,9 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		if !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || (scoped != nil && !scoped[k.ID]) {
 			continue
 		}
+		if req.Key != 0 && k.ID != req.Key {
+			continue
+		}
 		if req.Pin != "" && (pin == nil || pinScore(req.Pin, k.ID) > pinScore(req.Pin, pin.ID)) {
 			pin = k
 		}
@@ -220,7 +228,9 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 			continue
 		}
 		if !k.Available(now) {
-			if k.CooldownUntil != nil && k.CooldownUntil.After(now) && (earliest == nil || k.CooldownUntil.Before(*earliest)) {
+			// Only a cooldown ends by itself; a disabled, banned or
+			// exhausted key does not come back when it ends.
+			if k.CooldownUntil != nil && k.CooldownUntil.After(now) && k.Available(*k.CooldownUntil) && (earliest == nil || k.CooldownUntil.Before(*earliest)) {
 				earliest = k.CooldownUntil
 			}
 			continue
@@ -255,7 +265,7 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		set = backup
 	}
 	if len(set) == 0 {
-		e := &NoKeyError{Busy: busy, Paced: paceWait > 0}
+		e := &NoKeyError{Busy: busy, Paced: paceWait > 0, Pinned: req.Key != 0}
 		switch {
 		case busy && paceWait > 0 && (!slotBusy || paceWait < time.Second):
 			e.RetryAfter = paceWait
@@ -288,14 +298,14 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	if err != nil {
 		return nil, errors.New("cannot decrypt key, is ACNOLOGIA_MASTER_KEY correct?")
 	}
-	p.slots.acquire(k.ID)
-	freeOffer := p.pacer.take(k.ID, applied, now)
 	keyID, svcID := k.ID, svc.ID
+	p.slots.acquire(keyID, svcID, appID)
+	freeOffer := p.pacer.take(k.ID, applied, now)
 	release := func() {
 		if freeOffer != nil {
 			freeOffer()
 		}
-		p.slots.release(keyID, svcID)
+		p.slots.release(keyID, svcID, appID)
 	}
 	// The slot and the pace are taken, so the choice is final. The usage
 	// write waits on the single writer, so it runs after the unlock: other
@@ -313,7 +323,7 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		release()
 		return nil, err
 	}
-	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: release}, nil
+	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: release, svcID: svcID, appID: appID}, nil
 }
 
 // scopedKeys returns the only keys the app may use on the service, or nil

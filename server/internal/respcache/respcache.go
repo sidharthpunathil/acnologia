@@ -16,9 +16,6 @@ type Entry struct {
 	Body    []byte
 	KeyID   int64
 	Expires time.Time
-	// Fingerprint identifies the request that made an idempotent entry (a
-	// hash of its body), so a reused key with another request is caught.
-	Fingerprint string
 }
 
 func (e *Entry) size() int64 {
@@ -119,7 +116,9 @@ func (c *Cache) Set(key string, e *Entry, ttl time.Duration) {
 // Claim marks key as being filled by one request. It returns false when
 // another request holds the key; otherwise release must be called when the
 // request ends, whether or not it stored anything. Claims work even when
-// the cache is disabled, and they live only in this process.
+// the cache is disabled, and they live only in this process: the proxy uses
+// them to tell an Idempotency-Key whose request runs here now from one a
+// stopped server left pending.
 func (c *Cache) Claim(key string) (release func(), ok bool) {
 	if c == nil {
 		return func() {}, true

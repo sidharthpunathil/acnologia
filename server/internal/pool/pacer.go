@@ -20,6 +20,11 @@ type Request struct {
 	// with one Idempotency-Key lands on the same vendor account and the
 	// provider's own idempotency matches it. See pinnedKey.
 	Pin string
+	// Key, when set, is the only key that may serve the request: a job or
+	// file the provider keeps on one account, or a caller's affinity. When
+	// that key cannot take it, the pick fails with NoKeyError.Pinned rather
+	// than using another key.
+	Key int64
 }
 
 // pacer keeps each key under the limits its provider publishes in offers

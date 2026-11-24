@@ -263,6 +263,7 @@ func (c *Catalog) Boot(ctx context.Context) error {
 			c.backfillOffers(ctx, cur, b)
 			c.backfillTokenPrices(ctx, cur, b)
 			c.backfillGuide(ctx, b)
+			c.backfillAffinity(ctx, b)
 			// Already seeded: only fill in a logo that is still missing, so
 			// existing installs get logos added in newer releases.
 			_, cur, lerr := c.Store.ProviderLogo(ctx, b.Slug)
