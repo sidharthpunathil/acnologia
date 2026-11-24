@@ -406,14 +406,6 @@ func TestMeAndWhoami(t *testing.T) {
 	}
 }
 
-func toStrings(v any) []string {
-	out := []string{}
-	for _, x := range v.([]any) {
-		out = append(out, x.(string))
-	}
-	return out
-}
-
 func TestAgentIndex(t *testing.T) {
 	e := newEnv(t)
 	var idx map[string]any

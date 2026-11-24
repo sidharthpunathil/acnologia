@@ -58,6 +58,7 @@ var apiDocs = map[string]apiDoc{
 	"GET /api/docs":              {Summary: "List docs", Desc: "Every doc page: slug, title, first paragraph and size.", Auth: "none", Tag: "public"},
 	"GET /docs/{slug}.md":        {Summary: "Read a doc", Desc: "One doc page as Markdown.", Auth: "none", Tag: "public", Produces: "text/markdown"},
 	"GET /api/openapi.json":      {Summary: "OpenAPI spec", Desc: "This document.", Auth: "none", Tag: "public"},
+	"GET /api/v1":                {Summary: "Agent index", Desc: "Where an agent starts: version, setup_required, gated, auth hints, every endpoint URL and start_here steps.", Auth: "none", Tag: "public"},
 	"GET /api/public/github":     {Summary: "GitHub stars", Desc: "The project's GitHub star count, cached.", Auth: "none", Tag: "public"},
 	"GET /.well-known/acnologia": {Summary: "Server identity", Desc: "This server's public sharing identity: name, URL and keys.", Auth: "none", Tag: "sharing"},
 
