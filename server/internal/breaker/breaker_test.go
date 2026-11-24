@@ -13,6 +13,9 @@ func newTest() (*Set, *clock, *[]bool) {
 	c := &clock{t: time.Unix(1_000_000, 0)}
 	s := New()
 	s.now = c.now
+	// These tests fail at one instant on purpose; TestBurstIsOneStrike
+	// covers the spacing.
+	s.Spacing = 0
 	var changes []bool
 	s.OnChange = func(_ int64, down bool, _ string) { changes = append(changes, down) }
 	return s, c, &changes
@@ -118,5 +121,29 @@ func TestServicesAreIndependent(t *testing.T) {
 	}
 	if ok, _ := s.Allow(2, cfg); !ok {
 		t.Fatal("service 2 is unaffected")
+	}
+}
+
+func TestBurstIsOneStrike(t *testing.T) {
+	s, c, _ := newTest()
+	s.Spacing = DefaultSpacing
+	// Ten concurrent requests failing together are one strike.
+	for range 10 {
+		s.Failure(1, cfg, "503")
+		c.t = c.t.Add(50 * time.Millisecond)
+	}
+	if ok, _ := s.Allow(1, cfg); !ok {
+		t.Fatal("one burst of failures must not open the breaker")
+	}
+	if st := s.Status(1, cfg); st.Failures != 1 {
+		t.Fatalf("want 1 strike, got %d", st.Failures)
+	}
+	// Failures a second or more apart are separate strikes.
+	c.t = c.t.Add(time.Second)
+	s.Failure(1, cfg, "503")
+	c.t = c.t.Add(time.Second)
+	s.Failure(1, cfg, "503")
+	if ok, _ := s.Allow(1, cfg); ok {
+		t.Fatal("three spaced failures should open the breaker")
 	}
 }
