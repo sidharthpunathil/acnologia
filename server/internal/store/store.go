@@ -39,6 +39,8 @@ type Store struct {
 	red atomic.Pointer[redact.Redactor]
 	// scopes caches share key scopes by app (see keyscope.go).
 	scopes scopeCache
+	// schemaVersion is the database's PRAGMA user_version once open.
+	schemaVersion int
 }
 
 const schema = `
@@ -258,7 +260,28 @@ func DBFileIn(dataDir string) string {
 // on exactly one connection.
 const readPoolSize = 4
 
+// Options are the choices the server makes when it opens the store. The
+// zero value is what tests and tools want: no copy before an upgrade.
+type Options struct {
+	// MigrationBackup copies an existing database next to itself before a
+	// numbered migration upgrades it (see backupBeforeUpgrade).
+	MigrationBackup bool
+}
+
+// Open opens the store in dataDir with the zero Options.
 func Open(dataDir string) (*Store, error) {
+	return OpenWith(dataDir, Options{})
+}
+
+// OpenWith opens the store in dataDir and brings its schema up to
+// LatestSchemaVersion.
+func OpenWith(dataDir string, opts Options) (*Store, error) {
+	return open(dataDir, opts, migrations)
+}
+
+// open takes the numbered migrations as an argument, so tests can run their
+// own without changing the package list.
+func open(dataDir string, opts Options, steps []migration) (*Store, error) {
 	file := DBFileIn(dataDir)
 	path := filepath.Join(dataDir, file)
 	slog.Info("opening database", "path", path)
@@ -268,8 +291,13 @@ func Open(dataDir string) (*Store, error) {
 	}
 	// One writer keeps SQLite simple and avoids SQLITE_BUSY under load.
 	db.SetMaxOpenConns(1)
-	if err := migrateAtomically(db); err != nil {
+	version, err := migrateAtomically(db, path, opts, steps)
+	if err != nil {
 		db.Close()
+		var tooNew *SchemaTooNewError
+		if errors.As(err, &tooNew) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	// The database holds encrypted keys and password hashes: owner only.
@@ -289,7 +317,7 @@ func Open(dataDir string) (*Store, error) {
 	}
 	chmodDB(dataDir, file)
 	w := newStmtCache(db)
-	return &Store{DB: db, rd: rd, w: w, r: newStmtCache(rd), gw: newGroupWriter(db, w)}, nil
+	return &Store{DB: db, rd: rd, w: w, r: newStmtCache(rd), gw: newGroupWriter(db, w), schemaVersion: version}, nil
 }
 
 // chmodDB keeps the database and its WAL and shared memory files owner only.
@@ -299,31 +327,128 @@ func chmodDB(dataDir, file string) {
 	}
 }
 
-// migrateAtomically applies the schema and every migration in one
-// transaction. Several migrations add a column or table and then fill it,
-// and run the fill only when the column or table is new; if a step's DDL
-// could commit without its fill (a crash, a full disk), the next start would
-// skip the fill for good. SQLite DDL is transactional, so a failure or a
-// kill anywhere leaves the database as it was and the next start redoes it
-// all. The writer has one connection, so every db call in migrate runs
-// inside this transaction.
-func migrateAtomically(db *sql.DB) error {
+// baselineVersion is the schema version the idempotent baseline (the schema
+// constant plus migrate) brings a database to. Databases made before
+// versioning have PRAGMA user_version 0: they get the baseline, then this.
+const baselineVersion = 1
+
+// migrations are the numbered schema changes after the baseline, oldest
+// first. Entry i takes the database to version baselineVersion+i+1. Each one
+// runs exactly once, in the same transaction as the rest of the upgrade,
+// and the version goes up with it. To change the schema, append one entry,
+// such as
+//
+//	{"oauth device codes", migrateOAuthDeviceCodes},
+//
+// with the function next to the code that uses the table. Never edit,
+// reorder or remove an entry that has shipped, and never add to migrate or
+// the schema constant: they are the frozen baseline. A step runs on the
+// writer inside the open transaction, so it uses db directly and never
+// begins another one. It does not need to be idempotent.
+var migrations = []migration{}
+
+// LatestSchemaVersion is the schema version this binary brings a database
+// to, and the newest one it opens.
+func LatestSchemaVersion() int { return baselineVersion + len(migrations) }
+
+// SchemaVersion is the database's schema version, read when it was opened.
+func (s *Store) SchemaVersion() int { return s.schemaVersion }
+
+// migrateAtomically brings the database to the newest schema version in one
+// transaction and returns that version. Several baseline steps add a column
+// or table and then fill it, and run the fill only when the column or table
+// is new; if a step's DDL could commit without its fill (a crash, a full
+// disk), the next start would skip the fill for good. SQLite DDL is
+// transactional, so a failure or a kill anywhere leaves the database as it
+// was and the next start redoes it all. The writer has one connection, so
+// every db call in migrate and in the numbered steps runs inside this
+// transaction.
+//
+// The baseline runs while the database is at baselineVersion or below. It is
+// idempotent, so a database at the baseline gets it again on every start
+// until a numbered step has run. Then each numbered step the database has
+// not had runs once. A database newer than this binary is refused with a
+// SchemaTooNewError before anything is written.
+func migrateAtomically(db *sql.DB, path string, opts Options, steps []migration) (int, error) {
+	latest := baselineVersion + len(steps)
+	from, err := userVersion(db)
+	if err != nil {
+		return 0, err
+	}
+	if from > latest {
+		return 0, &SchemaTooNewError{Path: path, Found: from, Known: latest}
+	}
+	// VACUUM INTO cannot run inside a transaction, so the copy comes first.
+	// The writer is the only connection, so nothing writes between the copy
+	// and the upgrade.
+	if opts.MigrationBackup && max(from, baselineVersion) < latest {
+		empty, err := isEmpty(db)
+		if err != nil {
+			return 0, err
+		}
+		if !empty {
+			if err := backupBeforeUpgrade(db, path, from, latest); err != nil {
+				return 0, fmt.Errorf("copy the database before upgrading it from schema version %d to %d: %w (free some disk space, or set ACNOLOGIA_MIGRATION_BACKUP=false to upgrade without a copy)", from, latest, err)
+			}
+		}
+	}
 	if _, err := db.Exec(`BEGIN IMMEDIATE`); err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	version, err := upgrade(db, path, latest, steps)
+	if err != nil {
 		_, _ = db.Exec(`ROLLBACK`)
-		return err
+		return 0, err
 	}
-	if err := migrate(db); err != nil {
-		_, _ = db.Exec(`ROLLBACK`)
-		return err
+	if _, err := db.Exec(`COMMIT`); err != nil {
+		return 0, err
 	}
-	_, err := db.Exec(`COMMIT`)
-	return err
+	if from != 0 && version != from {
+		slog.Info("database schema upgraded", "from", from, "to", version)
+	}
+	return version, nil
 }
 
-// migrate adds columns introduced after the first release to existing databases.
+// upgrade runs the baseline and the numbered steps the database needs. It
+// runs inside migrateAtomically's transaction.
+func upgrade(db *sql.DB, path string, latest int, steps []migration) (int, error) {
+	v, err := userVersion(db)
+	if err != nil {
+		return 0, err
+	}
+	if v > latest {
+		return 0, &SchemaTooNewError{Path: path, Found: v, Known: latest}
+	}
+	if v <= baselineVersion {
+		if _, err := db.Exec(schema); err != nil {
+			return 0, err
+		}
+		if err := migrate(db); err != nil {
+			return 0, err
+		}
+		if v < baselineVersion {
+			if err := setUserVersion(db, baselineVersion); err != nil {
+				return 0, err
+			}
+			v = baselineVersion
+		}
+	}
+	for i := v - baselineVersion; i < len(steps); i++ {
+		next := baselineVersion + i + 1
+		if err := steps[i].run(db); err != nil {
+			return 0, fmt.Errorf("schema version %d (%s): %w", next, steps[i].name, err)
+		}
+		if err := setUserVersion(db, next); err != nil {
+			return 0, err
+		}
+		v = next
+	}
+	return v, nil
+}
+
+// migrate adds columns introduced after the first release to existing
+// databases. With the schema constant it is the baseline, schema version 1.
+// It stays idempotent and frozen: new changes go in migrations.
 func migrate(db *sql.DB) error {
 	added, err := addColumn(db, "services", "max_concurrency", "INTEGER NOT NULL DEFAULT 0")
 	if err != nil {
