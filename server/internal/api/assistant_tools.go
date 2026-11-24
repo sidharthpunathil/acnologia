@@ -784,7 +784,7 @@ func init() {
 		{
 			Name: "list_app_tokens", Role: store.RoleMember, Required: []string{"app_id"},
 			Props: map[string]any{"app_id": map[string]any{"type": "integer"}},
-			Desc: "An app's tokens: id, name, prefix hint, read_only scope, created, last used, expiry and whether revoked. Token values are never shown.",
+			Desc:  "An app's tokens: id, name, prefix hint, read_only scope, created, last used, expiry and whether revoked. Token values are never shown.",
 			Run: func(cs *chatSession, in map[string]any) toolOut {
 				id, _ := argNum(in, "app_id")
 				return cs.simple("GET", fmt.Sprintf("/api/admin/apps/%d/tokens", id), nil, fmt.Sprintf("Listed tokens of app %d", id), func(m map[string]any) any {

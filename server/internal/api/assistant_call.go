@@ -183,10 +183,10 @@ func callUpstreamMCPAssistantTool(cs *chatSession, in map[string]any) toolOut {
 	}
 	isErr, _ := res["isError"].(bool)
 	return toolOut{
-		OK:      !isErr,
-		Model:   b,
-		Summary: fmt.Sprintf("Called MCP tool %s on %s", target.upstreamTool, sv.Slug),
-		Link:    fmt.Sprintf("/services/%d", sv.ID),
+		OK:       !isErr,
+		Model:    b,
+		Summary:  fmt.Sprintf("Called MCP tool %s on %s", target.upstreamTool, sv.Slug),
+		Link:     fmt.Sprintf("/services/%d", sv.ID),
 		Entities: []chatEntity{{Type: "service", ID: sv.ID, Slug: sv.Slug, Name: sv.Name}},
 	}
 }
