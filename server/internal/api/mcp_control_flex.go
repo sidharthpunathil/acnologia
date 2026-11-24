@@ -14,8 +14,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
@@ -400,64 +398,57 @@ func resultValue(res map[string]any) any {
 
 // ---- routes ----
 
-// ctlListRoutes is list_routes: every /api/admin route, for api_request.
+// ctlListRoutes is list_routes: every /api/admin route, for api_request,
+// with its request body schema and query parameters from the same
+// descriptions GET /api/openapi.json serves (openapi.go).
 func ctlListRoutes(c *ctlCtx, in map[string]any) map[string]any {
-	routes, ok := c.s.handler().(chi.Routes)
-	if !ok {
-		return ctlFail("routes are not available")
-	}
 	q := strings.ToLower(strings.TrimSpace(argStr(in, "contains")))
-	covered := map[string]string{}
-	for _, t := range ctlTools {
-		if t.Path != "" {
-			covered[t.Method+" "+t.Path] = t.Name
-		}
-	}
+	ops, _ := c.s.routeOps()
 	type route struct {
-		Method string `json:"method"`
-		Path   string `json:"path"`
-		Tool   string `json:"tool,omitempty"`
+		Method  string           `json:"method"`
+		Path    string           `json:"path"`
+		Tool    string           `json:"tool,omitempty"`
+		Summary string           `json:"summary,omitempty"`
+		Role    string           `json:"role,omitempty"`
+		Query   []map[string]any `json:"query,omitempty"`
+		Body    any              `json:"body,omitempty"`
 	}
 	out := []route{}
-	_ = chi.Walk(routes, func(method, p string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		p = strings.ReplaceAll(p, "/*/", "/")
-		if !strings.HasPrefix(p, "/api/admin/") {
-			return nil
+	for _, rt := range c.s.walkRoutes() {
+		if rt.All || !strings.HasPrefix(rt.Path, "/api/admin/") {
+			continue
 		}
-		if q != "" && !strings.Contains(strings.ToLower(method+" "+p), q) {
-			return nil
+		if q != "" && !strings.Contains(strings.ToLower(rt.Method+" "+rt.Path), q) {
+			continue
 		}
-		out = append(out, route{Method: method, Path: p, Tool: ctlPublicTool(toolFor(covered, method, p))})
-		return nil
-	})
+		r := route{Method: rt.Method, Path: rt.Path}
+		if op := ops[rt.Method+" "+specPath(rt.Path)]; op != nil {
+			r.Tool, _ = op["x-mcp-tool"].(string)
+			r.Summary, _ = op["summary"].(string)
+			r.Role, _ = op["x-role"].(string)
+			params, _ := op["parameters"].([]map[string]any)
+			for _, p := range params {
+				if p["in"] == "query" {
+					r.Query = append(r.Query, map[string]any{"name": p["name"], "description": p["description"]})
+				}
+			}
+			if rb, ok := op["requestBody"].(map[string]any); ok {
+				ct, _ := rb["content"].(map[string]any)
+				if j, ok := ct["application/json"].(map[string]any); ok {
+					r.Body = j["schema"]
+				}
+			}
+		}
+		out = append(out, r)
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Path != out[j].Path {
 			return out[i].Path < out[j].Path
 		}
 		return out[i].Method < out[j].Method
 	})
-	return ctlJSON(map[string]any{"routes": out, "count": len(out),
-		"note": ctlPublicText("tool names the dedicated tool for a route; call the others with api_request (paths with {id} take the id). The route still checks your role.")})
-}
-
-// toolFor finds the tool whose path matches a route, placeholders aside.
-func toolFor(covered map[string]string, method, p string) string {
-	norm := func(s string) string {
-		segs := strings.Split(s, "/")
-		for i, seg := range segs {
-			if strings.HasPrefix(seg, "{") {
-				segs[i] = "{}"
-			}
-		}
-		return strings.Join(segs, "/")
-	}
-	for k, name := range covered {
-		m, path, _ := strings.Cut(k, " ")
-		if m == method && norm(path) == norm(p) {
-			return name
-		}
-	}
-	return ""
+	return ctlJSON(map[string]any{"routes": out,
+		"note": ctlPublicText("tool names the dedicated tool for a route; call the others with api_request, sending body as described (paths with {id} take the id). The route still checks your role. GET /api/openapi.json has the same as OpenAPI 3.1.")})
 }
 
 // ctlFlexTools are the tools in this file, plus the settings added with
@@ -481,7 +472,7 @@ func ctlFlexTools() []ctlTool {
 				"stop_on_error": bProp("Stop at the first failed call; by default every call runs"),
 			}, Required: []string{"calls"}},
 		{Name: "list_routes", Title: "List admin routes", Group: "power", Kind: ctlRead, Role: m, Run: ctlListRoutes,
-			Desc:  "Every /api/admin route this server has, with the tool that covers it when there is one. For anything without a tool, call api_request (in the raw group).",
+			Desc:  "Every /api/admin route this server has, with the tool that covers it when there is one, the role it needs, its query parameters and its JSON body schema. For anything without a tool, call api_request (in the raw group).",
 			Props: map[string]any{"contains": sProp("Only routes whose method or path contain this text")}},
 		{Name: "health_settings", Title: "Health check interval", Group: "overview", Kind: ctlRead, Role: a, Method: http.MethodGet, Path: "/api/admin/health/settings",
 			Desc: "How often every key is checked against its provider in the background: the interval in effect, whether it was set on the Settings page or comes from ACNOLOGIA_HEALTH_INTERVAL, and the choices."},

@@ -32,8 +32,10 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
-// ctlResultCap caps one tool result, like the app MCP's result size.
-const ctlResultCap = 512 << 10
+// ctlResultCap caps one tool result. It is small on purpose: a result
+// lands in an agent's context, so a big one should be narrowed with fields,
+// filter, limit or summary instead. List tools cut their page to fit.
+const ctlResultCap = 64 << 10
 
 // controlAppMeta is the meta key holding the id of the app call_service
 // runs as.
@@ -311,6 +313,11 @@ func (c *ctlCtx) call(t *ctlTool, in map[string]any) map[string]any {
 		res = shapeResult(c.callRaw(t, in), in)
 	}
 	delete(res, ctlRawKey)
+	if res["isError"] == true && ctlOutputs[t.Name] != nil {
+		// Clients check structuredContent against the output schema, so an
+		// error of such a tool carries its fields in the text alone.
+		delete(res, "structuredContent")
+	}
 	return res
 }
 
@@ -319,11 +326,11 @@ const ctlRawKey = "_untrimmed"
 
 func (c *ctlCtx) callRaw(t *ctlTool, in map[string]any) map[string]any {
 	if why := c.unavailable(t); why != "" {
-		return ctlFail(why)
+		return ctlFailCode("forbidden", why)
 	}
 	for _, k := range t.Required {
 		if v, ok := in[k]; !ok || v == nil || v == "" {
-			return ctlFail(k + " is required")
+			return ctlFailCode("invalid", k+" is required")
 		}
 	}
 	confirmStep := t.Kind == ctlDestructive && c.opts.confirm
@@ -374,15 +381,27 @@ func (c *ctlCtx) callRaw(t *ctlTool, in map[string]any) map[string]any {
 func (c *ctlCtx) buildPath(t *ctlTool, in map[string]any) (string, error) {
 	var err error
 	resolve := func(name, v string) string {
-		if name != "service" {
-			return v
+		switch name {
+		case "service":
+			sv, e := c.s.findService(c.r.Context(), v)
+			if e != nil {
+				err = e
+				return ""
+			}
+			return strconv.FormatInt(sv.ID, 10)
+		case "capability":
+			// A capability is named by its id or its slug.
+			if _, e := strconv.ParseInt(v, 10, 64); e == nil {
+				return v
+			}
+			cp, e := c.s.Store.GetCapabilityBySlug(c.r.Context(), v)
+			if e != nil {
+				err = fmt.Errorf("no capability %q; %s lists them", v, ctlPublicTool("list_capabilities"))
+				return ""
+			}
+			return strconv.FormatInt(cp.ID, 10)
 		}
-		sv, e := c.s.findService(c.r.Context(), v)
-		if e != nil {
-			err = e
-			return ""
-		}
-		return strconv.FormatInt(sv.ID, 10)
+		return v
 	}
 	p := pathParamRe.ReplaceAllStringFunc(t.Path, func(m string) string {
 		name := m[1 : len(m)-1]
@@ -451,6 +470,88 @@ func (c *ctlCtx) apiJSON(method, p string, body any) (int, map[string]any, strin
 	return code, out, routeErrMsg(code, out)
 }
 
+// routeErr is a route's JSON error as tool content: every field of the
+// error object (code, message, and hint or fix where the route gives them),
+// any other top level field of the answer, and the HTTP status. A missing
+// code is named after the status.
+func routeErr(status int, out map[string]any) map[string]any {
+	e := map[string]any{}
+	for k, v := range out {
+		if k != "error" {
+			e[k] = v
+		}
+	}
+	switch m := out["error"].(type) {
+	case map[string]any:
+		for k, v := range m {
+			e[k] = v
+		}
+	case string:
+		e["message"] = m
+	}
+	if c, _ := e["code"].(string); c == "" {
+		e["code"] = statusCode(status)
+	}
+	if m, _ := e["message"].(string); m == "" {
+		e["message"] = fmt.Sprintf("HTTP %d", status)
+	}
+	e["status"] = status
+	return e
+}
+
+// statusCode names an HTTP status for an error that has no code of its own.
+func statusCode(status int) string {
+	switch status {
+	case 400, 422:
+		return "invalid"
+	case 401:
+		return "unauthenticated"
+	case 403:
+		return "forbidden"
+	case 404:
+		return "not_found"
+	case 409:
+		return "conflict"
+	case 413:
+		return "too_large"
+	case 429:
+		return "rate_limited"
+	case 502, 503, 504:
+		return "unavailable"
+	}
+	return "http_error"
+}
+
+// ctlRouteError is a route error as a tool error: the text leads with the
+// status, code and message (and the hint when there is one), and
+// structuredContent is routeErr, so an agent can branch on the code.
+func ctlRouteError(status int, b []byte) map[string]any {
+	var out map[string]any
+	if json.Unmarshal(b, &out) != nil || out == nil {
+		out = map[string]any{}
+		if t := strings.TrimSpace(string(b)); t != "" && utf8.ValidString(t) {
+			out["error"] = clipText(t, 300)
+		}
+	}
+	e := routeErr(status, out)
+	text := fmt.Sprintf("HTTP %d %v: %v", status, e["code"], e["message"])
+	if h, _ := e["hint"].(string); h != "" {
+		text += "\nHint: " + h
+	}
+	for k := range e {
+		if k != "code" && k != "message" && k != "status" && k != "hint" {
+			j, _ := json.Marshal(e)
+			text += "\n" + string(j)
+			break
+		}
+	}
+	return map[string]any{
+		"content":           []map[string]any{{"type": "text", "text": text}},
+		"structuredContent": e,
+		"isError":           true,
+	}
+}
+
 func routeErrMsg(code int, out map[string]any) string {
 	if code < 400 {
 		return ""
@@ -484,8 +585,18 @@ func (c *ctlCtx) merge(p, field string, in map[string]any, keys []string) (any, 
 
 // ---- results ----
 
+// ctlFail is a tool error found before or around a route call. Its
+// structuredContent has the shape of a route error: {code, message}.
 func ctlFail(msg string) map[string]any {
-	return map[string]any{"content": []map[string]any{{"type": "text", "text": msg}}, "isError": true}
+	return ctlFailCode("tool_error", msg)
+}
+
+func ctlFailCode(code, msg string) map[string]any {
+	return map[string]any{
+		"content":           []map[string]any{{"type": "text", "text": msg}},
+		"structuredContent": map[string]any{"code": code, "message": msg},
+		"isError":           true,
+	}
 }
 
 // ctlText builds a result from text, adding structured content when the
@@ -500,7 +611,8 @@ func ctlText(text string, isErr bool) map[string]any {
 		for n > 0 && !utf8.RuneStart(text[n]) {
 			n--
 		}
-		text = text[:n] + fmt.Sprintf("\n[trimmed: the result was %d bytes, over the %d KB cap; narrow the request]", len(text), ctlResultCap>>10)
+		text = text[:n] + fmt.Sprintf("\n[trimmed: the result was %d bytes, over the %d KB cap. Ask for less: fields keeps only the paths you need, "+
+			"filter, limit and offset cut lists, and list tools take summary: true for counts and the first rows]", len(text), ctlResultCap>>10)
 	} else {
 		var obj map[string]any
 		if json.Unmarshal([]byte(text), &obj) == nil && obj != nil {
@@ -517,13 +629,7 @@ func ctlText(text string, isErr bool) map[string]any {
 // ctlRouteResult turns a route's response into a tool result.
 func ctlRouteResult(code int, b []byte) map[string]any {
 	if code >= 400 {
-		var out map[string]any
-		_ = json.Unmarshal(b, &out)
-		text := fmt.Sprintf("HTTP %d: %s", code, routeErrMsg(code, out))
-		if len(out) > 1 {
-			text += "\n" + strings.TrimSpace(string(b))
-		}
-		return ctlFail(text)
+		return ctlRouteError(code, b)
 	}
 	body := strings.TrimSpace(string(b))
 	if body == "" {
@@ -590,7 +696,7 @@ func ctlRawPath(method, p string) (string, error) {
 	case clean == "/api/admin/me" && method != http.MethodGet:
 		return "", errors.New("your account is changed in the dashboard only")
 	case clean == "/api/admin/chat" || strings.HasPrefix(clean, "/api/admin/chat/"):
-		return "", errors.New("the dashboard assistant's threads are not exposed here")
+		return "", errors.New(ctlPublicText("the Assistant's chats have their own tools: assistant_send, assistant_threads and the rest of the ai group"))
 	}
 	return clean, nil
 }

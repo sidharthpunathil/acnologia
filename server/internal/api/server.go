@@ -463,6 +463,7 @@ func (s *Server) Router() http.Handler {
 	r.HandleFunc("/mcp/control", s.mcpControl)
 	// OAuth sign in for /mcp (oauth.go).
 	s.mountOAuth(r)
+	s.mountAgentAPI(r) // GET /api/openapi.json and /api/admin/checklist (quickstart.go)
 
 	r.NotFound(s.serveWeb)
 	return r

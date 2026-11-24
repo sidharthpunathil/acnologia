@@ -486,7 +486,7 @@ func TestControlMCPResultCap(t *testing.T) {
 	big := bytes.Repeat([]byte("é"), ctlResultCap)
 	res := ctlText(`"`+string(big)+`"`, false)
 	text := res["content"].([]map[string]any)[0]["text"].(string)
-	if len(text) > ctlResultCap+200 || !strings.Contains(text, "trimmed") || res["structuredContent"] != nil {
+	if len(text) > ctlResultCap+400 || !strings.Contains(text, "trimmed") || res["structuredContent"] != nil {
 		t.Fatalf("cap: %d", len(text))
 	}
 	if !strings.HasPrefix(text, `"é`) {

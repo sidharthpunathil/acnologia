@@ -1167,6 +1167,11 @@ func (cs *chatSession) api(method, path string, body any) (int, map[string]any, 
 	ctx = context.WithValue(ctx, assistantCtxKey{}, true)
 	req := httptest.NewRequest(method, "http://acnologia.internal"+path, rdr).WithContext(ctx)
 	req.Header.Set("Cookie", cs.cookie)
+	// A chat driven by an admin API token (acn, the control MCP) acts with
+	// that token, as a dashboard chat acts with its session.
+	if cs.r != nil && cs.r.Header.Get("Authorization") != "" {
+		req.Header.Set("Authorization", cs.r.Header.Get("Authorization"))
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "acnologia-assistant")
 	req.RemoteAddr = cs.remote

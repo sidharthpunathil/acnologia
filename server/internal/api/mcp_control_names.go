@@ -10,6 +10,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 )
@@ -93,8 +94,10 @@ func ctlInstructions() string {
 		"Tools the role cannot use are not listed. Services are named by id, slug or name. " +
 		"call_service calls a provider API through the pooled keys as the app \"Control MCP\"; the key is never shown. " +
 		ctlPublicTool("search") + " finds anything by text; " + ctlPublicTool("batch") + " runs up to 20 tools in one call; list_routes lists every admin route. " +
-		"List tools return one page: pass limit and offset, and when has_more is true call again with offset set to next_offset. " +
-		"Read tools take fields and filter to cut big results down, and the guide tools take format: markdown. " +
+		"List tools return one page: pass limit and offset, and when has_more is true call again with offset set to next_offset; summary: true gives counts and the first rows. " +
+		"Read tools take fields and filter to cut big results down, and the guide tools take format: markdown. Results are capped at 64 KB. " +
+		"A failed call has isError and structuredContent {code, message, status, hint}: branch on code. " +
+		"On a new server, checklist says what is left to set up and quickstart does it in one call. " +
 		"Destructive tools (deletes, revokes, rotate, disconnect) do nothing on the first call: they say what would happen, then run when called again with confirm: true. Ask the user before confirming. " +
 		"The app side, where an app's token leases keys and proxies calls, is the separate /mcp endpoint.")
 }
@@ -128,6 +131,9 @@ var ctlPaging = map[string]ctlPage{
 	"list_refresh_runs":    {List: "runs", Def: 50, Max: 200},
 	"list_refresh_reviews": {List: "reviews", Def: 50, Max: 200},
 	"search":               {List: "results", Def: 50, Max: 200},
+	"list_routes":          {List: "routes", Def: 100, Max: 300},
+	"list_capabilities":    {List: "capabilities", Def: 100, Max: 500},
+	"assistant_threads":    {List: "threads", Def: 50, Max: 200},
 }
 
 // pageProps are the paging inputs of a list tool.
@@ -135,6 +141,8 @@ func pageProps(p *ctlPage) map[string]any {
 	return map[string]any{
 		"limit":  iProp("Items per page, default " + itoa(p.Def) + ", at most " + itoa(p.Max)),
 		"offset": iProp("Items to skip; pass next_offset from the last page to get the next one"),
+		"summary": bProp("Return counts instead of the whole list: total, counts by status, kind, provider and similar fields, " +
+			"and only the first " + itoa(summaryRows) + " rows (or limit rows). Use it first on a big list"),
 	}
 }
 
@@ -170,13 +178,96 @@ func pageResult(res map[string]any, in map[string]any, p *ctlPage) map[string]an
 	}
 	filter, _ := in["filter"].(map[string]any)
 	matched, _ := pageList(arr, filter, 0, 0)
-	items, info := paginate(matched, argInt(in, "offset"), argInt(in, "limit"), p.Def, p.Max)
-	m[p.List] = items
-	if fields := argStrings(in, "fields"); len(fields) > 0 {
-		m, _ = project(m, pathTree(fields)).(map[string]any)
+	def := p.Def
+	summary, _ := in["summary"].(bool)
+	if summary {
+		// Counts over every match, and only the first few rows.
+		m["summarized"] = true
+		m["counts"] = facetCounts(matched)
+		def = summaryRows
 	}
-	b, _ := json.Marshal(info.into(m))
+	items, info := paginate(matched, argInt(in, "offset"), argInt(in, "limit"), def, p.Max)
+	fields := argStrings(in, "fields")
+	render := func(items []any, info pageInfo) []byte {
+		out := make(map[string]any, len(m))
+		for k, v := range m {
+			out[k] = v
+		}
+		out[p.List] = items
+		if len(fields) > 0 {
+			keep := fields
+			if summary {
+				keep = append(append([]string{}, fields...), "summarized", "counts")
+			}
+			out, _ = project(out, pathTree(keep)).(map[string]any)
+		}
+		b, _ := json.Marshal(info.into(out))
+		return b
+	}
+	b := render(items, info)
+	if len(b) > ctlResultCap && len(items) > 1 {
+		// Cut the page to the most rows that fit, so the result stays whole
+		// JSON and next_offset picks up where it stopped.
+		lo, hi := 1, len(items)-1
+		for lo < hi {
+			mid := (lo + hi + 1) / 2
+			if len(render(items[:mid], pageInfo{total: info.total, count: mid, offset: info.offset})) <= ctlResultCap-512 {
+				lo = mid
+			} else {
+				hi = mid - 1
+			}
+		}
+		m["trimmed"] = fmt.Sprintf("this page was cut from %d to %d items to stay under the %d KB result cap; pass fields to keep only what you need, "+
+			"a smaller limit, or summary: true for counts and the first rows", len(items), lo, ctlResultCap>>10)
+		b = render(items[:lo], pageInfo{total: info.total, count: lo, offset: info.offset})
+	}
 	return ctlText(string(b), false)
+}
+
+// summaryRows is the page size of a list tool called with summary: true.
+const summaryRows = 5
+
+// facetFields are the list item fields summary mode counts by, when an item
+// has them as text or a boolean.
+var facetFields = []string{"status", "effective_status", "validity", "kind", "mode", "provider", "service_slug", "role",
+	"type", "category", "active", "tier", "recipient", "auth_type", "strategy", "rotation", "method", "tool"}
+
+// facetCounts counts the items by each facet field: {status: {active: 3,
+// disabled: 1}}. A field with more than 25 values is left out, as it says
+// little.
+func facetCounts(items []any) map[string]any {
+	counts := map[string]map[string]int{}
+	for _, x := range items {
+		row, ok := x.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, f := range facetFields {
+			var v string
+			switch t := row[f].(type) {
+			case string:
+				v = t
+			case bool:
+				v = fmt.Sprint(t)
+			default:
+				continue
+			}
+			if v == "" {
+				v = "(none)"
+			}
+			if counts[f] == nil {
+				counts[f] = map[string]int{}
+			}
+			counts[f][v]++
+		}
+	}
+	out := map[string]any{}
+	for f, c := range counts {
+		if len(c) <= 25 {
+			out[f] = c
+		}
+	}
+	return out
 }
 
 // ---- output schemas ----
