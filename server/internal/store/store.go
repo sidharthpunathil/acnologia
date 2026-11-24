@@ -403,6 +403,12 @@ func migrate(db *sql.DB) error {
 	if err := migrateOAuth(db); err != nil {
 		return err
 	}
+	if err := migrateIdempotency(db); err != nil {
+		return err
+	}
+	if err := migrateAffinity(db); err != nil {
+		return err
+	}
 	return migrateIndexes(db)
 }
 
