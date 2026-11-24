@@ -90,6 +90,10 @@
 - Deleting a key, service or app moves it to the trash for 7 days, from
   where it can be restored (Settings, `acn trash`, control MCP).
 - `GET /api/admin/version` and `POST /api/admin/backup`.
+- The database records a schema version. An older binary refuses to start
+  on a database a newer one upgraded, and an upgrade that changes the schema
+  first copies the database to `acnologia.db.pre-v<from>-to-v<to>.bak`
+  (the last three are kept; `ACNOLOGIA_MIGRATION_BACKUP=false` turns it off).
 
 ### Getting started
 
