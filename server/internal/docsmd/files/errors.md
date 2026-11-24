@@ -1163,6 +1163,30 @@ The provider is still used by a service.
 
 What to do: Delete or move those services first.
 
+### `invalid_oauth_client`
+
+HTTP 400. Retry: no, not without a change.
+
+The OAuth client id, secret or scopes given are not usable.
+
+What to do: Send a one line client_id, and scopes the provider allows (oauth_settings lists allowed_scopes when it limits them).
+
+Next step: tool `acnologia_oauth_settings`.
+
+More in [/docs/oauth-credentials.md](/docs/oauth-credentials.md).
+
+### `invalid_oauth_fields`
+
+HTTP 400. Retry: no, not without a change.
+
+The extra fields for an OAuth connection are missing one the provider needs, or name one it does not have.
+
+What to do: oauth_settings lists the fields; send the required ones, by key.
+
+Next step: tool `acnologia_oauth_settings`.
+
+More in [/docs/oauth-credentials.md](/docs/oauth-credentials.md).
+
 ### `invalid_provider`
 
 HTTP 422. Retry: no, not without a change.
@@ -1257,6 +1281,16 @@ The provider has no website to take a logo from.
 
 What to do: Set the provider website first, or pass a url.
 
+### `not_oauth_service`
+
+HTTP 400. Retry: no, not without a change.
+
+An OAuth route was called for a service that takes API keys, not OAuth sign in.
+
+What to do: Add keys to that service instead. OAuth routes are for services of an oauth2 provider.
+
+More in [/docs/oauth-credentials.md](/docs/oauth-credentials.md).
+
 ### `nothing_due`
 
 HTTP 409. Retry: no, not without a change.
@@ -1264,6 +1298,18 @@ HTTP 409. Retry: no, not without a change.
 No provider is due for an offers refresh.
 
 What to do: Nothing to do, or refresh one provider by hand.
+
+### `oauth_not_configured`
+
+HTTP 409. Retry: no, not without a change.
+
+The service has no OAuth client id yet, so there is nothing to sign in with.
+
+What to do: Register an OAuth app with the provider using the redirect URI oauth_settings shows, then set its client id and secret.
+
+Next step: tool `acnologia_set_oauth_client`.
+
+More in [/docs/oauth-credentials.md](/docs/oauth-credentials.md).
 
 ### `refresh_budget`
 

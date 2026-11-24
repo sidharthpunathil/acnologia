@@ -154,6 +154,10 @@ var apiDocs = map[string]apiDoc{
 			"code_verifier": sProp("PKCE verifier"), "client_id": sProp("Client id"), "refresh_token": sProp("Refresh token")}, Required: []string{"grant_type"}},
 	"POST /oauth/revoke": {Summary: "Revoke a token", Desc: "RFC 7009 token revocation.", Auth: "none", Tag: "oauth", Form: true, Body: map[string]any{"token": sProp("The token")}, Required: []string{"token"}},
 
+	// ---- OAuth credentials (oauth_connect.go) ----
+	"GET /oauth/callback": {Summary: "OAuth credential callback", Desc: "Where a provider sends the browser after an account owner signs in for an OAuth service. Trades the code (with the PKCE verifier) for tokens and adds the account as a key. Register <public URL>/oauth/callback as the redirect URI. Answers an HTML page.", Auth: "none", Tag: "oauth", Produces: "text/html",
+		Query: map[string]any{"state": sProp("The single use state from the connect"), "code": sProp("Authorization code"), "error": sProp("The provider's error, when the owner refused"), "error_description": sProp("The provider's error text")}},
+
 	// ---- sharing between servers and with people ----
 	"POST /api/peer/v1/preview":              {Summary: "Preview an invite (server to server)", Desc: "What an invite offers. Part of the server to server sharing protocol.", Auth: "none", Tag: "sharing", Body: map[string]any{"share_id": sProp("Share id"), "invite": sProp("Invite code")}},
 	"POST /api/peer/v1/redeem":               {Summary: "Redeem an invite (server to server)", Desc: "Part of the server to server sharing protocol.", Auth: "none", Tag: "sharing", Body: anyProps},

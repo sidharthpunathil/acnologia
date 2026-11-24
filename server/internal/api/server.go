@@ -484,6 +484,8 @@ func (s *Server) Router() http.Handler {
 	// OAuth sign in for /mcp (oauth.go).
 	s.mountOAuth(r)
 	s.mountAgentAPI(r) // GET /api/openapi.json and /api/admin/checklist (quickstart.go)
+	// OAuth credentials: connect, callback and token refresh (oauth_connect.go).
+	s.mountOAuthCredentials(r)
 
 	r.NotFound(s.serveWeb)
 	return r

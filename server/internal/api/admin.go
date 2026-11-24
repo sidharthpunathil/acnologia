@@ -239,10 +239,12 @@ func (in serviceInput) apply(sv *store.Service) string {
 	case sv.Provider == "":
 		return "provider is required"
 	case !validServiceAuth[sv.AuthType]:
-		return "auth_type must be query, header, bearer, basic or fields"
+		return "auth_type must be query, header, bearer, basic, fields or oauth2"
 	case sv.AuthType == "fields" && providers.Get(sv.Provider).Auth.Type != "fields":
 		return "fields auth comes from the provider: its spec must list the fields"
-	case sv.AuthName == "" && sv.AuthType != "bearer" && sv.AuthType != "basic" && sv.AuthType != "fields":
+	case sv.AuthType == providers.AuthOAuth2 && providers.Get(sv.Provider).Auth.OAuth == nil:
+		return "oauth2 auth comes from the provider: its spec must have an oauth block"
+	case sv.AuthName == "" && sv.AuthType != "bearer" && sv.AuthType != "basic" && sv.AuthType != "fields" && sv.AuthType != providers.AuthOAuth2:
 		return "auth_name is required"
 	case !pool.ValidStrategy(sv.Strategy):
 		return "unknown strategy"
@@ -259,7 +261,7 @@ func (in serviceInput) apply(sv *store.Service) string {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "base_url must be an http(s) URL"
 	}
-	if (sv.AuthType == "bearer" || sv.AuthType == "basic") && sv.AuthName == "" {
+	if (sv.AuthType == "bearer" || sv.AuthType == "basic" || sv.AuthType == providers.AuthOAuth2) && sv.AuthName == "" {
 		sv.AuthName = "Authorization"
 	}
 	return ""
@@ -267,7 +269,7 @@ func (in serviceInput) apply(sv *store.Service) string {
 
 var validRotation = map[string]bool{"": true, RotationFallback: true, RotationRoundRobin: true}
 
-var validServiceAuth = map[string]bool{"query": true, "header": true, "bearer": true, "basic": true, "fields": true}
+var validServiceAuth = map[string]bool{"query": true, "header": true, "bearer": true, "basic": true, "fields": true, providers.AuthOAuth2: true}
 
 func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 	var in serviceInput

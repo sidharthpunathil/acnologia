@@ -74,6 +74,12 @@ type Pool struct {
 	// the app may use every key. It limits the keys of a share app; nil
 	// skips scoping.
 	KeyScope func(ctx context.Context, appID int64, svc *store.Service) (*store.KeyScope, error)
+	// Resolver turns an OAuth key's stored secret, which names its
+	// connection, into the credential sent upstream: a current access token
+	// (refreshed when it is about to expire) with the key's extra fields.
+	// Keys of other auth types go out as stored. Nil sends every key as
+	// stored.
+	Resolver func(ctx context.Context, svc *store.Service, k *store.Key, stored string) (string, error)
 
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
@@ -322,6 +328,24 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 		// write can only make the key's pacing stricter, never looser.
 		release()
 		return nil, err
+	}
+	if p.Resolver != nil && svc.AuthType == providers.AuthOAuth2 {
+		wire, err := p.Resolver(ctx, svc, k, secret)
+		if err != nil {
+			// No token for this account right now (its grant is gone, or
+			// the token endpoint failed): try the next key.
+			release()
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			next := make(map[int64]bool, len(exclude)+1)
+			for id := range exclude {
+				next[id] = true
+			}
+			next[k.ID] = true
+			return p.pick(ctx, svc, appID, allowHidden, next, exclusive, req)
+		}
+		secret = wire
 	}
 	return &Picked{Key: k, Secret: secret, exclusive: exclusive, release: release, svcID: svcID, appID: appID}, nil
 }
@@ -587,6 +611,13 @@ func (p *Pool) check(ctx context.Context, svc *store.Service, k *store.Key) erro
 	}
 	if k.Status == store.StatusBanned {
 		return ErrBanned
+	}
+	if p.Resolver != nil && svc.AuthType == providers.AuthOAuth2 {
+		// The check sends the access token, refreshed when due. A
+		// connection that cannot get one was already marked.
+		if secret, err = p.Resolver(ctx, svc, k, secret); err != nil {
+			return err
+		}
 	}
 	client, err := p.checkClient(ctx, svc, k)
 	if err != nil {

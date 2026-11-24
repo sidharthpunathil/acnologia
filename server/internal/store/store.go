@@ -418,6 +418,9 @@ func migrate(db *sql.DB) error {
 	if err := migrateAffinity(db); err != nil {
 		return err
 	}
+	if err := migrateOAuthCredentials(db); err != nil {
+		return err
+	}
 	return migrateIndexes(db)
 }
 

@@ -109,7 +109,7 @@ func authPrefix(sv *store.Service) string {
 		return ""
 	}
 	name := a.Name
-	if (a.Type == "bearer" || a.Type == "basic") && name == "" {
+	if (a.Type == "bearer" || a.Type == "basic" || a.Type == providers.AuthOAuth2) && name == "" {
 		name = "Authorization"
 	}
 	if name != sv.AuthName {
@@ -490,6 +490,10 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		}
 		start := time.Now()
 		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusUnauthorized && sv.AuthType == providers.AuthOAuth2 {
+			// An OAuth access token may be revoked early: refresh once and retry (oauth_tokens.go).
+			resp = s.oauthRetryUnauthorized(trace.with(ctx), r, sv, picked, path, body, client, resp)
+		}
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			cancel()
@@ -819,7 +823,7 @@ func sanitizeUpstreamHeaders(h http.Header, secret string, fromPeer bool) {
 			continue
 		}
 		for i, v := range vs {
-			vs[i] = crypto.Scrub(v, secret)
+			vs[i] = scrub(v, secret)
 		}
 		h[k] = vs
 	}
@@ -839,7 +843,14 @@ func errorCodeOf(body []byte) string {
 }
 
 // scrub removes the secret from upstream messages before they are stored.
-func scrub(msg, secret string) string { return crypto.Scrub(msg, secret) }
+// scrub replaces the secret, and each part of a multi part or OAuth secret,
+// in msg.
+func scrub(msg, secret string) string {
+	for _, v := range providers.SecretVariants(secret) {
+		msg = crypto.Scrub(msg, v)
+	}
+	return msg
+}
 
 // hopHeader counts the Acnologia servers a proxied request passed through.
 const hopHeader = "X-Acnologia-Hop"

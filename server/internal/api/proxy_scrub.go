@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 )
 
 // Some upstreams echo the key they were called with (account endpoints, error
@@ -18,18 +20,22 @@ import (
 var scrubMark = []byte("[key]")
 
 // keyForms are the spellings of a secret an upstream may echo: raw, query
-// escaped and path escaped.
+// escaped and path escaped, for the secret and each of its parts (an OAuth
+// key's access token and extra fields, a multi part key's values).
 func keyForms(secret string) [][]byte {
 	if secret == "" {
 		return nil
 	}
 	var out [][]byte
 	seen := map[string]bool{}
-	cands := []string{secret, url.QueryEscape(secret), url.PathEscape(secret)}
-	// JSON escaped, as encoding/json writes it and with "/" escaped as "\/".
-	if b, err := json.Marshal(secret); err == nil && len(b) >= 2 {
-		js := string(b[1 : len(b)-1])
-		cands = append(cands, js, strings.ReplaceAll(js, "/", `\/`))
+	var cands []string
+	for _, v := range providers.SecretVariants(secret) {
+		cands = append(cands, v, url.QueryEscape(v), url.PathEscape(v))
+		// JSON escaped, as encoding/json writes it and with "/" escaped as "\/".
+		if b, err := json.Marshal(v); err == nil && len(b) >= 2 {
+			js := string(b[1 : len(b)-1])
+			cands = append(cands, js, strings.ReplaceAll(js, "/", `\/`))
+		}
 	}
 	for _, f := range cands {
 		if f != "" && !seen[f] {
