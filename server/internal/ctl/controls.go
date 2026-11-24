@@ -24,10 +24,6 @@ type limits struct {
 	MonthlyBudget   *float64 `json:"monthly_budget,omitempty"`
 }
 
-func (l limits) any() bool {
-	return l.DailyRequests != nil || l.MonthlyRequests != nil || l.DailyBudget != nil || l.MonthlyBudget != nil
-}
-
 func (l limits) String() string {
 	var parts []string
 	if l.DailyRequests != nil {
