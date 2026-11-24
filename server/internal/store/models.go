@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -341,6 +342,11 @@ type Event struct {
 	StatusCode  int       `json:"status_code"`
 	LatencyMS   int64     `json:"latency_ms"`
 	Detail      string    `json:"detail"`
+	// TokenID is the app token the request used, when an app made it.
+	TokenID *int64 `json:"token_id"`
+	// Data is a notification's structured fields (key.cooling's until,
+	// app.limit_near's limit and use), as JSON.
+	Data json.RawMessage `json:"data,omitempty"`
 
 	KeyHidden bool `json:"-"`
 }
@@ -352,6 +358,13 @@ type AuditEntry struct {
 	Action    string    `json:"action"`
 	Target    string    `json:"target"`
 	Detail    string    `json:"detail"`
+	// Who acted, beyond the person: the token (an admin API token for api,
+	// cli and control_mcp, an app token for app_mcp and app calls), the
+	// app, how the call came in (see Attribution) and the client.
+	TokenID *int64 `json:"token_id"`
+	AppID   *int64 `json:"app_id"`
+	Via     string `json:"via"`
+	Client  string `json:"client"`
 }
 
 func ago(now, t time.Time) string {
