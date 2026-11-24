@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { RiArrowDownSLine, RiPlugLine, RiRefreshLine } from "@remixicon/react";
 import { api, errorMessage } from "../../lib/api";
 import { dateTime, plural, relTime } from "../../lib/format";
-import type { Service, ServiceMCPTool, ServiceMCPView } from "../../lib/types";
+import type { Service, ServiceMCPTool, ServiceMCPToolAccess, ServiceMCPView } from "../../lib/types";
 import { toast } from "../../stores/toast";
 import { useNow } from "../../hooks/useNow";
 import { Callout, EmptyState, Section } from "@/components/acn";
 import { Chip } from "@/components/base/badges/chip";
 import { Button } from "@/components/base/buttons/button";
 import { SearchField } from "@/components/base/search-field/search-field";
+import { Select, SelectItem } from "@/components/base/select/select";
 import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { cx } from "@/utils/cx";
@@ -24,11 +25,34 @@ function SchemaBlock({ label, schema }: { label: string; schema: unknown }) {
   );
 }
 
-function ToolRow({ tool }: { tool: ServiceMCPTool }) {
+// The select needs a non-empty key for "follow the server" (access "").
+const UPSTREAM_KEY = "upstream";
+
+const ACCESS_OPTIONS: { id: ServiceMCPToolAccess; label: string }[] = [
+  { id: "", label: "Follow server" },
+  { id: "read", label: "Always read-only" },
+  { id: "write", label: "Always write" },
+];
+
+function ToolRow({
+  tool,
+  canManage,
+  saving,
+  onAccess,
+}: {
+  tool: ServiceMCPTool;
+  canManage: boolean;
+  saving: boolean;
+  onAccess: (access: ServiceMCPToolAccess) => void;
+}) {
   const [open, setOpen] = useState(false);
   const hasSchema = tool.inputSchema != null || tool.outputSchema != null;
   const shown = tool.public_name || tool.name;
   const renamed = tool.public_name && tool.public_name !== tool.name;
+  const access = tool.access ?? "";
+  const source = access
+    ? `Set by an admin. The server says ${tool.upstream_read_only ? "read-only" : "write"}.`
+    : "As the server says. Read-only apps and tokens only get read-only tools.";
 
   return (
     <li className="px-4 py-3.5">
@@ -36,9 +60,14 @@ function ToolRow({ tool }: { tool: ServiceMCPTool }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="break-all font-mono text-body-2-medium text-text-primary">{shown}</span>
-            <Chip variant="caption" color={tool.read_only ? "lime" : "neutral"} className="font-mono">
+            <Chip variant="caption" color={tool.read_only ? "lime" : "neutral"} className="font-mono" title={source}>
               {tool.read_only ? "read-only" : "write"}
             </Chip>
+            {access && (
+              <span className="text-caption-1-regular text-text-tertiary" title={source}>
+                override
+              </span>
+            )}
             {renamed && (
               <span className="font-mono text-caption-1-regular text-text-tertiary">upstream: {tool.name}</span>
             )}
@@ -50,18 +79,40 @@ function ToolRow({ tool }: { tool: ServiceMCPTool }) {
             <p className="mt-1 whitespace-pre-line text-caption-1-regular text-text-secondary">{tool.description}</p>
           )}
         </div>
-        {hasSchema && (
-          <Button
-            size="small"
-            variant="ghost"
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            trailingIcon={RiArrowDownSLine}
-            className={cx("shrink-0", open && "[&_svg]:rotate-180")}
-          >
-            Schema
-          </Button>
-        )}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {canManage && (
+            <Select
+              size="sm"
+              aria-label={`Read-only setting for ${shown}`}
+              selectedKey={access || UPSTREAM_KEY}
+              isDisabled={saving}
+              onSelectionChange={(k) => {
+                if (k == null) return;
+                const next = (String(k) === UPSTREAM_KEY ? "" : String(k)) as ServiceMCPToolAccess;
+                if (next !== access) onAccess(next);
+              }}
+              className="w-40"
+            >
+              {ACCESS_OPTIONS.map((o) => (
+                <SelectItem key={o.id || UPSTREAM_KEY} id={o.id || UPSTREAM_KEY}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </Select>
+          )}
+          {hasSchema && (
+            <Button
+              size="small"
+              variant="ghost"
+              onClick={() => setOpen((o) => !o)}
+              aria-expanded={open}
+              trailingIcon={RiArrowDownSLine}
+              className={cx("shrink-0", open && "[&_svg]:rotate-180")}
+            >
+              Schema
+            </Button>
+          )}
+        </div>
       </div>
       {open && hasSchema && (
         <div className="fade-up mt-3 flex flex-col gap-3 border-t border-separator-border pt-3">
@@ -137,6 +188,25 @@ export function ServiceMcpPanel({
   }, [view?.tools, query]);
 
   const readOnlyCount = useMemo(() => (view?.tools ?? []).filter((t) => t.read_only).length, [view?.tools]);
+
+  const [savingTool, setSavingTool] = useState<string | null>(null);
+  const setAccess = async (tool: ServiceMCPTool, access: ServiceMCPToolAccess) => {
+    setSavingTool(tool.name);
+    try {
+      const v = await api.setServiceMcpToolAccess(service.id, tool.name, access);
+      setView(v);
+      const shown = tool.public_name || tool.name;
+      toast.success(
+        access === ""
+          ? `${shown} follows the server again`
+          : `${shown} is now ${access === "read" ? "read-only" : "a write tool"}`,
+      );
+    } catch (e) {
+      toast.error(`Could not change ${tool.public_name || tool.name}: ${errorMessage(e)}`);
+    } finally {
+      setSavingTool(null);
+    }
+  };
 
   if (!view && !error) {
     return (
@@ -281,7 +351,13 @@ export function ServiceMcpPanel({
             ) : (
               <ul className="divide-y divide-separator-border rounded-2xl border border-border-button-default bg-background-primary-default">
                 {filtered.map((t) => (
-                  <ToolRow key={t.name} tool={t} />
+                  <ToolRow
+                    key={t.name}
+                    tool={t}
+                    canManage={canManage}
+                    saving={savingTool === t.name}
+                    onAccess={(a) => void setAccess(t, a)}
+                  />
                 ))}
               </ul>
             )}

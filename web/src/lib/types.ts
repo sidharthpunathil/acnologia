@@ -1115,8 +1115,15 @@ export interface ServiceMCPTool {
   inputSchema?: unknown;
   outputSchema?: unknown;
   annotations?: Record<string, unknown>;
+  /** What /mcp enforces: `access` when an admin set it, else `upstream_read_only`. */
   read_only: boolean;
+  /** The upstream server's own readOnlyHint. */
+  upstream_read_only?: boolean;
+  /** Admin override: "" follows the server, "read" or "write" overrides it. */
+  access?: ServiceMCPToolAccess;
 }
+
+export type ServiceMCPToolAccess = "" | "read" | "write";
 
 /** GET /api/admin/services/{id}/mcp and POST /api/admin/services/{id}/mcp/sync. */
 export interface ServiceMCPView {
