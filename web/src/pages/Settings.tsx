@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { RiCalendarScheduleLine, RiClaudeLine, RiEqualizerLine, RiGlobalLine, RiPaletteLine, RiPlugLine, RiServerLine, RiShieldKeyholeLine, RiSparklingLine } from "@remixicon/react";
+import { RiCalendarScheduleLine, RiClaudeLine, RiDatabase2Line, RiDeleteBinLine, RiEqualizerLine, RiGlobalLine, RiPaletteLine, RiPlugLine, RiServerLine, RiShieldKeyholeLine, RiSparklingLine } from "@remixicon/react";
 import { can } from "@/lib/perms";
 import { settingsApi } from "@/lib/settings";
 import { useAuth } from "@/stores/auth";
@@ -14,6 +14,7 @@ import { AdvancedSection, AppearanceSection, IntegrationsSection } from "./setti
 import { SettingsNav, useActiveSection, useHashLanding, type SettingsNavItem } from "./settings/nav";
 import { SecuritySection } from "./settings/SecuritySection";
 import { ServerSection } from "./settings/ServerSection";
+import { BackupSection, TrashSection } from "./settings/SafetySections";
 
 /**
  * One page of sections with an in page nav, rather than a sub route per
@@ -54,6 +55,8 @@ export function SettingsPage() {
       ...(isAdmin ? [{ id: "forward-proxy", label: "Forward proxy", icon: RiGlobalLine }] : []),
       { id: "connect-claude", label: "Connect Claude", icon: RiClaudeLine },
       { id: "advanced", label: "Advanced", icon: RiEqualizerLine },
+      { id: "trash", label: "Trash", icon: RiDeleteBinLine },
+      { id: "backup", label: "Version and backup", icon: RiDatabase2Line },
     ],
     [serverDirty, rulesDirty, modelsDirty, refreshDirty, isAdmin],
   );
@@ -76,6 +79,8 @@ export function SettingsPage() {
           {isAdmin && <ForwardProxySection />}
           <ConnectClaudeSection />
           <AdvancedSection isAdmin={isAdmin} isSuper={isSuper} summary={summary} />
+          <TrashSection isAdmin={isAdmin} isSuper={isSuper} />
+          <BackupSection isSuper={isSuper} />
         </div>
       </div>
     </div>

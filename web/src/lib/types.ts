@@ -1279,3 +1279,35 @@ export interface ControlMcpView {
   groups: ControlToolGroup[];
   tools: ControlTool[];
 }
+
+/** One deleted key, service or app in the trash (GET /api/admin/trash). Never a secret. */
+export interface TrashItem {
+  id: string;
+  kind: "key" | "service" | "app";
+  target_id: number;
+  /** A key's label, a service's slug or an app's name. */
+  name: string;
+  /** The service a key belongs to. */
+  service?: string;
+  hint?: string;
+  /** Keys a service took with it. */
+  keys?: number;
+  /** Is or holds a hidden key: superadmins only. */
+  hidden: boolean;
+  deleted_by: string;
+  deleted_at: string;
+  expires_at: string;
+}
+
+/** GET /api/admin/version. */
+export interface ServerVersion {
+  current: string;
+  /** Null when the release check got no answer. */
+  latest: string | null;
+  release_url: string | null;
+  /** Null when either version is not a release number (a dev build). */
+  update_available: boolean | null;
+  upgrade_command: string;
+  upgrade_doc: string;
+  checked_at: string;
+}
