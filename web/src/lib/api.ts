@@ -45,6 +45,7 @@ import type {
 } from "./types";
 import type { ForwardProxySetup } from "./types";
 import type { ControlMcpView, MCPSettingsInput, MCPView, ServiceFamily, ServiceMCPView, SharedKeysReport } from "./types";
+import type { ServiceMCPToolAccess } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -192,6 +193,8 @@ export const api = {
   deleteService: (id: number) => request<unknown>("DELETE", `/api/admin/services/${id}`),
   getServiceMcp: (id: number) => request<ServiceMCPView>("GET", `/api/admin/services/${id}/mcp`),
   syncServiceMcp: (id: number) => request<ServiceMCPView>("POST", `/api/admin/services/${id}/mcp/sync`, {}),
+  setServiceMcpToolAccess: (id: number, name: string, access: ServiceMCPToolAccess) =>
+    request<ServiceMCPView>("PATCH", `/api/admin/services/${id}/mcp/tools`, { name, access }),
   setServiceLogo: (id: number, body: LogoUpload) => request<unknown>("PUT", `/api/admin/services/${id}/logo`, body),
   deleteServiceLogo: (id: number) => request<unknown>("DELETE", `/api/admin/services/${id}/logo`),
 
