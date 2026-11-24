@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/apierr"
 	"github.com/sidharthpunathil/acnologia/server/internal/pool"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
@@ -555,24 +556,9 @@ func liftProxyFacts(out map[string]any, h http.Header) {
 	if v := h.Get(headerPrefix + "Cache"); v != "" {
 		out["cache"] = v
 	}
-	if sec, ok := retryAfterSec(h.Get("Retry-After")); ok {
+	if sec, ok := apierr.RetryAfterSec(h.Get("Retry-After")); ok {
 		out["retry_after_sec"] = sec
 	}
-}
-
-// retryAfterSec reads a Retry-After header: seconds, or an HTTP date.
-func retryAfterSec(v string) (int, bool) {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return 0, false
-	}
-	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-		return n, true
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		return max(int(math.Ceil(time.Until(t).Seconds())), 0), true
-	}
-	return 0, false
 }
 
 // wholeRunes drops a UTF-8 sequence cut off at the end of b.

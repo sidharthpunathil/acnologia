@@ -24,6 +24,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/agent"
+	"github.com/sidharthpunathil/acnologia/server/internal/apierr"
 	"github.com/sidharthpunathil/acnologia/server/internal/breaker"
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/clientip"
@@ -849,14 +850,14 @@ func etagMatches(header, etag string) bool {
 
 // helpers
 
-// apiError, the error envelope, lives in errors.go with the registry.
+// apiError, the error envelope, is apierr.Error (errors.go).
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	// An error envelope written directly (not through writeErr) still gets
 	// the response's request id and Retry-After.
 	if m, ok := v.(map[string]any); ok {
 		if e, ok := m["error"].(apiError); ok {
-			m["error"] = withResponse(w, e)
+			m["error"] = apierr.WithResponse(w, e)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -867,7 +868,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeErr writes {"error": {code, message, hint, fix, doc_url, request_id,
 // retry_after_sec}}. Set a Retry-After header first to fill retry_after_sec.
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, map[string]any{"error": envelopeError(w, code, msg)})
+	writeJSON(w, status, map[string]any{"error": apierr.Envelope(w, code, msg)})
 }
 
 func writeStoreErr(w http.ResponseWriter, err error) {
@@ -879,7 +880,7 @@ func writeStoreErr(w http.ResponseWriter, err error) {
 	case err != nil && strings.Contains(err.Error(), "UNIQUE"):
 		writeErr(w, 409, "duplicate", "already exists")
 	default:
-		slog.Error("internal error", "err", err, "request_id", requestID(w))
+		slog.Error("internal error", "err", err, "request_id", apierr.RequestID(w))
 		writeErr(w, 500, "internal", "internal error")
 	}
 }

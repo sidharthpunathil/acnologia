@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/sidharthpunathil/acnologia/server/internal/apierr"
 	"github.com/sidharthpunathil/acnologia/server/internal/peer"
 )
 
@@ -76,7 +77,7 @@ func (s *Server) agentIndex(r *http.Request) agentIndex {
 			LLMs:          base + "/llms.txt",
 			LLMsFull:      base + "/llms-full.txt",
 			Docs:          base + "/api/docs",
-			ErrorsDoc:     base + errorsDoc,
+			ErrorsDoc:     base + apierr.DocPath,
 			OpenAPI:       base + "/api/openapi.json",
 			DeviceLogin:   base + "/api/cli/device",
 			Me:            base + "/api/v1/me",
