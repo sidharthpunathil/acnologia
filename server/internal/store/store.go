@@ -403,6 +403,9 @@ func migrate(db *sql.DB) error {
 	if err := migrateOAuth(db); err != nil {
 		return err
 	}
+	if err := migrateAccessControls(db); err != nil {
+		return err
+	}
 	return migrateIndexes(db)
 }
 

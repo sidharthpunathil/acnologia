@@ -75,6 +75,11 @@ type Config struct {
 	// HTTPS_PROXY for everything. ACNOLOGIA_FORWARD_PASSTHROUGH, on by
 	// default.
 	ForwardPassthrough bool
+	// DailySpendCeilingUSD is ACNOLOGIA_DAILY_SPEND_CEILING_USD: once every
+	// app together has spent this much (estimated) in a UTC day, no app is
+	// admitted until the next. 0, the default, means no ceiling. A value
+	// saved on the Settings page wins over it.
+	DailySpendCeilingUSD float64
 }
 
 // MinAccessPasswordLen is the shortest ACNOLOGIA_ACCESS_PASSWORD accepted.
@@ -135,6 +140,7 @@ func Load(version string) Config {
 		ForwardProxyAddr:      strings.TrimSpace(Getenv("ACNOLOGIA_FORWARD_PROXY_ADDR")),
 		ForwardProxyURL:       strings.TrimRight(strings.TrimSpace(Getenv("ACNOLOGIA_FORWARD_PROXY_URL")), "/"),
 		ForwardPassthrough:    envBool("ACNOLOGIA_FORWARD_PASSTHROUGH", true),
+		DailySpendCeilingUSD:  envUSD("ACNOLOGIA_DAILY_SPEND_CEILING_USD"),
 	}
 }
 
@@ -212,6 +218,15 @@ func envDays(k string, def time.Duration) time.Duration {
 		return d
 	}
 	return def
+}
+
+// envUSD reads a dollar amount. Unset, malformed, zero or negative is 0.
+func envUSD(k string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimPrefix(strings.TrimSpace(Getenv(k)), "$"), 64)
+	if err != nil || !(v > 0) || v > 1e12 {
+		return 0
+	}
+	return v
 }
 
 func envDuration(k string, def time.Duration) time.Duration {
