@@ -1,7 +1,14 @@
 import type {
   App,
+  AppControls,
   AppInput,
   AppToken,
+  DenyRule,
+  DenyRuleInput,
+  SpendCeiling,
+  TagBudget,
+  TagUsageReport,
+  TokenLimits,
   AppWithToken,
   AuditEntry,
   AuthState,
@@ -267,11 +274,28 @@ export const api = {
   deleteApp: (id: number) => request<unknown>("DELETE", `/api/admin/apps/${id}`),
   rotateAppToken: (id: number) => request<AppWithToken>("POST", `/api/admin/apps/${id}/rotate-token`),
   listAppTokens: (id: number) => request<{ tokens: AppToken[] }>("GET", `/api/admin/apps/${id}/tokens`),
-  createAppToken: (id: number, body: { name: string; expires_in_days?: number; read_only?: boolean }) =>
-    request<{ token: string; app_token: AppToken }>("POST", `/api/admin/apps/${id}/tokens`, body),
+  createAppToken: (
+    id: number,
+    body: { name: string; expires_in_days?: number; read_only?: boolean; limits?: TokenLimits; pinned_tags?: Record<string, string> },
+  ) => request<{ token: string; app_token: AppToken }>("POST", `/api/admin/apps/${id}/tokens`, body),
   renameAppToken: (id: number, tokenId: number, name: string) =>
     request<AppToken>("PATCH", `/api/admin/apps/${id}/tokens/${tokenId}`, { name }),
+  /** Each field sent replaces the old value; null clears limits or pinned tags. */
+  updateAppToken: (id: number, tokenId: number, body: { name?: string; limits?: TokenLimits | null; pinned_tags?: Record<string, string> | null }) =>
+    request<AppToken>("PATCH", `/api/admin/apps/${id}/tokens/${tokenId}`, body),
   revokeAppToken: (id: number, tokenId: number) => request<AppToken>("DELETE", `/api/admin/apps/${id}/tokens/${tokenId}`),
+
+  // Per-token defaults, tag budgets and deny rules
+  appControls: (id: number) => request<AppControls>("GET", `/api/admin/apps/${id}/controls`),
+  setTokenDefaultLimits: (id: number, limits: TokenLimits) =>
+    request<{ token_limits: TokenLimits }>("PUT", `/api/admin/apps/${id}/token-limits`, { limits }),
+  setTagBudgets: (id: number, budgets: TagBudget[]) => request<{ tag_budgets: TagBudget[] }>("PUT", `/api/admin/apps/${id}/tag-budgets`, { budgets }),
+  addDenyRule: (id: number, rule: DenyRuleInput) => request<DenyRule>("POST", `/api/admin/apps/${id}/deny-rules`, rule),
+  deleteDenyRule: (id: number, ruleId: number) => request<unknown>("DELETE", `/api/admin/apps/${id}/deny-rules/${ruleId}`),
+  appTagUsage: (id: number, days = 30) => request<TagUsageReport>("GET", `/api/admin/apps/${id}/usage/tags?days=${days}`),
+  spendCeiling: () => request<SpendCeiling>("GET", "/api/admin/settings/spend-ceiling"),
+  /** A dollar amount, 0 for none, or null to use ACNOLOGIA_DAILY_SPEND_CEILING_USD. */
+  setSpendCeiling: (usd: number | null) => request<SpendCeiling>("PUT", "/api/admin/settings/spend-ceiling", { usd }),
 
   // Events
   listEvents: (params: { service_id?: number; key_id?: number; limit?: number } = {}) =>

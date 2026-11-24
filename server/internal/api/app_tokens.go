@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,8 +13,9 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
-// An app can hold several named tokens, each revocable on its own. Usage,
-// spend and limits stay per app.
+// An app can hold several named tokens, each revocable on its own. Usage
+// and spend count toward the app and the token. A token may carry limits of
+// its own inside the app's, and be pinned to caller tags.
 
 const maxAppTokenName = 64
 
@@ -80,11 +82,18 @@ func (s *Server) createAppToken(w http.ResponseWriter, r *http.Request) {
 		Name          string `json:"name"`
 		ExpiresInDays *int   `json:"expires_in_days"`
 		ReadOnly      bool   `json:"read_only"`
+		// Limits and PinnedTags are the token's own controls (see
+		// tokenControls).
+		Limits     store.AppLimits   `json:"limits"`
+		PinnedTags map[string]string `json:"pinned_tags"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	name, msg := appTokenName(in.Name)
+	if msg == "" {
+		msg = tokenControlsError(in.Limits, in.PinnedTags)
+	}
 	if msg != "" {
 		writeErr(w, 400, "invalid", msg)
 		return
@@ -99,7 +108,8 @@ func (s *Server) createAppToken(w http.ResponseWriter, r *http.Request) {
 		exp = &t
 	}
 	tok, prefix, hash := newAppToken()
-	t, err := s.Store.CreateAppTokenWithScope(r.Context(), a.ID, name, store.TokenPrefixHint(prefix), hash, userID(r), exp, in.ReadOnly)
+	t, err := s.Store.CreateAppTokenWith(r.Context(), a.ID, name, store.TokenPrefixHint(prefix), hash, userID(r), exp,
+		store.AppTokenOptions{ReadOnly: in.ReadOnly, Limits: in.Limits, PinnedTags: in.PinnedTags})
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -119,10 +129,30 @@ func (s *Server) createAppToken(w http.ResponseWriter, r *http.Request) {
 	if exp != nil {
 		detail += ", expires " + exp.Format(time.DateOnly)
 	}
+	if in.Limits.Any() {
+		detail += ", " + limitsText(in.Limits)
+	}
+	if len(in.PinnedTags) > 0 {
+		detail += ", pinned to " + store.FormatTags(in.PinnedTags)
+	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "app.token_create", a.Name, detail)
 	writeJSON(w, 201, map[string]any{"token": tok, "app_token": t})
 }
 
+// tokenControlsError checks a token's own limits and pinned tags.
+func tokenControlsError(l store.AppLimits, pinned map[string]string) string {
+	if err := l.Validate(); err != nil {
+		return err.Error()
+	}
+	if err := store.ValidateTags(pinned); err != nil {
+		return "pinned_tags: " + err.Error()
+	}
+	return ""
+}
+
+// renameAppToken changes a token's name, its own limits or its pinned
+// tags: each field sent replaces the old value, null clears limits and
+// pinned_tags, and a field left out stays as it is.
 func (s *Server) renameAppToken(w http.ResponseWriter, r *http.Request) {
 	a, ok := s.tokenApp(w, r)
 	if !ok {
@@ -133,30 +163,81 @@ func (s *Server) renameAppToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name string `json:"name"`
+		Name       *string         `json:"name"`
+		Limits     json.RawMessage `json:"limits"`
+		PinnedTags json.RawMessage `json:"pinned_tags"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	name, msg := appTokenName(in.Name)
-	if msg != "" {
+	var name string
+	if in.Name != nil {
+		var msg string
+		if name, msg = appTokenName(*in.Name); msg != "" {
+			writeErr(w, 400, "invalid", msg)
+			return
+		}
+	}
+	var limits store.AppLimits
+	var pinned map[string]string
+	if len(in.Limits) > 0 && json.Unmarshal(in.Limits, &limits) != nil {
+		writeErr(w, 400, "invalid", "limits must be an object or null")
+		return
+	}
+	if len(in.PinnedTags) > 0 && json.Unmarshal(in.PinnedTags, &pinned) != nil {
+		writeErr(w, 400, "invalid", "pinned_tags must be an object of strings or null")
+		return
+	}
+	if in.Name == nil && len(in.Limits) == 0 && len(in.PinnedTags) == 0 {
+		writeErr(w, 400, "invalid", "send name, limits or pinned_tags")
+		return
+	}
+	if msg := tokenControlsError(limits, pinned); msg != "" {
 		writeErr(w, 400, "invalid", msg)
 		return
 	}
-	old, err := s.Store.GetAppToken(r.Context(), a.ID, tid)
-	if err == nil {
-		err = s.Store.RenameAppToken(r.Context(), a.ID, tid, name)
-	}
+	ctx := r.Context()
+	old, err := s.Store.GetAppToken(ctx, a.ID, tid)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	t, err := s.Store.GetAppToken(r.Context(), a.ID, tid)
+	var changes []string
+	if in.Name != nil {
+		if err := s.Store.RenameAppToken(ctx, a.ID, tid, name); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		changes = append(changes, "token "+old.Name+" renamed to "+name)
+	}
+	if len(in.Limits) > 0 {
+		if err := s.Store.SetAppTokenLimits(ctx, a.ID, tid, limits); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		changes = append(changes, "token "+old.Name+" limits: "+limitsText(limits))
+	}
+	if len(in.PinnedTags) > 0 {
+		if err := s.Store.SetAppTokenPinnedTags(ctx, a.ID, tid, pinned); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		desc := "none"
+		if len(pinned) > 0 {
+			desc = store.FormatTags(pinned)
+		}
+		changes = append(changes, "token "+old.Name+" pinned tags: "+desc)
+	}
+	t, err := s.Store.GetAppToken(ctx, a.ID, tid)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "app.token_rename", a.Name, "token "+old.Name+" renamed to "+name)
+	action := "app.token_update"
+	if in.Name != nil && len(changes) == 1 {
+		action = "app.token_rename"
+	}
+	s.Store.AddAudit(ctx, userFrom(r), action, a.Name, strings.Join(changes, "; "))
 	writeJSON(w, 200, t)
 }
 

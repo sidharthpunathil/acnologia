@@ -3,6 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -17,6 +20,32 @@ type AppLimits struct {
 
 func (l AppLimits) Any() bool {
 	return l.DailyRequests != nil || l.MonthlyRequests != nil || l.DailyBudget != nil || l.MonthlyBudget != nil
+}
+
+// Validate refuses a negative limit.
+func (l AppLimits) Validate() error {
+	if (l.DailyRequests != nil && *l.DailyRequests < 0) || (l.MonthlyRequests != nil && *l.MonthlyRequests < 0) ||
+		(l.DailyBudget != nil && *l.DailyBudget < 0) || (l.MonthlyBudget != nil && *l.MonthlyBudget < 0) {
+		return errors.New("limits must not be negative")
+	}
+	return nil
+}
+
+// Over is l with every limit it leaves unset taken from def.
+func (l AppLimits) Over(def AppLimits) AppLimits {
+	if l.DailyRequests == nil {
+		l.DailyRequests = def.DailyRequests
+	}
+	if l.MonthlyRequests == nil {
+		l.MonthlyRequests = def.MonthlyRequests
+	}
+	if l.DailyBudget == nil {
+		l.DailyBudget = def.DailyBudget
+	}
+	if l.MonthlyBudget == nil {
+		l.MonthlyBudget = def.MonthlyBudget
+	}
+	return l
 }
 
 // AppUsage is an app's use so far today and this month.
@@ -76,15 +105,88 @@ func (s *Store) SetAppLimits(ctx context.Context, appID int64, l AppLimits) erro
 // Cache hits are counted separately and cost nothing. The write is group
 // committed and does not stop when ctx is cancelled: the request was served,
 // so a client hanging up must not keep it out of the app's limits. It has
-// committed when RecordAppUsage returns.
-func (s *Store) RecordAppUsage(_ context.Context, appID int64, cost float64, cacheHit bool) error {
+// committed when RecordAppUsage returns. A request made with a token (see
+// WithAppToken) also counts toward the token, and one with caller tags
+// (SetUsageTags) toward each tag value, in the same commit.
+func (s *Store) RecordAppUsage(ctx context.Context, appID int64, cost float64, cacheHit bool) error {
 	req, hit := 1, 0
 	if cacheHit {
 		req, hit, cost = 0, 1, 0
 	}
-	return s.gw.write(wstmt{`INSERT INTO app_usage(app_id, day, requests, cost, cache_hits) VALUES(?,?,?,?,?)
+	day := dayOf(time.Now())
+	stmts := []wstmt{{`INSERT INTO app_usage(app_id, day, requests, cost, cache_hits) VALUES(?,?,?,?,?)
 		ON CONFLICT(app_id, day) DO UPDATE SET requests=requests+excluded.requests, cost=cost+excluded.cost, cache_hits=cache_hits+excluded.cache_hits`,
-		[]any{appID, dayOf(time.Now()), req, cost, hit}})
+		[]any{appID, day, req, cost, hit}}}
+	if !cacheHit {
+		stmts = append(stmts, scopeStmts(ctx, appID, day, cost)...)
+	}
+	return s.gw.write(stmts...)
+}
+
+// ServerSpendToday is every app's recorded spend for the UTC day of at.
+func (s *Store) ServerSpendToday(ctx context.Context, at time.Time) (float64, error) {
+	var v float64
+	err := s.r.QueryRowContext(ctx, `SELECT COALESCE(SUM(cost),0) FROM app_usage WHERE day=?`, dayOf(at)).Scan(&v)
+	return v, err
+}
+
+// The server-wide daily spend ceiling a superadmin saved, in USD. It wins
+// over ACNOLOGIA_DAILY_SPEND_CEILING_USD; "off" saved turns the ceiling off
+// whatever the environment says. Admission reads it on every request, so it
+// is cached here and the cache is dropped on every change.
+const metaSpendCeiling = "daily_spend_ceiling_usd"
+
+type ceilingEntry struct {
+	v     float64
+	saved bool
+	at    time.Time
+}
+
+var ceilingCache sync.Map // *Store -> ceilingEntry
+
+// ceilingTTL bounds how stale the cached ceiling can be if the meta row
+// changes behind the store's back.
+const ceilingTTL = 5 * time.Second
+
+// SavedSpendCeiling returns the saved ceiling (0 when saved as off) and
+// whether one is saved.
+func (s *Store) SavedSpendCeiling(ctx context.Context) (float64, bool) {
+	if v, ok := ceilingCache.Load(s); ok {
+		if e := v.(ceilingEntry); time.Since(e.at) < ceilingTTL {
+			return e.v, e.saved
+		}
+	}
+	raw, found, err := s.LookupMeta(ctx, metaSpendCeiling)
+	if err != nil {
+		return 0, false
+	}
+	e := ceilingEntry{at: time.Now()}
+	if found {
+		if raw == "off" {
+			e.saved = true
+		} else if f, err := strconv.ParseFloat(raw, 64); err == nil && f > 0 {
+			e.v, e.saved = f, true
+		}
+	}
+	ceilingCache.Store(s, e)
+	return e.v, e.saved
+}
+
+// SetSpendCeiling saves the ceiling; 0 saves "off".
+func (s *Store) SetSpendCeiling(ctx context.Context, usd float64) error {
+	v := "off"
+	if usd > 0 {
+		v = strconv.FormatFloat(usd, 'f', -1, 64)
+	}
+	defer ceilingCache.Delete(s)
+	return s.SetMeta(ctx, metaSpendCeiling, v)
+}
+
+// ClearSpendCeiling drops the saved ceiling, so the environment's applies.
+func (s *Store) ClearSpendCeiling(ctx context.Context) error {
+	defer ceilingCache.Delete(s)
+	_, err := s.DB.ExecContext(ctx, `DELETE FROM meta WHERE k=?`, metaSpendCeiling)
+	return err
 }
 
 func (s *Store) GetAppUsage(ctx context.Context, appID int64, at time.Time) (AppUsage, error) {
@@ -120,8 +222,15 @@ func (s *Store) AppUsageHistory(ctx context.Context, appID int64, days int) ([]U
 
 // LimitHit says which limit an app reached and when it lifts.
 type LimitHit struct {
-	Limit   string    `json:"limit"` // daily_requests | monthly_requests | daily_budget | monthly_budget
+	// Limit is daily_requests, monthly_requests, daily_budget or
+	// monthly_budget for the app's own limits; the same with a token_ or
+	// tag_ prefix for a token's or a tag value's; server_spend_ceiling; or
+	// tag_pinned when the request's tags contradict its token's.
+	Limit   string    `json:"limit"`
 	ResetAt time.Time `json:"reset_at"`
+	// Tag is the tag value (customer=cust_A) a tag_ limit is about, or the
+	// key a tag_pinned refusal is about.
+	Tag string `json:"tag,omitempty"`
 }
 
 // CheckLimits reports the first limit the app has reached, or nil. It is
@@ -152,13 +261,13 @@ func checkLimits(l AppLimits, u AppUsage, at time.Time, reqs int64, est float64)
 	overBudget := func(used, limit float64) bool { return used >= limit || used+est > limit+budgetSlack }
 	switch {
 	case l.DailyRequests != nil && overReqs(u.TodayRequests, *l.DailyRequests):
-		return &LimitHit{"daily_requests", tomorrow}
+		return &LimitHit{Limit: "daily_requests", ResetAt: tomorrow}
 	case l.DailyBudget != nil && overBudget(u.TodayCost, *l.DailyBudget):
-		return &LimitHit{"daily_budget", tomorrow}
+		return &LimitHit{Limit: "daily_budget", ResetAt: tomorrow}
 	case l.MonthlyRequests != nil && overReqs(u.MonthRequests, *l.MonthlyRequests):
-		return &LimitHit{"monthly_requests", nextMonth}
+		return &LimitHit{Limit: "monthly_requests", ResetAt: nextMonth}
 	case l.MonthlyBudget != nil && overBudget(u.MonthCost, *l.MonthlyBudget):
-		return &LimitHit{"monthly_budget", nextMonth}
+		return &LimitHit{Limit: "monthly_budget", ResetAt: nextMonth}
 	}
 	return nil
 }

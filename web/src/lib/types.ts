@@ -387,9 +387,82 @@ export interface AppToken {
   last_used_at: string | null;
   expires_at: string | null;
   revoked_at: string | null;
+  /** The token's own limits; an empty field falls back to the app's per-token default. */
+  limits?: TokenLimits;
+  /** Caller tags every call with this token carries. */
+  pinned_tags?: Record<string, string>;
 }
 
-export type AppInput = Pick<App, "name" | "description" | "mode" | "allowed_services"> & { lease_hidden?: boolean };
+/** Daily and monthly request counts and USD budgets; null means none. */
+export interface TokenLimits {
+  daily_requests: number | null;
+  monthly_requests: number | null;
+  daily_budget: number | null;
+  monthly_budget: number | null;
+}
+
+/** Caps each value of one caller tag key on its own. */
+export interface TagBudget extends TokenLimits {
+  key: string;
+}
+
+/** Blocks an app's matching requests with 403 denied_by_rule. */
+export interface DenyRule {
+  id: number;
+  app_id: number;
+  /** "*" or an HTTP method. */
+  method: string;
+  /** A service, group or capability slug, or empty. */
+  service: string;
+  /** An upstream hostname, or empty. */
+  host: string;
+  path_prefix: string;
+  note: string;
+  created_at: string;
+}
+
+export interface DenyRuleInput {
+  method: string;
+  service?: string;
+  host?: string;
+  path_prefix: string;
+  note?: string;
+}
+
+export interface AppControls {
+  token_limits: TokenLimits;
+  tag_budgets: TagBudget[];
+  deny_rules: DenyRule[];
+}
+
+export interface TagUsageRow {
+  key: string;
+  value: string;
+  today_requests: number;
+  today_cost: number;
+  month_requests: number;
+  month_cost: number;
+  requests: number;
+  cost: number;
+}
+
+export interface TagUsageReport {
+  days: number;
+  tags: TagUsageRow[];
+  tag_budgets: TagBudget[];
+  truncated: boolean;
+}
+
+export interface SpendCeiling {
+  ceiling_usd: number;
+  source: "env" | "saved";
+  env_usd: number;
+  saved_usd?: number;
+  spent_today_usd: number;
+  reset_at: string;
+}
+
+export type AppInput =Pick<App, "name" | "description" | "mode" | "allowed_services"> & { lease_hidden?: boolean };
 
 export interface AppWithToken {
   app: App;

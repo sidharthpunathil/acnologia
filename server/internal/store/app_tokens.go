@@ -8,8 +8,9 @@ import (
 )
 
 // AppToken is one of an app's tokens. An app can hold several, each named
-// and revocable on its own; usage, spend and limits stay per app. Only the
-// SHA-256 of the whole token is stored.
+// and revocable on its own. Usage and spend count toward the app and the
+// token; a token may carry limits of its own on top of the app's, and be
+// pinned to caller tags. Only the SHA-256 of the whole token is stored.
 type AppToken struct {
 	ID             int64      `json:"id"`
 	AppID          int64      `json:"app_id"`
@@ -22,6 +23,12 @@ type AppToken struct {
 	ExpiresAt      *time.Time `json:"expires_at"`
 	RevokedAt      *time.Time `json:"revoked_at"`
 	ReadOnly       bool       `json:"read_only"`
+	// Limits are the token's own; an unset field falls back to the app's
+	// per-token default. The app's limits apply as well.
+	Limits AppLimits `json:"limits"`
+	// PinnedTags go on every call made with the token; a call that sends
+	// another value for one of these keys is refused.
+	PinnedTags map[string]string `json:"pinned_tags"`
 }
 
 // Usable reports whether the token is neither revoked nor expired at t.
@@ -72,7 +79,7 @@ func migrateAppTokens(db *sql.DB) error {
 	return migrateAppTokenIDs(db)
 }
 
-const appTokenCols = `t.id, t.app_id, t.name, t.prefix, t.created_at, t.created_by, COALESCE(u.email,''), t.last_used_at, t.expires_at, t.revoked_at, t.read_only`
+const appTokenCols = `t.id, t.app_id, t.name, t.prefix, t.created_at, t.created_by, COALESCE(u.email,''), t.last_used_at, t.expires_at, t.revoked_at, t.read_only, t.limits, t.pinned_tags`
 
 // tokenScan holds the Scan destinations of one app token row
 // (appTokenCols) and turns them into an AppToken. scanAppToken and
@@ -82,11 +89,12 @@ type tokenScan struct {
 	created            int64
 	by, last, exp, rev sql.NullInt64
 	readOnly           int
+	limits, pinned     string
 }
 
 func (s *tokenScan) dests() []any {
 	t := &s.t
-	return []any{&t.ID, &t.AppID, &t.Name, &t.Prefix, &s.created, &s.by, &t.CreatedByEmail, &s.last, &s.exp, &s.rev, &s.readOnly}
+	return []any{&t.ID, &t.AppID, &t.Name, &t.Prefix, &s.created, &s.by, &t.CreatedByEmail, &s.last, &s.exp, &s.rev, &s.readOnly, &s.limits, &s.pinned}
 }
 
 func (s *tokenScan) finish() *AppToken {
@@ -95,6 +103,13 @@ func (s *tokenScan) finish() *AppToken {
 	t.CreatedBy = toInt(s.by)
 	t.LastUsedAt, t.ExpiresAt, t.RevokedAt = toTime(s.last), toTime(s.exp), toTime(s.rev)
 	t.ReadOnly = s.readOnly != 0
+	// Bad JSON cannot be written through the API; read as no limits here,
+	// admission reads the columns again and fails closed on it.
+	t.Limits, _ = decodeLimits(s.limits)
+	t.PinnedTags, _ = decodeTags(s.pinned)
+	if t.PinnedTags == nil {
+		t.PinnedTags = map[string]string{}
+	}
 	return t
 }
 
@@ -121,6 +136,27 @@ func (s *Store) CreateAppToken(ctx context.Context, appID int64, name, prefix, h
 
 // CreateAppTokenWithScope adds a token to an app with optional read-only enforcement.
 func (s *Store) CreateAppTokenWithScope(ctx context.Context, appID int64, name, prefix, hash string, createdBy int64, expiresAt *time.Time, readOnly bool) (*AppToken, error) {
+	return s.CreateAppTokenWith(ctx, appID, name, prefix, hash, createdBy, expiresAt, AppTokenOptions{ReadOnly: readOnly})
+}
+
+// AppTokenOptions are a new token's scope and controls.
+type AppTokenOptions struct {
+	ReadOnly   bool
+	Limits     AppLimits
+	PinnedTags map[string]string
+}
+
+// CreateAppTokenWith adds a token with its limits and pinned tags in one
+// write, so it never works for a moment without them.
+func (s *Store) CreateAppTokenWith(ctx context.Context, appID int64, name, prefix, hash string, createdBy int64, expiresAt *time.Time, o AppTokenOptions) (*AppToken, error) {
+	limits, err := encodeJSONOrEmpty(o.Limits, !o.Limits.Any())
+	if err != nil {
+		return nil, err
+	}
+	pinned, err := encodeJSONOrEmpty(o.PinnedTags, len(o.PinnedTags) == 0)
+	if err != nil {
+		return nil, err
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -130,8 +166,8 @@ func (s *Store) CreateAppTokenWithScope(ctx context.Context, appID int64, name, 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by,expires_at,read_only) VALUES(?,?,?,?,?,?,?,?,?)`,
-		id, appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt), b2i(readOnly)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by,expires_at,read_only,limits,pinned_tags) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		id, appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt), b2i(o.ReadOnly), limits, pinned); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -175,6 +211,24 @@ func (s *Store) RenameAppToken(ctx context.Context, appID, id int64, name string
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetAppTokenLimits replaces a token's own limits.
+func (s *Store) SetAppTokenLimits(ctx context.Context, appID, id int64, l AppLimits) error {
+	raw, err := encodeJSONOrEmpty(l, !l.Any())
+	if err != nil {
+		return err
+	}
+	return execOne(s.DB.ExecContext(ctx, `UPDATE app_tokens SET limits=? WHERE app_id=? AND id=?`, raw, appID, id))
+}
+
+// SetAppTokenPinnedTags replaces the tags pinned to a token.
+func (s *Store) SetAppTokenPinnedTags(ctx context.Context, appID, id int64, tags map[string]string) error {
+	raw, err := encodeJSONOrEmpty(tags, len(tags) == 0)
+	if err != nil {
+		return err
+	}
+	return execOne(s.DB.ExecContext(ctx, `UPDATE app_tokens SET pinned_tags=? WHERE app_id=? AND id=?`, raw, appID, id))
 }
 
 // RevokeAppToken marks a token revoked. Revoking twice keeps the first time.
@@ -252,16 +306,17 @@ func (s *Store) TouchAppToken(_ context.Context, appID, tokenID int64) {
 
 type appTokenCtxKey struct{}
 
-// WithAppToken marks ctx as a request made with the given app token, so
-// events recorded with it note the token as well as the app.
+// WithAppToken marks ctx as a request made with the given app token (0 for
+// none, as with an OAuth access token), so events recorded with it note the
+// token as well as the app, and its usage counts toward the token and the
+// caller tags admission sets on it (SetUsageTags).
 func WithAppToken(ctx context.Context, tokenID int64) context.Context {
-	if tokenID == 0 {
-		return ctx
-	}
-	return context.WithValue(ctx, appTokenCtxKey{}, tokenID)
+	return context.WithValue(ctx, appTokenCtxKey{}, &usageScope{tokenID: tokenID})
 }
 
 func appTokenFrom(ctx context.Context) int64 {
-	id, _ := ctx.Value(appTokenCtxKey{}).(int64)
-	return id
+	if sc := scopeFrom(ctx); sc != nil {
+		return sc.tokenID
+	}
+	return 0
 }

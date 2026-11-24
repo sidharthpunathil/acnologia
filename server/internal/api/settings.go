@@ -48,6 +48,7 @@ func (s *Server) settingsSummary(w http.ResponseWriter, r *http.Request) {
 		plain("ACNOLOGIA_HEALTH_INTERVAL", c.HealthInterval.String()),
 		plain("ACNOLOGIA_MAX_BODY_MB", itoa(int(c.MaxBodyBytes>>20))),
 		plain("ACNOLOGIA_CACHE_MB", itoa(int(c.CacheBytes>>20))),
+		plain("ACNOLOGIA_DAILY_SPEND_CEILING_USD", strconv.FormatFloat(c.DailySpendCeilingUSD, 'f', -1, 64)),
 		secret("ANTHROPIC_API_KEY", os.Getenv("ANTHROPIC_API_KEY") != ""),
 		// The fallback model: the model saved on this page wins over it.
 		plain("ACNOLOGIA_AI_MODEL", cmp.Or(c.AIModel, agent.BuiltinModel)),

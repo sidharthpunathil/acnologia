@@ -437,6 +437,9 @@ func (s *Server) callUpstreamMCPTool(ctx context.Context, r *http.Request, a *st
 	if endpoint == "" {
 		return nil, fmt.Errorf("service %q no longer has an upstream MCP URL configured", sv.Slug)
 	}
+	if err := s.denyMCPTool(ctx, a, sv, t.upstreamTool); err != nil {
+		return nil, err
+	}
 	cost := costPerRequest(sv, prov, http.MethodPost, "/mcp")
 	if hit, release := s.admitApp(ctx, a, cost); hit != nil {
 		return nil, fmt.Errorf("this app reached its %s limit, it resets %s", strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339))
