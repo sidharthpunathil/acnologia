@@ -9,6 +9,7 @@ import { CodeBlock } from "@/components/acn/code-block";
 import { RouterButtonLink } from "@/components/acn/button-link";
 import { cx } from "@/utils/cx";
 import { CARD } from "./service/parts";
+import { DemoData } from "./DemoData";
 
 /** Set once the person closes the card; it then stays closed in this browser. */
 const DISMISS_KEY = "acn.getting-started.dismissed";
@@ -229,6 +230,7 @@ export function GettingStarted({ services, onAddService }: { services: Service[]
           );
         })}
       </ol>
+      <DemoData services={services} />
     </section>
   );
 }
