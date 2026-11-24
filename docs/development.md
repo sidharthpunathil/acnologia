@@ -88,21 +88,35 @@ does.
 
 ### CI
 
-`.github/workflows/ci.yml` runs on every push and pull request, and on demand.
-Every job runs offline against fakes. A `changes` job first works out which
-areas a commit touched (a push is diffed against the last commit that passed
-CI, a pull request against its base), and only those jobs run. A change to
-`ci.yml` itself, a manual run, or a diff it cannot compute runs them all.
+`.github/workflows/ci.yml` runs only on a push to `main`, and on demand
+(`gh workflow run ci.yml --ref main`). Day to day work goes to the `stage`
+branch, which runs nothing; merging `stage` (or a pull request) into `main`
+tests the whole batch in one run. Pull requests themselves run nothing, and
+a push to `main` that only touches Markdown, `docs/`, the embedded doc copies
+in `server/internal/docsmd` and `llmstxt`, `video/` or issue templates runs
+nothing either. A newer push to `main` cancels the older run, and every job
+has a timeout.
 
-| Job | Runs on | What |
-|---|---|---|
-| go | Linux, macOS, Windows | `go vet`, server and CLI tests (`-race` except on Windows), and on Linux a Windows arm64 cross compile and vet |
-| embedded docs | Linux | The docs tests alone, when only the copies in `server/internal/docsmd` or `llmstxt` changed |
-| go sdk | Linux, macOS, Windows | `go test ./...` in `sdk/go` |
-| python sdk | Linux, macOS, Windows | `pytest` |
-| typescript sdk | Linux, macOS, Windows | `pnpm test` and `pnpm typecheck` |
-| dashboard build | Linux | `pnpm build` |
-| windows build | Windows | Parses `install.ps1` and `scripts/build.ps1` in PowerShell 5.1 and 7, builds both binaries with `build.ps1` and runs them |
+Every job runs offline against fakes. A `changes` job first works out which
+areas a push touched, by diffing it against the last commit a `ci` run passed
+on, and only those jobs run. A manual run, or a push it cannot diff (no
+earlier passing run, or one that is no ancestor after a force push), runs
+them all. Editing `ci.yml` does not by itself run anything. A skipped job
+counts as passed.
+
+A push runs on Linux only, without `-race`. A manual run is the full check:
+the macOS and Windows legs, `-race` (except on Windows), and the windows
+build job. Run one before a release or after an OS specific change.
+
+| Job | On a push | Manual run adds | What |
+|---|---|---|---|
+| go | Linux | macOS, Windows, `-race` | `go vet`, server and CLI tests, and on Linux a Windows arm64 cross compile and vet |
+| embedded docs | Linux | | The docs tests alone, when the copies in `server/internal/docsmd` or `llmstxt` changed but no server Go code did (the go job runs them anyway) |
+| go, python, ruby, c, cpp, haskell, zig, typescript sdk | Linux | macOS, Windows | Each SDK's own tests, when its folder under `sdk/` changed |
+| elixir sdk | Linux (two Elixir and OTP versions) | Windows | `mix test` |
+| lua sdk | Linux (Lua 5.1 and 5.4) | macOS | `busted` |
+| dashboard build | Linux | | `pnpm build` |
+| windows build | (manual only) | Windows | Parses `install.ps1`, `setup.ps1` and `scripts/build.ps1` in PowerShell 5.1 and 7, builds both binaries with `build.ps1` and runs them, when the build tooling changed |
 
 ### Releases
 
