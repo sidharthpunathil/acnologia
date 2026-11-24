@@ -164,7 +164,7 @@ func (s *Server) versionInfo(ctx context.Context) map[string]any {
 	out := map[string]any{
 		"current": s.Cfg.Version, "latest": nil, "release_url": nil, "update_available": nil,
 		"upgrade_command": upgradeCommand(), "upgrade_doc": "/docs/configuration.md#upgrading",
-		"checked_at": at, "repo": repo,
+		"checked_at": at, "repo": repo, "schema_version": s.Store.SchemaVersion(),
 	}
 	if info != nil {
 		out["latest"], out["release_url"] = info.Tag, info.URL

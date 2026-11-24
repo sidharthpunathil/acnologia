@@ -262,11 +262,15 @@ func (c *cli) serverVersion(args []string) error {
 		UpdateAvailable *bool   `json:"update_available"`
 		UpgradeCommand  string  `json:"upgrade_command"`
 		ReleaseURL      *string `json:"release_url"`
+		SchemaVersion   *int    `json:"schema_version"`
 	}
 	if done, err := c.callJSON("GET", "/api/admin/version", &out); done || err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "Server   %s\n", clean(out.Current))
+	if out.SchemaVersion != nil {
+		fmt.Fprintf(c.out, "Schema   %d\n", *out.SchemaVersion)
+	}
 	if out.Latest != nil {
 		fmt.Fprintf(c.out, "Latest   %s\n", clean(*out.Latest))
 	} else {
