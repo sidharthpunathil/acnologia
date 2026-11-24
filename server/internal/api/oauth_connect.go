@@ -48,13 +48,6 @@ const oauthCallbackPath = "/oauth/callback"
 // oauthConnectTTL is how long a sign in link works.
 const oauthConnectTTL = 15 * time.Minute
 
-func init() {
-	// The control MCP's table is built in mcp_control_tools.go's init,
-	// which runs before this file's: add the OAuth tools to it.
-	ctlTools = append(ctlTools, ctlOAuthCredTools()...)
-	indexCtlTools()
-}
-
 // mountOAuthCredentials adds the OAuth credential routes and lets the pool
 // fetch access tokens for OAuth keys.
 func (s *Server) mountOAuthCredentials(r chi.Router) {
