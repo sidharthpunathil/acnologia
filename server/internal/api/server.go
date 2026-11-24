@@ -118,6 +118,8 @@ type Server struct {
 	mcpSessions mcpSessionCache
 	// static serves WebFS (serveWeb); Router builds it.
 	static atomic.Pointer[staticSite]
+	// oauth is the MCP authorization server's state (oauth.go).
+	oauth oauthState
 }
 
 func New(cfg config.Config, st *store.Store, p *pool.Pool, cat *catalog.Catalog, ag *agent.Agent, web fs.FS, llms []byte) *Server {
@@ -457,6 +459,8 @@ func (s *Server) Router() http.Handler {
 	// The control MCP (mcp_control.go): the dashboard's features for an
 	// admin API token. Behind the access gate like /api/admin.
 	r.HandleFunc("/mcp/control", s.mcpControl)
+	// OAuth sign in for /mcp (oauth.go).
+	s.mountOAuth(r)
 
 	r.NotFound(s.serveWeb)
 	return r

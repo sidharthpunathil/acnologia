@@ -400,6 +400,9 @@ func migrate(db *sql.DB) error {
 	if err := migrateHiddenKeyEvents(db); err != nil {
 		return err
 	}
+	if err := migrateOAuth(db); err != nil {
+		return err
+	}
 	return migrateIndexes(db)
 }
 

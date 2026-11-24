@@ -220,6 +220,16 @@ var gateOpenExact = map[string]bool{
 	"/.well-known/acnologia": true,
 	// The landing page's GitHub star count: what github.com shows anyone.
 	"/api/public/github": true,
+	// OAuth for /mcp (oauth.go): discovery, registration and the token
+	// endpoints need no browser; authorize only sends the browser on to
+	// the consent page, which sits behind the gate.
+	"/.well-known/oauth-protected-resource":     true,
+	"/.well-known/oauth-protected-resource/mcp": true,
+	"/.well-known/oauth-authorization-server":   true,
+	"/oauth/authorize":                          true,
+	"/oauth/register":                           true,
+	"/oauth/token":                              true,
+	"/oauth/revoke":                             true,
 }
 
 // gateOpen reports whether a path is reachable while locked. Both the decoded
