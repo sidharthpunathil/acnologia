@@ -10,7 +10,7 @@ import (
 const serviceCols = `id, slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon, created_at, max_concurrency, queue_timeout_sec, logo IS NOT NULL, logo_rev, target_trusted, egress_id, cache_ttl_sec, cost_per_request,
 peer_link_id, peer_remote_slug, peer_provider, COALESCE((SELECT pl.peer_name FROM peer_links pl WHERE pl.id=services.peer_link_id),''),
 COALESCE((SELECT pl.trusted FROM peer_links pl WHERE pl.id=services.peer_link_id),0),
-rotation, key_source_id, COALESCE((SELECT k.slug FROM services k WHERE k.id=services.key_source_id),''), COALESCE((SELECT k.name FROM services k WHERE k.id=services.key_source_id),''), mcp_url`
+rotation, key_source_id, COALESCE((SELECT k.slug FROM services k WHERE k.id=services.key_source_id AND k.deleted_at IS NULL),''), COALESCE((SELECT k.name FROM services k WHERE k.id=services.key_source_id AND k.deleted_at IS NULL),''), mcp_url`
 
 func scanService(row interface{ Scan(...any) error }) (*Service, error) {
 	var s Service
@@ -60,7 +60,7 @@ func (s *Store) CreateService(ctx context.Context, sv *Service) (*Service, error
 }
 
 func (s *Store) UpdateService(ctx context.Context, sv *Service) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=?,target_trusted=?,egress_id=?,cache_ttl_sec=?,cost_per_request=?,rotation=?,mcp_url=? WHERE id=?`,
+	_, err := s.DB.ExecContext(ctx, `UPDATE services SET slug=?,name=?,provider=?,category=?,description=?,base_url=?,auth_type=?,auth_name=?,strategy=?,cooldown_sec=?,max_attempts=?,icon=?,max_concurrency=?,queue_timeout_sec=?,target_trusted=?,egress_id=?,cache_ttl_sec=?,cost_per_request=?,rotation=?,mcp_url=? WHERE id=? AND deleted_at IS NULL`,
 		sv.Slug, sv.Name, sv.Provider, sv.Category, sv.Description, sv.BaseURL, sv.AuthType, sv.AuthName,
 		sv.Strategy, sv.CooldownSec, sv.MaxAttempts, sv.Icon, sv.MaxConcurrency, sv.QueueTimeoutSec, b2i(sv.TargetTrusted),
 		fromInt(sv.EgressID), fromInt(sv.CacheTTLSec), fromFloat(sv.CostPerRequest), sv.Rotation, sv.MCPURL, sv.ID)
@@ -78,15 +78,15 @@ func (s *Store) DeleteService(ctx context.Context, id int64) error {
 }
 
 func (s *Store) GetService(ctx context.Context, id int64) (*Service, error) {
-	return scanService(s.r.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE id=?`, id))
+	return scanService(s.r.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE id=? AND deleted_at IS NULL`, id))
 }
 
 func (s *Store) GetServiceBySlug(ctx context.Context, slug string) (*Service, error) {
-	return scanService(s.r.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE slug=?`, slug))
+	return scanService(s.r.QueryRowContext(ctx, `SELECT `+serviceCols+` FROM services WHERE slug=? AND deleted_at IS NULL`, slug))
 }
 
 func (s *Store) ListServices(ctx context.Context) ([]*Service, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT `+serviceCols+` FROM services ORDER BY category, name`)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+serviceCols+` FROM services WHERE deleted_at IS NULL ORDER BY category, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -110,9 +110,9 @@ func (s *Store) FillStats(ctx context.Context, svcs []*Service, includeHidden bo
 		byID[sv.ID] = sv
 		sv.KeyCounts = KeyCounts{}
 	}
-	q := `SELECT id, service_id, status, tier, cooldown_until, quota_remaining, max_concurrency, secret_fp, hidden, restricted FROM keys`
+	q := `SELECT id, service_id, status, tier, cooldown_until, quota_remaining, max_concurrency, secret_fp, hidden, restricted FROM keys WHERE deleted_at IS NULL`
 	if !includeHidden {
-		q += ` WHERE hidden=0`
+		q += ` AND hidden=0`
 	}
 	rows, err := s.r.QueryContext(ctx, q)
 	if err != nil {
@@ -235,7 +235,7 @@ func (s *Store) SetServiceLogo(ctx context.Context, id int64, data []byte, mime 
 func (s *Store) ServiceLogo(ctx context.Context, id int64) ([]byte, string, error) {
 	var data []byte
 	var mime string
-	err := s.r.QueryRowContext(ctx, `SELECT logo, logo_mime FROM services WHERE id=? AND logo IS NOT NULL`, id).Scan(&data, &mime)
+	err := s.r.QueryRowContext(ctx, `SELECT logo, logo_mime FROM services WHERE id=? AND logo IS NOT NULL AND deleted_at IS NULL`, id).Scan(&data, &mime)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
 	}
@@ -247,7 +247,7 @@ func (s *Store) ServiceLogo(ctx context.Context, id int64) ([]byte, string, erro
 // edit can move where health checks send keys, so hidden keys pause until a
 // superadmin confirms each service again.
 func (s *Store) UntrustProviderServices(ctx context.Context, provider string) ([]string, error) {
-	rows, err := s.DB.QueryContext(ctx, `UPDATE services SET target_trusted=0 WHERE provider=? AND target_trusted=1 RETURNING slug`, provider)
+	rows, err := s.DB.QueryContext(ctx, `UPDATE services SET target_trusted=0 WHERE provider=? AND target_trusted=1 AND deleted_at IS NULL RETURNING slug`, provider)
 	if err != nil {
 		return nil, err
 	}

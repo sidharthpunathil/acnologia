@@ -587,13 +587,13 @@ func (s *Store) TouchProviderSpec(ctx context.Context, slug string, version int,
 // ProvidersWithUsableKeys lists providers behind at least one service with a
 // key that can serve: active, cooling or out of quota until it resets.
 func (s *Store) ProvidersWithUsableKeys(ctx context.Context) (map[string]bool, error) {
-	return s.slugSet(ctx, `SELECT DISTINCT s.provider FROM services s JOIN keys k ON k.service_id=s.id WHERE k.status IN (?,?,?)`,
+	return s.slugSet(ctx, `SELECT DISTINCT s.provider FROM services s JOIN keys k ON k.service_id=s.id WHERE k.status IN (?,?,?) AND k.deleted_at IS NULL AND s.deleted_at IS NULL`,
 		StatusActive, StatusCooling, StatusExhausted)
 }
 
 // ProvidersWithServices lists providers at least one service is built on.
 func (s *Store) ProvidersWithServices(ctx context.Context) (map[string]bool, error) {
-	return s.slugSet(ctx, `SELECT DISTINCT provider FROM services`)
+	return s.slugSet(ctx, `SELECT DISTINCT provider FROM services WHERE deleted_at IS NULL`)
 }
 
 func (s *Store) slugSet(ctx context.Context, q string, args ...any) (map[string]bool, error) {

@@ -172,7 +172,7 @@ func (s *Store) PatchApp(ctx context.Context, id int64, p AppPatch) error {
 	if len(sets) == 0 {
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET `+strings.Join(sets, ", ")+` WHERE id=?`, append(args, id)...)
+	_, err := s.DB.ExecContext(ctx, `UPDATE apps SET `+strings.Join(sets, ", ")+` WHERE id=? AND deleted_at IS NULL`, append(args, id)...)
 	return err
 }
 
@@ -185,9 +185,9 @@ func (s *Store) RotateAppToken(ctx context.Context, id int64, name, prefix, toke
 		return nil, err
 	}
 	defer tx.Rollback()
-	q := `UPDATE apps SET token_prefix=? WHERE id=?`
+	q := `UPDATE apps SET token_prefix=? WHERE id=? AND deleted_at IS NULL`
 	if !keepHidden {
-		q = `UPDATE apps SET token_prefix=?, lease_hidden=0 WHERE id=?`
+		q = `UPDATE apps SET token_prefix=?, lease_hidden=0 WHERE id=? AND deleted_at IS NULL`
 	}
 	res, err := tx.ExecContext(ctx, q, prefix, id)
 	if err != nil {
@@ -228,13 +228,13 @@ func (s *Store) DeleteApp(ctx context.Context, id int64) error {
 }
 
 func (s *Store) GetApp(ctx context.Context, id int64) (*App, error) {
-	return scanApp(s.r.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=?`, id))
+	return scanApp(s.r.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE id=? AND deleted_at IS NULL`, id))
 }
 
 // ListApps lists the apps people manage on the Apps page. Apps backing a
 // share are managed on the Sharing page and left out.
 func (s *Store) ListApps(ctx context.Context) ([]*App, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT `+appCols+` FROM apps WHERE share_id IS NULL ORDER BY name`)
+	rows, err := s.r.QueryContext(ctx, `SELECT `+appCols+` FROM apps WHERE share_id IS NULL AND deleted_at IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +340,13 @@ func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 			t.Add(-eventRetention).Unix()); err != nil {
 			return err
 		}
+	}
+	// The trash janitor: items deleted more than TrashTTL ago go for good.
+	if _, err := s.PurgeExpiredTrash(ctx); err != nil {
+		return err
+	}
+	if err := s.pruneAdminIdem(ctx); err != nil {
+		return err
 	}
 	optimize(ctx, s.DB)
 	s.warnLargeWAL(ctx)

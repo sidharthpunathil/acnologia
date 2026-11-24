@@ -46,8 +46,8 @@ func scanEgress(row interface{ Scan(...any) error }) (*EgressProxy, error) {
 
 func (s *Store) ListEgress(ctx context.Context) ([]*EgressProxy, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+egressCols+`,
-		(SELECT COUNT(*) FROM services WHERE egress_id=egress_proxies.id),
-		(SELECT COUNT(*) FROM keys WHERE egress_id=egress_proxies.id)
+		(SELECT COUNT(*) FROM services WHERE egress_id=egress_proxies.id AND deleted_at IS NULL),
+		(SELECT COUNT(*) FROM keys WHERE egress_id=egress_proxies.id AND deleted_at IS NULL)
 		FROM egress_proxies ORDER BY name`)
 	if err != nil {
 		return nil, err
