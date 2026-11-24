@@ -161,5 +161,6 @@ var toolOutputs = map[string]map[string]any{
 	"check_keys": outObj(map[string]any{"message": typed("string", "Summary"), "checked": typed("integer", "Keys checked"), "working": typed("integer", "Keys that work"),
 		"out_of_quota": typed("integer", "Keys out of quota"), "invalid": typed("integer", "Keys the provider rejected"), "unreachable": typed("integer", "Checks that could not reach the provider"), "skipped": typed("integer", "Keys not checked")}, "message"),
 	"set_key_status": keyItem,
-	"add_keys":       outObj(map[string]any{"added": listOf(outObj(map[string]any{"key_id": typed("integer", "Key id"), "label": typed("string", "Label"), "hint": typed("string", "The secret's last characters")}), "Keys added"), "skipped": typed("integer", "Duplicates and empty secrets")}, "added", "skipped"),
+	"add_keys":       outObj(map[string]any{"added": listOf(outObj(map[string]any{"key_id": typed("integer", "Key id"), "label": typed("string", "Label"), "hint": typed("string", "The secret's last characters")}), "Keys added"), "skipped": typed("integer", "Duplicates and empty secrets"),
+		"check_job_id": typed("integer", "The background job checking the new keys, when the provider has a health check")}, "added", "skipped"),
 }

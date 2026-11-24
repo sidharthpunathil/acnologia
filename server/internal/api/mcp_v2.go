@@ -189,7 +189,7 @@ var manageTools = withTitles([]mcpTool{
 		Description: "Enable or disable a key. Disabled keys are never handed out.",
 		InputSchema: obj(map[string]any{"key_id": integer("Key id from list_keys", 1, 0), "status": map[string]any{"type": "string", "enum": []string{"active", "disabled"}}}, "key_id", "status")},
 	{Name: "add_keys", Set: setManage, Annotations: hints("Add keys", false, false, true),
-		Description: "Add API keys to a service. Duplicates are skipped. New keys are health checked in the background. A provider whose credential has several parts (a login and a password for Basic auth, or an app id and an app key) takes parts instead of secret, or secret as login:password.",
+		Description: "Add API keys to a service. Duplicates are skipped. New keys are health checked in the background as a job: check_job_id in the result names it, and list_keys shows each key's state once it is done. A provider whose credential has several parts (a login and a password for Basic auth, or an app id and an app key) takes parts instead of secret, or secret as login:password.",
 		InputSchema: obj(map[string]any{
 			"service": str("Service slug"),
 			"keys": map[string]any{"type": "array", "items": obj(map[string]any{
@@ -897,8 +897,17 @@ func (s *Server) mcpAdminCall(ctx context.Context, a *store.App, name string, ra
 			added = append(added, map[string]any{"key_id": k.ID, "label": k.Label, "hint": k.Hint})
 		}
 		s.Store.AddAudit(ctx, nil, "key.create", sv.Slug, fmt.Sprintf("%s: %d added, %d skipped", actor, len(added), skipped))
-		go s.checkMany(sv, created)
-		return map[string]any{"added": added, "skipped": skipped}, nil
+		out := map[string]any{"added": added, "skipped": skipped}
+		// The new keys are checked in the background as a job, the same one
+		// the admin add keys route starts (jobs.go). The job carries this
+		// call's attribution; it has no request of its own.
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/mcp", nil)
+		if err != nil {
+			go s.checkMany(sv, created)
+		} else if job := s.checkNewKeys(req, sv, created); job != nil {
+			out["check_job_id"] = job.ID
+		}
+		return out, nil
 	}
 	return nil, fmt.Errorf("unknown tool %q", name)
 }
