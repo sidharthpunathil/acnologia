@@ -1,0 +1,12 @@
+{
+  "name": "acnologia",
+  "description": "Connect your agent to your Acnologia server: find a provider's tools, read its guide and call it through pooled keys it never sees.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Sidharth P"
+  },
+  "homepage": "https://github.com/sidharthpunathil/acnologia",
+  "repository": "https://github.com/sidharthpunathil/acnologia",
+  "license": "MIT",
+  "keywords": ["api-keys", "mcp", "proxy", "rate-limits"]
+}

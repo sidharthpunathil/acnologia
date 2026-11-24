@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "acnologia",
+  "description": "Share your API keys without giving them away.",
+  "owner": {
+    "name": "Sidharth P"
+  },
+  "plugins": [
+    {
+      "name": "acnologia",
+      "source": "./plugin",
+      "description": "Connect your agent to your Acnologia server: find a provider's tools, read its guide and call it through pooled keys it never sees.",
+      "version": "0.1.0",
+      "category": "development",
+      "homepage": "https://github.com/sidharthpunathil/acnologia"
+    }
+  ]
+}

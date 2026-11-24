@@ -159,7 +159,8 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 | `acn proxy ca [--out file\|-] [--bundle]` | Save the CA certificate apps must trust (`acnologia-ca.pem` by default; `-` prints it). `--bundle` saves the system roots plus the CA instead (`acnologia-ca-bundle.pem`), for `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`. |
 | `acn proxy env [--token acn_...] [--ca file] [--bundle file]` | Print `export` lines (`HTTPS_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS` and the like) for an app to use the forward proxy, with a placeholder where the app token goes unless you pass `--token`. It saves the CA and a bundle of the system roots plus the CA next to the CLI config: `NODE_EXTRA_CA_CERTS` gets the CA alone, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` get the bundle, because they replace the whole trust store. The system roots come from `SSL_CERT_FILE` or the usual Linux and macOS bundle paths; on Windows, or when none is found, it sets `NODE_EXTRA_CA_CERTS` only and says so on stderr. |
 | `acn mcp` | A stdio MCP server for Claude and other MCP clients. See [Connect Claude](#connect-claude). |
-| `acn mcp config` | Print the snippet that adds `acn mcp` to Claude Code, Claude Desktop or Cursor. |
+| `acn mcp config` | Print the snippet that adds `acn mcp` to Claude Code, Claude Desktop, Cursor or Codex. |
+| `acn mcp install [--client claude-code\|cursor\|codex\|all] [--dry-run]` | Add `acn mcp` to the agents on this machine. See [Set up your agents in one step](#set-up-your-agents-in-one-step). |
 | `acn version` | The client's version. |
 | `acn help` | The list of commands. |
 
@@ -180,14 +181,54 @@ read usage and events, build providers. It acts as you, with the token's
 scope, and every call lands in the audit log. The other MCP, `/mcp` with an
 app token, hands out keys to one app.
 
-Sign in once, then add it to Claude Code:
+Sign in once, then add it to every agent on this machine:
 
 ```sh
 acn login
-claude mcp add acnologia -- "$(command -v acn)" mcp
+acn mcp install
 ```
 
-`acn mcp config` prints that line for you, with the absolute path of the
+### Set up your agents in one step
+
+`acn mcp install` finds Claude Code, Cursor and Codex on this machine (the
+binary on your PATH, or its config folder) and adds the `acn mcp` entry to
+each one:
+
+| Agent | Where it goes |
+|---|---|
+| Claude Code | `claude mcp add --scope user acnologia -- /path/to/acn mcp` when `claude` is on your PATH, otherwise `mcpServers` in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). User scope, so every project sees it. |
+| Cursor | `mcpServers` in `~/.cursor/mcp.json`. |
+| Codex | `[mcp_servers.acnologia]` in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). |
+
+```sh
+$ acn mcp install
+Claude Code: added acnologia with claude mcp add --scope user acnologia -- /usr/local/bin/acn mcp
+Cursor: backed up /home/me/.cursor/mcp.json to /home/me/.cursor/mcp.json.bak-20261125-101500
+Cursor: updated acnologia in /home/me/.cursor/mcp.json
+Codex: added acnologia in /home/me/.codex/config.toml
+Restart your agent, or start a new session, to load the Acnologia tools.
+```
+
+- The entry runs `acn mcp`, which reads the token from your saved login, so
+  no token is written into the agent's files.
+- Other servers and settings in each file stay as they were. A file is
+  copied to `<file>.bak-<time>` before it changes. If the entry already
+  exists with other settings, its command and arguments are replaced and
+  extra fields such as `env` are kept.
+- Running it again changes nothing when the entry is already right.
+- `--client cursor` sets up one agent even if it was not detected, and
+  `--client all` (the default) sets up every agent it finds.
+- `--dry-run` prints the commands it would run and the entries it would
+  write, and touches nothing.
+- `--name`, `--context` and the [tool filters](#choose-the-tools) work as
+  for `acn mcp config`.
+- A config file that is not valid JSON, or a Codex server written as a
+  dotted key or an inline table, is left alone with a message asking you to
+  edit it by hand.
+
+### Print a snippet instead
+
+`acn mcp config` prints the Claude Code line, with the absolute path of the
 `acn` you ran:
 
 ```sh
@@ -212,8 +253,9 @@ $ acn mcp config --client claude-desktop
 }
 ```
 
-`--client cursor` prints the same shape and `--client json` just the inner
-server object. `--name` changes the name the client shows (default
+`--client cursor` prints the same shape, `--client codex` the
+`[mcp_servers.acnologia]` table for `~/.codex/config.toml`, and
+`--client json` just the inner server object. `--name` changes the name the client shows (default
 `acnologia`), and `--context staging` pins a saved server other than the
 default (the snippet then runs `acn mcp --context staging`).
 

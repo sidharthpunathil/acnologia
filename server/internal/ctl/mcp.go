@@ -28,6 +28,9 @@ func (c *cli) mcp(args []string) error {
 	if len(args) > 0 && args[0] == "config" {
 		return c.mcpConfig(args[1:])
 	}
+	if len(args) > 0 && args[0] == "install" {
+		return c.mcpInstall(args[1:])
+	}
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(c.err)
 	name := fs.String("context", "", "saved server to use (default: the current one, see contexts)")
@@ -38,7 +41,7 @@ func (c *cli) mcp(args []string) error {
 		return err
 	}
 	if len(pos) > 0 {
-		return fmt.Errorf("usage: %s mcp [--context name] [--groups g1,g2] [--exclude t1,t2] [--read-only] [--confirm on|off], or %s mcp config", c.name(), c.name())
+		return fmt.Errorf("usage: %s mcp [--context name] [--groups g1,g2] [--exclude t1,t2] [--read-only] [--confirm on|off], or %s mcp config, or %s mcp install", c.name(), c.name(), c.name())
 	}
 	if err := f.Normalize(); err != nil {
 		return err
@@ -109,7 +112,7 @@ type mcpServer struct {
 func (c *cli) mcpConfig(args []string) error {
 	fs := flag.NewFlagSet("mcp config", flag.ContinueOnError)
 	fs.SetOutput(c.err)
-	client := fs.String("client", "claude-code", "claude-code, claude-desktop, cursor or json")
+	client := fs.String("client", "claude-code", "claude-code, claude-desktop, cursor, codex or json")
 	httpMode := fs.Bool("http", false, "connect to the server's URL directly instead of running "+c.name()+" mcp")
 	name := fs.String("name", "acnologia", "the server's name in the client")
 	showToken := fs.Bool("show-token", false, "with --http, print the saved token instead of a placeholder")
@@ -121,12 +124,19 @@ func (c *cli) mcpConfig(args []string) error {
 		return err
 	}
 	if len(pos) > 0 {
-		return fmt.Errorf("usage: %s mcp config [--client claude-code|claude-desktop|cursor|json] [--http] [--name acnologia] [filters]", c.name())
+		return fmt.Errorf("usage: %s mcp config [--client claude-code|claude-desktop|cursor|codex|json] [--http] [--name acnologia] [filters]", c.name())
 	}
 	switch *client {
 	case "claude-code", "claude-desktop", "cursor", "json":
+	case "codex":
+		if *httpMode {
+			return fmt.Errorf("--client codex runs %s mcp over stdio; drop --http", c.name())
+		}
+		if !serverNameRe.MatchString(*name) {
+			return fmt.Errorf("--name %q: use letters, digits, - and _ only", *name)
+		}
 	default:
-		return fmt.Errorf("unknown client %q; use claude-code, claude-desktop, cursor or json", *client)
+		return fmt.Errorf("unknown client %q; use claude-code, claude-desktop, cursor, codex or json", *client)
 	}
 	if strings.TrimSpace(*name) == "" {
 		return errors.New("--name is empty")
@@ -156,20 +166,9 @@ func (c *cli) mcpConfig(args []string) error {
 			fmt.Fprintf(c.err, "Claude Desktop may only run local commands from its config file; if it skips this entry, drop --http to use %s mcp.\n", c.name())
 		}
 	} else {
-		exe, err := c.executablePath()
-		if err != nil {
-			return fmt.Errorf("cannot find the path of %s: %w", c.name(), err)
+		if srv, err = c.stdioServer(*ctxName, f); err != nil {
+			return err
 		}
-		a := append(c.progArgs(), "mcp")
-		if *ctxName != "" {
-			if _, ok := c.load().Contexts[*ctxName]; !ok {
-				return fmt.Errorf("no saved server named %q; %s contexts lists them", *ctxName, c.name())
-			}
-			a = append(a, "--context", *ctxName)
-		} else if _, err := c.current(); err != nil {
-			fmt.Fprintf(c.err, "Not logged in yet: run %s login before starting your MCP client.\n", c.name())
-		}
-		srv = mcpServer{Command: exe, Args: append(a, f.Args()...)}
 	}
 
 	switch *client {
@@ -185,11 +184,33 @@ func (c *cli) mcpConfig(args []string) error {
 		}
 		fmt.Fprintln(c.out, strings.Join(words, " "))
 		return nil
+	case "codex":
+		_, err := io.WriteString(c.out, codexBlock(*name, srv))
+		return err
 	case "json":
 		return writeJSON(c, srv)
 	default:
 		return writeJSON(c, map[string]any{"mcpServers": map[string]mcpServer{*name: srv}})
 	}
+}
+
+// stdioServer is the entry that runs this binary's `mcp` over stdio, pinned
+// to ctxName when given. It nudges toward login when no server is saved yet.
+func (c *cli) stdioServer(ctxName string, f mcpbridge.Filters) (mcpServer, error) {
+	exe, err := c.executablePath()
+	if err != nil {
+		return mcpServer{}, fmt.Errorf("cannot find the path of %s: %w", c.name(), err)
+	}
+	a := append(c.progArgs(), "mcp")
+	if ctxName != "" {
+		if _, ok := c.load().Contexts[ctxName]; !ok {
+			return mcpServer{}, fmt.Errorf("no saved server named %q; %s contexts lists them", ctxName, c.name())
+		}
+		a = append(a, "--context", ctxName)
+	} else if _, err := c.current(); err != nil {
+		fmt.Fprintf(c.err, "Not logged in yet: run %s login before starting your MCP client.\n", c.name())
+	}
+	return mcpServer{Command: exe, Args: append(a, f.Args()...)}, nil
 }
 
 // writeJSON prints v indented, without escaping <, > and & (the placeholder
