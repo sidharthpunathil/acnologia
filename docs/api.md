@@ -37,6 +37,7 @@ limited time.
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. With `rotate`, `next` is null once the app reached a request or budget limit. A report never changes a key an admin disabled or a suspended (banned) key. |
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. 403 `lease_revoked` ends the lease when the app may no longer hold the key: lease mode or the service was taken away, its hidden key grant or share scope no longer covers the key, or the key was disabled. |
 | `GET /api/v1/capabilities` | The capabilities the app may call: `{capabilities: [{slug, name, description, strategy, params, routes: [{service, mapped}], url}]}`. Empty for a share's token. |
+| `GET /api/v1/usage/tags?days=30` | The app's own use per [caller tag](#limits-caller-tags-and-deny-rules) value: `{days, tags: [{key, value, today_requests, today_cost, month_requests, month_cost, requests, cost}], tag_budgets, truncated}`, the most expensive first, at most 500 rows. `requests` and `cost` cover the last `days` days (1 to 366). |
 | `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group or a capability (see llms-full.txt, Capabilities). Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` (not for a share's or a person's token), `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. A caller that may not lease the key gets bodies with the key replaced by `[key]`. A share's token reaches only the services it was made with: a slug that now names another service or a group answers 403 `service_not_allowed`. |
 | `GET /api/v1/proxy` | How to use the [forward proxy](#forward-proxy): `{proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts: [{host, service, name, path}], env: {HTTPS_PROXY, HTTP_PROXY, NO_PROXY, no_proxy, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE}, env_notes, ca_bundle: {file, build, note}, service_header}`. `hosts` lists the hosts of the services the token may use; `proxy_url_with_token` has `<app token>` where the token goes. `NODE_EXTRA_CA_CERTS` names the CA alone (`acnologia-ca.pem`), since Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so they name a bundle of the system roots plus the CA (`acnologia-ca-bundle.pem`); `ca_bundle.build` shows how to make it, and `acn proxy env` makes it for you. `passthrough` is false for a share's token and a read-only token. |
 | `GET /api/v1/proxy/ca.pem` | The forward proxy's CA certificate (PEM, `acnologia-ca.pem`). Public: no token, and open behind the access password. |
@@ -65,6 +66,13 @@ Status codes an app should handle:
 | 503 | `no_route` | No route of the capability can take these params (or `_service` names none). |
 | 503 | `no_route_worked` | Every route of the capability failed before reaching a provider. |
 | 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
+| 429 | `token_limit_reached` | The token used up a limit of its own; `limit` is `token_daily_requests`, `token_monthly_requests`, `token_daily_budget` or `token_monthly_budget`. |
+| 429 | `tag_limit_reached` | A caller tag value used up its tag budget; `limit` is `tag_daily_budget` and the like, and `tag` names the value (`customer=cust_A`). |
+| 503 | `server_spend_ceiling` | The server reached its daily spend ceiling. Every app waits until `reset_at` (midnight UTC). |
+| 400 | `bad_meta` | `X-Acnologia-Meta` is malformed: more than 5 pairs, a repeated key, or a key or value outside the allowed characters. |
+| 400 | `tag_pinned` | The token is pinned to a value of the tag key in `tag`, and the request sent another one. |
+| 403 | `denied_by_rule` | One of the app's deny rules covers the request. `rule` carries the rule (`id`, `method`, `service`, `host`, `path_prefix`, `note`). |
+| 503 | `limits_unavailable` | The app's limits or usage could not be read. Nothing is sent; retry after `retry_after_sec`. |
 | 404 | `unknown_service` | No service (or, for the proxy, service group or capability) has that slug. |
 | 404 | `lease_not_found` | Renewing a lease that is not open. |
 | 409 | `report_failed` | Lease already reported. |
@@ -77,6 +85,69 @@ Status codes an app should handle:
 Hidden keys serve only apps a superadmin marked `lease_hidden`. Other apps
 never see them, so on a service with only hidden keys those apps get 503
 `no_key_available`.
+
+### Limits, caller tags and deny rules
+
+Every request through `/proxy`, the forward proxy, a capability, a lease or
+an MCP tool is admitted against each limit it falls under, in one step:
+
+- the app's limits (`limits` on the app);
+- the token's limits: the token's own, with any field it leaves unset taken
+  from the app's per-token default (`PUT /api/admin/apps/{id}/token-limits`);
+- a tag budget for each caller tag value the request carries;
+- the server's daily spend ceiling (see
+  [configuration](configuration.md#daily-spend-ceiling)).
+
+Each limit is a daily or monthly request count or USD budget, with days and
+months in UTC. An admitted request holds one request and its estimated cost
+under every one of them until its usage is recorded, so a burst of
+concurrent requests cannot pass a cap that had room for fewer of them, and
+the request that would cross a budget is refused rather than let through.
+The hold is released however the request ends. The per-token default gives
+each token its own cap inside the app's: each person who claimed a reusable
+share link, or each agent that got its own token. OAuth access tokens
+(`acno_`) have no cap of their own: their calls count toward their app's
+limits and tag budgets.
+
+**Caller tags.** A caller may label a request with
+`X-Acnologia-Meta: customer=cust_A,workspace=w1`: up to 5 pairs, keys of
+`a-z 0-9 _ - .` up to 32 characters (lowercased), values of letters, digits
+and `_ - . : @ / +` up to 64 characters. The header is read on `/proxy`, the
+forward proxy, capabilities and leases, and never reaches the provider.
+Usage is recorded per tag value, so an app can bill its own customers.
+
+A tag budget caps each value of one key on its own: `{key: "customer",
+daily_budget: 2}` gives every customer $2 a day. Admission reserves against
+it like the app's limits, so concurrent calls cannot overshoot it. A request
+without that key is not under
+the budget, so to make a caller unable to skip or change its tag, pin the
+token: a token with `pinned_tags: {"customer": "cust_A"}` carries that value
+on every call, MCP tool calls included, and a request that sends another
+value for a pinned key gets 400 `tag_pinned`.
+
+**Deny rules.** A rule blocks an app's matching requests with 403
+`denied_by_rule`, whatever its other access allows. A rule has a `method`
+(or `*`), a target and a `path_prefix`:
+
+- `service`: a service, group or capability slug. The path is the one after
+  `/proxy/{service}`, with a leading `~host` segment also tried without it.
+- `host`: an upstream hostname, matched against the full path on that host.
+  This covers the forward proxy, and `/proxy` calls whose service lives on
+  that host. A rule for a whole host (path `/`, method `*` or `CONNECT`) also
+  blocks a passthrough tunnel to it; inside a blind tunnel nothing else can
+  be seen.
+- neither: every target.
+
+The path prefix matches itself and everything under it on whole segments
+(`/v1/files` covers `/v1/files/abc`, not `/v1/filesystem`); a trailing `*`
+makes it a plain string prefix (`/v1/file*`). Paths are compared after
+percent decoding (repeated, so `%252F` counts as `/`), with backslashes read
+as slashes, dot segments and repeated slashes cleaned, `;parameters`
+tried both kept and dropped, and case ignored. A group drops the members a
+rule covers and is refused only when none are left. A capability is checked
+by its own slug, and each route again as it runs. An upstream MCP tool is
+matched as `POST /tools/<tool name>` on its service. Leases hand the key to
+the app, so a rule cannot cover what the app does with a leased key.
 
 ### Forward proxy
 
@@ -223,9 +294,15 @@ lower of its owner's role and its scope.
 | `POST /apps`, `PATCH /apps/{id}` | a | `{name, description, mode, allowed_services, active, lease_hidden, limits}`. `limits` is `{daily_requests, monthly_requests, daily_budget, monthly_budget}`, null meaning none. Only a superadmin may set `lease_hidden: true`. Create returns the first token once as `token`, with its record (named `Default`) as `app_token`. |
 | `GET /mcp/control` | m | The control MCP for the Connect Claude card: `{url, groups: [{id, label, default}], tools: [{name, title, description, group, kind, available}]}`. `kind` is `read`, `write` or `destructive`; `available` is false when your role cannot use the tool. `url` uses `ACNOLOGIA_PUBLIC_URL`, else the request host. See [Control MCP](#control-mcp-mcpcontrol). |
 | `GET /apps/{id}/mcp`, `PUT /apps/{id}/mcp` | m / a | An app's MCP settings: `{core, service_tools, insights, manage, resources, prompts, exclusive_default, max_result_kb, instructions, disabled_tools, tool_mode}`, with the tool list (each tool has `enabled` and `listed`) and `listing: {mode, listed, total, auto_max}`, where `mode` is the effective `all` or `search`. `max_result_kb` defaults to 200, at most 2048; `instructions` under 8,000 characters; `tool_mode` is `auto` (default), `all` or `search`, else 400 `invalid`. The control MCP's `update_app_mcp` takes the same fields. |
-| `GET /apps/{id}/tokens` | m | The app's tokens, revoked ones included: `{id, name, prefix, created_at, created_by, created_by_email, last_used_at, expires_at, revoked_at}`. `prefix` is the first 8 characters plus `...`. `last_used_at` is written at most once a minute per token. |
-| `POST /apps/{id}/tokens` | a | Add a token: `{name, expires_in_days?}` (name up to 64 characters, expiry 1 to 3650 days, omitted means never). Returns `{token, app_token}`; the token is shown once. The app's other tokens keep working. Clears `lease_hidden` unless a superadmin creates it. |
-| `PATCH /apps/{id}/tokens/{tokenId}` | a | Rename: `{name}`. |
+| `GET /apps/{id}/tokens` | m | The app's tokens, revoked ones included: `{id, name, prefix, created_at, created_by, created_by_email, last_used_at, expires_at, revoked_at, read_only, limits, pinned_tags}`. `prefix` is the first 8 characters plus `...`. `last_used_at` is written at most once a minute per token. |
+| `POST /apps/{id}/tokens` | a | Add a token: `{name, expires_in_days?, read_only?, limits?, pinned_tags?}` (name up to 64 characters, expiry 1 to 3650 days, omitted means never). `limits` is the token's own `{daily_requests, monthly_requests, daily_budget, monthly_budget}`; `pinned_tags` is up to 5 caller tags, such as `{"customer": "cust_A"}` (see [Limits, caller tags and deny rules](#limits-caller-tags-and-deny-rules)). Returns `{token, app_token}`; the token is shown once. The app's other tokens keep working. Clears `lease_hidden` unless a superadmin creates it. |
+| `PATCH /apps/{id}/tokens/{tokenId}` | a | `{name?, limits?, pinned_tags?}`: each field sent replaces the old value, `null` clears `limits` or `pinned_tags`. Audited as `app.token_rename` for a rename alone, else `app.token_update`. |
+| `GET /apps/{id}/controls` | m | `{token_limits, tag_budgets, deny_rules}`: the per-token default, the tag budgets and the deny rules. |
+| `PUT /apps/{id}/token-limits` | a | `{limits}`: the limits every token of the app gets unless it sets its own field. Works on a share's backing app too, to cap each claimant. Audited as `app.token_limits`. |
+| `PUT /apps/{id}/tag-budgets` | a | `{budgets: [{key, daily_requests, monthly_requests, daily_budget, monthly_budget}]}` replaces the tag budgets: one per key, at most 10, each with at least one limit. Audited as `app.tag_budgets`. |
+| `GET /apps/{id}/deny-rules`, `POST /apps/{id}/deny-rules`, `DELETE /apps/{id}/deny-rules/{ruleId}` | m / a / a | List, add or remove deny rules. Add takes `{method, service, host, path_prefix, note}` (one of `service` or `host`, or neither; `method` defaults to `*`) and returns the rule as stored: method in capitals, host lowercased, path decoded and cleaned. At most 100 rules an app. Audited as `app.deny_rule_add` and `app.deny_rule_delete`. |
+| `GET /apps/{id}/usage/tags?days=30` | m | Use per caller tag value, the same answer as `GET /api/v1/usage/tags`. |
+| `GET /settings/spend-ceiling`, `PUT /settings/spend-ceiling` | a / s | The server's daily spend ceiling: `{ceiling_usd, source (env or saved), env_usd, saved_usd, spent_today_usd, reset_at}`. PUT takes `{usd}`: a dollar amount, `0` for none, or `null` to go back to `ACNOLOGIA_DAILY_SPEND_CEILING_USD`. |
 | `DELETE /apps/{id}/tokens/{tokenId}` | a | Revoke the token at once. It stays listed with `revoked_at` set. Token changes are audited as `app.token_create`, `app.token_rename`, `app.token_revoke` and `app.rotate_token`. |
 | `POST /apps/{id}/rotate-token` | a | Kept for compatibility: creates one new token and revokes all the app's other tokens. Returns `{app, token, app_token}`; the token is shown once. Clears `lease_hidden` unless a superadmin rotates. |
 | `DELETE /apps/{id}` | a | Delete the app and its leases. |
@@ -503,7 +580,10 @@ happens:
 - `max_claims` claims were made (`0` or unset means no cap; it can be changed
   on edit).
 
-Limits, pause and revoke cover everyone who claimed it at once. A reusable
+Limits, pause and revoke cover everyone who claimed it at once. Each claim
+gets its own token, so the backing app's per-token limits
+(`PUT /api/admin/apps/{id}/token-limits`) give each claimant a cap of its
+own inside the share's. A reusable
 share is proxy only, so a forwarded link never shows raw keys. It takes no
 `email`, its `label` defaults to "Anyone with the link", and `reusable`
 cannot change. Shares carry `reusable`, `max_claims` and `claim_count`, the

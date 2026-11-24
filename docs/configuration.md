@@ -55,6 +55,7 @@ Details in [Access password](#access-password) below.
 | `ACNOLOGIA_EVENT_RETENTION_DAYS` | `30` | How long request events are kept. `0` or less keeps them forever. |
 | `ACNOLOGIA_MAX_BODY_MB` | `50` | Largest proxied request body. Bodies are buffered in memory up to this size. |
 | `ACNOLOGIA_CACHE_MB` | `64` | Memory for cached GET responses and idempotent replays. `0` turns caching off. |
+| `ACNOLOGIA_DAILY_SPEND_CEILING_USD` | `0` (none) | Server-wide spend ceiling for one UTC day, in US dollars. Once every app together reaches it (by the estimated cost of their calls), every app is refused with 503 `server_spend_ceiling` until midnight UTC. A value saved under Settings wins over it, see [Daily spend ceiling](#daily-spend-ceiling). |
 | `ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE` | `false` | Let webhooks reach private, loopback and link-local addresses, for a receiver on your own network. |
 | `ACNOLOGIA_EGRESS_ECHO_URL` | `https://www.cloudflare.com/cdn-cgi/trace` | URL the egress proxy test calls to learn the proxy's public IP. |
 
@@ -123,6 +124,25 @@ return as soon as their quota resets. Keys that are disabled or banned,
 keys of providers without a health check, hidden keys of an untrusted
 service are never checked in the background, and a key at its concurrency
 limit waits for the next pass.
+
+### Daily spend ceiling
+
+The ceiling caps what the whole server spends in a UTC day, across every
+app. Admission adds up the day's recorded cost of every app plus the
+requests already admitted and still running, and refuses a request whose
+estimated cost would take the total past the ceiling. The refusal is 503
+`server_spend_ceiling` with `reset_at` (the next midnight UTC) and a
+`Retry-After`. The estimate is the same one app budgets use: the service's
+`cost_per_request` or its provider's price, so a service with no known
+price counts as free.
+
+`ACNOLOGIA_DAILY_SPEND_CEILING_USD` sets it. A superadmin can save another
+value under Settings, which is stored in the database and wins over the
+environment: a dollar amount, `0` to turn the ceiling off, or `null` to go
+back to the environment's value. Changes apply at once and are audit
+logged as `settings.spend_ceiling`. Admins can read the ceiling, where it
+comes from and what the server spent today with
+`GET /api/admin/settings/spend-ceiling`; only superadmins `PUT` it.
 
 ### Command line and tests
 
