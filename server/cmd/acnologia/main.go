@@ -117,7 +117,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DataDir)
+	st, err := store.OpenWith(cfg.DataDir, store.Options{MigrationBackup: cfg.MigrationBackup})
 	if err != nil {
 		return err
 	}

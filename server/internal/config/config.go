@@ -25,7 +25,10 @@ type Config struct {
 	TrustedProxyHops int
 	// ClientIPHeader names one header the edge sets to the client IP (such
 	// as Fly-Client-IP). When set, it is read instead of X-Forwarded-For.
-	ClientIPHeader     string
+	ClientIPHeader string
+	// MigrationBackup is ACNOLOGIA_MIGRATION_BACKUP: copy the database next
+	// to itself before a schema upgrade changes it. On by default.
+	MigrationBackup    bool
 	EventRetentionDays int
 	HealthInterval     time.Duration
 	MaxBodyBytes       int64
@@ -124,6 +127,7 @@ func Load(version string) Config {
 		TrustProxyHeaders:     envBool("ACNOLOGIA_TRUST_PROXY_HEADERS", false),
 		TrustedProxyHops:      max(envInt("ACNOLOGIA_TRUSTED_PROXY_HOPS", 1), 1),
 		ClientIPHeader:        strings.TrimSpace(Getenv("ACNOLOGIA_CLIENT_IP_HEADER")),
+		MigrationBackup:       envBool("ACNOLOGIA_MIGRATION_BACKUP", true),
 		EventRetentionDays:    envInt("ACNOLOGIA_EVENT_RETENTION_DAYS", 30),
 		HealthInterval:        envDuration("ACNOLOGIA_HEALTH_INTERVAL", 6*time.Hour),
 		MaxBodyBytes:          int64(envInt("ACNOLOGIA_MAX_BODY_MB", 50)) << 20,

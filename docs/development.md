@@ -243,6 +243,41 @@ Baselines are rendered on macOS. Other platforms render fonts differently, so
 regenerate the baselines on the machine that runs the suite, and review the
 diff images before committing them.
 
+## Changing the schema
+
+The database records its schema version in SQLite's `PRAGMA user_version`.
+Version 1 is the baseline: the `schema` constant and `store.migrate`, the
+idempotent steps (`CREATE TABLE IF NOT EXISTS`, `addColumn`) that brought
+every database up to date before versioning. A database from before then
+has version 0, gets the baseline and is set to 1. The baseline is frozen, so
+don't add to it.
+
+A schema change is one entry appended to `migrations` in
+`server/internal/store/store.go`, with its function next to the code that
+uses the table:
+
+```go
+var migrations = []migration{
+	{"oauth device codes", migrateOAuthDeviceCodes}, // version 2
+}
+```
+
+On start, every step the database has not had runs once, in order, inside
+one transaction with the rest of the upgrade, and the version goes up after
+each. A failure anywhere rolls all of it back. The step runs on the single
+writer connection inside that transaction, so it uses `db` directly and
+never begins another transaction. It does not need to be idempotent. Never
+edit, reorder or remove a step that has shipped: fix a mistake with a new
+step.
+
+A binary refuses to start on a database with a newer version than it knows,
+and says which versions and what to do. Before a step changes an existing
+database, the server copies it to `acnologia.db.pre-v<from>-to-v<to>.bak`
+next to it and keeps the last three (`ACNOLOGIA_MIGRATION_BACKUP=false`
+turns this off). `store.Open` never copies; the server opens the store with
+`store.OpenWith` and the setting. Tests that need their own steps call
+`open` with a list, as `schema_version_test.go` does.
+
 ## Conventions
 
 - Store secrets only through `crypto.Box`. Never log a request query string,
@@ -255,10 +290,8 @@ diff images before committing them.
 - A new route that must work while the access lock is on goes in
   `gateOpenPrefixes` or `gateOpenExact` (`internal/api/gate.go`). Everything
   else is locked by default.
-- Schema changes go in `store.migrate` with `addColumn`, so existing
-  databases upgrade on start. `migrate` runs inside one transaction on the
-  single writer connection: use `db` directly and never begin another
-  transaction there.
+- Schema changes go in a numbered migration step, see
+  [Changing the schema](#changing-the-schema).
 - Links built from server data use `safeHref` in the dashboard.
 - Update [`llms.txt`](llms.txt) and [`llms-full.txt`](llms-full.txt) when the
   consumer API changes, then run `make llms`. That target also copies

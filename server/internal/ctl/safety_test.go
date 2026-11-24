@@ -32,7 +32,7 @@ func TestSafetyCommandsAndFlags(t *testing.T) {
 		case r.URL.Path == "/api/admin/trash/trs_1/restore":
 			_, _ = io.WriteString(w, `{"ok":true,"restored":{"id":"trs_1","kind":"service","name":"serpapi"}}`)
 		case r.URL.Path == "/api/admin/version":
-			_, _ = io.WriteString(w, `{"current":"v1.0.0","latest":"v1.1.0","update_available":true,"upgrade_command":"docker compose pull && docker compose up -d"}`)
+			_, _ = io.WriteString(w, `{"current":"v1.0.0","latest":"v1.1.0","schema_version":4,"update_available":true,"upgrade_command":"docker compose pull && docker compose up -d"}`)
 		case r.URL.Path == "/api/admin/backup":
 			w.Header().Set("Content-Type", "application/vnd.sqlite3")
 			w.Header().Set("Content-Disposition", `attachment; filename="acnologia-backup-x.db"`)
@@ -62,7 +62,7 @@ func TestSafetyCommandsAndFlags(t *testing.T) {
 	if code, out, _ := run("trash", "restore", "trs_1"); code != 0 || !strings.Contains(out, "Restored service serpapi") {
 		t.Fatalf("restore: %s", out)
 	}
-	if code, out, _ := run("version", "--server"); code != 0 || !strings.Contains(out, "v1.1.0") || !strings.Contains(out, "docker compose pull") {
+	if code, out, _ := run("version", "--server"); code != 0 || !strings.Contains(out, "v1.1.0") || !strings.Contains(out, "docker compose pull") || !strings.Contains(out, "Schema   4") {
 		t.Fatalf("version: %s", out)
 	}
 	dir := t.TempDir()

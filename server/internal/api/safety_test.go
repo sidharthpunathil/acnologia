@@ -374,7 +374,7 @@ func TestVersionAndBackup(t *testing.T) {
 	})
 	var v map[string]any
 	e.do(e.super, "GET", "/api/admin/version", nil, 200, &v)
-	if v["current"] != "test" || v["latest"] != "v9.9.9" || v["upgrade_command"] == "" {
+	if v["current"] != "test" || v["latest"] != "v9.9.9" || v["upgrade_command"] == "" || v["schema_version"] != float64(store.LatestSchemaVersion()) {
 		t.Fatalf("version: %v", v)
 	}
 	if b := newerVersion("v1.2.3", "v1.10.0"); b == nil || !*b {
