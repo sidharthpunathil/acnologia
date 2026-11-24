@@ -471,6 +471,9 @@ func (s *Server) searchTools(ctx context.Context, a *store.App, st store.MCPSett
 		if av, ok := live.tool(t); ok {
 			m["available"] = av
 		}
+		if e := live.evidence(t); e.Enough() {
+			m["evidence"] = toolEvidence(e)
+		}
 		out = append(out, m)
 	}
 	res := map[string]any{"tools": out, "matches": total, "catalog_size": len(ids)}
@@ -521,6 +524,7 @@ type availLookup struct {
 	free    map[int64]int
 	resting map[int64]time.Time
 	memo    map[string]toolAvail
+	ev      *store.Evidence
 }
 
 func (s *Server) newAvailLookup(ctx context.Context, c *toolCatalog) *availLookup {
@@ -593,8 +597,9 @@ func (l *availLookup) tool(t *mcpTool) (toolAvail, bool) {
 
 // order sorts hits by score, then by availability: among equally good
 // matches a tool with a free key comes before one whose keys rest, and
-// that before one that is down. A capability comes before a single
-// provider at the same score.
+// that before one that is down. Then the measured success rate: a tool
+// with enough evidence comes before one without, the higher rate first. A
+// capability comes before a single provider at the same score.
 func (l *availLookup) order(hits []toolHit) {
 	rank := func(id int) int {
 		if av, ok := l.tool(&l.c.tools[id]); ok {
@@ -602,12 +607,21 @@ func (l *availLookup) order(hits []toolHit) {
 		}
 		return 0
 	}
+	rate := func(id int) float64 {
+		if e := l.evidence(&l.c.tools[id]); e.Enough() {
+			return e.SuccessRate()
+		}
+		return -1
+	}
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].score != hits[j].score {
 			return hits[i].score > hits[j].score
 		}
 		if ri, rj := rank(hits[i].id), rank(hits[j].id); ri != rj {
 			return ri < rj
+		}
+		if ri, rj := rate(hits[i].id), rate(hits[j].id); ri != rj {
+			return ri > rj
 		}
 		ci, cj := l.c.tools[hits[i].id].capability != "", l.c.tools[hits[j].id].capability != ""
 		if ci != cj {

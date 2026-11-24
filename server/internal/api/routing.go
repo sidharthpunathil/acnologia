@@ -27,11 +27,16 @@ const (
 	StrategyWeighted   = "weighted"    // random, in proportion to weights
 	StrategyCheapest   = "cheapest"    // lowest known price per request first, unpriced last
 	StrategyMostKeys   = "most_keys"   // most keys free right now first
+	// StrategyReliable puts the highest measured success rate first (the
+	// endpoint's over the last 7 days, else the service's), providers with
+	// too few calls to tell last, and breaks ties by median latency.
+	StrategyReliable = "reliable"
 )
 
 var routingStrategies = map[string]bool{
 	StrategyPriority: true, StrategyRoundRobin: true, StrategyRandom: true,
 	StrategyWeighted: true, StrategyCheapest: true, StrategyMostKeys: true,
+	StrategyReliable: true,
 }
 
 // routeCand is one candidate the strategy orders.
@@ -48,6 +53,10 @@ type routeCand struct {
 	// now. Such candidates go last whatever the strategy, so the request
 	// tries a working provider first and still has them as a last resort.
 	down bool
+	// evidence reads the candidate's measured success rate and median
+	// latency for this request; known is false with too few calls. Read
+	// only by the reliable strategy.
+	evidence func() (rate float64, p50 int64, known bool)
 }
 
 var rrCounters sync.Map // slug -> *atomic.Uint64
@@ -77,8 +86,51 @@ func orderRoutes(slug, strategy string, cands []routeCand) []routeCand {
 		})
 	case StrategyMostKeys:
 		sort.SliceStable(out, func(i, j int) bool { return out[i].keys > out[j].keys })
+	case StrategyReliable:
+		out = reliableOrder(out)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return !out[i].down && out[j].down })
+	return out
+}
+
+// reliableOrder sorts by measured success rate, highest first, unknown
+// last, then by median latency, lowest first (an unknown latency last).
+func reliableOrder(in []routeCand) []routeCand {
+	type ev struct {
+		rate  float64
+		p50   int64
+		known bool
+	}
+	evs := make([]ev, len(in))
+	for i, c := range in {
+		if c.evidence != nil {
+			evs[i].rate, evs[i].p50, evs[i].known = c.evidence()
+		}
+	}
+	idx := make([]int, len(in))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		x, y := evs[idx[a]], evs[idx[b]]
+		if x.known != y.known {
+			return x.known
+		}
+		if !x.known {
+			return false
+		}
+		if x.rate != y.rate {
+			return x.rate > y.rate
+		}
+		if (x.p50 > 0) != (y.p50 > 0) {
+			return x.p50 > 0
+		}
+		return x.p50 < y.p50
+	})
+	out := make([]routeCand, len(in))
+	for i, j := range idx {
+		out[i] = in[j]
+	}
 	return out
 }
 
@@ -142,7 +194,8 @@ func (s *Server) candidate(ctx context.Context, idx int, sv *store.Service, weig
 	keys := free[sv.ID]
 	cost, known := costKnown(sv, prov, method, "/"+trimSlash(path))
 	return routeCand{idx: idx, sv: sv, weight: weight, cost: cost, unpriced: !known,
-		keys: keys, down: st.State == breaker.Open || keys == 0}
+		keys: keys, down: st.State == breaker.Open || keys == 0,
+		evidence: func() (float64, int64, bool) { return s.routeEvidence(ctx, sv, method, path) }}
 }
 
 func trimSlash(p string) string {

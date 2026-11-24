@@ -29,8 +29,8 @@ func opsTools() []*chatTool {
 		"name":        map[string]any{"type": "string"},
 		"description": map[string]any{"type": "string"},
 		"members":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "service slugs in fallback order"},
-		"strategy": map[string]any{"type": "string", "enum": []string{"priority", "round_robin", "random", "cheapest", "most_keys"},
-			"description": "which member goes first: priority (the order of members), round_robin, random, cheapest, or most_keys (most free keys); the rest follow as fallbacks"},
+		"strategy": map[string]any{"type": "string", "enum": []string{"priority", "round_robin", "random", "cheapest", "most_keys", "reliable"},
+			"description": "which member goes first: priority (the order of members), round_robin, random, cheapest, most_keys (most free keys) or reliable (highest measured success rate); the rest follow as fallbacks"},
 	}
 	svcPath := func(cs *chatSession, in map[string]any, suffix string) (string, *store.Service, error) {
 		sv, err := cs.resolveService(argStr(in, "service"))

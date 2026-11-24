@@ -143,7 +143,7 @@ function CapabilityEditor({
           isInvalid={!!error}
           spellCheck="false"
           fieldClassName="font-mono text-caption-1-regular"
-          hint={error ?? "strategy: priority, round_robin, random, weighted, cheapest or most_keys. A route can set weight, disabled, method and body."}
+          hint={error ?? "strategy: priority, round_robin, random, weighted, cheapest, most_keys or reliable. A route can set weight, disabled, method and body."}
         />
       </form>
     </Modal>

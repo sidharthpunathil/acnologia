@@ -19,7 +19,7 @@ type ServiceGroup struct {
 	Description string   `json:"description"`
 	Members     []string `json:"members"` // service slugs, in fallback order
 	// Strategy picks which member goes first: priority (the order above),
-	// round_robin, random, cheapest or most_keys. The rest follow as fallbacks.
+	// round_robin, random, cheapest, most_keys or reliable. The rest follow as fallbacks.
 	Strategy  string    `json:"strategy"`
 	CreatedAt time.Time `json:"created_at"`
 }

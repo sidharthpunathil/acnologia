@@ -421,7 +421,7 @@ func (s *Server) applyGroup(ctx context.Context, in groupInput, g *store.Service
 	case g.Name == "" || len(g.Name) > 100:
 		return "name is required (at most 100 characters)"
 	case !routingStrategies[g.Strategy] || g.Strategy == StrategyWeighted:
-		return "strategy must be priority, round_robin, random, cheapest or most_keys"
+		return "strategy must be priority, round_robin, random, cheapest, most_keys or reliable"
 	case len(g.Members) < 2:
 		return "a group needs at least two services"
 	case len(g.Members) > 20:

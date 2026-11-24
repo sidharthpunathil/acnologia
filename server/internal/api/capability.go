@@ -463,7 +463,7 @@ func (s *Server) applyCapability(ctx context.Context, in capabilityInput, c *sto
 	case len(c.Description) > 1000:
 		return "description must be at most 1,000 characters"
 	case !routingStrategies[c.Strategy]:
-		return "strategy must be priority, round_robin, random, weighted, cheapest or most_keys"
+		return "strategy must be priority, round_robin, random, weighted, cheapest, most_keys or reliable"
 	case len(c.Params) > maxCapParams:
 		return fmt.Sprintf("at most %d params", maxCapParams)
 	case len(c.Routes) == 0:
