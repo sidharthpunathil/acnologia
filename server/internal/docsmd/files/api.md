@@ -1,15 +1,28 @@
 # HTTP API
 
 Every route Acnologia serves, grouped by who calls it. Bodies are JSON, and
-every error has the shape
-`{"error": {"code": "string", "message": "string"}}` with a matching HTTP
-status.
+every error has the shape below, with a matching HTTP status:
+
+```json
+{"error": {"code": "string", "message": "string", "hint": "string",
+           "fix": {"tool": "string", "command": "string", "url": "string"},
+           "doc_url": "/docs/errors.md#code", "request_id": "req_...", "retry_after_sec": 30}}
+```
+
+`code` and `message` are the original fields. The rest were added for
+agents and appear when they apply: `hint` says what to do next; `fix` names
+an MCP tool, a CLI command or a URL for the next step (each optional, and
+`fix` is left out when there is none); `doc_url` links the code's entry in
+[Error codes](errors.md); `request_id` repeats the `X-Request-Id` response
+header; `retry_after_sec` is set when the response has a `Retry-After`
+header. [Error codes](errors.md) lists every code with its meaning and
+whether a retry can help. Ignore fields you do not know: more may come.
 
 Each surface takes its own kind of credential:
 
 | Surface | Prefix | Auth |
 |---|---|---|
-| Public | `/healthz`, `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate`, `/api/public/github`, `/api/v1/proxy/ca.pem` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` and `/api/public/github` stay open) |
+| Public | `/healthz`, `/api/v1` (the agent index), `/llms.txt`, `/llms-full.txt`, `/docs/{slug}.md`, `/docs/assets/{name}`, `/api/docs`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate`, `/api/public/github`, `/api/v1/proxy/ca.pem` | none (behind the [access password](configuration.md#access-password) only `/healthz`, `/api/v1`, `/robots.txt`, `/.well-known/acnologia`, `/api/gate` and `/api/public/github` stay open; the llms files, `/docs/*` and `/api/docs` also open to any valid app token, MCP access token or admin token) |
 | Server to server | `/api/peer/v1` | an invite (`preview`, `redeem`), a share token (`manifest`, `leave`, `providers/{slug}/logo`, `keys`, `report`) or the owner's signature (`revoke`); see [Sharing between servers](#sharing-between-servers) |
 | Claim links | `/api/claim/v1` | a claim code (`acnclaim_...`) from a share with a person; see [Sharing with people](#sharing-with-people) |
 | Consumer | `/api/v1`, `/proxy`, `/mcp` | app token: `Authorization: Bearer acn_...`, `X-Acnologia-Token`, or `?acn_token=` (proxy only) |
@@ -30,9 +43,10 @@ limited time.
 
 | Method and path | Purpose |
 |---|---|
+| `GET /api/v1` | The agent index, open to anyone and behind the access password too: `{name, version, base_url, setup_required, gated, auth: {app_token, admin_token, oauth, access_header, docs_need_token}, endpoints: {mcp, mcp_control, oauth_metadata, llms, llms_full, docs, errors_doc, openapi, device_login, me, services, index, well_known, health}, start_here}`. Endpoints are absolute URLs. `setup_required` is null for a caller the access password keeps out. `GET /.well-known/acnologia` carries the same object as `agent`. |
 | `GET /api/v1/services` | Services the token may use, with `available`, `base_url`, `auth` `{type, name, prefix}` and `guide_url`. |
 | `GET /api/v1/services/{slug}/guide` | The service's usage guide, only for a service the token may use (403 `service_not_allowed` otherwise). `Accept: text/markdown` or `?format=md` returns raw Markdown; otherwise `{markdown, guide, generated}` (see [usage guides](providers.md#usage-guides)). |
-| `GET /api/v1/me` | The token's own access: `{app: {id, name}, limits: {daily_requests, monthly_requests, daily_budget, monthly_budget}, usage: {today_requests, today_cost, month_requests, month_cost, last_used_at, limit_hit}, limit_hit, services: [{slug, name, provider, category, available, logo_url}], share}` (`logo_url` is the service logo inlined as a `data:` image URI of at most 48 KB, or null). `share` is null for an ordinary app; for a share's token it is `{id, name, owner: {name, id}, owner_name, owner_id, recipient, label, status, mode, ends_at}`. A share token whose share is paused, expired or revoked still gets 200 here with that `status` and no services. `available` counts keys free right now for a share's token; for an ordinary app it is 1 or 0, since apps never learn pool sizes. |
+| `GET /api/v1/me` | The token's own access: `{app: {id, name, mode, read_only}, mode, read_only, token: {kind, id, name, prefix, read_only, expires_at, client}, mcp: {tool_sets, tool_mode, read_only, resources, prompts}, limits: {daily_requests, monthly_requests, daily_budget, monthly_budget}, remaining: {daily_requests, monthly_requests, daily_budget, monthly_budget}, usage: {today_requests, today_cost, month_requests, month_cost, last_used_at, limit_hit}, limit_hit, services: [{slug, name, provider, category, available, logo_url}], share}`. `token.kind` is `app` or `oauth`; `remaining` is what is left of each limit, null where there is none. `logo_url` is null unless the request asks for `?logos=1`; then it is the service logo inlined as a `data:` image URI of at most 48 KB, or null. The `acnologia_whoami` MCP tool returns the same object. `share` is null for an ordinary app; for a share's token it is `{id, name, owner: {name, id}, owner_name, owner_id, recipient, label, status, mode, ends_at}`. A share token whose share is paused, expired or revoked still gets 200 here with that `status` and no services. `available` counts keys free right now for a share's token; for an ordinary app it is 1 or 0, since apps never learn pool sizes. |
 | `POST /api/v1/lease` | Borrow a key: `{service, exclude_key_ids, ttl_sec, wait_sec, exclusive}`. Apps in mode `lease` or `both`. `exclusive: true` keeps the key from every other caller until you report or the lease expires. |
 | `POST /api/v1/leases/{id}/report` | Report the outcome: `{outcome, status_code, retry_after_sec, message, rotate}`. With `rotate`, `next` is null once the app reached a request or budget limit. A report never changes a key an admin disabled or a suspended (banned) key. |
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. 403 `lease_revoked` ends the lease when the app may no longer hold the key: lease mode or the service was taken away, its hidden key grant or share scope no longer covers the key, or the key was disabled. |
@@ -41,15 +55,25 @@ limited time.
 | `GET /api/v1/proxy` | How to use the [forward proxy](#forward-proxy): `{proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts: [{host, service, name, path}], env: {HTTPS_PROXY, HTTP_PROXY, NO_PROXY, no_proxy, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE}, env_notes, ca_bundle: {file, build, note}, service_header}`. `hosts` lists the hosts of the services the token may use; `proxy_url_with_token` has `<app token>` where the token goes. `NODE_EXTRA_CA_CERTS` names the CA alone (`acnologia-ca.pem`), since Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so they name a bundle of the system roots plus the CA (`acnologia-ca-bundle.pem`); `ca_bundle.build` shows how to make it, and `acn proxy env` makes it for you. `passthrough` is false for a share's token and a read-only token. |
 | `GET /api/v1/proxy/ca.pem` | The forward proxy's CA certificate (PEM, `acnologia-ca.pem`). Public: no token, and open behind the access password. |
 | `CONNECT`, or any method with an absolute URL | The forward proxy itself: the app sets Acnologia as its `HTTPS_PROXY` / `HTTP_PROXY` and calls provider URLs as they are. A request to a service's host runs exactly as `/proxy/{service}/...`. Apps in mode `proxy` or `both`. |
-| `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Built in tools are listed as `acnologia_<name>` (old names still work) with an `outputSchema`. Tools depend on the app's tool sets: core (`acnologia_list_services`, `acnologia_pool_status`, `acnologia_service_guide`, `acnologia_get_key`, `acnologia_renew_key`, `acnologia_report_key`, `acnologia_proxy_request`), service tools generated from every provider example and every usage guide endpoint no example covers (named `<service slug>_<group>_<endpoint name>`; a new provider or guide adds its tools without a restart), with `acnologia_search_tools` and `acnologia_call_tool` to find and call them, insights (`acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats`) and manage (`acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys`). The app's `tool_mode` decides what `tools/list` shows: `auto` (default) lists every tool while there are 30 or fewer service tools, else works as `search`; `all` lists every tool; `search` lists the other tools plus `acnologia_search_tools` and `acnologia_call_tool`, and unlisted service tools stay callable by name. `initialize` advertises `tools.listChanged`. Also resources (including `acnologia://services/{slug}/guide`, the usage guide as Markdown) and prompts. Tools synced from a service's upstream MCP server are listed by name too; `acnologia_call_tool` returns their result exactly as calling them by name does (`isError` included), and declares no `outputSchema` for that reason. A generated service tool or capability tool rejects an argument its input schema does not have with an `isError` result that lists the ones it takes, before anything is sent (upstream MCP tools pass their arguments through). An unknown tool name gets up to three close names: a `-32602` error from `tools/call`, an `isError` result from `acnologia_call_tool`. Each `acnologia_search_tools` hit for a service or capability carries `available: {state, free_keys, breaker, resting_until, retry_after_sec}`, where `state` is `available`, `resting` (every key cools down) or `down`; equal matches sort available first. A capability whose route calls a matched tool's endpoint shows up next to it with `served_by` (its services). A capability whose routes are all GET or HEAD is read-only. Proxied results (`acnologia_proxy_request` and generated tools) add, when known, `served_by`, `attempts`, `tried` (capabilities), `cache` (`hit`, `miss`, `replay`, `bypass`) and `retry_after_sec`; a body over the app's `max_result_kb` comes back as text marked `truncated: true` with `bytes_total`. Both take an optional `idempotency_key`, sent as the `Idempotency-Key` header. |
+| `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Built in tools are listed as `acnologia_<name>` (old names still work) with an `outputSchema`. Tools depend on the app's tool sets: core (`acnologia_whoami`, `acnologia_list_services`, `acnologia_pool_status`, `acnologia_service_guide`, `acnologia_get_key`, `acnologia_renew_key`, `acnologia_report_key`, `acnologia_proxy_request`), service tools generated from every provider example and every usage guide endpoint no example covers (named `<service slug>_<group>_<endpoint name>`; a new provider or guide adds its tools without a restart), with `acnologia_search_tools` and `acnologia_call_tool` to find and call them, insights (`acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats`) and manage (`acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys`). The app's `tool_mode` decides what `tools/list` shows: `auto` (default) lists every tool while there are 30 or fewer service tools, else works as `search`; `all` lists every tool; `search` lists the other tools plus `acnologia_search_tools` and `acnologia_call_tool`, and unlisted service tools stay callable by name. `initialize` advertises `tools.listChanged`. Also resources (including `acnologia://services/{slug}/guide`, the usage guide as Markdown) and prompts. Tools synced from a service's upstream MCP server are listed by name too; `acnologia_call_tool` returns their result exactly as calling them by name does (`isError` included), and declares no `outputSchema` for that reason. A generated service tool or capability tool rejects an argument its input schema does not have with an `isError` result that lists the ones it takes, before anything is sent (upstream MCP tools pass their arguments through). An unknown tool name gets up to three close names: a `-32602` error from `tools/call`, an `isError` result from `acnologia_call_tool`. Each `acnologia_search_tools` hit for a service or capability carries `available: {state, free_keys, breaker, resting_until, retry_after_sec}`, where `state` is `available`, `resting` (every key cools down) or `down`; equal matches sort available first. A capability whose route calls a matched tool's endpoint shows up next to it with `served_by` (its services). A capability whose routes are all GET or HEAD is read-only. Proxied results (`acnologia_proxy_request` and generated tools) add, when known, `served_by`, `attempts`, `tried` (capabilities), `cache` (`hit`, `miss`, `replay`, `bypass`) and `retry_after_sec`; a body over the app's `max_result_kb` comes back as text marked `truncated: true` with `bytes_total`. Both take an optional `idempotency_key`, sent as the `Idempotency-Key` header. |
 | `GET /mcp` | With `Accept: text/event-stream`: the MCP notification stream (server sent events). Sends `notifications/tools/list_changed` and `notifications/resources/list_changed` when what the app sees changes; an admin write wakes it at once and a check runs every 60 seconds. Keepalive comment every 25 seconds; closes after an hour (reconnect) or when the token stops working. Without that `Accept`: 405. |
 
-Status codes an app should handle:
+A tool that fails on `/mcp` returns `isError: true`, with the message and
+the hint as text and `{code, message, hint, fix, doc_url, retry_after_sec}`
+under `_meta["acnologia/error"]`. Tools without an output schema that
+requires fields (`acnologia_call_tool`, `acnologia_search_tools`, upstream
+MCP tools) also return that object as `structuredContent`; the others leave
+it out there, since clients check `structuredContent` against the schema
+even on an error.
+
+Status codes an app should handle (every code is in [Error codes](errors.md)):
 
 | Status | Code | Meaning |
 |---|---|---|
 | 401 | `unauthenticated` | Token missing or wrong. |
-| 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
+| 401 | `locked` | The server is behind its access password. Send `X-Acnologia-Access`, or a token where one is accepted. |
+| 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. `service_not_allowed` lists the services the app may use. |
+| 403 | `read_only_token` | A read-only token tried to lease, renew, report or write. |
 | 407 | `proxy_auth_required` | Forward proxy only: the proxy URL has no app token, or a wrong one. Carries `Proxy-Authenticate: Basic realm="Acnologia"`. |
 | 403 | `not_a_service` | Forward proxy only: plain HTTP to a host that is no service, or HTTPS to one when passthrough is off (or the token is a share's or read-only). Call that host directly or list it in `NO_PROXY`. |
 | 403 | `port_not_allowed` | Forward proxy only: a passthrough tunnel to a port other than 443 or 8443. |
@@ -65,7 +89,7 @@ Status codes an app should handle:
 | 503 | `no_route` | No route of the capability can take these params (or `_service` names none). |
 | 503 | `no_route_worked` | Every route of the capability failed before reaching a provider. |
 | 429 | `app_limit_reached` | The app used up a daily or monthly request or budget limit; `limit` and `reset_at` say which and until when. |
-| 404 | `unknown_service` | No service (or, for the proxy, service group or capability) has that slug. |
+| 404 | `unknown_service` | No service (or, for the proxy, service group or capability) has that slug. `/api/v1` and MCP answers suggest close slugs the app may use. |
 | 404 | `lease_not_found` | Renewing a lease that is not open. |
 | 409 | `report_failed` | Lease already reported. |
 | 410 | `report_failed` | Lease expired more than 10 minutes ago. |

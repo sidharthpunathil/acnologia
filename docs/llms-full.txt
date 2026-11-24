@@ -2,11 +2,45 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider, hands out a working key, detects rate limits and quota exhaustion, cools keys down and rotates. Consume it through the proxy (the key is injected and never exposed), through the forward proxy (set `HTTPS_PROXY` to Acnologia and call provider URLs as they are), or by leasing a key and reporting the outcome.
 
-Contents: authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), the forward proxy (HTTPS_PROXY), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, provider rotation, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
+Contents: starting from a URL, GET /api/v1/me, authentication, public endpoints, the consumer API (services, lease, report, renew, proxy, LLM providers), the forward proxy (HTTPS_PROXY), outcomes, concurrency, MCP, SDKs and other languages, resilience, cache and idempotency, service groups, provider rotation, capabilities, app limits, egress proxies, webhooks, AI models and the provider refresh, key secrecy and redaction, errors, services shared by another Acnologia, admin tokens and the `acn` CLI, docs.
 
 Before calling a service you have not used, fetch its usage guide: `GET /api/v1/services/{slug}/guide` (or the `acnologia_service_guide` MCP tool). It lists the endpoints worth knowing with their parameters, ready curl examples through the proxy, limits and pricing, and how errors are handled. Every entry of `GET /api/v1/services` carries its `guide_url`.
 
-Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code": "string", "message": "string"}}` with a matching HTTP status.
+Conventions: JSON bodies; IDs are integers except `lease_id` (string); timestamps are RFC 3339 strings or null. Errors are `{"error": {"code", "message", "hint", "fix", "doc_url", "request_id", "retry_after_sec"}}` with a matching HTTP status (see Errors).
+
+## Starting from a URL
+
+An agent that has only the server's URL starts with `GET /api/v1`. It needs no token and works behind the access password too. It answers with the agent index: `name`, `version`, `base_url`, `gated` (whether an access password is set), `setup_required` (null for a caller the access password keeps out), `auth` (how each surface takes its token, plus `access_header` and `docs_need_token` on a gated server), `endpoints` and `start_here`, a few steps in order. `endpoints` holds absolute URLs for `mcp`, `mcp_control`, `oauth_metadata`, `llms`, `llms_full`, `docs`, `errors_doc`, `openapi`, `device_login`, `me`, `services`, `index`, `well_known` and `health`. `GET /.well-known/acnologia` carries the same index as its `agent` field, next to the identity fields other servers read.
+
+From there:
+
+1. Read `/llms.txt` and this file. On a gated server, send your token with the request: the docs open to any valid app token, MCP access token or admin token.
+2. With an app token, call `GET /api/v1/me` or the `acnologia_whoami` MCP tool to see what the token may do.
+3. Connect an MCP client to `/mcp` with the token, or let it sign in with OAuth.
+4. Without a token, ask a person to create an app in the dashboard and hand you its token. The `acn` CLI signs in through the browser with `acn login`.
+5. On any error, follow `error.hint` and `error.fix`.
+
+## GET /api/v1/me
+
+What the token may do, without a key in sight:
+
+```json
+{
+  "app": {"id": 3, "name": "agent", "mode": "both", "read_only": false},
+  "mode": "both",
+  "read_only": false,
+  "token": {"kind": "app", "id": 7, "name": "laptop", "prefix": "acn_Ab12", "read_only": false, "expires_at": null},
+  "mcp": {"tool_sets": ["core", "service_tools"], "tool_mode": "auto", "read_only": false, "resources": true, "prompts": true},
+  "limits": {"daily_requests": 1000, "monthly_requests": null, "daily_budget": null, "monthly_budget": null},
+  "remaining": {"daily_requests": 958, "monthly_requests": null, "daily_budget": null, "monthly_budget": null},
+  "usage": {"today_requests": 42, "today_cost": 0.42, "month_requests": 900, "month_cost": 9, "last_used_at": "2026-11-25T10:00:00Z", "limit_hit": null},
+  "limit_hit": null,
+  "services": [{"slug": "serpapi", "name": "SerpAPI", "provider": "serpapi", "category": "search", "available": 1, "logo_url": null}],
+  "share": null
+}
+```
+
+`token.kind` is `app` for an `acn_` token (a share's token included) and `oauth` for an `acno_` access token from an MCP sign in, which also carries `client`. `remaining` is what is left of each limit today or this month, null where the app has none. `logo_url` stays null unless you ask for `?logos=1`, which inlines each logo as a `data:` URI of up to 48 KB. The `acnologia_whoami` MCP tool returns the same object.
 
 ## Authentication
 
@@ -25,6 +59,7 @@ Acnologia strips all of them before forwarding to the provider. An app can be re
 
 ```
 GET /healthz             -> 200 {"ok": true, "version": "1.0.0"}
+GET /api/v1              -> the agent index (see Starting from a URL)
 GET /llms.txt            -> the short summary with links
 GET /llms-full.txt       -> this reference
 GET /docs/{slug}.md      -> one doc as Markdown (see Docs as Markdown)
@@ -32,13 +67,13 @@ GET /docs/assets/{name}  -> an image the docs show
 GET /api/docs            -> JSON index of the docs
 GET /robots.txt          -> disallows everything
 GET /api/v1/proxy/ca.pem -> the forward proxy's CA certificate (PEM)
-GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url, box_public_key}, for sharing between servers
+GET /.well-known/acnologia -> this server's identity {id, name, version, public_key, url, box_public_key}, for sharing between servers, plus the agent index as `agent`
 GET /api/gate            -> {required, locked, password_only, unlock_ttl_sec}: whether the site has an access password and this caller is past it
 POST /api/claim/v1/preview {code} -> what a claim link shares (no secret); see Access shared with you by link
 POST /api/claim/v1/redeem  {code} -> the token (or, for a reveal share, the keys), once
 ```
 
-When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia, the server to server routes under /api/peer/v1, the claim link routes under /api/claim/v1 and the /claim/<code> and /me pages stay public: the llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>` or carries the browser's gate cookie. The app token routes (/proxy, /api/v1, /mcp, the forward proxy) and /api/v1/proxy/ca.pem are not affected.
+When the instance sets an access password (ACNOLOGIA_ACCESS_PASSWORD), only /healthz, /robots.txt, /.well-known/acnologia, the agent index at /api/v1, the server to server routes under /api/peer/v1, the claim link routes under /api/claim/v1 and the /claim/<code> and /me pages stay public. The llms files, the docs and /api/docs answer 401 {"error":{"code":"locked"}} unless the request sends `X-Acnologia-Access: <password>`, carries the browser's gate cookie, or carries any valid token: an app token (`Authorization: Bearer acn_...` or `X-Acnologia-Token`), an MCP access token (`acno_...`) or an admin token (`acnadm_...`). A token opens the docs only, never the dashboard. The app token routes (/proxy, /api/v1, /mcp, the forward proxy) and /api/v1/proxy/ca.pem are not affected.
 
 ## GET /api/v1/services
 
@@ -435,6 +470,33 @@ If the operator rotates the CA (`POST /api/admin/forward-proxy/ca/rotate`), down
 
 ### Errors
 
+Every JSON error has this shape:
+
+```json
+{"error": {
+  "code": "no_key_available",
+  "message": "every key for this service is cooling down, exhausted or disabled",
+  "hint": "Wait retry_after_sec, then retry. Check the service's state with acnologia_pool_status; if it stays empty, an admin has to add or fix keys.",
+  "fix": {"tool": "acnologia_pool_status"},
+  "doc_url": "/docs/errors.md#no_key_available",
+  "request_id": "req_3kTq9wZx1bQf",
+  "retry_after_sec": 30
+}}
+```
+
+`code` and `message` are unchanged from earlier releases; the other fields were added and appear when they apply. Branch on `code`. `hint` is what to do next. `fix` names the next step: an MCP `tool`, a CLI `command` or a `url` on the server. `doc_url` is the code's entry in [/docs/errors.md](/docs/errors.md), which lists every code with whether a retry can help. `request_id` repeats the `X-Request-Id` header; quote it when you report a server error. `retry_after_sec` is set when the response has a `Retry-After` header.
+
+Recovering from an error:
+
+- 401 `unauthenticated`: the token is missing, wrong, revoked or expired. Do not retry with the same token.
+- 401 `locked`: the server is behind its access password. Consumer routes and the docs take your token; dashboard routes need the password in `X-Acnologia-Access` or an admin token.
+- 403 `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed`, `read_only_token`: the token cannot do this. The message lists the services the app may use; `GET /api/v1/me` or `acnologia_whoami` shows the mode and read-only state.
+- 404 `unknown_service`: the message suggests close slugs the app may use.
+- 429 and 503 with `retry_after_sec`: wait that long, then retry the same request. With an `Idempotency-Key`, a retried write is safe.
+- 5xx `internal`: retry once; if it repeats, report `request_id`.
+
+The common codes:
+
 | Status | Code | Meaning |
 |---|---|---|
 | 407 | `proxy_auth_required` | No app token in the proxy URL, or a wrong, revoked or expired one. Comes with `Proxy-Authenticate: Basic realm="Acnologia"`. |
@@ -501,6 +563,7 @@ The built in tools are listed with an `acnologia_` prefix (`acnologia_get_key`, 
 
 | set | tool | purpose | typical arguments |
 |---|---|---|---|
+| core | `acnologia_whoami` | what this connection may do: token, mode, tool sets, limits with what is left, services (the same object as `GET /api/v1/me`) | none |
 | core | `acnologia_list_services` | services the token may use, with availability | none |
 | core | `acnologia_pool_status` | whether a service has a key available now | `service` |
 | core | `acnologia_service_guide` | the service's usage guide as Markdown; read it before calling a service you have not used | `service` |
@@ -514,6 +577,8 @@ The built in tools are listed with an `acnologia_` prefix (`acnologia_get_key`, 
 | manage | `acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
 
 `acnologia_list_services` and `acnologia_list_keys` return their items (`services` or `keys`) with `total`, `count`, `offset`, `has_more` and `next_offset`: pass `next_offset` as `offset` for the next page. Every built in tool states `readOnlyHint`, `destructiveHint` and `openWorldHint` (only `acnologia_proxy_request`, `acnologia_call_tool` and `acnologia_set_key_status` are marked destructive) and has a top level `title`. `initialize` answers with the client's protocol version when the server speaks it (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`), else `2025-06-18`. Errors name the tool that helps next, such as `acnologia_list_services` for an unknown service.
+
+A tool that fails returns `isError: true`. Its text is the message, then `Hint (<code>): ...`. The same facts come as `{code, message, hint, fix, doc_url, retry_after_sec}` under `_meta["acnologia/error"]`, and as `structuredContent` too when the tool declares no output schema with required fields (`acnologia_call_tool`, `acnologia_search_tools`, upstream MCP tools). The codes are those of the HTTP API plus `invalid_arguments`, `unknown_tool` and `tool_error`.
 
 Resources: `acnologia://services`, `acnologia://services/{slug}`, `acnologia://services/{slug}/guide` (the usage guide, `text/markdown`) and `acnologia://llms.txt`. Prompts: `use_service` and `key_health_report`. Per app settings also cap tool results (`max_result_kb`, default 200), make `acnologia_get_key` exclusive by default, add instructions, hide single tools and pick the tool mode.
 
@@ -1209,10 +1274,11 @@ The CLI stores servers per host in `acnologia/ctl.json` under the user config fo
 
 ## Docs as Markdown
 
-This reference covers the consumer API. The rest of the docs are served as raw Markdown (`text/markdown`, no auth) at `/docs/{slug}.md`, and rendered for people at `/docs/{slug}`. `GET /api/docs` lists them as JSON: `{"docs": [{"slug", "title", "description", "size"}]}`.
+This reference covers the consumer API. The rest of the docs are served as raw Markdown (`text/markdown`; no auth, or any valid token behind the access password) at `/docs/{slug}.md`, and rendered for people at `/docs/{slug}`. `GET /api/docs` lists them as JSON: `{"docs": [{"slug", "title", "description", "size"}]}`.
 
 - [/docs/overview.md](/docs/overview.md): what Acnologia does, quick start and features.
 - [/docs/api.md](/docs/api.md): consumer error codes and the dashboard API with required roles.
+- [/docs/errors.md](/docs/errors.md): every error code with its meaning, whether a retry can help and what to do next.
 - [/docs/cli.md](/docs/cli.md): the acn command line client, browser sign in, commands and CI variables.
 - [/docs/configuration.md](/docs/configuration.md): environment variables, per service settings, self-hosting, Windows, the access password, backups and upgrading.
 - [/docs/deploy.md](/docs/deploy.md): every deploy option and the settings a public deploy needs.

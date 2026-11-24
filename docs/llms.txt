@@ -2,7 +2,14 @@
 
 > Acnologia is a self-hosted API key pool. It stores many API keys per provider (SerpAPI, ElevenLabs, Brave Search, Gemini, or any API key based HTTP service), hands out a working key on demand, detects rate limits, quota exhaustion and suspended accounts, cools keys down and rotates to the next one. Agents use it either as a proxy (Acnologia injects the key and the secret is never exposed), as a forward proxy (set `HTTPS_PROXY` and call provider URLs unchanged), or by leasing a key and reporting the outcome.
 
-Base URL is wherever Acnologia is deployed, for example `http://localhost:8080`. All consumer calls need an app token (`acn_...`) created in the dashboard. All bodies are JSON. Errors look like `{"error": {"code": "string", "message": "string"}}`.
+Base URL is wherever Acnologia is deployed, for example `http://localhost:8080`. All consumer calls need an app token (`acn_...`) created in the dashboard. All bodies are JSON. Errors look like `{"error": {"code", "message", "hint", "fix", "doc_url", "request_id", "retry_after_sec"}}`: branch on `code`, follow `hint` and `fix`.
+
+## Start here
+
+- `GET /api/v1` needs no token and answers behind the access password too. It lists every endpoint (MCP, OAuth metadata, these docs, the error codes, OpenAPI, CLI sign in) and the first steps. `GET /.well-known/acnologia` carries the same index as `agent`.
+- If the index says `gated: true`, send your token when you fetch these docs: `/llms.txt`, `/llms-full.txt`, `/docs/*.md` and `/api/docs` open to any valid app token, MCP access token or admin token.
+- With a token, call `GET /api/v1/me` (or the `acnologia_whoami` MCP tool) first. It shows the token (kind, name, expiry, read-only), the app's mode and MCP tool sets, each limit with what is left, and the services you may call.
+- No token: a person creates an app in the dashboard and gives you its token, or signs the `acn` CLI in with `acn login`.
 
 Key facts for agents:
 
@@ -16,6 +23,7 @@ Key facts for agents:
 - HTTP 503 `service_unavailable`: the provider keeps failing and its circuit breaker is open. Wait `retry_after_sec`.
 - HTTP 429 `app_limit_reached`: your app used up its daily or monthly request or budget limit. `reset_at` says when it lifts.
 - Report every lease within 10 minutes of `expires_at`. A second report gets 409, a late one 410.
+- 403 `service_not_allowed` lists the services the app may use; 404 `unknown_service` suggests close slugs. Every error code, with whether a retry helps, is in [Error codes](/docs/errors.md).
 - `{service}` can also be a service group: several services with the same API. Its strategy (priority, round_robin, random, cheapest or most_keys) picks the member that goes first and the rest are fallbacks. `X-Acnologia-Service` says which member answered.
 - `{service}` can also be a capability: one job (such as searching places) that several providers do with APIs of their own. Call `/proxy/{capability}` with its params as query parameters or a JSON object body; Acnologia picks a provider by the strategy, translates the params into that provider's request, rotates its keys, and moves to the next provider on 401, 402, 403, 408, 429 or 5xx. Mapped routes answer `{items, count, capability, service, provider}` (or `{data, ...}`) in one shape whichever provider served. `_raw=1` returns the provider's own body; `_service=<slug>` pins one provider; `X-Acnologia-Tried` lists who was tried. `GET /api/v1/capabilities` lists them with their params, and each is one tool on `/mcp`.
 - A service whose provider is `acnologia-peer` is shared by another Acnologia server: proxy only (leasing it gets 403 `lease_not_allowed`). 403 `share_revoked`, `share_paused` or `share_expired` means its owner revoked, paused or let it expire. 508 `loop_detected` means the request crossed more than 3 Acnologia servers.
@@ -42,6 +50,15 @@ Key facts for agents:
 - [Forward proxy](/llms-full.txt): `CONNECT host:443` or an absolute URL request through Acnologia as `HTTPS_PROXY`. Routed to the service by host and path; `X-Acnologia-Service: <slug>` picks one service or a group.
 - [GET /healthz](/llms-full.txt): `{"ok": true, "version": "..."}`, no auth.
 
+## Errors and recovery
+
+- Read `error.hint` and `error.fix` (an MCP `tool`, a CLI `command` or a `url`) before retrying. `error.doc_url` links the code's entry in [/docs/errors.md](/docs/errors.md).
+- Retry unchanged only when the error has `retry_after_sec` (429, 503) or is a 502 from the provider, and wait that long first. Send an `Idempotency-Key` so a retried write cannot run twice.
+- 401 `unauthenticated`: fix the token, do not loop. 401 `locked`: the server is behind its access password; consumer routes and docs take your token, dashboard routes need `X-Acnologia-Access` or an admin token.
+- 403 errors mean the token cannot do this: `GET /api/v1/me` or `acnologia_whoami` says what it can.
+- Quote `error.request_id` (also the `X-Request-Id` header) when you report a server error.
+- MCP tool errors return `isError: true` with the hint in the text and `{code, message, hint, fix, doc_url, retry_after_sec}` under `_meta["acnologia/error"]` (and as `structuredContent` for tools without a strict output schema).
+
 ## Outcomes
 
 - `ok`: call succeeded, resets the key's failure counter.
@@ -61,7 +78,7 @@ Key facts for agents:
 
 ## MCP
 
-- [POST /mcp](/llms-full.txt): MCP streamable HTTP endpoint (JSON responses), same app token. Core tools (listed with an `acnologia_` prefix; the old names still work, and every built in tool declares an `outputSchema`): `acnologia_list_services`, `acnologia_pool_status`, `acnologia_service_guide`, `acnologia_get_key`, `acnologia_renew_key`, `acnologia_report_key`, `acnologia_proxy_request`. Apps can also enable service tools generated from every provider example and usage guide endpoint (adding a provider adds its tools, no restart), read only insights (`acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats`) and key management (`acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys`). With many service tools (over 30 in the default `auto` tool mode, or always in `search` mode) `tools/list` shows the core tools plus `acnologia_search_tools` {query} and `acnologia_call_tool` {name, arguments}, so the context stays small however many providers there are. `initialize` advertises `tools.listChanged`; `GET /mcp` with `Accept: text/event-stream` streams `notifications/tools/list_changed` when the app's tools change. Stdio clients can run `acnologia mcp --url <base> --token acn_...`.
+- [POST /mcp](/llms-full.txt): MCP streamable HTTP endpoint (JSON responses), same app token. Core tools (listed with an `acnologia_` prefix; the old names still work, and every built in tool declares an `outputSchema`): `acnologia_whoami`, `acnologia_list_services`, `acnologia_pool_status`, `acnologia_service_guide`, `acnologia_get_key`, `acnologia_renew_key`, `acnologia_report_key`, `acnologia_proxy_request`. Apps can also enable service tools generated from every provider example and usage guide endpoint (adding a provider adds its tools, no restart), read only insights (`acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats`) and key management (`acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys`). With many service tools (over 30 in the default `auto` tool mode, or always in `search` mode) `tools/list` shows the core tools plus `acnologia_search_tools` {query} and `acnologia_call_tool` {name, arguments}, so the context stays small however many providers there are. `initialize` advertises `tools.listChanged`; `GET /mcp` with `Accept: text/event-stream` streams `notifications/tools/list_changed` when the app's tools change. Stdio clients can run `acnologia mcp --url <base> --token acn_...`.
 - [POST /mcp/control](/llms-full.txt): the control MCP, for running the server itself from an MCP client. It takes an admin API token (`acnadm_...`) and acts as its owner: services, keys, apps, providers, AI builds, sharing, usage and `call_service` (a provider call through the proxy). Destructive tools need `confirm: true`. Choose tools with `?groups=`, `exclude=`, `read_only=1`.
 
 ## SDKs
@@ -96,6 +113,7 @@ Every page of the docs is also served as raw Markdown. Fetch these when you need
 
 - [Overview](/docs/overview.md): what Acnologia does, quick start and features.
 - [HTTP API](/docs/api.md): consumer error codes, the forward proxy and every dashboard route with its required role.
+- [Error codes](/docs/errors.md): every error code, what it means, whether a retry helps and what to do next.
 - [MCP sign in](/docs/mcp-oauth.md): connect claude.ai, ChatGPT, Claude Code or Cursor to `/mcp` with OAuth instead of an app token.
 - [Command line](/docs/cli.md): install the acn CLI, sign in through the browser, commands and CI variables.
 - [SDKs](/docs/sdks.md): the seventeen client libraries, how to install each today, the shared surface and running their tests.
@@ -113,3 +131,4 @@ Every page of the docs is also served as raw Markdown. Fetch these when you need
 - [Server architecture](/docs/architecture.md): components, packages, middleware pipeline, data model, boot and background work.
 - [Development](/docs/development.md): setup, repository layout, tests and conventions.
 - [Docs index](/api/docs): JSON list of every doc with slug, title, description and size.
+- [Agent index](/api/v1): JSON list of every endpoint an agent needs, open without a token.
