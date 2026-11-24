@@ -716,16 +716,33 @@ describe("0.2.0 surface", function()
   end)
 
   it("builds forward_proxy_url and forward_proxy_env with the escaped token", function()
-    local f = fake({ { body = FORWARD }, { body = FORWARD }, { body = FORWARD } })
+    local f = fake({ { body = FORWARD }, { body = FORWARD }, { body = FORWARD }, { body = FORWARD } })
     local c = client(f, { token = "acn_a/b+c" })
     assert.are.equal("http://app:acn_a%2Fb%2Bc@acn.test:8888", assert(c:forward_proxy_url()))
     local env = assert(c:forward_proxy_env())
     local url = "http://app:acn_a%2Fb%2Bc@acn.test:8888"
     assert.are.same({
       HTTPS_PROXY = url, HTTP_PROXY = url, NODE_USE_ENV_PROXY = "1",
-      NODE_EXTRA_CA_CERTS = "acnologia-ca.pem", REQUESTS_CA_BUNDLE = "acnologia-ca.pem", SSL_CERT_FILE = "acnologia-ca.pem",
+      NODE_EXTRA_CA_CERTS = "acnologia-ca.pem", REQUESTS_CA_BUNDLE = "acnologia-ca-bundle.pem", SSL_CERT_FILE = "acnologia-ca-bundle.pem",
+      NO_PROXY = "localhost,127.0.0.1,::1", no_proxy = "localhost,127.0.0.1,::1",
     }, env)
-    assert.are.equal("/etc/acn.pem", assert(c:forward_proxy_env("/etc/acn.pem")).SSL_CERT_FILE)
+    local custom = assert(c:forward_proxy_env("/etc/acn.pem"))
+    assert.are.equal("/etc/acn.pem", custom.NODE_EXTRA_CA_CERTS)
+    assert.are.equal("acnologia-ca-bundle.pem", custom.SSL_CERT_FILE)
+    local both = assert(c:forward_proxy_env("/etc/acn.pem", "/etc/bundle.pem"))
+    assert.are.equal("/etc/bundle.pem", both.SSL_CERT_FILE)
+    assert.are.equal("/etc/bundle.pem", both.REQUESTS_CA_BUNDLE)
+  end)
+
+  it("builds the CA bundle from the system roots", function()
+    local roots = os.tmpname()
+    local fh = assert(io.open(roots, "wb"))
+    fh:write("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n")
+    fh:close()
+    local found = assert(acnologia._system_roots("/nonexistent/bundle.pem", roots))
+    assert.are.equal("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n",
+      acnologia._ca_bundle(found, "CA\n"))
+    os.remove(roots)
   end)
 
   it("downloads the CA without a token and saves it", function()

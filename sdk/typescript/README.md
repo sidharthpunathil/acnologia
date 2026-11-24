@@ -236,7 +236,8 @@ import { writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 await writeFile("acnologia-ca.pem", await acnologia.forwardProxyCA());
-const env = await acnologia.forwardProxyEnv("acnologia-ca.pem");
+// acnologia-ca-bundle.pem: build it once with `acn proxy ca --bundle`
+const env = await acnologia.forwardProxyEnv("acnologia-ca.pem", "acnologia-ca-bundle.pem");
 spawn("node", ["agent.js"], { env: { ...process.env, ...env }, stdio: "inherit" });
 
 // in agent.js, the app's own client, unchanged:
@@ -248,7 +249,9 @@ const res = await fetch("https://api.openai.com/v1/models"); // Acnologia adds t
 | `forwardProxy()` | `ForwardProxy`: `proxyUrl`, `proxyUrlWithToken` (with an `<app token>` placeholder), `caUrl`, `caFingerprint`, `passthrough`, `hosts`, `env`, `serviceHeader` |
 | `forwardProxyCA()` | the CA certificate as PEM text. Public: the token is not sent |
 | `forwardProxyURL()` | `http://app:acn_...@host:8888`. Contains the token |
-| `forwardProxyEnv(caPath = "acnologia-ca.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` set to `caPath`. Contains the token |
+| `forwardProxyEnv(caPath = "acnologia-ca.pem", bundlePath = "acnologia-ca-bundle.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `caPath`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundlePath`, and `NO_PROXY`, `no_proxy` set to `localhost,127.0.0.1,::1`. Contains the token |
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service. This SDK runs in browsers too, so it has no file helper for the bundle: build `bundlePath` yourself with `acn proxy ca --bundle`, or `cat <system roots> acnologia-ca.pem > acnologia-ca-bundle.pem` (the system roots are `/etc/ssl/certs/ca-certificates.crt` on Debian and Ubuntu, `/etc/ssl/cert.pem` on macOS). A Node-only child process needs no bundle.
 
 ## About this token
 

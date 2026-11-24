@@ -135,17 +135,19 @@ System.out.println(res.service() + " answered after " + res.tried());
 An app can also set Acnologia as its `HTTPS_PROXY` and call provider URLs as they are. Save the CA certificate, then hand the environment to the program that makes the calls:
 
 ```java
-acn.saveForwardProxyCa(Path.of("acnologia-ca.pem"));   // public route, sends no token
-Map<String, String> env = acn.forwardProxyEnv("acnologia-ca.pem");
+acn.saveForwardProxyCa(Path.of("acnologia-ca.pem"));                // public route, sends no token
+acn.saveForwardProxyCaBundle(Path.of("acnologia-ca-bundle.pem"));   // the system roots plus the CA
+Map<String, String> env = acn.forwardProxyEnv("acnologia-ca.pem", "acnologia-ca-bundle.pem");
 
 ProcessBuilder pb = new ProcessBuilder("node", "app.js");
-pb.environment().putAll(env); // HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, ...
+pb.environment().putAll(env); // HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, NO_PROXY, ...
 pb.inheritIO().start().waitFor();
 ```
 
 - `forwardProxy()` returns `ForwardProxy`: `proxyUrl`, `proxyUrlWithToken` (with an `<app token>` placeholder), `caUrl`, `caFingerprint`, `passthrough`, `hosts` (`host`, `service`, `name`, `path`), `env` and `serviceHeader`. It holds no token, so it is safe to log.
 - `forwardProxyUrl()` returns the proxy URL with user `app` and your token as the password: `http://app:acn_...@host:8888`.
-- `forwardProxyEnv(caPath)` returns `HTTPS_PROXY` and `HTTP_PROXY` (that URL), `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `caPath` (default `acnologia-ca.pem`).
+- `forwardProxyEnv(caPath, bundlePath)` returns `HTTPS_PROXY` and `HTTP_PROXY` (that URL), `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `caPath` (default `acnologia-ca.pem`), `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `bundlePath` (default `acnologia-ca-bundle.pem`), and `NO_PROXY` and `no_proxy` set to `localhost,127.0.0.1,::1`. `NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
+- `saveForwardProxyCaBundle(path)` writes the system roots (from `$SSL_CERT_FILE` or the usual system bundles) plus the CA, and throws `AcnologiaException` when there are none, as on Windows.
 - `forwardProxyUrl()` and `forwardProxyEnv()` contain the token: keep them out of logs.
 - `forwardProxyCa()` returns the PEM text. All of these have `Async` forms.
 

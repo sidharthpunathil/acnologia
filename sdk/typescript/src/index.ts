@@ -1,4 +1,4 @@
-export { Acnologia, DEFAULT_CA_PATH, Lease, Proxy, VERSION, proxyInfo } from "./client.js";
+export { Acnologia, DEFAULT_CA_BUNDLE_PATH, DEFAULT_CA_PATH, Lease, Proxy, VERSION, proxyInfo } from "./client.js";
 export {
   AcnologiaError,
   NoKeyAvailableError,

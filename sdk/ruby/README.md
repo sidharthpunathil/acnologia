@@ -303,10 +303,12 @@ acn.capability("web-search", { "query" => "coffee" }, service: "tavily", raw: tr
 Apps can also call a provider's own URL with Acnologia as their `HTTPS_PROXY`. The proxy puts a key on the request. The app trusts the proxy's CA and uses its token as the proxy password.
 
 ```ruby
-acn.save_forward_proxy_ca("acnologia-ca.pem")   # public route, sends no token
-env = acn.forward_proxy_env("acnologia-ca.pem")
+acn.save_forward_proxy_ca("acnologia-ca.pem")                 # public route, sends no token
+acn.save_forward_proxy_ca_bundle("acnologia-ca-bundle.pem")   # the system roots plus the CA
+env = acn.forward_proxy_env("acnologia-ca.pem", "acnologia-ca-bundle.pem")
 # {"HTTPS_PROXY"=>"http://app:acn_...@keys.example.com:8888", "HTTP_PROXY"=>..., "NODE_USE_ENV_PROXY"=>"1",
-#  "NODE_EXTRA_CA_CERTS"=>"acnologia-ca.pem", "REQUESTS_CA_BUNDLE"=>"acnologia-ca.pem", "SSL_CERT_FILE"=>"acnologia-ca.pem"}
+#  "NODE_EXTRA_CA_CERTS"=>"acnologia-ca.pem", "REQUESTS_CA_BUNDLE"=>"acnologia-ca-bundle.pem",
+#  "SSL_CERT_FILE"=>"acnologia-ca-bundle.pem", "NO_PROXY"=>"localhost,127.0.0.1,::1", "no_proxy"=>"localhost,127.0.0.1,::1"}
 system(env, "python", "my_script.py")           # the child's own HTTP client goes through the proxy
 ```
 
@@ -322,11 +324,14 @@ res = http.start { |h| h.get("/v1/models") }      # no key in your code
 | `forward_proxy` | `Acnologia::ForwardProxy`: `proxy_url`, `proxy_url_with_token`, `ca_url`, `ca_fingerprint`, `passthrough?`, `hosts` (`host`, `service`, `name`, `path`), `env`, `service_header`, `raw` |
 | `forward_proxy_ca` | The CA certificate as PEM text, from `GET /api/v1/proxy/ca.pem`, sent without a token |
 | `save_forward_proxy_ca(path = "acnologia-ca.pem")` | Writes the PEM to `path` and returns `path` |
+| `save_forward_proxy_ca_bundle(path = "acnologia-ca-bundle.pem")` | Writes the system roots plus the CA to `path` and returns `path`. The roots come from `$SSL_CERT_FILE` or the usual system bundles; raises `Acnologia::Error` when there are none, as on Windows |
 | `forward_proxy_url` | `proxy_url` with user `app` and your token as the password, percent escaped |
-| `forward_proxy_env(ca_path = "acnologia-ca.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` |
+| `forward_proxy_env(ca_path = "acnologia-ca.pem", bundle_path = "acnologia-ca-bundle.pem")` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS` (`ca_path`), `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` (`bundle_path`), `NO_PROXY` and `no_proxy` (`localhost,127.0.0.1,::1`) |
 | `forward_proxy_http(host, port = 443, use_ssl:, ca_path: nil)` | A configured `Net::HTTP` |
 
 `ForwardProxy` holds a `<app token>` placeholder, never the token, so it is safe to print. `forward_proxy_url`, `forward_proxy_env` and `forward_proxy_http` contain the real token: keep them out of logs.
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
 
 ## Concurrency limits
 

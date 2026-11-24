@@ -30,7 +30,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::client::{access_password, env_pair, validate, DEFAULT_CA_PATH, DEFAULT_TIMEOUT};
+use crate::client::{
+    access_password, env_pair, validate, DEFAULT_CA_BUNDLE_PATH, DEFAULT_CA_PATH, DEFAULT_TIMEOUT,
+};
 use crate::core::{self, Redacted};
 use crate::error::Error;
 use crate::lease_info::LeaseInfo;
@@ -316,6 +318,20 @@ impl Client {
         Ok(path)
     }
 
+    /// Save the system roots followed by the CA certificate to `path`
+    /// (default [`DEFAULT_CA_BUNDLE_PATH`]) and return the path. See
+    /// [`crate::Client::save_forward_proxy_ca_bundle`].
+    pub fn save_forward_proxy_ca_bundle(&self, path: Option<&Path>) -> Result<PathBuf, Error> {
+        let path = path
+            .unwrap_or(Path::new(DEFAULT_CA_BUNDLE_PATH))
+            .to_path_buf();
+        let roots = core::system_roots(&path, std::env::var_os("SSL_CERT_FILE"))
+            .ok_or_else(core::no_system_roots)?;
+        let pem = self.forward_proxy_ca()?;
+        std::fs::write(&path, core::ca_bundle(&roots, &pem))?;
+        Ok(path)
+    }
+
     /// The forward proxy URL with user `app` and this client's token as the
     /// password.
     ///
@@ -333,10 +349,21 @@ impl Client {
         &self,
         ca_path: Option<&str>,
     ) -> Result<BTreeMap<String, String>, Error> {
+        self.forward_proxy_env_with_bundle(ca_path, None)
+    }
+
+    /// The environment with `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to
+    /// `bundle_path`. See [`crate::Client::forward_proxy_env_with_bundle`].
+    pub fn forward_proxy_env_with_bundle(
+        &self,
+        ca_path: Option<&str>,
+        bundle_path: Option<&str>,
+    ) -> Result<BTreeMap<String, String>, Error> {
         let url = self.forward_proxy_url()?;
         Ok(core::forward_proxy_env(
             &url,
             ca_path.unwrap_or(DEFAULT_CA_PATH),
+            bundle_path.unwrap_or(DEFAULT_CA_BUNDLE_PATH),
         ))
     }
 

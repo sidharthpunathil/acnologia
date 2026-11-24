@@ -261,6 +261,14 @@ public:
     /// cannot be written.
     void save_forward_proxy_ca(const std::string& path = "acnologia-ca.pem") const;
 
+    /// Fetches the CA and writes the system roots followed by it to path.
+    /// SSL_CERT_FILE and REQUESTS_CA_BUNDLE replace the whole trust store, so
+    /// they need this bundle, not the CA alone. The roots come from
+    /// $SSL_CERT_FILE (when it is a PEM bundle other than path) or the usual
+    /// system bundles. Throws Error when there is none (as on Windows) or the
+    /// file cannot be written.
+    void save_forward_proxy_ca_bundle(const std::string& path = "acnologia-ca-bundle.pem") const;
+
     /// The proxy URL with user "app" and this client's token as the password,
     /// percent escaped: http://app:acn_...@host:8888. It holds the token: do
     /// not log it.
@@ -268,9 +276,14 @@ public:
 
     /// The environment that sends an app through the forward proxy:
     /// HTTPS_PROXY and HTTP_PROXY (forward_proxy_url()), NODE_USE_ENV_PROXY=1,
-    /// and NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to
-    /// ca_path. The proxy values hold the token: do not log them.
-    std::map<std::string, std::string> forward_proxy_env(const std::string& ca_path = "acnologia-ca.pem") const;
+    /// NODE_EXTRA_CA_CERTS set to ca_path, REQUESTS_CA_BUNDLE and
+    /// SSL_CERT_FILE set to bundle_path (the system roots plus the CA, see
+    /// save_forward_proxy_ca_bundle), and NO_PROXY and no_proxy set to
+    /// localhost,127.0.0.1,::1. The proxy values hold the token: do not log
+    /// them.
+    std::map<std::string, std::string> forward_proxy_env(
+        const std::string& ca_path = "acnologia-ca.pem",
+        const std::string& bundle_path = "acnologia-ca-bundle.pem") const;
 
     /// POST /api/v1/lease. Throws NoKeyAvailable when the pool is empty or
     /// every key is cooling down, and AllKeysBusy (a subclass) when every

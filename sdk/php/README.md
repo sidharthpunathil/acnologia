@@ -101,10 +101,12 @@ $acn->capability('web-search', ['query' => 'coffee'], service: 'tavily', raw: tr
 Apps can also call a provider's own URL with Acnologia as their `HTTPS_PROXY`. The proxy puts a key on the request. The app trusts the proxy's CA and uses its token as the proxy password.
 
 ```php
-$acn->saveForwardProxyCA('acnologia-ca.pem');        // public route, sends no token
-$env = $acn->forwardProxyEnv('acnologia-ca.pem');
+$acn->saveForwardProxyCA('acnologia-ca.pem');                // public route, sends no token
+$acn->saveForwardProxyCABundle('acnologia-ca-bundle.pem');   // the system roots plus the CA
+$env = $acn->forwardProxyEnv('acnologia-ca.pem', 'acnologia-ca-bundle.pem');
 // ['HTTPS_PROXY' => 'http://app:acn_...@keys.example.com:8888', 'HTTP_PROXY' => ..., 'NODE_USE_ENV_PROXY' => '1',
-//  'NODE_EXTRA_CA_CERTS' => 'acnologia-ca.pem', 'REQUESTS_CA_BUNDLE' => 'acnologia-ca.pem', 'SSL_CERT_FILE' => 'acnologia-ca.pem']
+//  'NODE_EXTRA_CA_CERTS' => 'acnologia-ca.pem', 'REQUESTS_CA_BUNDLE' => 'acnologia-ca-bundle.pem',
+//  'SSL_CERT_FILE' => 'acnologia-ca-bundle.pem', 'NO_PROXY' => 'localhost,127.0.0.1,::1', 'no_proxy' => 'localhost,127.0.0.1,::1']
 
 // a child process uses its own HTTP client through the proxy
 $proc = proc_open(['python3', 'my_script.py'], [], $pipes, null, $env + getenv());
@@ -113,7 +115,7 @@ $proc = proc_open(['python3', 'my_script.py'], [], $pipes, null, $env + getenv()
 $ch = curl_init('https://api.openai.com/v1/models');
 curl_setopt_array($ch, [
     CURLOPT_PROXY => $env['HTTPS_PROXY'],
-    CURLOPT_CAINFO => 'acnologia-ca.pem',
+    CURLOPT_CAINFO => 'acnologia-ca-bundle.pem',
     CURLOPT_RETURNTRANSFER => true,
 ]);
 ```
@@ -123,10 +125,13 @@ curl_setopt_array($ch, [
 | `forwardProxy()` | `GET /api/v1/proxy` as an array: `proxy_url`, `proxy_url_with_token`, `ca_url`, `ca_fingerprint`, `passthrough`, `hosts` (`host`, `service`, `name`, `path`), `env`, `service_header` |
 | `forwardProxyCA()` | The CA certificate as PEM text, from `GET /api/v1/proxy/ca.pem`, sent without a token |
 | `saveForwardProxyCA($path = 'acnologia-ca.pem')` | Writes the PEM to `$path` and returns `$path` |
+| `saveForwardProxyCABundle($path = 'acnologia-ca-bundle.pem')` | Writes the system roots plus the CA to `$path` and returns `$path`. The roots come from `$SSL_CERT_FILE` or the usual system bundles; throws `AcnologiaException` when there are none, as on Windows |
 | `forwardProxyURL()` | `proxy_url` with user `app` and your token as the password, percent escaped |
-| `forwardProxyEnv($caPath = 'acnologia-ca.pem')` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` |
+| `forwardProxyEnv($caPath = 'acnologia-ca.pem', $bundlePath = 'acnologia-ca-bundle.pem')` | `HTTPS_PROXY`, `HTTP_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS` (`$caPath`), `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` (`$bundlePath`), `NO_PROXY` and `no_proxy` (`localhost,127.0.0.1,::1`) |
 
-`forwardProxy()` holds a `<app token>` placeholder, never the token, so it is safe to log. `forwardProxyURL()` and `forwardProxyEnv()` contain the real token: keep them out of logs. With `CURLOPT_CAINFO` curl trusts only that file, which is enough for hosts the proxy opens. For a passthrough host, put the system bundle and the Acnologia CA in one file.
+`forwardProxy()` holds a `<app token>` placeholder, never the token, so it is safe to log. `forwardProxyURL()` and `forwardProxyEnv()` contain the real token: keep them out of logs. With `CURLOPT_CAINFO` curl trusts only that file, so give it the bundle: the CA alone is enough for hosts the proxy opens, but not for a passthrough host.
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service.
 
 ## Proxy mode
 

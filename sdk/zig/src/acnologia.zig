@@ -52,6 +52,22 @@ pub const Tried = catalog.Tried;
 /// Where `saveForwardProxyCA` and `forwardProxyEnv` put the CA by default.
 pub const default_ca_path = "acnologia-ca.pem";
 
+/// Where `saveForwardProxyCABundle` and `forwardProxyEnv` put the system
+/// roots plus the CA by default.
+pub const default_ca_bundle_path = "acnologia-ca-bundle.pem";
+
+/// Hosts that stay off the forward proxy, which refuses hosts that are no
+/// service.
+pub const no_proxy = "localhost,127.0.0.1,::1";
+
+/// The usual system root bundles, tried in order.
+const system_root_paths = [_][]const u8{
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+};
+
 pub const version = "0.2.0";
 pub const user_agent = "acnologia-zig/" ++ version;
 
@@ -530,6 +546,49 @@ pub const Client = struct {
         try Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path orelse default_ca_path, .data = pem });
     }
 
+    /// Downloads the CA certificate and writes the system roots followed by
+    /// it to `path` (relative to the current directory), or to
+    /// `default_ca_bundle_path` when null. `SSL_CERT_FILE` and
+    /// `REQUESTS_CA_BUNDLE` replace the whole trust store, so they need this
+    /// bundle, not the CA alone. The roots come from `ssl_cert_file` (pass
+    /// the `SSL_CERT_FILE` of your environment, or null) when it is a PEM
+    /// bundle other than `path`, else the usual system bundles. Returns
+    /// `error.InvalidArgument` when there is none, as on Windows.
+    pub fn saveForwardProxyCABundle(self: *Client, path: ?[]const u8, ssl_cert_file: ?[]const u8, options: CallOptions) (Error || Io.Dir.WriteFileError)!void {
+        const target = path orelse default_ca_bundle_path;
+        const roots = try self.systemRoots(target, ssl_cert_file, options.diag);
+        defer self.gpa.free(roots);
+        const pem = try self.forwardProxyCA(self.gpa, options);
+        defer self.gpa.free(pem);
+        const bundle = try std.mem.concat(self.gpa, u8, &.{
+            std.mem.trimEnd(u8, roots, "\n"),
+            "\n\n# Acnologia forward proxy CA\n",
+            std.mem.trimEnd(u8, pem, "\n"),
+            "\n",
+        });
+        defer self.gpa.free(bundle);
+        try Io.Dir.cwd().writeFile(self.io, .{ .sub_path = target, .data = bundle });
+    }
+
+    /// The first system root bundle found (`ssl_cert_file` first), skipping
+    /// `target`. Owned by the caller, allocated with `gpa`.
+    fn systemRoots(self: *Client, target: []const u8, ssl_cert_file: ?[]const u8, diag: ?*Diagnostic) Error![]u8 {
+        if (@import("builtin").os.tag != .windows) {
+            const first = [_][]const u8{ssl_cert_file orelse ""};
+            const groups = [_][]const []const u8{ &first, &system_root_paths };
+            for (groups) |group| for (group) |p| {
+                if (p.len == 0 or std.mem.eql(u8, p, target)) continue;
+                const text = Io.Dir.cwd().readFileAlloc(self.io, p, self.gpa, .limited(16 << 20)) catch |e| switch (e) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => continue,
+                };
+                if (std.mem.find(u8, text, "BEGIN CERTIFICATE") != null) return text;
+                self.gpa.free(text);
+            };
+        }
+        return self.fail(diag, error.InvalidArgument, "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone");
+    }
+
     /// The forward proxy URL with this client's token as the password,
     /// percent encoded: `http://app:acn_...@host:8888`. Calls `forwardProxy`.
     ///
@@ -543,25 +602,38 @@ pub const Client = struct {
 
     /// The environment that sends an app's HTTP through the forward proxy:
     /// `HTTPS_PROXY` and `HTTP_PROXY` (the `forwardProxyURL`),
-    /// `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`
-    /// and `SSL_CERT_FILE` set to `ca_path` (`default_ca_path` when null).
-    /// Save the CA there with `saveForwardProxyCA`. Calls `forwardProxy`.
+    /// `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `ca_path`
+    /// (`default_ca_path` when null), `REQUESTS_CA_BUNDLE` and
+    /// `SSL_CERT_FILE` set to `default_ca_bundle_path` (see
+    /// `forwardProxyEnvWithBundle`), and `NO_PROXY` and `no_proxy` set to
+    /// `no_proxy`. Save the CA with `saveForwardProxyCA` and the bundle with
+    /// `saveForwardProxyCABundle`. Calls `forwardProxy`.
     ///
     /// The map CONTAINS THE TOKEN. It is allocated with `allocator` and
     /// owned by the caller: call its `deinit`. Pass it as a child process's
     /// `environ_map`, or copy entries into one.
     pub fn forwardProxyEnv(self: *Client, allocator: Allocator, ca_path: ?[]const u8, options: CallOptions) Error!std.process.Environ.Map {
+        return self.forwardProxyEnvWithBundle(allocator, ca_path, null, options);
+    }
+
+    /// `forwardProxyEnv` with `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to
+    /// `bundle_path` (`default_ca_bundle_path` when null). Those replace the
+    /// whole trust store, so the file must hold the system roots plus the CA.
+    pub fn forwardProxyEnvWithBundle(self: *Client, allocator: Allocator, ca_path: ?[]const u8, bundle_path: ?[]const u8, options: CallOptions) Error!std.process.Environ.Map {
         const url = try self.forwardProxyURL(self.gpa, options);
         defer freeSecret(self.gpa, url);
         const ca = ca_path orelse default_ca_path;
+        const bundle = bundle_path orelse default_ca_bundle_path;
         var env = std.process.Environ.Map.init(allocator);
         errdefer env.deinit();
         try env.put("HTTPS_PROXY", url);
         try env.put("HTTP_PROXY", url);
         try env.put("NODE_USE_ENV_PROXY", "1");
         try env.put("NODE_EXTRA_CA_CERTS", ca);
-        try env.put("REQUESTS_CA_BUNDLE", ca);
-        try env.put("SSL_CERT_FILE", ca);
+        try env.put("REQUESTS_CA_BUNDLE", bundle);
+        try env.put("SSL_CERT_FILE", bundle);
+        try env.put("NO_PROXY", no_proxy);
+        try env.put("no_proxy", no_proxy);
         return env;
     }
 

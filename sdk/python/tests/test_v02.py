@@ -249,9 +249,12 @@ def test_forward_proxy(acn: Acnologia, stub: Stub) -> None:
     env = acn.forward_proxy_env()
     assert env == {
         "HTTPS_PROXY": url, "HTTP_PROXY": url, "NODE_USE_ENV_PROXY": "1",
-        "NODE_EXTRA_CA_CERTS": "acnologia-ca.pem", "REQUESTS_CA_BUNDLE": "acnologia-ca.pem", "SSL_CERT_FILE": "acnologia-ca.pem",
+        "NODE_EXTRA_CA_CERTS": "acnologia-ca.pem", "REQUESTS_CA_BUNDLE": "acnologia-ca-bundle.pem", "SSL_CERT_FILE": "acnologia-ca-bundle.pem",
+        "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1",
     }
-    assert acn.forward_proxy_env("/etc/ca.pem")["SSL_CERT_FILE"] == "/etc/ca.pem"
+    custom = acn.forward_proxy_env("/etc/ca.pem", "/etc/bundle.pem")
+    assert custom["NODE_EXTRA_CA_CERTS"] == "/etc/ca.pem"
+    assert custom["SSL_CERT_FILE"] == custom["REQUESTS_CA_BUNDLE"] == "/etc/bundle.pem"
 
 
 def test_forward_proxy_url_escapes_token(stub: Stub) -> None:
@@ -267,6 +270,19 @@ def test_forward_proxy_ca(acn: Acnologia, stub: Stub, tmp_path: Any) -> None:
     assert acn.save_forward_proxy_ca(path) == path
     with open(path, encoding="utf-8") as f:
         assert f.read() == CA_PEM
+
+
+def test_save_forward_proxy_ca_bundle(acn: Acnologia, tmp_path: Any, monkeypatch: Any) -> None:
+    roots = tmp_path / "roots.pem"
+    roots.write_text("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n", encoding="utf-8")
+    monkeypatch.setenv("SSL_CERT_FILE", str(roots))
+    path = str(tmp_path / "bundle.pem")
+    assert acn.save_forward_proxy_ca_bundle(path) == path
+    with open(path, encoding="utf-8") as f:
+        assert f.read() == (
+            "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\n"
+            + CA_PEM.rstrip("\n") + "\n"
+        )
 
 
 class _RecordingProxy(BaseHTTPRequestHandler):

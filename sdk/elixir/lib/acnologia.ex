@@ -633,6 +633,87 @@ defmodule Acnologia do
   def save_forward_proxy_ca!(c, path \\ "acnologia-ca.pem"),
     do: unwrap(save_forward_proxy_ca(c, path))
 
+  @system_roots [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem"
+  ]
+
+  @doc """
+  Writes the system roots followed by the forward proxy's CA certificate to
+  `path` (default `acnologia-ca-bundle.pem`). Returns `{:ok, path}`.
+
+  `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so
+  they need this bundle, not the CA alone. The roots come from
+  `$SSL_CERT_FILE` (when it is a PEM bundle other than `path`) or the usual
+  system bundles. Returns an `:invalid_argument` error when there is none, as
+  on Windows.
+  """
+  @spec save_forward_proxy_ca_bundle(client(), Path.t()) :: result(Path.t())
+  def save_forward_proxy_ca_bundle(%Client{} = c, path \\ "acnologia-ca-bundle.pem") do
+    case system_roots(path) do
+      nil ->
+        {:error,
+         Error.new(
+           :invalid_argument,
+           "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle " <>
+             "of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone"
+         )}
+
+      roots ->
+        with {:ok, ca} <- forward_proxy_ca(c) do
+          bundle =
+            String.trim_trailing(roots, "\n") <>
+              "\n\n# Acnologia forward proxy CA\n" <> String.trim_trailing(ca, "\n") <> "\n"
+
+          case File.write(path, bundle) do
+            :ok ->
+              {:ok, path}
+
+            {:error, reason} ->
+              {:error,
+               Error.new(
+                 :invalid_argument,
+                 "could not write #{path}: #{:file.format_error(reason)}"
+               )}
+          end
+        end
+    end
+  end
+
+  @doc "Like `save_forward_proxy_ca_bundle/2`, but returns the path or raises `Acnologia.Error`."
+  @spec save_forward_proxy_ca_bundle!(client(), Path.t()) :: Path.t()
+  def save_forward_proxy_ca_bundle!(c, path \\ "acnologia-ca-bundle.pem"),
+    do: unwrap(save_forward_proxy_ca_bundle(c, path))
+
+  # The first system root bundle found ($SSL_CERT_FILE first), skipping the
+  # file at target.
+  defp system_roots(target) do
+    if match?({:win32, _}, :os.type()) do
+      nil
+    else
+      target = Path.expand(target)
+
+      env =
+        case System.get_env("SSL_CERT_FILE") do
+          nil -> []
+          "" -> []
+          f -> [f]
+        end
+
+      Enum.find_value(env ++ @system_roots, fn p ->
+        with false <- Path.expand(p) == target,
+             {:ok, text} <- File.read(p),
+             true <- String.contains?(text, "BEGIN CERTIFICATE") do
+          text
+        else
+          _ -> nil
+        end
+      end)
+    end
+  end
+
   @doc """
   Returns the forward proxy URL with user `app` and this client's token as
   the password, percent escaped: `http://app:acn_...@host:8888`.
@@ -651,14 +732,20 @@ defmodule Acnologia do
   @doc """
   Returns the environment an app needs to send its own HTTP calls through
   the forward proxy: `HTTPS_PROXY` and `HTTP_PROXY` (the
-  `forward_proxy_url/1`), `NODE_USE_ENV_PROXY` set to `1`, and
-  `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to
-  `ca_path`. Save the CA there with `save_forward_proxy_ca/2`.
+  `forward_proxy_url/1`), `NODE_USE_ENV_PROXY` set to `1`,
+  `NODE_EXTRA_CA_CERTS` set to `ca_path`, `REQUESTS_CA_BUNDLE` and
+  `SSL_CERT_FILE` set to `bundle_path`, and `NO_PROXY` and `no_proxy` set to
+  `localhost,127.0.0.1,::1`. Save the CA with `save_forward_proxy_ca/2` and
+  the bundle (system roots plus the CA) with `save_forward_proxy_ca_bundle/2`.
 
   The result holds the app token. Never log it.
   """
-  @spec forward_proxy_env(client(), Path.t()) :: result(%{String.t() => String.t()})
-  def forward_proxy_env(%Client{} = c, ca_path \\ "acnologia-ca.pem") do
+  @spec forward_proxy_env(client(), Path.t(), Path.t()) :: result(%{String.t() => String.t()})
+  def forward_proxy_env(
+        %Client{} = c,
+        ca_path \\ "acnologia-ca.pem",
+        bundle_path \\ "acnologia-ca-bundle.pem"
+      ) do
     with {:ok, url} <- forward_proxy_url(c) do
       {:ok,
        %{
@@ -666,16 +753,22 @@ defmodule Acnologia do
          "HTTP_PROXY" => url,
          "NODE_USE_ENV_PROXY" => "1",
          "NODE_EXTRA_CA_CERTS" => ca_path,
-         "REQUESTS_CA_BUNDLE" => ca_path,
-         "SSL_CERT_FILE" => ca_path
+         "REQUESTS_CA_BUNDLE" => bundle_path,
+         "SSL_CERT_FILE" => bundle_path,
+         "NO_PROXY" => "localhost,127.0.0.1,::1",
+         "no_proxy" => "localhost,127.0.0.1,::1"
        }}
     end
   end
 
-  @doc "Like `forward_proxy_env/2`, but returns the map or raises `Acnologia.Error`."
-  @spec forward_proxy_env!(client(), Path.t()) :: %{String.t() => String.t()}
-  def forward_proxy_env!(c, ca_path \\ "acnologia-ca.pem"),
-    do: unwrap(forward_proxy_env(c, ca_path))
+  @doc "Like `forward_proxy_env/3`, but returns the map or raises `Acnologia.Error`."
+  @spec forward_proxy_env!(client(), Path.t(), Path.t()) :: %{String.t() => String.t()}
+  def forward_proxy_env!(
+        c,
+        ca_path \\ "acnologia-ca.pem",
+        bundle_path \\ "acnologia-ca-bundle.pem"
+      ),
+      do: unwrap(forward_proxy_env(c, ca_path, bundle_path))
 
   defp proxy_url_with_token(%Client{token: token}, %ForwardProxy{proxy_url: url}) do
     u = URI.parse(url)

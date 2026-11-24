@@ -20,6 +20,18 @@ M.DEFAULT_PROXY_TIMEOUT = 120
 M.MAX_WAIT_SEC = 60
 -- Where forward_proxy_env and save_forward_proxy_ca put the proxy CA by default.
 M.DEFAULT_CA_PATH = "acnologia-ca.pem"
+-- Where forward_proxy_env and save_forward_proxy_ca_bundle put the system
+-- roots plus the proxy CA by default.
+M.DEFAULT_CA_BUNDLE_PATH = "acnologia-ca-bundle.pem"
+-- Hosts that stay off the forward proxy, which refuses hosts that are no service.
+M.NO_PROXY = "localhost,127.0.0.1,::1"
+-- The usual system root bundles, tried in order.
+M.SYSTEM_ROOTS = {
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/ssl/cert.pem",
+}
 M.OUTCOMES = { "ok", "rate_limited", "busy", "quota_exhausted", "invalid", "banned", "error" }
 
 M.json = json
@@ -288,6 +300,58 @@ function Client:save_forward_proxy_ca(path)
   return path
 end
 
+--- The first system root bundle found (env_cert_file, the value of
+--- SSL_CERT_FILE, first), skipping the file at target. nil on Windows or
+--- when there is none.
+function M._system_roots(target, env_cert_file)
+  if package.config:sub(1, 1) == "\\" then return nil end
+  local paths = {}
+  if env_cert_file and env_cert_file ~= "" then paths[#paths + 1] = env_cert_file end
+  for _, p in ipairs(M.SYSTEM_ROOTS) do paths[#paths + 1] = p end
+  for _, p in ipairs(paths) do
+    if p ~= target then
+      local fh = io.open(p, "rb")
+      if fh then
+        local text = fh:read("*a")
+        fh:close()
+        if text and text:find("BEGIN CERTIFICATE", 1, true) then return text end
+      end
+    end
+  end
+  return nil
+end
+
+--- The system roots followed by the Acnologia CA.
+function M._ca_bundle(roots, ca)
+  return (roots:gsub("\n+$", "")) .. "\n\n# Acnologia forward proxy CA\n" .. (ca:gsub("\n+$", "")) .. "\n"
+end
+
+--- Write the system roots followed by the forward proxy's CA certificate to
+--- path (default "acnologia-ca-bundle.pem"). SSL_CERT_FILE and
+--- REQUESTS_CA_BUNDLE replace the whole trust store, so they need this
+--- bundle, not the CA alone. The roots come from $SSL_CERT_FILE (when it is
+--- a PEM bundle other than path) or the usual system bundles. Returns path,
+--- or nil and an error (code "no_system_roots" when there is none, as on
+--- Windows).
+function Client:save_forward_proxy_ca_bundle(path)
+  path = path or M.DEFAULT_CA_BUNDLE_PATH
+  local roots = M._system_roots(path, os.getenv("SSL_CERT_FILE"))
+  if not roots then
+    return nil, errors.new({
+      code = "no_system_roots",
+      message = "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle "
+        .. "of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone",
+    })
+  end
+  local pem, err = self:forward_proxy_ca()
+  if not pem then return nil, err end
+  local fh, ferr = io.open(path, "wb")
+  if not fh then return nil, errors.new({ code = "io", message = tostring(ferr) }) end
+  fh:write(M._ca_bundle(roots, pem))
+  fh:close()
+  return path
+end
+
 --- The forward proxy URL with user "app" and this client's token as the
 --- password, percent escaped: http://app:acn_...@host:8888. It contains
 --- the token: keep it out of logs.
@@ -305,11 +369,15 @@ end
 
 --- Environment for a process that should reach providers through the
 --- forward proxy: HTTPS_PROXY and HTTP_PROXY (forward_proxy_url()),
---- NODE_USE_ENV_PROXY=1, and NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and
---- SSL_CERT_FILE set to ca_path (default "acnologia-ca.pem"). The proxy
---- values contain the token: keep them out of logs.
-function Client:forward_proxy_env(ca_path)
+--- NODE_USE_ENV_PROXY=1, NODE_EXTRA_CA_CERTS set to ca_path (default
+--- "acnologia-ca.pem"), REQUESTS_CA_BUNDLE and SSL_CERT_FILE set to
+--- bundle_path (default "acnologia-ca-bundle.pem", the system roots plus the
+--- CA: see save_forward_proxy_ca_bundle), and NO_PROXY and no_proxy set to
+--- "localhost,127.0.0.1,::1". The proxy values contain the token: keep them
+--- out of logs.
+function Client:forward_proxy_env(ca_path, bundle_path)
   ca_path = ca_path or M.DEFAULT_CA_PATH
+  bundle_path = bundle_path or M.DEFAULT_CA_BUNDLE_PATH
   local url, err = self:forward_proxy_url()
   if not url then return nil, err end
   return {
@@ -317,8 +385,10 @@ function Client:forward_proxy_env(ca_path)
     HTTP_PROXY = url,
     NODE_USE_ENV_PROXY = "1",
     NODE_EXTRA_CA_CERTS = ca_path,
-    REQUESTS_CA_BUNDLE = ca_path,
-    SSL_CERT_FILE = ca_path,
+    REQUESTS_CA_BUNDLE = bundle_path,
+    SSL_CERT_FILE = bundle_path,
+    NO_PROXY = M.NO_PROXY,
+    no_proxy = M.NO_PROXY,
   }
 end
 

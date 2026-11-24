@@ -195,12 +195,15 @@ An app can use Acnologia as its `HTTPS_PROXY` and call provider URLs as they are
 
 ```zig
 try client.saveForwardProxyCA(null, .{}); // writes acnologia-ca.pem; no token is sent
+// writes acnologia-ca-bundle.pem: the system roots (your SSL_CERT_FILE, or the
+// usual system bundles) plus the CA
+try client.saveForwardProxyCABundle(null, init.environ_map.get("SSL_CERT_FILE"), .{});
 
 var proxy_env = try client.forwardProxyEnv(gpa, null, .{}); // CA path, default acnologia-ca.pem
 defer proxy_env.deinit();
-// HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS,
-// REQUESTS_CA_BUNDLE and SSL_CERT_FILE. Add them to your own environment
-// and start the app with it:
+// HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS (the CA),
+// REQUESTS_CA_BUNDLE and SSL_CERT_FILE (the bundle), NO_PROXY and no_proxy.
+// Add them to your own environment and start the app with it:
 var env = try init.environ_map.clone(gpa);
 defer env.deinit();
 var it = proxy_env.iterator();
@@ -227,6 +230,8 @@ defer {
     gpa.free(url);
 }
 ```
+
+`NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service. `forwardProxyEnvWithBundle` takes another bundle path. `saveForwardProxyCABundle` returns `error.InvalidArgument` when it finds no system roots, as on Windows.
 
 `forwardProxyURL` and `forwardProxyEnv` contain the app token, percent encoded. `forwardProxy` and its `{f}` form never do: the server's `proxy_url_with_token` holds a `<app token>` placeholder.
 

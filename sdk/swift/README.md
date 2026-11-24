@@ -220,7 +220,8 @@ An app can send its own HTTP calls through Acnologia as an `HTTPS_PROXY` and cal
 ```swift
 let setup = try await acn.forwardProxy()        // proxy_url, CA, hosts, env (no token inside)
 try await acn.forwardProxyCA(saveTo: "acnologia-ca.pem")   // or forwardProxyCA() for the PEM text
-let env = try await acn.forwardProxyEnv(caPath: "acnologia-ca.pem")
+try await acn.forwardProxyCABundle(saveTo: "acnologia-ca-bundle.pem")   // the system roots plus the CA
+let env = try await acn.forwardProxyEnv(caPath: "acnologia-ca.pem", bundlePath: "acnologia-ca-bundle.pem")
 
 // Run a child process (any language) through the proxy:
 let p = Process()
@@ -230,7 +231,7 @@ p.environment = ProcessInfo.processInfo.environment.merging(env) { _, new in new
 try p.run()
 ```
 
-`forwardProxyEnv` returns `HTTPS_PROXY` and `HTTP_PROXY` (from `forwardProxyURL()`, `http://app:acn_...@host:8888`), `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `caPath`. `forwardProxyURL()` and `forwardProxyEnv()` contain the app token, so do not log them. `ForwardProxy` itself never does. `forwardProxyCA()` sends no token: the CA is public.
+`forwardProxyEnv` returns `HTTPS_PROXY` and `HTTP_PROXY` (from `forwardProxyURL()`, `http://app:acn_...@host:8888`), `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `caPath`, `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` set to `bundlePath` (default `acnologia-ca-bundle.pem`), and `NO_PROXY` and `no_proxy` set to `localhost,127.0.0.1,::1`. `NODE_EXTRA_CA_CERTS` gets the CA alone because Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store (OpenSSL, curl, Python, Ruby), so they get the bundle: the system roots plus the CA. With the CA alone there, TLS fails for every host the proxy passes through untouched. `NO_PROXY` keeps local calls off the proxy, which refuses hosts that are no service. `forwardProxyCABundle(saveTo:)` takes the roots from `$SSL_CERT_FILE` or the usual system bundles and throws `AcnologiaError.invalidArgument` when there are none (on iOS, for one). `forwardProxyURL()` and `forwardProxyEnv()` contain the app token, so do not log them. `ForwardProxy` itself never does. `forwardProxyCA()` sends no token: the CA is public.
 
 `URLSession` has no portable way to take a proxy with credentials and an extra CA root without a delegate, so the SDK does not build a proxied session for you. In Swift, `acn.proxy(service)` is the simpler route.
 

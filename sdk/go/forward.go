@@ -9,11 +9,30 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
+	"strings"
 )
 
 // DefaultCAPath is where SaveForwardProxyCA writes the CA by default, and
-// the path ForwardProxyEnv points the CA variables at.
+// the path ForwardProxyEnv points NODE_EXTRA_CA_CERTS at.
 const DefaultCAPath = "acnologia-ca.pem"
+
+// DefaultCABundlePath is where SaveForwardProxyCABundle writes the system
+// roots plus the CA by default, and the path ForwardProxyEnv points
+// SSL_CERT_FILE and REQUESTS_CA_BUNDLE at.
+const DefaultCABundlePath = "acnologia-ca-bundle.pem"
+
+// NoProxy keeps local calls off the forward proxy, which refuses hosts that
+// are no service.
+const NoProxy = "localhost,127.0.0.1,::1"
+
+// systemRootPaths are the usual system root bundles, tried in order.
+var systemRootPaths = []string{
+	"/etc/ssl/certs/ca-certificates.crt",
+	"/etc/pki/tls/certs/ca-bundle.crt",
+	"/etc/ssl/ca-bundle.pem",
+	"/etc/ssl/cert.pem",
+}
 
 // ForwardHost is a host the forward proxy opens and puts keys on.
 type ForwardHost struct {
@@ -71,6 +90,58 @@ func (c *Client) SaveForwardProxyCA(ctx context.Context, path string) (string, e
 	return path, nil
 }
 
+// SaveForwardProxyCABundle writes the system roots followed by the CA
+// certificate to path (DefaultCABundlePath when empty) and returns the path.
+// SSL_CERT_FILE and REQUESTS_CA_BUNDLE replace the whole trust store, so
+// they need this bundle, not the CA alone. The roots come from
+// $SSL_CERT_FILE when it is a PEM bundle other than path, else the first
+// usual system bundle found. It fails when there is none, as on Windows.
+func (c *Client) SaveForwardProxyCABundle(ctx context.Context, path string) (string, error) {
+	if path == "" {
+		path = DefaultCABundlePath
+	}
+	roots := systemRootsPEM(path)
+	if roots == "" {
+		return "", errors.New("acnologia: no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone")
+	}
+	pem, err := c.ForwardProxyCA(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(caBundle(roots, pem)), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// systemRootsPEM returns the first system root bundle found, skipping the
+// file at target.
+func systemRootsPEM(target string) string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	paths := systemRootPaths
+	if f := os.Getenv("SSL_CERT_FILE"); f != "" {
+		paths = append([]string{f}, paths...)
+	}
+	ts, terr := os.Stat(target)
+	for _, p := range paths {
+		if ps, err := os.Stat(p); err == nil && terr == nil && os.SameFile(ps, ts) {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err == nil && strings.Contains(string(b), "BEGIN CERTIFICATE") {
+			return string(b)
+		}
+	}
+	return ""
+}
+
+// caBundle is the system roots followed by the Acnologia CA.
+func caBundle(roots, ca string) string {
+	return strings.TrimRight(roots, "\n") + "\n\n# Acnologia forward proxy CA\n" + strings.TrimRight(ca, "\n") + "\n"
+}
+
 // proxyURLWithToken puts user "app" and the client's token on proxyURL.
 func (c *Client) proxyURLWithToken(proxyURL string) (*url.URL, error) {
 	u, err := url.Parse(proxyURL)
@@ -98,12 +169,20 @@ func (c *Client) ForwardProxyURL(ctx context.Context) (string, error) {
 
 // ForwardProxyEnv returns the environment that sends an app's HTTP through
 // the forward proxy: HTTPS_PROXY and HTTP_PROXY (the ForwardProxyURL),
-// NODE_USE_ENV_PROXY=1, and NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and
-// SSL_CERT_FILE set to caPath (DefaultCAPath when empty). Save the CA there
-// with SaveForwardProxyCA. The result contains the token: do not log it.
-func (c *Client) ForwardProxyEnv(ctx context.Context, caPath string) (map[string]string, error) {
+// NODE_USE_ENV_PROXY=1, NODE_EXTRA_CA_CERTS set to caPath (DefaultCAPath
+// when empty), SSL_CERT_FILE and REQUESTS_CA_BUNDLE set to the optional
+// bundlePath (DefaultCABundlePath when empty), and NO_PROXY and no_proxy
+// set to NoProxy. Save the CA with SaveForwardProxyCA and the bundle with
+// SaveForwardProxyCABundle: SSL_CERT_FILE and REQUESTS_CA_BUNDLE replace
+// the whole trust store, so they need the system roots plus the CA. The
+// result contains the token: do not log it.
+func (c *Client) ForwardProxyEnv(ctx context.Context, caPath string, bundlePath ...string) (map[string]string, error) {
 	if caPath == "" {
 		caPath = DefaultCAPath
+	}
+	bundle := DefaultCABundlePath
+	if len(bundlePath) > 0 && bundlePath[0] != "" {
+		bundle = bundlePath[0]
 	}
 	u, err := c.ForwardProxyURL(ctx)
 	if err != nil {
@@ -114,8 +193,10 @@ func (c *Client) ForwardProxyEnv(ctx context.Context, caPath string) (map[string
 		"HTTP_PROXY":          u,
 		"NODE_USE_ENV_PROXY":  "1",
 		"NODE_EXTRA_CA_CERTS": caPath,
-		"REQUESTS_CA_BUNDLE":  caPath,
-		"SSL_CERT_FILE":       caPath,
+		"REQUESTS_CA_BUNDLE":  bundle,
+		"SSL_CERT_FILE":       bundle,
+		"NO_PROXY":            NoProxy,
+		"no_proxy":            NoProxy,
 	}, nil
 }
 

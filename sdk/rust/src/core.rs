@@ -187,6 +187,63 @@ pub(crate) const ACCESS_HEADER: &str = "x-acnologia-access";
 /// Where the forward proxy CA is saved by default.
 pub(crate) const DEFAULT_CA_PATH: &str = "acnologia-ca.pem";
 
+/// Where the system roots plus the forward proxy CA are saved by default.
+pub(crate) const DEFAULT_CA_BUNDLE_PATH: &str = "acnologia-ca-bundle.pem";
+
+/// Hosts that stay off the forward proxy, which refuses hosts that are no
+/// service.
+pub(crate) const NO_PROXY: &str = "localhost,127.0.0.1,::1";
+
+/// The usual system root bundles, tried in order.
+const SYSTEM_ROOTS: [&str; 4] = [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+];
+
+/// The first system root bundle found: `env_cert_file` (the value of
+/// `SSL_CERT_FILE`) first, then [`SYSTEM_ROOTS`], skipping the file at
+/// `target`. `None` on Windows or when there is none.
+pub(crate) fn system_roots(
+    target: &std::path::Path,
+    env_cert_file: Option<std::ffi::OsString>,
+) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let target = std::fs::canonicalize(target).ok();
+    let mut paths: Vec<std::path::PathBuf> = SYSTEM_ROOTS.iter().map(Into::into).collect();
+    if let Some(f) = env_cert_file.filter(|f| !f.is_empty()) {
+        paths.insert(0, f.into());
+    }
+    paths.into_iter().find_map(|p| {
+        if target.is_some() && std::fs::canonicalize(&p).ok() == target {
+            return None;
+        }
+        let text = std::fs::read_to_string(&p).ok()?;
+        text.contains("BEGIN CERTIFICATE").then_some(text)
+    })
+}
+
+/// The error when no system roots are found for the bundle.
+pub(crate) fn no_system_roots() -> Error {
+    Error::InvalidInput(
+        "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle \
+         of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone"
+            .to_string(),
+    )
+}
+
+/// The system roots followed by the Acnologia CA.
+pub(crate) fn ca_bundle(roots: &str, ca: &str) -> String {
+    format!(
+        "{}\n\n# Acnologia forward proxy CA\n{}\n",
+        roots.trim_end_matches('\n'),
+        ca.trim_end_matches('\n')
+    )
+}
+
 pub(crate) fn guide_path(slug: &str) -> String {
     format!("/api/v1/services/{}/guide", escape_segment(slug))
 }
@@ -242,13 +299,21 @@ pub(crate) fn forward_proxy_url(proxy_url: &str, token: &str) -> Result<String, 
 }
 
 /// The environment for an app that uses the forward proxy.
-pub(crate) fn forward_proxy_env(proxy_url: &str, ca_path: &str) -> BTreeMap<String, String> {
+pub(crate) fn forward_proxy_env(
+    proxy_url: &str,
+    ca_path: &str,
+    bundle_path: &str,
+) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert("HTTPS_PROXY".to_string(), proxy_url.to_string());
     env.insert("HTTP_PROXY".to_string(), proxy_url.to_string());
     env.insert("NODE_USE_ENV_PROXY".to_string(), "1".to_string());
-    for k in ["NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"] {
-        env.insert(k.to_string(), ca_path.to_string());
+    env.insert("NODE_EXTRA_CA_CERTS".to_string(), ca_path.to_string());
+    for k in ["REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"] {
+        env.insert(k.to_string(), bundle_path.to_string());
+    }
+    for k in ["NO_PROXY", "no_proxy"] {
+        env.insert(k.to_string(), NO_PROXY.to_string());
     }
     env
 }
@@ -492,6 +557,29 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
+    fn ca_bundle_from_system_roots() {
+        let dir = std::env::temp_dir().join(format!("acn-roots-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let roots = dir.join("roots.pem");
+        std::fs::write(
+            &roots,
+            "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n",
+        )
+        .unwrap();
+        let target = dir.join("bundle.pem");
+        let found = system_roots(&target, Some(roots.clone().into_os_string())).unwrap();
+        assert_eq!(
+            ca_bundle(&found, "CA\n"),
+            "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n"
+        );
+        // The target itself is never read as the roots.
+        let again = system_roots(&roots, Some(roots.clone().into_os_string()));
+        assert_ne!(again.as_deref(), Some(found.as_str()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn forward_proxy_helpers() {
         assert_eq!(
             forward_proxy_url("http://h:8888", "acn_a/b").unwrap(),
@@ -502,10 +590,14 @@ mod tests {
             "http://app:acn_t@h:8888"
         );
         assert!(forward_proxy_url("h:8888", "t").is_err());
-        let env = forward_proxy_env("http://p", "ca.pem");
-        assert_eq!(env.len(), 6);
+        let env = forward_proxy_env("http://p", "ca.pem", "bundle.pem");
+        assert_eq!(env.len(), 8);
         assert_eq!(env["NODE_USE_ENV_PROXY"], "1");
-        assert_eq!(env["SSL_CERT_FILE"], "ca.pem");
+        assert_eq!(env["NODE_EXTRA_CA_CERTS"], "ca.pem");
+        assert_eq!(env["SSL_CERT_FILE"], "bundle.pem");
+        assert_eq!(env["REQUESTS_CA_BUNDLE"], "bundle.pem");
+        assert_eq!(env["NO_PROXY"], "localhost,127.0.0.1,::1");
+        assert_eq!(env["no_proxy"], "localhost,127.0.0.1,::1");
         let t = parse_tried("serpapi=503, tavily=200,bad,x=y");
         assert_eq!(t.len(), 2);
         assert_eq!(t[1].service, "tavily");

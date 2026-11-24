@@ -1320,6 +1320,82 @@ acn_code acn_forward_proxy_save_ca(acn_client *c, const char *path, acn_error *e
     return ACN_OK;
 }
 
+/* The whole file at path, or NULL. */
+static char *read_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    acn__buf b = {0};
+    char chunk[4096];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, f)) > 0) acn__buf_append(&b, chunk, n);
+    int bad = ferror(f);
+    fclose(f);
+    if (bad) {
+        acn__buf_free(&b);
+        return NULL;
+    }
+    return acn__buf_take(&b);
+}
+
+/* The first system root bundle found ($SSL_CERT_FILE first), skipping the
+ * file at target. NULL on Windows or when there is none. Free with free. */
+static char *system_roots(const char *target) {
+#ifdef _WIN32
+    (void)target;
+    return NULL;
+#else
+    const char *paths[] = {getenv("SSL_CERT_FILE"), "/etc/ssl/certs/ca-certificates.crt",
+                           "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/ssl/cert.pem"};
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; i++) {
+        if (!paths[i] || !*paths[i] || strcmp(paths[i], target) == 0) continue;
+        char *text = read_file(paths[i]);
+        if (text && strstr(text, "BEGIN CERTIFICATE")) return text;
+        free(text);
+    }
+    return NULL;
+#endif
+}
+
+/* s without its trailing newlines. */
+static size_t trimmed_len(const char *s) {
+    size_t n = strlen(s);
+    while (n > 0 && s[n - 1] == '\n') n--;
+    return n;
+}
+
+acn_code acn_forward_proxy_save_ca_bundle(acn_client *c, const char *path, acn_error *err) {
+    if (!c) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client is required");
+    if (!path || !*path) path = "acnologia-ca-bundle.pem";
+    char *roots = system_roots(path);
+    if (!roots) {
+        return acn__fail(err, ACN_ERR_INVALID_ARGUMENT,
+                         "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle "
+                         "of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone");
+    }
+    char *pem = NULL;
+    acn_code rc = acn_forward_proxy_ca(c, &pem, err);
+    if (rc != ACN_OK) {
+        free(roots);
+        return rc;
+    }
+    acn__buf b = {0};
+    acn__buf_append(&b, roots, trimmed_len(roots));
+    acn__buf_puts(&b, "\n\n# Acnologia forward proxy CA\n");
+    acn__buf_append(&b, pem, trimmed_len(pem));
+    acn__buf_putc(&b, '\n');
+    free(roots);
+    free(pem);
+    char *bundle = acn__buf_take(&b);
+    if (!bundle) return acn__fail(err, ACN_ERR_NO_MEMORY, NULL);
+    FILE *f = fopen(path, "wb");
+    size_t len = strlen(bundle);
+    int written = f && fwrite(bundle, 1, len, f) == len;
+    if (f && fclose(f) != 0) written = 0;
+    free(bundle);
+    if (!written) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "could not write the CA bundle file");
+    return ACN_OK;
+}
+
 /* proxy_url with app:<token>@ put in, any user info it had replaced. */
 static char *url_with_token(const acn_client *c, const char *proxy_url) {
     const char *sep = strstr(proxy_url, "://");
@@ -1377,15 +1453,22 @@ const char *acn_env_get(const acn_env *e, const char *name) {
 }
 
 acn_code acn_forward_proxy_env(acn_client *c, const char *ca_path, acn_env **out, acn_error *err) {
+    return acn_forward_proxy_env_bundle(c, ca_path, NULL, out, err);
+}
+
+acn_code acn_forward_proxy_env_bundle(acn_client *c, const char *ca_path, const char *bundle_path,
+                                      acn_env **out, acn_error *err) {
     if (out) *out = NULL;
     if (!c || !out) return acn__fail(err, ACN_ERR_INVALID_ARGUMENT, "client and out are required");
     if (!ca_path || !*ca_path) ca_path = "acnologia-ca.pem";
+    if (!bundle_path || !*bundle_path) bundle_path = "acnologia-ca-bundle.pem";
     char *url = NULL;
     acn_code rc = acn_forward_proxy_url(c, &url, err);
     if (rc != ACN_OK) return rc;
-    const char *names[] = {"HTTPS_PROXY", "HTTP_PROXY", "NODE_USE_ENV_PROXY",
-                           "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"};
-    const char *values[] = {url, url, "1", ca_path, ca_path, ca_path};
+    const char *no_proxy = "localhost,127.0.0.1,::1";
+    const char *names[] = {"HTTPS_PROXY",        "HTTP_PROXY",    "NODE_USE_ENV_PROXY", "NODE_EXTRA_CA_CERTS",
+                           "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "NO_PROXY",           "no_proxy"};
+    const char *values[] = {url, url, "1", ca_path, bundle_path, bundle_path, no_proxy, no_proxy};
     size_t n = sizeof names / sizeof names[0];
     acn_env *e = calloc(1, sizeof *e);
     int ok = e && (e->vars = calloc(n, sizeof *e->vars)) != NULL;

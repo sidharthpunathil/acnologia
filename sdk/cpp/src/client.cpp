@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <ostream>
 #include <sstream>
@@ -815,6 +816,57 @@ void Client::save_forward_proxy_ca(const std::string& path) const {
     if (!f) throw Error("acnologia: cannot write " + target);
 }
 
+namespace {
+
+// The first system root bundle found ($SSL_CERT_FILE first), skipping the
+// file at target. Empty on Windows or when there is none.
+std::string system_roots(const std::string& target) {
+#ifdef _WIN32
+    (void)target;
+    return {};
+#else
+    std::vector<std::string> paths;
+    if (const char* env = std::getenv("SSL_CERT_FILE"); env && *env) paths.emplace_back(env);
+    for (const char* p : {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt",
+                          "/etc/ssl/ca-bundle.pem", "/etc/ssl/cert.pem"}) {
+        paths.emplace_back(p);
+    }
+    for (const auto& p : paths) {
+        std::error_code ec;
+        if (p == target || std::filesystem::equivalent(p, target, ec)) continue;
+        std::ifstream in(p, std::ios::binary);
+        if (!in) continue;
+        std::stringstream text;
+        text << in.rdbuf();
+        if (text.str().find("BEGIN CERTIFICATE") != std::string::npos) return text.str();
+    }
+    return {};
+#endif
+}
+
+std::string trim_newlines(std::string s) {
+    while (!s.empty() && s.back() == '\n') s.pop_back();
+    return s;
+}
+
+}  // namespace
+
+void Client::save_forward_proxy_ca_bundle(const std::string& path) const {
+    const std::string target = path.empty() ? "acnologia-ca-bundle.pem" : path;
+    const std::string roots = system_roots(target);
+    if (roots.empty()) {
+        throw Error(
+            "acnologia: no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle "
+            "of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone");
+    }
+    const std::string pem = forward_proxy_ca();
+    std::ofstream f(target, std::ios::binary | std::ios::trunc);
+    if (!f) throw Error("acnologia: cannot write " + target);
+    f << trim_newlines(roots) << "\n\n# Acnologia forward proxy CA\n" << trim_newlines(pem) << "\n";
+    f.close();
+    if (!f) throw Error("acnologia: cannot write " + target);
+}
+
 std::string Client::forward_proxy_url() const {
     const std::string u = forward_proxy().proxy_url;
     const auto sep = u.find("://");
@@ -826,11 +878,15 @@ std::string Client::forward_proxy_url() const {
     return u.substr(0, sep + 3) + "app:" + url_encode(core_->token) + "@" + u.substr(host);
 }
 
-std::map<std::string, std::string> Client::forward_proxy_env(const std::string& ca_path) const {
+std::map<std::string, std::string> Client::forward_proxy_env(const std::string& ca_path,
+                                                             const std::string& bundle_path) const {
     const std::string url = forward_proxy_url();
     const std::string ca = ca_path.empty() ? "acnologia-ca.pem" : ca_path;
-    return {{"HTTPS_PROXY", url},       {"HTTP_PROXY", url},         {"NODE_USE_ENV_PROXY", "1"},
-            {"NODE_EXTRA_CA_CERTS", ca}, {"REQUESTS_CA_BUNDLE", ca}, {"SSL_CERT_FILE", ca}};
+    const std::string bundle = bundle_path.empty() ? "acnologia-ca-bundle.pem" : bundle_path;
+    const std::string no_proxy = "localhost,127.0.0.1,::1";
+    return {{"HTTPS_PROXY", url},           {"HTTP_PROXY", url},          {"NODE_USE_ENV_PROXY", "1"},
+            {"NODE_EXTRA_CA_CERTS", ca},     {"REQUESTS_CA_BUNDLE", bundle}, {"SSL_CERT_FILE", bundle},
+            {"NO_PROXY", no_proxy},          {"no_proxy", no_proxy}};
 }
 
 Lease Client::lease(const std::string& service, const LeaseOptions& options) const {

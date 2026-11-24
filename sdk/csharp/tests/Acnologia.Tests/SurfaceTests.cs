@@ -221,9 +221,37 @@ public class SurfaceTests
         Assert.Equal("http://app:acn_test@acn.test:8888", env["HTTPS_PROXY"]);
         Assert.Equal(env["HTTPS_PROXY"], env["HTTP_PROXY"]);
         Assert.Equal("1", env["NODE_USE_ENV_PROXY"]);
-        foreach (var k in new[] { "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE" })
-            Assert.Equal("acnologia-ca.pem", env[k]);
-        Assert.Equal("/etc/ca.pem", (await c.ForwardProxyEnvAsync("/etc/ca.pem"))["SSL_CERT_FILE"]);
+        Assert.Equal("acnologia-ca.pem", env["NODE_EXTRA_CA_CERTS"]);
+        foreach (var k in new[] { "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE" })
+            Assert.Equal("acnologia-ca-bundle.pem", env[k]);
+        foreach (var k in new[] { "NO_PROXY", "no_proxy" })
+            Assert.Equal("localhost,127.0.0.1,::1", env[k]);
+        Assert.Equal(8, env.Count);
+        Assert.Equal("/etc/ca.pem", (await c.ForwardProxyEnvAsync("/etc/ca.pem"))["NODE_EXTRA_CA_CERTS"]);
+        var custom = await c.ForwardProxyEnvAsync("/etc/ca.pem", "/etc/bundle.pem");
+        Assert.Equal("/etc/bundle.pem", custom["SSL_CERT_FILE"]);
+        Assert.Equal("/etc/bundle.pem", custom["REQUESTS_CA_BUNDLE"]);
+    }
+
+    [Fact]
+    public void ForwardProxyCABundle()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        var dir = Directory.CreateTempSubdirectory("acn").FullName;
+        try
+        {
+            var roots = Path.Combine(dir, "roots.pem");
+            File.WriteAllText(roots, "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n");
+            var found = AcnologiaClient.SystemRoots(Path.Combine(dir, "bundle.pem"), roots);
+            Assert.NotNull(found);
+            Assert.Equal("-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n\n# Acnologia forward proxy CA\nCA\n",
+                AcnologiaClient.CABundle(found!, "CA\n"));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
     }
 
     [Fact]

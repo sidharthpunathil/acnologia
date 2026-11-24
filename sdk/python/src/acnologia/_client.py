@@ -49,6 +49,14 @@ def _resolve(base_url: Optional[str], token: Optional[str]) -> "tuple[str, str]"
 
 
 DEFAULT_CA_PATH = "acnologia-ca.pem"
+DEFAULT_CA_BUNDLE_PATH = "acnologia-ca-bundle.pem"
+NO_PROXY = "localhost,127.0.0.1,::1"
+_SYSTEM_ROOTS = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+)
 
 
 def _resolve_access(access_password: Optional[str]) -> Optional[str]:
@@ -111,15 +119,59 @@ def _url_with_token(proxy_url: str, token: str) -> str:
     return urlunsplit((parts.scheme, f"app:{quote(token, safe='')}@{host}", parts.path, parts.query, parts.fragment))
 
 
-def _env(url: str, ca_path: str) -> Dict[str, str]:
+def _env(url: str, ca_path: str, bundle_path: str) -> Dict[str, str]:
     return {
         "HTTPS_PROXY": url,
         "HTTP_PROXY": url,
         "NODE_USE_ENV_PROXY": "1",
         "NODE_EXTRA_CA_CERTS": ca_path,
-        "REQUESTS_CA_BUNDLE": ca_path,
-        "SSL_CERT_FILE": ca_path,
+        "REQUESTS_CA_BUNDLE": bundle_path,
+        "SSL_CERT_FILE": bundle_path,
+        "NO_PROXY": NO_PROXY,
+        "no_proxy": NO_PROXY,
     }
+
+
+def _same_file(a: str, b: str) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _system_roots(target: str) -> str:
+    """The first system root bundle found, skipping the file at `target`."""
+    if os.name == "nt":
+        return ""
+    paths = list(_SYSTEM_ROOTS)
+    env = os.environ.get("SSL_CERT_FILE")
+    if env:
+        paths.insert(0, env)
+    for p in paths:
+        if _same_file(p, target):
+            continue
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        if "BEGIN CERTIFICATE" in text:
+            return text
+    return ""
+
+
+def _roots_for_bundle(path: str) -> str:
+    roots = _system_roots(path)
+    if not roots:
+        raise AcnologiaError(
+            "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle "
+            "of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone"
+        )
+    return roots
+
+
+def _write_bundle(path: str, roots: str, ca: str) -> str:
+    return _write_ca(path, roots.rstrip("\n") + "\n\n# Acnologia forward proxy CA\n" + ca.rstrip("\n") + "\n")
 
 
 def _ssl_context(ca_pem: str) -> ssl.SSLContext:
@@ -562,19 +614,31 @@ class Acnologia:
         """Write the CA certificate to `path` and return the path."""
         return _write_ca(path, self.forward_proxy_ca())
 
+    def save_forward_proxy_ca_bundle(self, path: str = DEFAULT_CA_BUNDLE_PATH) -> str:
+        """Write the system roots followed by the CA certificate to `path` and
+        return the path. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the
+        whole trust store, so they need this bundle, not the CA alone. The
+        roots come from `$SSL_CERT_FILE` (when it is a PEM bundle other than
+        `path`) or the usual system bundles; raises `AcnologiaError` when there
+        is none, as on Windows."""
+        roots = _roots_for_bundle(path)
+        return _write_bundle(path, roots, self.forward_proxy_ca())
+
     def forward_proxy_url(self) -> str:
         """The forward proxy URL with user `app` and this client's token as the
         password, such as `http://app:acn_...@host:8888`. It contains the token:
         do not log it."""
         return _url_with_token(self.forward_proxy().proxy_url, self.token)
 
-    def forward_proxy_env(self, ca_path: str = DEFAULT_CA_PATH) -> Dict[str, str]:
+    def forward_proxy_env(self, ca_path: str = DEFAULT_CA_PATH, bundle_path: str = DEFAULT_CA_BUNDLE_PATH) -> Dict[str, str]:
         """Environment that sends an app's HTTP through the forward proxy:
         `HTTPS_PROXY` and `HTTP_PROXY` (the `forward_proxy_url`),
-        `NODE_USE_ENV_PROXY=1`, and `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`
-        and `SSL_CERT_FILE` set to `ca_path`. Save the CA there with
-        `save_forward_proxy_ca`. It contains the token: do not log it."""
-        return _env(self.forward_proxy_url(), ca_path)
+        `NODE_USE_ENV_PROXY=1`, `NODE_EXTRA_CA_CERTS` set to `ca_path`,
+        `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` set to `bundle_path`, and
+        `NO_PROXY` and `no_proxy` set to `localhost,127.0.0.1,::1`. Save the CA
+        with `save_forward_proxy_ca` and the bundle (system roots plus the CA)
+        with `save_forward_proxy_ca_bundle`. It contains the token: do not log it."""
+        return _env(self.forward_proxy_url(), ca_path, bundle_path)
 
     def forward_proxy_client(self, **kwargs: Any) -> httpx.Client:
         """An httpx.Client that sends every request through the forward proxy,
@@ -743,13 +807,18 @@ class AsyncAcnologia:
     async def save_forward_proxy_ca(self, path: str = DEFAULT_CA_PATH) -> str:
         return _write_ca(path, await self.forward_proxy_ca())
 
+    async def save_forward_proxy_ca_bundle(self, path: str = DEFAULT_CA_BUNDLE_PATH) -> str:
+        """See Acnologia.save_forward_proxy_ca_bundle."""
+        roots = _roots_for_bundle(path)
+        return _write_bundle(path, roots, await self.forward_proxy_ca())
+
     async def forward_proxy_url(self) -> str:
         """Contains the token: do not log it. See Acnologia.forward_proxy_url."""
         return _url_with_token((await self.forward_proxy()).proxy_url, self.token)
 
-    async def forward_proxy_env(self, ca_path: str = DEFAULT_CA_PATH) -> Dict[str, str]:
+    async def forward_proxy_env(self, ca_path: str = DEFAULT_CA_PATH, bundle_path: str = DEFAULT_CA_BUNDLE_PATH) -> Dict[str, str]:
         """Contains the token: do not log it. See Acnologia.forward_proxy_env."""
-        return _env(await self.forward_proxy_url(), ca_path)
+        return _env(await self.forward_proxy_url(), ca_path, bundle_path)
 
     async def forward_proxy_client(self, **kwargs: Any) -> httpx.AsyncClient:
         """An httpx.AsyncClient for the forward proxy. See Acnologia.forward_proxy_client."""

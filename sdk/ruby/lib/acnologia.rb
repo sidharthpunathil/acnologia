@@ -22,6 +22,18 @@ module Acnologia
   ACCESS_HEADER = "X-Acnologia-Access"
   # Where forward_proxy_env and save_forward_proxy_ca put the proxy CA by default.
   DEFAULT_CA_PATH = "acnologia-ca.pem"
+  # Where forward_proxy_env and save_forward_proxy_ca_bundle put the system
+  # roots plus the proxy CA by default.
+  DEFAULT_CA_BUNDLE_PATH = "acnologia-ca-bundle.pem"
+  # Hosts that stay off the forward proxy, which refuses hosts that are no service.
+  NO_PROXY = "localhost,127.0.0.1,::1"
+  # The usual system root bundles, tried in order.
+  SYSTEM_ROOTS = %w[
+    /etc/ssl/certs/ca-certificates.crt
+    /etc/pki/tls/certs/ca-bundle.crt
+    /etc/ssl/ca-bundle.pem
+    /etc/ssl/cert.pem
+  ].freeze
 
   # Replace the lease secret (raw and URL encoded) with "[key]" and truncate.
   # Errors from query auth services often carry the full request URL, key
@@ -884,6 +896,24 @@ module Acnologia
       path
     end
 
+    # Write the system roots followed by the forward proxy's CA certificate
+    # to path and return path. SSL_CERT_FILE and REQUESTS_CA_BUNDLE replace
+    # the whole trust store, so they need this bundle, not the CA alone. The
+    # roots come from $SSL_CERT_FILE (when it is a PEM bundle other than
+    # path) or the usual system bundles; raises Acnologia::Error when there
+    # is none, as on Windows.
+    def save_forward_proxy_ca_bundle(path = DEFAULT_CA_BUNDLE_PATH)
+      roots = system_roots(path)
+      unless roots
+        raise Error, "no system root certificates found. SSL_CERT_FILE and REQUESTS_CA_BUNDLE need a bundle " \
+                     "of the system roots plus the Acnologia CA; NODE_EXTRA_CA_CERTS takes the CA alone"
+      end
+
+      ca = forward_proxy_ca
+      File.write(path, "#{roots.sub(/\n+\z/, "")}\n\n# Acnologia forward proxy CA\n#{ca.sub(/\n+\z/, "")}\n")
+      path
+    end
+
     # The forward proxy URL with user "app" and this client's token as the
     # password: http://app:acn_...@host:8888. It contains the token: keep it
     # out of logs.
@@ -893,18 +923,22 @@ module Acnologia
 
     # Environment for a process that should reach providers through the
     # forward proxy: HTTPS_PROXY and HTTP_PROXY (forward_proxy_url),
-    # NODE_USE_ENV_PROXY=1, and NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE and
-    # SSL_CERT_FILE set to ca_path. The proxy values contain the token: keep
-    # them out of logs. Save the CA there with save_forward_proxy_ca.
-    def forward_proxy_env(ca_path = DEFAULT_CA_PATH)
+    # NODE_USE_ENV_PROXY=1, NODE_EXTRA_CA_CERTS set to ca_path, SSL_CERT_FILE
+    # and REQUESTS_CA_BUNDLE set to bundle_path, and NO_PROXY and no_proxy
+    # set to localhost,127.0.0.1,::1. The proxy values contain the token:
+    # keep them out of logs. Save the CA with save_forward_proxy_ca and the
+    # bundle (system roots plus the CA) with save_forward_proxy_ca_bundle.
+    def forward_proxy_env(ca_path = DEFAULT_CA_PATH, bundle_path = DEFAULT_CA_BUNDLE_PATH)
       url = forward_proxy_url
       {
         "HTTPS_PROXY" => url,
         "HTTP_PROXY" => url,
         "NODE_USE_ENV_PROXY" => "1",
         "NODE_EXTRA_CA_CERTS" => ca_path,
-        "REQUESTS_CA_BUNDLE" => ca_path,
-        "SSL_CERT_FILE" => ca_path
+        "REQUESTS_CA_BUNDLE" => bundle_path,
+        "SSL_CERT_FILE" => bundle_path,
+        "NO_PROXY" => NO_PROXY,
+        "no_proxy" => NO_PROXY
       }
     end
 
@@ -1072,6 +1106,24 @@ module Acnologia
     end
 
     private
+
+    # The first system root bundle found, skipping the file at target.
+    def system_roots(target)
+      return nil if Gem.win_platform?
+
+      paths = SYSTEM_ROOTS.dup
+      env = ENV.fetch("SSL_CERT_FILE", "")
+      paths.unshift(env) unless env.empty?
+      paths.each do |p|
+        next if File.exist?(target) && File.exist?(p) && File.identical?(p, target)
+
+        text = File.read(p)
+        return text if text.include?("BEGIN CERTIFICATE")
+      rescue SystemCallError
+        next
+      end
+      nil
+    end
 
     def proxy_url_with_token(raw)
       u = URI(raw)
