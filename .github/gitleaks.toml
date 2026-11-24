@@ -1,0 +1,27 @@
+# Secret scan settings for the gitleaks job in ci.yml (and `make check`).
+# The default gitleaks rules, minus the fake keys this repo uses on purpose.
+# Keep these narrow: a real key in any other file still fails the scan.
+title = "acnologia"
+
+[extend]
+useDefault = true
+
+# Test fixtures. The redaction, key paste and Assistant tests feed in strings
+# shaped like real provider keys (sk_live_..., ghp_..., AIza..., JWTs) to
+# check that they are found and scrubbed.
+[[allowlists]]
+description = "fake keys in tests"
+paths = [
+  '''^server/internal/[a-z0-9_]+/[a-z0-9_]+_test\.go$''',
+  '''^server/internal/keyparse/testdata/cases\.json$''',
+  '''^web/src/.+\.test\.tsx?$''',
+]
+
+# Placeholders in the docs, the README and the dashboard's examples.
+[[allowlists]]
+description = "documentation placeholders"
+regexes = [
+  '''^(acn|cog)_your_app_token$''',
+  '''^sk_live_a1b2c3d4e5f6a7b8c9d0$''',
+  '''^9f8e7d6c5b4a9f8e7d6c$''',
+]

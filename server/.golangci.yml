@@ -1,0 +1,97 @@
+# golangci-lint for the server module. CI runs it in the go job (Linux leg)
+# and `make check` runs it locally. Kept to a few high signal linters, so a
+# finding is worth reading:
+#   staticcheck  bugs, simplifications and style (the default checks, minus
+#                the ones listed below)
+#   govet        the go vet checks
+#   errcheck     unchecked errors, in non-test code only
+#   ineffassign  assignments that are never read
+#   unused       dead code
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # Off by default in staticcheck too: package comments, naming and
+        # receiver names, dot imports, doc comment form.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # Error strings here are often shown to people as written (the
+        # dashboard, the CLI, MCP tool results), so they start with a capital
+        # and end with a full stop on purpose.
+        - -ST1005
+        # Quick fixes are editor suggestions (De Morgan, embedded field
+        # selectors), not problems.
+        - -QF*
+
+    errcheck:
+      # Errors nothing can act on: closing a body, file, rows or connection
+      # after use, rolling back a finished transaction, and writes to a
+      # response or terminal.
+      exclude-functions:
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (io/fs.File).Close
+        - (net/http.File).Close
+        - (*os.File).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*github.com/sidharthpunathil/acnologia/server/internal/store.Store).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # .env loading: a variable that fails to set is reported by the
+        # config check that reads it.
+        - os.Setenv
+        # A sizes="" attribute that does not parse leaves the size at 0.
+        - fmt.Sscan
+
+  exclusions:
+    rules:
+      # Tests may ignore errors from setup and cleanup.
+      - path: _test\.go
+        linters: [errcheck]
+      # Test only style: helpers that return (t, err), time.Until spelled
+      # out, and strings that carry Unicode format characters on purpose
+      # (the redaction and guard tests feed them in).
+      - path: _test\.go
+        linters: [staticcheck]
+        text: "^(ST1008|S1024|ST1018):"
+      # take() has side effects: the repeated call is the point of the test.
+      - path: internal/api/ratelimit_test\.go
+        linters: [staticcheck]
+        text: "^SA4000:"
+      # Values a test reassigns for readability and then does not check.
+      - path: internal/api/(capability|mcp_control_parity|people)_test\.go
+        linters: [staticcheck, ineffassign]
+        text: "(SA4006: this value of `?(r|sc|code)`? is never used|ineffectual assignment to (sc|code))"
+      # The proxied MCP sync records a healthy key on a best effort basis;
+      # the sync itself already succeeded.
+      - path: internal/api/mcp_upstream\.go
+        linters: [errcheck]
+        text: "s\\.Pool\\.ApplyProxied"
+      # The forward proxy's client pool is torn down on shutdown.
+      - path: internal/api/forward\.go
+        linters: [errcheck]
+        text: "`cl\\.Close`"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
