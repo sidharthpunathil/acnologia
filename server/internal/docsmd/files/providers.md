@@ -159,7 +159,8 @@ it work as before.
 |---|---|
 | `name` | The product name. Unique within the spec. |
 | `match` | Which requests the offer covers. `method` (empty for any) and `path`, relative to the base URL: a prefix by default, `*` matches inside one segment, and a trailing `$` makes it exact. Or `examples`, a list of example names, which match that example's method and path exactly. Leave `match` out for a provider wide offer. |
-| `price` | `amount` is USD (or `currency`) for one `unit`: request, search, query, url, page, step, minute, check, token, character, credit, image, second, session, run or gb. `$5 per 1,000` is `0.005`. `per_request` is how many units one request uses when that is fixed (1 credit). |
+| `price` | `amount` is USD (or `currency`) for one `unit`: request, search, query, url, page, step, minute, check, token, character, credit, image, second, session, run or gb. `$5 per 1,000` is `0.005`. `per_request` is how many units one request uses when that is fixed (1 credit). For unit `token`, `amount` prices one input token and `output_amount`, when set, one output token (`$3` per million is `0.000003`). |
+| `model` | For a token price: the model it applies to, as the request body names it (`"model": "..."`). A dated or routed form of it (`name-20261101`, `name-2026-11-01`, `vendor/name`) matches too. Empty prices every model on the offer's endpoint. |
 | `free` | Requests under this offer cost nothing. A free offer cannot have a price above 0. |
 | `limits` | `{count, per, unit}` with `per` second, minute, hour, day or month (30 days). |
 | `concurrency` | Requests one key may have in flight under this offer. |
@@ -192,6 +193,24 @@ How Acnologia uses offers:
   else `quota.cost_per_request`. Prices in units that vary per request
   (tokens, minutes) without `per_request`, or in another currency, fall back
   to `quota.cost_per_request`. The Usage page and app budgets use this cost.
+- **Token cost.** An LLM service's answer reports the tokens it used. Once
+  the answer has been sent, the tokens are priced with the offers that apply
+  to the request and have a USD price in unit `token`: the one whose `model`
+  is the model the request body names (or, failing that, the answer), else
+  one with no `model`. That cost is added to the request's cost in the app's
+  usage, so USD budgets count what a call really spent. The per request
+  price is still what an app reserves before the call (with no price it
+  reserves 0), and the request's activity event keeps the per request
+  price.
+- **Budgets.** An app's request and budget limits count the request being
+  admitted: a request whose estimate would take spend past a budget is
+  refused rather than let through to overshoot it, and a budget already
+  reached refuses every request. When the limits or usage cannot be read
+  the request is refused with 503 `limits_unavailable` and `Retry-After`.
+- **Cheapest routing.** The `cheapest` strategy of groups and capabilities
+  orders services by this per request price. A service with no known price
+  (no deciding offer, no override, `quota.cost_per_request` of 0) goes after
+  every priced one; a free offer is a known price of 0.
 - **AI and people.** The AI builder reads the provider's pricing page and
   fills offers with `source_url` and `checked_at`. The Assistant's
   `provider_offers` tool answers questions such as which search provider is
@@ -470,9 +489,16 @@ The mode of the service a request names decides the order:
 
 A service whose breaker is open or that has no free key goes last. The
 request moves on when a service has no usable key, its breaker is open, it
-cannot be reached, every key it tried was rate limited, busy, out of quota,
-invalid or banned, or it failed on its side. A request the provider rejects
-as malformed (400, 422) is relayed as is. `X-Acnologia-Service` names the
+could not be connected to, or every key it tried was rate limited, busy, out
+of quota, invalid or banned: the provider refused before doing any work.
+When it failed on its side (a 5xx), or the connection was lost after the
+request was sent, the provider may already have done the work, so the
+request moves on only if it may be repeated: a GET, HEAD or OPTIONS, or a
+request with an `Idempotency-Key`. Anything else gets that answer (or 502
+`upstream_unreachable`) back. Service groups and capability routes follow
+the same rule, and inside one service keys rotate only on refusals, plus a
+connection failure through a proxy set on the key itself. A request the
+provider rejects as malformed (400, 422) is relayed as is. `X-Acnologia-Service` names the
 service that answered. An app only reaches services it may use, and a
 share's token never rotates. The Settings card lists the services that
 match, with their mode and free keys, and turns rotation on for all of them
@@ -622,9 +648,11 @@ Offers list a few headline models per provider with input and output prices
 per million tokens, free tiers and credits, and published rate limits per
 tier in `notes`, each with its source page, checked 2026-11-03. The model is
 chosen in the request body, so a provider's model offers share their
-endpoint's match and only the first one selects a request. The rest are
-there for people and the AI tools, and token prices never decide a request's
-cost. Free offers (Groq's free plan, Mistral's free mode, Cohere trial keys,
+endpoint's match and only the first one selects a request. The built in
+model offers state their token prices in `notes` only, for people and the AI
+tools, so they add no token cost; give an offer a `model` and a `price` in
+unit `token` (see [Token cost](#offers)) for the spend to count toward
+budgets. Free offers (Groq's free plan, Mistral's free mode, Cohere trial keys,
 OpenRouter's `:free` models) come last for the same reason, so their limits
 never pace paid traffic. Only Perplexity's Search API has a per request price
 and a limit that holds on every tier (50 a second).

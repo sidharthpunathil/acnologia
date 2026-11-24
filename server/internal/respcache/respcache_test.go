@@ -73,3 +73,26 @@ func TestPurgePrefix(t *testing.T) {
 		t.Fatal("other services keep their entries")
 	}
 }
+
+func TestClaimIsExclusiveUntilReleased(t *testing.T) {
+	c := New(0) // claims work with the cache off too
+	release, ok := c.Claim("idem|1|k")
+	if !ok {
+		t.Fatal("first claim should succeed")
+	}
+	if _, ok := c.Claim("idem|1|k"); ok {
+		t.Fatal("a held key must not be claimed twice")
+	}
+	if r2, ok := c.Claim("idem|1|other"); !ok {
+		t.Fatal("other keys are independent")
+	} else {
+		r2()
+	}
+	release()
+	release() // safe twice
+	if r3, ok := c.Claim("idem|1|k"); !ok {
+		t.Fatal("a released key can be claimed again")
+	} else {
+		r3()
+	}
+}

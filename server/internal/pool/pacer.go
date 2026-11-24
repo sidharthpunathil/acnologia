@@ -15,6 +15,11 @@ import (
 type Request struct {
 	Method string
 	Path   string
+	// Pin, when set, makes the pick deterministic for it: the same pin
+	// reaches the same key while that key can take the request, so a retry
+	// with one Idempotency-Key lands on the same vendor account and the
+	// provider's own idempotency matches it. See pinnedKey.
+	Pin string
 }
 
 // pacer keeps each key under the limits its provider publishes in offers

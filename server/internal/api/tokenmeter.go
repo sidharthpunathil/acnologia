@@ -27,6 +27,7 @@ const (
 var (
 	tokenInRe  = regexp.MustCompile(`"(?:input_tokens|prompt_tokens|promptTokenCount)"\s*:\s*(\d{1,12})`)
 	tokenOutRe = regexp.MustCompile(`"(?:output_tokens|completion_tokens|candidatesTokenCount)"\s*:\s*(\d{1,12})`)
+	modelRe    = regexp.MustCompile(`"(?:model|modelVersion)"\s*:\s*"([^"\\]{1,200})"`)
 )
 
 // tokenMeter is an io.ReadCloser that copies the start and end of what it
@@ -66,6 +67,19 @@ func (m *tokenMeter) counts() (in, out int64) {
 		out = max(out, maxMatch(tokenOutRe, chunk))
 	}
 	return in, out
+}
+
+// model is the first model name the answer reports, or "". Answers name
+// the model near the start (OpenAI, Anthropic) or in every event of a
+// stream, so the head is enough.
+func (m *tokenMeter) model() string {
+	if m == nil {
+		return ""
+	}
+	if sm := modelRe.FindSubmatch(m.head); sm != nil {
+		return string(sm[1])
+	}
+	return ""
 }
 
 func maxMatch(re *regexp.Regexp, b []byte) int64 {

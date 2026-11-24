@@ -6,6 +6,10 @@
 // such failures inside a window the breaker opens and requests fail fast.
 // When the reset time passes one probe request is let through (half open);
 // its result closes the breaker or opens it again.
+//
+// Failures that arrive less than Spacing apart count as one strike: a burst
+// of concurrent requests that all fail at once is one outage seen many
+// times, not many outages.
 package breaker
 
 import (
@@ -54,9 +58,16 @@ type Set struct {
 	// OnChange is called outside the lock when a breaker opens (down=true)
 	// or closes again (down=false).
 	OnChange func(serviceID int64, down bool, reason string)
+
+	// Spacing is how far apart two failures of one service must be to count
+	// as two strikes. Set it before use; 0 counts every failure.
+	Spacing time.Duration
 }
 
-func New() *Set { return &Set{m: map[int64]*entry{}, now: time.Now} }
+// DefaultSpacing is the Spacing New sets.
+const DefaultSpacing = time.Second
+
+func New() *Set { return &Set{m: map[int64]*entry{}, now: time.Now, Spacing: DefaultSpacing} }
 
 func (s *Set) get(id int64) *entry {
 	e, ok := s.m[id]
@@ -128,6 +139,10 @@ func (s *Set) Failure(id int64, cfg Settings, reason string) {
 	case Open:
 		// A request that started before the breaker opened. Nothing to change.
 	default:
+		if n := len(e.failures); n > 0 && now.Sub(e.failures[n-1]) < s.Spacing {
+			// Part of the strike already counted.
+			break
+		}
 		cut := now.Add(-cfg.Window)
 		kept := e.failures[:0]
 		for _, t := range e.failures {

@@ -25,7 +25,7 @@ const (
 	StrategyRoundRobin = "round_robin" // each request starts at the next one
 	StrategyRandom     = "random"      // a shuffle per request
 	StrategyWeighted   = "weighted"    // random, in proportion to weights
-	StrategyCheapest   = "cheapest"    // lowest price per request first, from offers
+	StrategyCheapest   = "cheapest"    // lowest known price per request first, unpriced last
 	StrategyMostKeys   = "most_keys"   // most keys free right now first
 )
 
@@ -40,7 +40,10 @@ type routeCand struct {
 	sv     *store.Service
 	weight int
 	cost   float64
-	keys   int
+	// unpriced means no price is known (no deciding offer, no cost per
+	// request): its cost of 0 is not free, so cheapest puts it last.
+	unpriced bool
+	keys     int
 	// down is set when the service's breaker is open or it has no key free
 	// now. Such candidates go last whatever the strategy, so the request
 	// tries a working provider first and still has them as a last resort.
@@ -66,7 +69,12 @@ func orderRoutes(slug, strategy string, cands []routeCand) []routeCand {
 	case StrategyWeighted:
 		out = weightedOrder(out)
 	case StrategyCheapest:
-		sort.SliceStable(out, func(i, j int) bool { return out[i].cost < out[j].cost })
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].unpriced != out[j].unpriced {
+				return !out[i].unpriced
+			}
+			return !out[i].unpriced && out[i].cost < out[j].cost
+		})
 	case StrategyMostKeys:
 		sort.SliceStable(out, func(i, j int) bool { return out[i].keys > out[j].keys })
 	}
@@ -132,7 +140,8 @@ func (s *Server) candidate(ctx context.Context, idx int, sv *store.Service, weig
 	free := s.freeKeys(ctx)
 	st := s.Breakers.Status(sv.ID, breakerSettings(prov))
 	keys := free[sv.ID]
-	return routeCand{idx: idx, sv: sv, weight: weight, cost: costPerRequest(sv, prov, method, "/"+trimSlash(path)),
+	cost, known := costKnown(sv, prov, method, "/"+trimSlash(path))
+	return routeCand{idx: idx, sv: sv, weight: weight, cost: cost, unpriced: !known,
 		keys: keys, down: st.State == breaker.Open || keys == 0}
 }
 

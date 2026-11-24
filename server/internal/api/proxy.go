@@ -29,8 +29,9 @@ import (
 )
 
 // proxyIdleTimeout ends a proxied response when the upstream sends nothing
-// for this long, so a stalled stream cannot hold a key's slot forever.
-const proxyIdleTimeout = 5 * time.Minute
+// for this long, so a stalled stream cannot hold a key's slot forever. It
+// covers streamed and buffered answers alike. A variable for tests.
+var proxyIdleTimeout = 5 * time.Minute
 
 // proxyMethods are the methods forwarded upstream. TRACE and CONNECT are
 // refused: an echoing upstream would hand the injected key back to the app.
@@ -246,6 +247,29 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	} else {
 		path = chi.URLParam(r, "*")
 	}
+	// An Idempotency-Key is answered from its stored response before any
+	// limit applies: the request was paid for when it first ran, and a
+	// replay records no usage. While the first request with the key is
+	// still running, a second one gets 409 instead of a second upstream call.
+	idemKey, idemFP := idempotencyKey(r, a, slug, path), ""
+	if idemKey != "" {
+		idemFP = bodyFingerprint(body)
+		if s.replayIdempotent(w, a, idemKey, idemFP) {
+			return
+		}
+		unclaim, ok := s.Cache.Claim(idemKey)
+		if !ok {
+			w.Header().Set("Retry-After", "1")
+			writeErr(w, 409, "idempotency_in_progress", "a request with this Idempotency-Key is still running, retry shortly")
+			return
+		}
+		// Released last, after the answer is stored, and on a panic too.
+		defer unclaim()
+		// The holder may have stored its answer between the check and the claim.
+		if s.replayIdempotent(w, a, idemKey, idemFP) {
+			return
+		}
+	}
 	var targets []proxyTarget
 	if group != nil {
 		targets = singleTargets(s.orderGroup(r.Context(), group.Slug, group.Strategy, svcs, r.Method, path), path)
@@ -270,14 +294,15 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	// Runs after the usage below is recorded.
 	defer release()
-	idemKey := idempotencyKey(r, a.ID, slug, path)
-	if idemKey != "" {
-		if e, ok := s.Cache.Get(idemKey); ok {
-			writeCached(w, e, "replay", hidesKey(a))
-			return
-		}
-	}
 
+	// ran is set once an upstream may have done the work (see
+	// proxy_resend.go); from then on the request moves to another service
+	// only when it may be repeated.
+	resend := resendable(r.Method, r.Header)
+	ran := false
+	if rep, ok := r.Context().Value(proxyReportKey{}).(*proxyReport); ok {
+		defer func() { rep.mayHaveRun = ran }()
+	}
 	var last *serviceResult
 	var failErr error
 	for i, t := range targets {
@@ -299,20 +324,28 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 			failErr = &serviceDownError{Service: sv.Name, RetryAfter: ra}
 			continue
 		}
-		res := s.proxyService(w, r, a, sv, prov, t.path, body, bcfg, capture{cacheKey: cacheKey, ttl: ttl, idemKey: idemKey})
+		res := s.proxyService(w, r, a, sv, prov, t.path, body, bcfg, capture{cacheKey: cacheKey, ttl: ttl, idemKey: idemKey, idemFP: idemFP}, resend)
+		ran = ran || res.mayHaveRun
 		if res.served {
 			_ = s.Store.RecordAppUsage(r.Context(), a.ID, res.cost, false)
 			return
 		}
+		// Another service re-sends the request: always fine while every
+		// attempt was refused before any work, otherwise only for a request
+		// that may be repeated.
+		safe := resend || !ran
 		if res.resp == nil {
 			failErr = res.err
-			continue
+			if safe {
+				continue
+			}
+			break
 		}
 		last = res
 		// In a group or a rotation, a failure that another account, region
 		// or provider could avoid moves on to the next service. A request the provider rejected as
 		// malformed would fail everywhere, so it is relayed as is.
-		if i < len(targets)-1 && (res.outcome.Rotates() || res.outcome.ProviderFault()) {
+		if i < len(targets)-1 && safe && (res.outcome.Rotates() || res.outcome.ProviderFault()) {
 			continue
 		}
 		break
@@ -320,8 +353,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	if last != nil {
 		_ = s.Store.RecordAppUsage(r.Context(), a.ID, 0, false)
 		setHeader(w.Header(), "Service", last.service)
-		if idemKey != "" && last.resp.StatusCode < 500 {
-			s.Cache.Set(idemKey, &respcache.Entry{Status: last.resp.StatusCode, Header: last.resp.Header.Clone(), Body: last.body, KeyID: last.keyID}, idempotencyTTL)
+		if idemKey != "" && idemStorable(last.resp.StatusCode) {
+			s.Cache.Set(idemKey, &respcache.Entry{Status: last.resp.StatusCode, Header: last.resp.Header.Clone(), Body: last.body, KeyID: last.keyID, Fingerprint: idemFP}, idempotencyTTL)
 		}
 		relay(w, last.resp, view(a, last.keyID, last.attempts), last.body)
 		return
@@ -357,6 +390,10 @@ type serviceResult struct {
 	attempts int
 	outcome  providers.Outcome
 	err      error // why no upstream answer exists: no key, or unreachable
+	// mayHaveRun is set once an upstream may have done the work: it
+	// answered with anything but a refusal, or a request was lost after it
+	// reached the wire.
+	mayHaveRun bool
 }
 
 // capture says which caches a successful response should be stored in.
@@ -364,6 +401,7 @@ type capture struct {
 	cacheKey string
 	ttl      time.Duration
 	idemKey  string
+	idemFP   string // the request body's fingerprint, stored with the idempotent entry
 }
 
 func (c capture) any() bool { return c.cacheKey != "" || c.idemKey != "" }
@@ -375,9 +413,11 @@ var errUpstreamUnreachable = errors.New("upstream unreachable")
 var errUpstreamBlocked = fmt.Errorf("%w: %s", errUpstreamUnreachable, catalog.ErrMetadataAddr)
 
 // proxyService tries the request on one service, rotating keys on failures
-// that are a key's fault.
+// that are a key's fault: refusals, which never did any work, and a key's
+// own egress proxy failing, under the resend rule (proxy_resend.go). A 5xx
+// is the provider's and is never retried on another key here.
 func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.App, sv *store.Service, prov *providers.Spec,
-	path string, body []byte, bcfg breaker.Settings, cap capture) *serviceResult {
+	path string, body []byte, bcfg breaker.Settings, cap capture, resend bool) *serviceResult {
 	out := &serviceResult{service: sv.Slug}
 	verdict := false // whether the breaker heard about this service
 	defer func() {
@@ -386,7 +426,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		}
 	}()
 	cost := costPerRequest(sv, prov, r.Method, "/"+path)
-	pr := pool.Request{Method: r.Method, Path: "/" + path}
+	// An Idempotency-Key pins the key, so a retry reaches the same vendor
+	// account and the provider's own idempotency sees the same caller.
+	pr := pool.Request{Method: r.Method, Path: "/" + path, Pin: cap.idemKey}
 	tried := map[int64]bool{}
 	queue := time.Duration(sv.QueueTimeoutSec) * time.Second
 	for attempt := 1; attempt <= sv.MaxAttempts; attempt++ {
@@ -405,8 +447,8 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			return out
 		}
 		if err != nil {
-			if out.resp != nil {
-				return out // out of keys, relay the last upstream answer
+			if out.resp != nil || out.err != nil {
+				return out // out of keys, relay the last upstream answer or failure
 			}
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, AppID: a.ID, StatusCode: 503, Detail: "proxy: " + err.Error()})
 			var nk *pool.NoKeyError
@@ -418,15 +460,25 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		}
 		k := picked.Key
 		tried[k.ID] = true
+		// A proxy set on the key itself is the key's: when it fails, the key
+		// steps aside and the next key tries, and the service is not blamed.
+		ownEgress := k.EgressID != nil && s.Pool.Egress != nil
 		client, err := s.upstreamClient(r.Context(), sv, k)
 		if err != nil {
 			picked.Release()
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, Detail: "egress: " + err.Error()})
-			out.err = errUpstreamUnreachable
+			if out.resp == nil {
+				out.err = errUpstreamUnreachable
+			}
+			if ownEgress {
+				_ = s.Pool.EgressFailed(context.WithoutCancel(r.Context()), k, err.Error())
+				continue // nothing was sent
+			}
 			return out
 		}
 		ctx, cancel := context.WithCancel(r.Context())
-		req, err := buildUpstream(ctx, r, sv, path, body, picked.Secret)
+		trace := &sentTrace{}
+		req, err := buildUpstream(trace.with(ctx), r, sv, path, body, picked.Secret)
 		if err != nil {
 			cancel()
 			picked.Release()
@@ -446,15 +498,29 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			msg := scrub(err.Error(), picked.Secret)
 			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + msg})
 			blocked := strings.Contains(msg, catalog.ErrMetadataAddr)
-			if r.Context().Err() == nil && !blocked {
-				s.Breakers.Failure(sv.ID, bcfg, "could not connect: "+msg)
-				verdict = true
+			// Once the headers were written the upstream may have acted on
+			// the request; before that it saw nothing.
+			sent := trace.sent()
+			if sent {
+				out.mayHaveRun = true
 			}
 			if out.resp == nil {
 				out.err = errUpstreamUnreachable
 				if blocked {
 					out.err = errUpstreamBlocked
 				}
+			}
+			gone := r.Context().Err() != nil
+			if ownEgress && !gone && !blocked {
+				_ = s.Pool.EgressFailed(context.WithoutCancel(r.Context()), k, msg)
+				if !sent || resend {
+					continue
+				}
+				return out
+			}
+			if !gone && !blocked {
+				s.Breakers.Failure(sv.ID, bcfg, "could not connect: "+msg)
+				verdict = true
 			}
 			return out // relay an earlier answer instead of hiding it behind a 502
 		}
@@ -472,6 +538,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 		s.Store.AddEvent(r.Context(), ev)
 
 		if resp.StatusCode < 400 {
+			out.mayHaveRun = true
 			s.Breakers.Success(sv.ID)
 			verdict = true
 			_ = s.Pool.ApplyProxied(r.Context(), sv, k, a.ID, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(resp.Header)})
@@ -489,8 +556,12 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 				s.deliver(w, resp, k, view(a, k.ID, attempt), cancel, picked.Secret, !mayReadKey(a, sv), cap)
 			}()
 			if meter != nil {
+				// Settle: the request's price was the estimate; the tokens the
+				// answer used are added once they are known, so a USD budget
+				// sees what a token priced call really cost.
 				in, outTok := meter.counts()
 				_ = s.Store.RecordTokens(context.WithoutCancel(r.Context()), a.ID, sv.ID, in, outTok)
+				cost += tokenCost(prov, r.Method, "/"+path, body, meter, in, outTok)
 			}
 			out.served, out.cost = true, cost
 			return out
@@ -513,6 +584,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			}
 		}
 		res.Message = scrub(res.Message, picked.Secret)
+		if !res.Outcome.Rotates() {
+			out.mayHaveRun = true // anything but a refusal may have done the work
+		}
 		if res.Outcome.ProviderFault() {
 			s.Breakers.Failure(sv.ID, bcfg, fmt.Sprintf("%d: %s", resp.StatusCode, res.Message))
 		} else {
@@ -537,7 +611,10 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 
 // deliver sends a successful upstream response to the client. When the
 // response may be cached it is buffered (up to maxCachedBody) and stored;
-// larger bodies stream through untouched.
+// larger bodies stream through untouched. An event stream is never
+// buffered: it is relayed as it arrives and not stored for replay. While
+// buffering, an upstream that goes quiet for proxyIdleTimeout is cut off as
+// it is when streaming.
 //
 // When scrubBody is set (the caller may not read the key), every form of the
 // secret in the body is replaced, streamed or buffered.
@@ -546,11 +623,19 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 		defer resp.Body.Close()
 		resp.Body = readCloser{newScrubReader(resp.Body, secret), resp.Body}
 	}
-	if !cap.any() || !s.Cache.Enabled() {
+	if !cap.any() || !s.Cache.Enabled() || isEventStream(resp) {
 		relayStream(w, resp, v, cancel, !scrubBody)
 		return
 	}
-	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxCachedBody+1))
+	idle := time.AfterFunc(proxyIdleTimeout, cancel)
+	buf, err := io.ReadAll(io.LimitReader(idleReader{resp.Body, idle}, maxCachedBody+1))
+	if stopped := idle.Stop(); err != nil && !stopped {
+		// The upstream went quiet and the read was cut off. Nothing has
+		// been written yet, so the caller gets a clear error, not half a body.
+		resp.Body.Close()
+		writeErr(w, 504, "upstream_idle", "the provider stopped sending its answer")
+		return
+	}
 	if err != nil || len(buf) > maxCachedBody {
 		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
 		setHeader(w.Header(), "Cache", "bypass")
@@ -566,8 +651,11 @@ func (s *Server) deliver(w http.ResponseWriter, resp *http.Response, k *store.Ke
 	} else if cap.cacheKey != "" {
 		setHeader(w.Header(), "Cache", "bypass")
 	}
-	if cap.idemKey != "" {
-		s.Cache.Set(cap.idemKey, entry, idempotencyTTL)
+	if cap.idemKey != "" && idemStorable(resp.StatusCode) {
+		// A copy: Set stamps the expiry, and the cached entry keeps its own.
+		ie := *entry
+		ie.Fingerprint = cap.idemFP
+		s.Cache.Set(cap.idemKey, &ie, idempotencyTTL)
 	}
 	relay(w, resp, v, buf)
 }

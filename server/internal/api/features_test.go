@@ -119,7 +119,9 @@ func call(t *testing.T, e *env, method, path, tok string, hdr ...string) (*http.
 }
 
 func TestBreakerOpensAndFailsFast(t *testing.T) {
-	e, _ := newFeatureEnv(t)
+	e, s := newFeatureEnv(t)
+	// Ten calls in a row land inside one second; count each as a strike.
+	s.Breakers.Spacing = 0
 	up, _ := e.upstream("flaky", nil, "a", "b")
 	up.answer = func(string, *http.Request) (int, map[string]string, string) { return 503, nil, `{"error":"down"}` }
 	_, tok := e.app(map[string]any{"name": "x"})
