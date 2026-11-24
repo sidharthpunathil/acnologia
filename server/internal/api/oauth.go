@@ -49,8 +49,15 @@ import (
 // would, read only included, so every app rule applies unchanged. It works
 // only on the resource it was issued for, and stops when the grant is
 // revoked, the app is disabled or deleted, or the person who approved it is
-// disabled, deleted or no longer an admin. /mcp/control keeps its admin API
-// tokens.
+// disabled, deleted or no longer an admin.
+//
+// The control MCP (/mcp/control) takes OAuth too, next to admin API tokens.
+// Its resource is <base>/mcp/control and its scope mcp:control. The consent
+// page then has no app to pick: the connection acts as the person who
+// approves it, with an admin scope (read, write or admin) no higher than
+// their role, exactly like an admin API token they could create. Its access
+// token works on /mcp/control only (tokens_auth.go), and stops when the
+// person is disabled or deleted or their role drops below the scope.
 
 const (
 	oauthAccessPrefix  = "acno_"
@@ -67,8 +74,13 @@ const (
 	// and oauthPendingPerClient from one address.
 	oauthPendingCap       = 500
 	oauthPendingPerClient = 20
-	// oauthScope is the one scope: the app's MCP surface.
+	// oauthScope is the app MCP's scope: an app's MCP surface.
 	oauthScope = "mcp"
+	// oauthControlScope is the control MCP's: the dashboard, as a person.
+	oauthControlScope = "mcp:control"
+	// controlPath is the control MCP's path, the resource its tokens are
+	// bound to.
+	controlPath = "/mcp/control"
 	// A client ID metadata document is fetched again after this long.
 	oauthCIMDFresh = 5 * time.Minute
 	oauthCIMDMax   = 64 << 10
@@ -122,6 +134,7 @@ func (s *Server) oauthSt() *oauthState {
 func (s *Server) mountOAuth(r chi.Router) {
 	r.HandleFunc("/.well-known/oauth-protected-resource", oauthOpen(http.MethodGet, s.oauthResourceMeta))
 	r.HandleFunc("/.well-known/oauth-protected-resource/mcp", oauthOpen(http.MethodGet, s.oauthResourceMeta))
+	r.HandleFunc("/.well-known/oauth-protected-resource/mcp/control", oauthOpen(http.MethodGet, s.oauthControlResourceMeta))
 	r.HandleFunc("/.well-known/oauth-authorization-server", oauthOpen(http.MethodGet, s.oauthServerMeta))
 	r.Get("/oauth/authorize", s.oauthAuthorize)
 	r.HandleFunc("/oauth/register", oauthOpen(http.MethodPost, s.oauthRegister))
@@ -135,6 +148,10 @@ func (s *Server) mountOAuth(r chi.Router) {
 		r.With(s.sessionOnly).Post("/requests/{rid}/deny", s.oauthDeny)
 		r.Get("/apps/{id}/connections", s.listOAuthConnections)
 		r.With(s.requireRole(store.RoleAdmin), s.notShareApp).Delete("/apps/{id}/connections/{grantId}", s.revokeOAuthConnection)
+		// Control MCP connections, listed with the person's admin API
+		// tokens: their own, or everyone's for a superadmin.
+		r.Get("/control/connections", s.listControlConnections)
+		r.Delete("/control/connections/{grantId}", s.revokeControlConnection)
 	})
 }
 
@@ -174,13 +191,23 @@ func oauthErr(w http.ResponseWriter, status int, code, desc string) {
 
 func (s *Server) mcpResourceURL(r *http.Request) string { return s.publicURL(r) + "/mcp" }
 
+func (s *Server) controlResourceURL(r *http.Request) string { return s.publicURL(r) + controlPath }
+
 func (s *Server) oauthResourceMeta(w http.ResponseWriter, r *http.Request) {
+	s.writeResourceMeta(w, r, "/mcp", "Acnologia MCP", oauthScope)
+}
+
+func (s *Server) oauthControlResourceMeta(w http.ResponseWriter, r *http.Request) {
+	s.writeResourceMeta(w, r, controlPath, "Acnologia control MCP", oauthControlScope)
+}
+
+func (s *Server) writeResourceMeta(w http.ResponseWriter, r *http.Request, path, name, scope string) {
 	base := s.publicURL(r)
 	writeJSON(w, 200, map[string]any{
-		"resource":                 base + "/mcp",
-		"resource_name":            "Acnologia MCP",
+		"resource":                 base + path,
+		"resource_name":            name,
 		"authorization_servers":    []string{base},
-		"scopes_supported":         []string{oauthScope},
+		"scopes_supported":         []string{scope},
 		"bearer_methods_supported": []string{"header"},
 		"resource_documentation":   base + "/docs/mcp-oauth",
 	})
@@ -200,7 +227,7 @@ func (s *Server) oauthServerMeta(w http.ResponseWriter, r *http.Request) {
 		"code_challenge_methods_supported":               []string{"S256"},
 		"token_endpoint_auth_methods_supported":          []string{"none"},
 		"revocation_endpoint_auth_methods_supported":     []string{"none"},
-		"scopes_supported":                               []string{oauthScope},
+		"scopes_supported":                               []string{oauthScope, oauthControlScope},
 		"client_id_metadata_document_supported":          true,
 		"authorization_response_iss_parameter_supported": true,
 		"service_documentation":                          base + "/docs/mcp-oauth",
@@ -211,13 +238,22 @@ func (s *Server) oauthServerMeta(w http.ResponseWriter, r *http.Request) {
 // resource metadata is, and invalid_token when a token was sent, so a client
 // holding an expired access token refreshes it without asking anyone.
 func (s *Server) mcpChallenge(w http.ResponseWriter, r *http.Request, status int) {
-	v := `Bearer realm="acnologia", resource_metadata="` + s.publicURL(r) + `/.well-known/oauth-protected-resource/mcp"`
+	s.oauthChallenge(w, r, status, "/mcp", oauthScope)
+}
+
+// controlChallenge is mcpChallenge for /mcp/control.
+func (s *Server) controlChallenge(w http.ResponseWriter, r *http.Request, status int) {
+	s.oauthChallenge(w, r, status, controlPath, oauthControlScope)
+}
+
+func (s *Server) oauthChallenge(w http.ResponseWriter, r *http.Request, status int, path, scope string) {
+	v := `Bearer realm="acnologia", resource_metadata="` + s.publicURL(r) + `/.well-known/oauth-protected-resource` + path + `"`
 	switch {
 	case status != http.StatusUnauthorized:
 	case r.Header.Get("Authorization") != "" || appToken(r) != "":
 		v += `, error="invalid_token"`
 	default:
-		v += `, scope="` + oauthScope + `"`
+		v += `, scope="` + scope + `"`
 	}
 	w.Header().Set("WWW-Authenticate", v)
 }
@@ -229,12 +265,27 @@ func oauthBearer(r *http.Request) (string, bool) {
 	return tok, ok && strings.HasPrefix(tok, oauthAccessPrefix)
 }
 
+// isControlGrant reports whether a grant is a control MCP connection: no
+// app, the control scope, and the control MCP as its resource.
+func isControlGrant(g *store.OAuthGrant) bool {
+	if g == nil || g.AppID != 0 || g.Scope != oauthControlScope {
+		return false
+	}
+	p, err := url.Parse(g.Resource)
+	return err == nil && strings.TrimRight(p.Path, "/") == controlPath
+}
+
 // authOAuth authenticates an OAuth access token as the app its grant acts
 // as, read only when the grant is.
 func (s *Server) authOAuth(r *http.Request, tok string) (*store.App, *authFail) {
 	unauth := func(msg string) *authFail { return &authFail{Status: 401, Code: "unauthenticated", Message: msg} }
 	a, ti, u, err := s.Store.AppByOAuthToken(r.Context(), crypto.SHA256(tok))
 	if err != nil {
+		// A control MCP token has no app, so it is not found here; say
+		// where it works.
+		if _, ci, cerr := s.Store.UserByOAuthToken(r.Context(), crypto.SHA256(tok)); cerr == nil && isControlGrant(ci.Grant) {
+			return nil, unauth("this access token is for " + ci.Grant.Resource + " only")
+		}
 		return nil, unauth("invalid access token")
 	}
 	g := ti.Grant
@@ -260,6 +311,55 @@ func (s *Server) authOAuth(r *http.Request, tok string) (*store.App, *authFail) 
 	// Attribution names the grant, since an OAuth call has no app token id.
 	a.OAuthGrantID = g.ID
 	return a, nil
+}
+
+// controlStillAllowed says why the person who approved a control MCP
+// connection can no longer hold it, or "". It is checked on every use and
+// every refresh, so a role change or a disabled account counts at once.
+func controlStillAllowed(u *store.User, g *store.OAuthGrant) string {
+	role, ok := store.ScopeRole(g.Access)
+	switch {
+	case !ok:
+		return "this connection has no valid scope"
+	case u == nil || u.Disabled:
+		return "the person who approved this connection is disabled"
+	case !u.Role.AtLeast(role):
+		return "the person who approved this connection no longer has the role its " + g.Access + " scope needs"
+	}
+	return ""
+}
+
+// authControlOAuth authenticates an OAuth access token for the control MCP.
+// It returns the person the connection acts as, with their role lowered to
+// the connection's scope exactly as an admin API token's would be, and the
+// grant; or why the token is refused. A token for /mcp is refused, and a
+// person who lost the role the scope needs, or was disabled, has the
+// connection revoked.
+func (s *Server) authControlOAuth(r *http.Request, tok string) (*store.User, *store.OAuthGrant, string) {
+	u, ti, err := s.Store.UserByOAuthToken(r.Context(), crypto.SHA256(tok))
+	if err != nil {
+		return nil, nil, "invalid access token"
+	}
+	g := ti.Grant
+	switch {
+	case !isControlGrant(g):
+		return nil, nil, "this access token is for " + g.Resource + " only; the control MCP needs one issued for " + s.controlResourceURL(r)
+	case g.RevokedAt != nil:
+		return nil, nil, "access token revoked"
+	case !ti.ExpiresAt.After(time.Now()):
+		return nil, nil, "access token expired"
+	}
+	if why := controlStillAllowed(u, g); why != "" {
+		s.oauthRevokeGrant(r, g.ID, nil, "oauth.revoke", why)
+		return nil, nil, why + "; the connection was revoked, so sign in again"
+	}
+	role, _ := store.ScopeRole(g.Access)
+	acting := *u
+	if !role.AtLeast(acting.Role) {
+		acting.Role = role
+	}
+	s.Store.TouchOAuthGrant(0, g.ID)
+	return &acting, g, ""
 }
 
 // Redirect URIs and client ids.
@@ -603,13 +703,25 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		fail("invalid_request", "PKCE is required: send code_challenge with code_challenge_method S256")
 		return
 	}
-	resource := s.mcpResourceURL(r)
+	// The resource picks the MCP server: /mcp (an app) or /mcp/control (the
+	// dashboard, as the person who approves). Without one, the scope does.
+	mcpURL, ctlURL := s.mcpResourceURL(r), s.controlResourceURL(r)
+	wantsControl := false
+	for _, sc := range strings.Fields(q.Get("scope")) {
+		wantsControl = wantsControl || sc == oauthControlScope
+	}
+	resource, scope := mcpURL, oauthScope
 	switch rs := q["resource"]; {
 	case len(rs) > 1:
 		fail("invalid_target", "send one resource")
 		return
-	case len(rs) == 1 && !sameResource(rs[0], resource):
-		fail("invalid_target", "resource must be "+resource)
+	case len(rs) == 1 && sameResource(rs[0], ctlURL), len(rs) == 0 && wantsControl:
+		resource, scope = ctlURL, oauthControlScope
+	case len(rs) == 1 && !sameResource(rs[0], mcpURL):
+		fail("invalid_target", "resource must be "+mcpURL+" or "+ctlURL)
+		return
+	case wantsControl:
+		fail("invalid_scope", "the "+oauthControlScope+" scope is for the resource "+ctlURL)
 		return
 	}
 	o := s.oauthSt()
@@ -631,7 +743,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o.pending[id] = &oauthPending{client: c, redirectURI: redirect, state: state, challenge: q.Get("code_challenge"),
-		resource: resource, scope: oauthScope, source: src, created: now}
+		resource: resource, scope: scope, source: src, created: now}
 	o.mu.Unlock()
 	http.Redirect(w, r, "/oauth/consent?request="+url.QueryEscape(id), http.StatusFound)
 }
@@ -773,7 +885,7 @@ func (s *Server) oauthCodeGrant(w http.ResponseWriter, r *http.Request, f url.Va
 		name = cl.Name
 	}
 	g := &store.OAuthGrant{ID: crypto.RandomToken("", 16), ClientID: clientID, ClientName: name, AppID: c.AppID, UserID: c.UserID,
-		ReadOnly: c.ReadOnly, Scope: c.Scope, Resource: c.Resource}
+		ReadOnly: c.ReadOnly, Access: c.Access, Scope: c.Scope, Resource: c.Resource}
 	t := newTokenPair()
 	switch err := s.Store.RedeemOAuthCode(ctx, hash, g, t.p); {
 	case errors.Is(err, store.ErrOAuthUsed):
@@ -820,23 +932,40 @@ func (s *Server) oauthRefreshGrant(w http.ResponseWriter, r *http.Request, f url
 		bad("invalid_target", "resource does not match this connection")
 		return
 	}
-	if u, err := s.Store.GetUser(ctx, g.UserID); err != nil || u.Disabled || !u.Role.AtLeast(store.RoleAdmin) {
-		bad("invalid_grant", "the person who approved this connection can no longer approve it")
-		return
-	}
-	a, err := s.Store.GetApp(ctx, g.AppID)
-	if err != nil || a.ShareID != nil {
-		bad("invalid_grant", "the app is gone")
-		return
-	}
-	if !a.Active {
-		bad("invalid_grant", "the app is disabled")
-		return
+	var target string
+	if isControlGrant(g) {
+		// A control connection acts as its person: they must still hold
+		// the role its scope needs.
+		u, err := s.Store.GetUser(ctx, g.UserID)
+		if err != nil {
+			u = nil
+		}
+		if why := controlStillAllowed(u, g); why != "" {
+			s.oauthRevokeGrant(r, g.ID, nil, "oauth.revoke", why)
+			bad("invalid_grant", why+": sign in again")
+			return
+		}
+		target = grantTarget(g)
+	} else {
+		if u, err := s.Store.GetUser(ctx, g.UserID); err != nil || u.Disabled || !u.Role.AtLeast(store.RoleAdmin) {
+			bad("invalid_grant", "the person who approved this connection can no longer approve it")
+			return
+		}
+		a, err := s.Store.GetApp(ctx, g.AppID)
+		if err != nil || a.ShareID != nil {
+			bad("invalid_grant", "the app is gone")
+			return
+		}
+		if !a.Active {
+			bad("invalid_grant", "the app is disabled")
+			return
+		}
+		target = a.Name
 	}
 	t := newTokenPair()
 	switch err := s.Store.RotateOAuthRefresh(ctx, ti.ID, g.ID, t.p); {
 	case errors.Is(err, store.ErrOAuthUsed):
-		s.Store.AddAudit(ctx, nil, "oauth.refresh_reuse", a.Name, "client "+g.ClientName+": a used refresh token came back; the connection was revoked")
+		s.Store.AddAudit(ctx, nil, "oauth.refresh_reuse", target, "client "+g.ClientName+": a used refresh token came back; the connection was revoked")
 		bad("invalid_grant", "the refresh token was already used: sign in again")
 		return
 	case errors.Is(err, store.ErrOAuthRevoked):
@@ -861,13 +990,25 @@ func (s *Server) oauthRevokeGrant(r *http.Request, grantID string, by *store.Use
 	if err != nil || !done {
 		return g, false
 	}
-	target := strconv.FormatInt(g.AppID, 10)
-	if a, err := s.Store.GetApp(ctx, g.AppID); err == nil {
+	target := grantTarget(g)
+	if a, err := s.Store.GetApp(ctx, g.AppID); err == nil && g.AppID != 0 {
 		target = a.Name
 	}
 	s.Store.AddAudit(ctx, by, action, target, "client "+clientLabel(g.ClientName, g.ClientID)+", approved by "+g.UserEmail+": "+why)
 	return g, true
 }
+
+// grantTarget names a grant in the audit log when its app is unknown: the
+// app id, or the control MCP for a connection with no app.
+func grantTarget(g *store.OAuthGrant) string {
+	if g.AppID == 0 {
+		return controlTarget
+	}
+	return strconv.FormatInt(g.AppID, 10)
+}
+
+// controlTarget is the audit target of a control MCP connection.
+const controlTarget = "control MCP"
 
 // oauthRevoke is RFC 7009: revoking either token revokes the connection.
 // The answer is 200 whether or not the token was known.

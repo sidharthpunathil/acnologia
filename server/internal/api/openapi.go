@@ -82,18 +82,22 @@ var apiDocs = map[string]apiDoc{
 	"POST /api/cli/device/deny":    {Summary: "Deny a CLI sign in", Desc: "Refuse a user code.", Auth: "session", Tag: "cli", Body: map[string]any{"user_code": sProp("The user code")}, Required: []string{"user_code"}},
 
 	// ---- admin routes without a control tool ----
-	"PATCH /api/admin/me":                               {Summary: "Update your account", Desc: "Change your name or password. Session only.", Auth: "session", Role: store.RoleMember, Tag: "account", Body: map[string]any{"name": sProp("Display name"), "password": sProp("New password"), "current_password": sProp("Current password")}},
-	"GET /api/admin/tokens":                             {Summary: "List admin API tokens", Desc: "Your admin API tokens (all with ?all=1 for a superadmin). Session only.", Auth: "session", Role: store.RoleMember, Tag: "account", Query: map[string]any{"all": sProp("1 lists every user's tokens (superadmin)")}},
-	"POST /api/admin/tokens":                            {Summary: "Create an admin API token", Desc: "The token is in the answer, shown once. Session only.", Auth: "session", Role: store.RoleMember, Tag: "account", Body: map[string]any{"name": sProp("Token name"), "scope": eProp("read acts as a member, write as an admin, admin as a superadmin", "read", "write", "admin"), "expires_in_days": iProp("0 never expires, up to 3650")}, Required: []string{"name", "scope"}},
-	"DELETE /api/admin/tokens/{id}":                     {Summary: "Revoke an admin API token", Desc: "A session, or the token itself (logout).", Auth: "admin", Role: store.RoleMember, Tag: "account"},
-	"GET /api/admin/services/{id}/keys":                 {Summary: "List a service's keys", Desc: "The keys of one service, never their secrets. The control tool list_keys takes service instead.", Auth: "admin", Role: store.RoleMember, Tag: "keys"},
-	"GET /api/admin/mcp/control":                        {Summary: "Control MCP tools", Desc: "The control MCP endpoint, its groups and every tool with whether your role can use it.", Auth: "admin", Role: store.RoleMember, Tag: "mcp"},
-	"GET /api/admin/chat/threads/{id}/images/{image}":   {Summary: "A chat image", Desc: "An image sent in one of your Assistant chats.", Auth: "admin", Role: store.RoleMember, Tag: "ai", Produces: "image/*"},
-	"GET /api/admin/chat/threads/{id}/logos/{logo}":     {Summary: "A chat logo candidate", Desc: "A logo the Assistant found, for its ask form.", Auth: "admin", Role: store.RoleMember, Tag: "ai", Produces: "image/*"},
-	"GET /api/logos/providers/{slug}":                   {Summary: "Provider logo", Auth: "admin", Role: store.RoleMember, Tag: "providers", Produces: "image/*"},
-	"GET /api/logos/services/{id}":                      {Summary: "Service logo", Auth: "admin", Role: store.RoleMember, Tag: "services", Produces: "image/*"},
-	"GET /api/oauth/requests/{rid}":                     {Summary: "An OAuth consent request", Desc: "What an MCP client asks for, for the consent page.", Auth: "session", Role: store.RoleMember, Tag: "oauth"},
-	"POST /api/oauth/requests/{rid}/approve":            {Summary: "Approve an OAuth request", Desc: "Grant the MCP client access as an app.", Auth: "session", Role: store.RoleMember, Tag: "oauth", Body: map[string]any{"app_id": iProp("App the client acts as"), "new_app": sProp("Or the name of a new app"), "read_only": bProp("Grant read only access")}},
+	"PATCH /api/admin/me":                             {Summary: "Update your account", Desc: "Change your name or password. Session only.", Auth: "session", Role: store.RoleMember, Tag: "account", Body: map[string]any{"name": sProp("Display name"), "password": sProp("New password"), "current_password": sProp("Current password")}},
+	"GET /api/admin/tokens":                           {Summary: "List admin API tokens", Desc: "Your admin API tokens (all with ?all=1 for a superadmin). Session only.", Auth: "session", Role: store.RoleMember, Tag: "account", Query: map[string]any{"all": sProp("1 lists every user's tokens (superadmin)")}},
+	"POST /api/admin/tokens":                          {Summary: "Create an admin API token", Desc: "The token is in the answer, shown once. Session only.", Auth: "session", Role: store.RoleMember, Tag: "account", Body: map[string]any{"name": sProp("Token name"), "scope": eProp("read acts as a member, write as an admin, admin as a superadmin", "read", "write", "admin"), "expires_in_days": iProp("0 never expires, up to 3650")}, Required: []string{"name", "scope"}},
+	"DELETE /api/admin/tokens/{id}":                   {Summary: "Revoke an admin API token", Desc: "A session, or the token itself (logout).", Auth: "admin", Role: store.RoleMember, Tag: "account"},
+	"GET /api/admin/services/{id}/keys":               {Summary: "List a service's keys", Desc: "The keys of one service, never their secrets. The control tool list_keys takes service instead.", Auth: "admin", Role: store.RoleMember, Tag: "keys"},
+	"GET /api/admin/mcp/control":                      {Summary: "Control MCP tools", Desc: "The control MCP endpoint, its groups and every tool with whether your role can use it.", Auth: "admin", Role: store.RoleMember, Tag: "mcp"},
+	"GET /api/admin/chat/threads/{id}/images/{image}": {Summary: "A chat image", Desc: "An image sent in one of your Assistant chats.", Auth: "admin", Role: store.RoleMember, Tag: "ai", Produces: "image/*"},
+	"GET /api/admin/chat/threads/{id}/logos/{logo}":   {Summary: "A chat logo candidate", Desc: "A logo the Assistant found, for its ask form.", Auth: "admin", Role: store.RoleMember, Tag: "ai", Produces: "image/*"},
+	"GET /api/logos/providers/{slug}":                 {Summary: "Provider logo", Auth: "admin", Role: store.RoleMember, Tag: "providers", Produces: "image/*"},
+	"GET /api/logos/services/{id}":                    {Summary: "Service logo", Auth: "admin", Role: store.RoleMember, Tag: "services", Produces: "image/*"},
+	"GET /api/oauth/requests/{rid}":                   {Summary: "An OAuth consent request", Desc: "What an MCP client asks for, for the consent page.", Auth: "session", Role: store.RoleMember, Tag: "oauth"},
+	"POST /api/oauth/requests/{rid}/approve": {Summary: "Approve an OAuth request", Desc: "Grant the MCP client access: as an app for /mcp, or as you with an admin scope for /mcp/control.", Auth: "session", Role: store.RoleMember, Tag: "oauth",
+		Body: map[string]any{"app_id": iProp("App the client acts as (/mcp)"), "new_app": sProp("Or the name of a new app (/mcp)"), "read_only": bProp("Grant read only access (/mcp)"),
+			"scope": eProp("Admin scope for a /mcp/control connection, at most your role; read when left out", "read", "write", "admin")}},
+	"GET /api/oauth/control/connections":                {Summary: "Control MCP OAuth connections", Desc: "MCP clients signed in to /mcp/control through OAuth: your own, or everyone's for a superadmin.", Auth: "admin", Role: store.RoleMember, Tag: "oauth"},
+	"DELETE /api/oauth/control/connections/{grantId}":   {Summary: "Revoke a control MCP OAuth connection", Desc: "Your own, or anyone's for a superadmin.", Auth: "admin", Role: store.RoleMember, Tag: "oauth"},
 	"POST /api/oauth/requests/{rid}/deny":               {Summary: "Deny an OAuth request", Auth: "session", Role: store.RoleMember, Tag: "oauth"},
 	"GET /api/oauth/apps/{id}/connections":              {Summary: "An app's OAuth connections", Desc: "MCP clients signed in to an app through OAuth.", Auth: "admin", Role: store.RoleMember, Tag: "oauth"},
 	"DELETE /api/oauth/apps/{id}/connections/{grantId}": {Summary: "Revoke an OAuth connection", Auth: "admin", Role: store.RoleAdmin, Tag: "oauth"},
@@ -137,13 +141,14 @@ var apiDocs = map[string]apiDoc{
 	// ---- MCP ----
 	"POST /mcp":           {Summary: "App MCP", Desc: "Streamable HTTP MCP (JSON-RPC 2.0) for apps: lease, proxy and the generated service tools.", Auth: "oauth", Tag: "mcp", Body: map[string]any{"jsonrpc": sProp("2.0"), "id": map[string]any{"description": "Request id"}, "method": sProp("JSON-RPC method"), "params": anyObj}},
 	"DELETE /mcp":         {Summary: "End an MCP session", Auth: "oauth", Tag: "mcp"},
-	"POST /mcp/control":   {Summary: "Control MCP", Desc: "Streamable HTTP MCP (JSON-RPC 2.0) with every dashboard feature as a tool, as the admin API token's owner. Tools are described with x-mcp-tool on the admin routes.", Auth: "admin_token", Tag: "mcp", Body: map[string]any{"jsonrpc": sProp("2.0"), "id": map[string]any{"description": "Request id"}, "method": sProp("JSON-RPC method"), "params": anyObj}},
-	"DELETE /mcp/control": {Summary: "End a control MCP session", Auth: "admin_token", Tag: "mcp"},
+	"POST /mcp/control":   {Summary: "Control MCP", Desc: "Streamable HTTP MCP (JSON-RPC 2.0) with every dashboard feature as a tool, as the admin API token's owner or the person who approved the OAuth connection. Tools are described with x-mcp-tool on the admin routes.", Auth: "control", Tag: "mcp", Body: map[string]any{"jsonrpc": sProp("2.0"), "id": map[string]any{"description": "Request id"}, "method": sProp("JSON-RPC method"), "params": anyObj}},
+	"DELETE /mcp/control": {Summary: "End a control MCP session", Auth: "control", Tag: "mcp"},
 
-	// ---- OAuth for /mcp ----
-	"GET /.well-known/oauth-protected-resource":     {Summary: "Protected resource metadata", Desc: "RFC 9728 metadata for /mcp.", Auth: "none", Tag: "oauth"},
-	"GET /.well-known/oauth-protected-resource/mcp": {Summary: "Protected resource metadata (/mcp)", Desc: "RFC 9728 metadata for /mcp.", Auth: "none", Tag: "oauth"},
-	"GET /.well-known/oauth-authorization-server":   {Summary: "Authorization server metadata", Desc: "RFC 8414 metadata.", Auth: "none", Tag: "oauth"},
+	// ---- OAuth for /mcp and /mcp/control ----
+	"GET /.well-known/oauth-protected-resource":             {Summary: "Protected resource metadata", Desc: "RFC 9728 metadata for /mcp.", Auth: "none", Tag: "oauth"},
+	"GET /.well-known/oauth-protected-resource/mcp":         {Summary: "Protected resource metadata (/mcp)", Desc: "RFC 9728 metadata for /mcp.", Auth: "none", Tag: "oauth"},
+	"GET /.well-known/oauth-protected-resource/mcp/control": {Summary: "Protected resource metadata (/mcp/control)", Desc: "RFC 9728 metadata for the control MCP.", Auth: "none", Tag: "oauth"},
+	"GET /.well-known/oauth-authorization-server":           {Summary: "Authorization server metadata", Desc: "RFC 8414 metadata.", Auth: "none", Tag: "oauth"},
 	"GET /oauth/authorize": {Summary: "Authorize", Desc: "Start the authorization code flow with PKCE; the browser goes on to the consent page.", Auth: "none", Tag: "oauth", Produces: "text/html",
 		Query: map[string]any{"response_type": sProp("code"), "client_id": sProp("Client id from registration"), "redirect_uri": sProp("Registered redirect URI"),
 			"code_challenge": sProp("PKCE challenge"), "code_challenge_method": sProp("S256"), "state": sProp("Opaque state"), "scope": sProp("Scope"), "resource": sProp("The MCP URL")}},
@@ -255,6 +260,8 @@ func security(auth string) []map[string]any {
 		return []map[string]any{{"adminToken": []string{}}, {"session": []string{}}}
 	case "admin_token":
 		return []map[string]any{{"adminToken": []string{}}}
+	case "control":
+		return []map[string]any{{"adminToken": []string{}}, {"oauth": []string{oauthControlScope}}}
 	case "session":
 		return []map[string]any{{"session": []string{}}}
 	case "app":
@@ -524,8 +531,9 @@ func (s *Server) openAPISpec(base string) map[string]any {
 				"session":        map[string]any{"type": "apiKey", "in": "cookie", "name": sessionCookie, "description": "Dashboard session; mutating calls also need a JSON content type or X-Requested-With"},
 				"appToken":       map[string]any{"type": "http", "scheme": "bearer", "bearerFormat": "acn_...", "description": "App token"},
 				"appTokenHeader": map[string]any{"type": "apiKey", "in": "header", "name": "X-Acnologia-Token", "description": "App token in a header"},
-				"oauth": map[string]any{"type": "oauth2", "description": "OAuth 2.1 with PKCE for /mcp", "flows": map[string]any{"authorizationCode": map[string]any{
-					"authorizationUrl": base + "/oauth/authorize", "tokenUrl": base + "/oauth/token", "scopes": map[string]any{oauthScope: "Act as an app"}}}},
+				"oauth": map[string]any{"type": "oauth2", "description": "OAuth 2.1 with PKCE for /mcp and /mcp/control", "flows": map[string]any{"authorizationCode": map[string]any{
+					"authorizationUrl": base + "/oauth/authorize", "tokenUrl": base + "/oauth/token",
+					"scopes": map[string]any{oauthScope: "Act as an app on /mcp", oauthControlScope: "Act as you on /mcp/control, with the admin scope you approve"}}}},
 			},
 			"schemas": map[string]any{
 				"Error": obj(map[string]any{"error": obj(map[string]any{

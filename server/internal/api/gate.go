@@ -275,10 +275,12 @@ var gateOpenExact = map[string]bool{
 	"/.well-known/oauth-protected-resource":     true,
 	"/.well-known/oauth-protected-resource/mcp": true,
 	"/.well-known/oauth-authorization-server":   true,
-	"/oauth/authorize":                          true,
-	"/oauth/register":                           true,
-	"/oauth/token":                              true,
-	"/oauth/revoke":                             true,
+	// The control MCP stays locked, but a client must find how to sign in.
+	"/.well-known/oauth-protected-resource/mcp/control": true,
+	"/oauth/authorize": true,
+	"/oauth/register":  true,
+	"/oauth/token":     true,
+	"/oauth/revoke":    true,
 }
 
 // gateOpen reports whether a path is reachable while locked. Both the decoded
@@ -339,6 +341,11 @@ func (s *Server) gateRequests(next http.Handler) http.Handler {
 			msg := "this Acnologia instance is private: send its access password in the " + accessHeader + " header, or an admin API token (Authorization: Bearer acnadm_...)"
 			if gateDocs(r.URL.Path) {
 				msg += "; the docs also open to a valid app token (Authorization: Bearer acn_...) or MCP access token"
+			}
+			if r.URL.Path == controlPath {
+				// An MCP client learns from this where to sign in; the
+				// token it gets opens the gate here (validAdminToken).
+				s.controlChallenge(w, r, http.StatusUnauthorized)
 			}
 			writeErr(w, http.StatusUnauthorized, "locked", msg+". GET /api/v1 is open and lists the endpoints")
 			return

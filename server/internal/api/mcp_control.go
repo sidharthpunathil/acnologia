@@ -7,7 +7,10 @@ package api
 // /api/admin. Each tool is an in process request to an existing
 // /api/admin route carrying the same token, so roles, sessionOnly,
 // notShareApp, validation and audit stay with the routes. The tool table is
-// in mcp_control_tools.go. /mcp is the app side and stays separate.
+// in mcp_control_tools.go. /mcp is the app side and stays separate. An
+// OAuth access token issued for /mcp/control works the same way, as the
+// person who approved it with the scope they picked (controlCaller in
+// tokens_auth.go).
 
 import (
 	"context"
@@ -123,7 +126,7 @@ func (s *Server) controlUser(r *http.Request) (*store.User, string) {
 		if appToken(r) != "" {
 			return nil, "this is the control MCP and it takes an admin API token (Authorization: Bearer acnadm_...); app tokens use /mcp"
 		}
-		return nil, "send an admin API token: Authorization: Bearer acnadm_..."
+		return nil, "send an admin API token (Authorization: Bearer acnadm_...) or sign in with OAuth"
 	}
 	t, owner, err := s.Store.TokenByHash(r.Context(), crypto.SHA256(tok))
 	if err != nil {
@@ -148,9 +151,9 @@ func (s *Server) mcpControl(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	u, msg := s.controlUser(r)
+	u, r, msg := s.controlCaller(r)
 	if u == nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="acnologia"`)
+		s.controlChallenge(w, r, http.StatusUnauthorized)
 		writeErr(w, http.StatusUnauthorized, "unauthenticated", msg)
 		return
 	}
@@ -163,7 +166,7 @@ func (s *Server) mcpControl(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	r = s.controlAttribution(r, req)
+	r = controlOAuthAttribution(s.controlAttribution(r, req))
 	c := &ctlCtx{s: s, r: r, user: u, opts: ctlOptions(r)}
 	result, rerr := c.dispatch(req)
 	resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}

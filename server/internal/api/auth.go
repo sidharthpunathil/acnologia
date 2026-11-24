@@ -61,6 +61,10 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			s.tokenUser(w, r, tok, attributeAdminToken(next))
 			return
 		}
+		if tok, ok := oauthBearer(r); ok {
+			s.controlOAuthUser(w, r, tok, next)
+			return
+		}
 		sess := sessionFrom(r)
 		var u *store.User
 		var h string
