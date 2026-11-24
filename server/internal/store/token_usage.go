@@ -8,7 +8,7 @@ import (
 
 // Token usage: input and output tokens an LLM provider reported in its
 // answers, per app, service and UTC day. The proxy reads them from the
-// response body (see api/tokenmeter.go); they outlive event retention.
+// response body (see internal/tokenmeter); they outlive event retention.
 
 const schemaTokenUsage = `
 CREATE TABLE IF NOT EXISTS token_usage(

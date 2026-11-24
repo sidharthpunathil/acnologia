@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
+	"github.com/sidharthpunathil/acnologia/server/internal/tokenmeter"
 )
 
 // When a request may go to another key, service or capability route.
@@ -106,13 +107,13 @@ func (ir idleReader) Read(p []byte) (int, error) {
 // tokenCost is the USD cost of the tokens a metered answer used, from the
 // provider's token priced offers, for the model the request named (or the
 // answer reported). 0 when no offer prices them.
-func tokenCost(prov *providers.Spec, method, path string, body []byte, meter *tokenMeter, in, out int64) float64 {
+func tokenCost(prov *providers.Spec, method, path string, body []byte, meter *tokenmeter.Meter, in, out int64) float64 {
 	if (in == 0 && out == 0) || !prov.HasTokenPrices() {
 		return 0
 	}
 	model := requestModel(body)
 	if model == "" {
-		model = meter.model()
+		model = meter.Model()
 	}
 	c, _ := prov.TokenCost(method, path, model, in, out)
 	return c

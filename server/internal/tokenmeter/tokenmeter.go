@@ -1,4 +1,6 @@
-package api
+// Package tokenmeter reads the tokens an LLM answer used as the answer
+// passes through the proxy, without changing what the client gets.
+package tokenmeter
 
 import (
 	"io"
@@ -6,8 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // Token metering: LLM providers report the tokens a call used in the
@@ -30,15 +30,18 @@ var (
 	modelRe    = regexp.MustCompile(`"(?:model|modelVersion)"\s*:\s*"([^"\\]{1,200})"`)
 )
 
-// tokenMeter is an io.ReadCloser that copies the start and end of what it
+// Meter is an io.ReadCloser that copies the start and end of what it
 // reads. It never changes what the client gets.
-type tokenMeter struct {
+type Meter struct {
 	rc   io.ReadCloser
 	head []byte
 	tail []byte
 }
 
-func (m *tokenMeter) Read(p []byte) (int, error) {
+// New meters rc.
+func New(rc io.ReadCloser) *Meter { return &Meter{rc: rc} }
+
+func (m *Meter) Read(p []byte) (int, error) {
 	n, err := m.rc.Read(p)
 	if n > 0 {
 		b := p[:n]
@@ -54,10 +57,10 @@ func (m *tokenMeter) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (m *tokenMeter) Close() error { return m.rc.Close() }
+func (m *Meter) Close() error { return m.rc.Close() }
 
-// counts returns the input and output tokens seen, 0 when none.
-func (m *tokenMeter) counts() (in, out int64) {
+// Counts returns the input and output tokens seen, 0 when none.
+func (m *Meter) Counts() (in, out int64) {
 	tail := m.tail
 	if len(tail) > meterTail {
 		tail = tail[len(tail)-meterTail:]
@@ -69,10 +72,10 @@ func (m *tokenMeter) counts() (in, out int64) {
 	return in, out
 }
 
-// model is the first model name the answer reports, or "". Answers name
+// Model is the first model name the answer reports, or "". Answers name
 // the model near the start (OpenAI, Anthropic) or in every event of a
-// stream, so the head is enough.
-func (m *tokenMeter) model() string {
+// stream, so the head is enough. A nil Meter reports "".
+func (m *Meter) Model() string {
 	if m == nil {
 		return ""
 	}
@@ -92,10 +95,11 @@ func maxMatch(re *regexp.Regexp, b []byte) int64 {
 	return best
 }
 
-// meterable says whether a successful answer of a service is worth reading
-// for tokens: an LLM service, a JSON or event stream body, not compressed.
-func meterable(sv *store.Service, resp *http.Response) bool {
-	if !strings.EqualFold(strings.TrimSpace(sv.Category), "llm") {
+// Meterable says whether a successful answer of a service in category is
+// worth reading for tokens: an LLM service, a JSON or event stream body,
+// not compressed.
+func Meterable(category string, resp *http.Response) bool {
+	if !strings.EqualFold(strings.TrimSpace(category), "llm") {
 		return false
 	}
 	if ce := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); ce != "" && ce != "identity" {

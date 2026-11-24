@@ -26,6 +26,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/respcache"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
+	"github.com/sidharthpunathil/acnologia/server/internal/tokenmeter"
 )
 
 // proxyIdleTimeout ends a proxied response when the upstream sends nothing
@@ -548,9 +549,9 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			setHeader(w.Header(), "Service", sv.Slug)
 			// The slot stays held until the (possibly streamed) body is fully
 			// sent, or the upstream goes quiet for proxyIdleTimeout.
-			var meter *tokenMeter
-			if meterable(sv, resp) {
-				meter = &tokenMeter{rc: resp.Body}
+			var meter *tokenmeter.Meter
+			if tokenmeter.Meterable(sv.Category, resp) {
+				meter = tokenmeter.New(resp.Body)
 				resp.Body = meter
 			}
 			grab := grabFor(&aff, resp)
@@ -565,7 +566,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 				// Settle: the request's price was the estimate; the tokens the
 				// answer used are added once they are known, so a USD budget
 				// sees what a token priced call really cost.
-				in, outTok := meter.counts()
+				in, outTok := meter.Counts()
 				_ = s.Store.RecordTokens(context.WithoutCancel(r.Context()), a.ID, sv.ID, in, outTok)
 				cost += tokenCost(prov, r.Method, "/"+path, body, meter, in, outTok)
 			}
