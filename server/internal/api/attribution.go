@@ -71,7 +71,22 @@ func appAttribution(r *http.Request, a *store.App) store.Attribution {
 	if _, ok := oauthBearer(r); ok {
 		via = store.ViaOAuth
 	}
-	return store.Attribution{Via: via, TokenID: a.TokenID, AppID: a.ID, Client: userAgent(r)}
+	return store.Attribution{Via: via, TokenID: a.TokenID, AppID: a.ID, Client: oauthClient(a, userAgent(r))}
+}
+
+// oauthGrantPrefix starts the client of a call made with an OAuth access
+// token: "oauth-grant/<grant id> <client>". The grant id goes in the client
+// rather than token_id, which holds app token ids only, so the two are never
+// confused; ?client=oauth-grant/<id> finds a grant's audit rows.
+const oauthGrantPrefix = "oauth-grant/"
+
+// oauthClient puts the OAuth grant in front of the client, for a call that
+// authenticated with one.
+func oauthClient(a *store.App, client string) string {
+	if a == nil || a.OAuthGrantID == "" {
+		return client
+	}
+	return strings.TrimSpace(oauthGrantPrefix + a.OAuthGrantID + " " + client)
 }
 
 // mcpAttribution is an app MCP request's, with the client from initialize.
@@ -80,7 +95,7 @@ func (s *Server) mcpAttribution(ctx context.Context, r *http.Request, req rpcReq
 	if _, ok := oauthBearer(r); ok {
 		via = store.ViaOAuth
 	}
-	return store.WithAttribution(ctx, store.Attribution{Via: via, TokenID: a.TokenID, AppID: a.ID, Client: mcpClientName(r, req)})
+	return store.WithAttribution(ctx, store.Attribution{Via: via, TokenID: a.TokenID, AppID: a.ID, Client: oauthClient(a, mcpClientName(r, req))})
 }
 
 // controlAttribution marks a control MCP request, so the admin routes it
