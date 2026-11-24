@@ -395,6 +395,14 @@ obvious:
   the link (`keys.peer_link_id`) with the end of their lease
   (`keys.peer_valid_until`). `peer_link_providers` records the provider specs
   imported through a link and their versions on both sides.
+- **Measured evidence.** `endpoint_stats` holds per service, method, path
+  template and UTC day the proxied calls that counted, successes, failures,
+  the last success and failure, and a latency histogram (bucket counts as
+  text). The worker fills it from the events table past the cursor in
+  `meta.endpoint_stats_cursor` and drops days past the window and rows of
+  deleted services. `example_responses` keeps one scrubbed sample answer per
+  provider and example, outside the spec. See
+  [Measured evidence](providers.md#measured-evidence).
 - **Provider refresh.** `refresh_runs` and their `refresh_items` record each
   run, `refresh_reviews` the proposals waiting for a superadmin, and
   `provider_refresh` when each provider was last checked and last changed.
@@ -488,7 +496,7 @@ password and no `access-password` file to fall back on. With no
 
 ## Background work
 
-`internal/worker` runs five loops, each in its own goroutine so a slow one
+`internal/worker` runs six loops, each in its own goroutine so a slow one
 never holds up another.
 
 | Loop | Interval | Does |
@@ -498,6 +506,7 @@ never holds up another.
 | Peers | 10 min | Reads the manifest of every share another server gave this one: imports the providers of shared services this server lacks, adds new services, disables removed ones, and for handover links fetches, renews or deletes the sealed keys (`internal/peer`). |
 | Sharing | 1 min | Deletes handed over keys whose lease ended without renewal (no network needed), ends shares whose timer ran out, and records lapsed handovers on the owner's side. |
 | Refresh | 1 min tick | Asks the provider refresh whether a scheduled run is due and starts it in the background (`internal/refresh`). A run checks providers one by one and stops at its budget. |
+| Endpoint stats | 1 min | Folds the proxy events written since the last pass into `endpoint_stats`, matching each path to the catalog's templates, at most 100,000 events a pass (a backlog catches up over the next passes). One transaction per batch of 2,000 holds the writer briefly. Readers cache the 7 day view for 30 seconds. |
 
 Webhook delivery runs on its own goroutine too (`internal/notify`), started at
 boot next to the worker. Each webhook gets its own delivery goroutine and a

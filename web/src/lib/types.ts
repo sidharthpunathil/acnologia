@@ -633,6 +633,19 @@ export interface GuideDoc {
   errors: string[];
   notes: string[];
   markdown?: string;
+  /** Measured per endpoint over the last 7 days, where there are enough calls. Service guides only. */
+  evidence?: {
+    method: string;
+    path: string;
+    calls: number;
+    success_rate: number;
+    p50_ms: number;
+    p95_ms: number;
+    last_ok?: string;
+    last_fail?: string;
+  }[];
+  /** Sample answers from live checks and catalog verifies, cut to 4KB and scrubbed of keys. */
+  responses?: { example: string; method: string; path: string; status: number; content_type?: string; body: string; verified_at: string }[];
 }
 
 /** GET /api/admin/providers/{slug}/guide and /api/admin/services/{id}/guide. */

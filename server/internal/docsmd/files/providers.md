@@ -210,7 +210,9 @@ How Acnologia uses offers:
 - **Cheapest routing.** The `cheapest` strategy of groups and capabilities
   orders services by this per request price. A service with no known price
   (no deciding offer, no override, `quota.cost_per_request` of 0) goes after
-  every priced one; a free offer is a known price of 0.
+  every priced one; a free offer is a known price of 0. The `reliable`
+  strategy orders by measured success rate instead (see
+  [Measured evidence](#measured-evidence)).
 - **AI and people.** The AI builder reads the provider's pricing page and
   fills offers with `source_url` and `checked_at`. The Assistant's
   `provider_offers` tool answers questions such as which search provider is
@@ -239,7 +241,10 @@ review in Settings: adding or removing an offer, changing what it matches,
 its notes or whether it is free, and any tighter limit or concurrency. So
 does every change when apply is set to review. A change to a built in
 provider makes it an edited version, so later releases stop backfilling its
-offers; roll back from the Versions tab. When nothing changed, `checked_at`
+offers; roll back from the Versions tab. A proposal that drops a model
+offer's `model` or its output price, or restates a token price per million
+instead of per token, is a change that waits for review, so a refresh never
+wipes structured token prices on its own. When nothing changed, `checked_at`
 just moves to today. The full flow is in
 [Keeping provider offers fresh](flows.md#keeping-provider-offers-fresh).
 
@@ -286,7 +291,9 @@ will need next.
   `Authorization: Bearer acn_...`, a note not to send a provider key, and the
   MCP alternatives `acnologia_proxy_request` on `/mcp` or `call_service` on
   `/mcp/control`;
-- the endpoints, with a parameter table, example body and response notes;
+- the endpoints, with a parameter table, example body and response notes,
+  and, for a service, what this server measured for each one and a stored
+  sample answer (see [Measured evidence](#measured-evidence));
 - the spec's `examples` as curl commands through the proxy;
 - limits and pricing from `quota` and `offers`;
 - how Acnologia handles this provider's errors, built from its `rules`: rate
@@ -346,6 +353,67 @@ providers ship with guides. An install seeded by an older release gets each
 built in guide once on boot (as a version noted "built-in guide added"), even
 when the spec was edited since, because a guide never changes how requests
 are handled. If you remove it afterwards, it stays removed.
+
+## Measured evidence
+
+Acnologia records how each service's endpoints answer, so agents and
+routing can prefer the providers that work on this server.
+
+**What counts.** Every minute the worker folds the new proxy events into
+per endpoint counts for each service: calls, successes, failures, the last
+success and the last failure, and a latency histogram, per UTC day. Readers
+see the last 7 days. A call is matched to the catalog's most specific
+template: an example's path (without its query) or a guide endpoint's path,
+where `{name}` stands for one segment or part of one, so `/v1/users/42`
+counts for `/v1/users/{id}`. A path no entry covers gets a generic template
+with ids folded (numbers, UUIDs, long mixes of letters and digits become
+`{id}`), at most 200 per service. Upstream MCP tool calls count under the
+tool's name.
+
+- A 2xx or 3xx is a success.
+- A 5xx, 405 or 429 counts against the provider.
+- Any other 4xx is the caller's fault and counts for neither side.
+- Acnologia's own refusals (app limits, read-only tokens, no key free, an
+  open breaker), cache hits and idempotent replays never reach the provider
+  and are not counted. Neither are connection failures, which carry no path.
+
+The fold reads from a cursor on the events table, so each pass reads only
+new rows; on a first start it begins at the window rather than at the first
+event ever written.
+
+**Where it shows.** An endpoint needs 20 counted calls in the window before
+its evidence is shown or used.
+
+- `search_tools` results carry `evidence`:
+  `{success_rate, p50_ms, last_ok, calls}`. Among equally good matches with
+  the same availability, the higher success rate comes first, and a tool
+  without enough calls after those with them.
+- Service guides (the Integrate tab, `GET /api/v1/services/{slug}/guide`
+  and the MCP `service_guide`) print a line under each measured endpoint:
+  success rate, p50 and p95 latency, last success and last failure. The
+  JSON form has them in `evidence`.
+- The `reliable` routing strategy for groups and capabilities puts the
+  service with the highest success rate for the request's endpoint first
+  (the service's rate over all its endpoints when the endpoint has too few
+  calls), services with too few calls last, and breaks ties by the lower
+  median latency. Like every strategy, a service whose breaker is open or
+  that has no free key still goes last.
+
+Latency percentiles come from the histogram's buckets, so they are
+approximate.
+
+### Sample responses
+
+When a live check runs a provider's safe example with a key you paste, and
+when the Assistant's catalog verify makes a live GET through the proxy, a
+2xx answer is kept as that example's sample response: its JSON shape with
+arrays cut to two items and strings to 120 characters, at most 4KB, with a
+`verified_at` date. Before and after the cut, every spelling of the key used
+(raw, query, path and JSON escaped) and every pool key the redactor knows
+are replaced, so no part of a key can survive. Samples are stored per
+provider and example name in their own table, not in the spec, so they
+survive spec updates. Guides show each sample under its endpoint or
+example, so an agent learns the response fields without a probe call.
 
 ## Providers with many APIs
 
@@ -648,11 +716,19 @@ Offers list a few headline models per provider with input and output prices
 per million tokens, free tiers and credits, and published rate limits per
 tier in `notes`, each with its source page, checked 2026-11-03. The model is
 chosen in the request body, so a provider's model offers share their
-endpoint's match and only the first one selects a request. The built in
-model offers state their token prices in `notes` only, for people and the AI
-tools, so they add no token cost; give an offer a `model` and a `price` in
-unit `token` (see [Token cost](#offers)) for the spend to count toward
-budgets. Free offers (Groq's free plan, Mistral's free mode, Cohere trial keys,
+endpoint's match and only the first one selects a request by path. Each
+built in model offer also carries its `model` and a `price` in unit `token`
+(input, and `output_amount` for output) taken from the prices its `notes`
+state, so a metered answer's tokens are priced at the rate of the model the
+request names (see [Token cost](#offers)) and count toward app budgets. The
+offer covers only its own endpoint: OpenAI's model offers match
+`/v1/responses`, so Chat Completions calls are not token priced. Gemini's
+offers are free tier offers (a free offer cannot carry a price) and
+Perplexity's Agent API bills per model plus tool fees, so neither has a
+token price. An install seeded by an older release gets these prices once
+on boot, in place, on every model offer that still reads exactly as shipped;
+an offer someone edited, or one the refresh changed, is left alone. Free
+offers (Groq's free plan, Mistral's free mode, Cohere trial keys,
 OpenRouter's `:free` models) come last for the same reason, so their limits
 never pace paid traffic. Only Perplexity's Search API has a per request price
 and a limit that holds on every tier (50 a second).
