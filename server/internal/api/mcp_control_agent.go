@@ -104,8 +104,8 @@ func ctlAgentTools() []ctlTool {
 		{Name: "get_spend_ceiling", Title: "Server spend ceiling", Group: "apps", Kind: ctlRead, Role: a, Method: get, Path: "/api/admin/settings/spend-ceiling",
 			Desc: "The server's daily spend ceiling in USD across every app, where it comes from (env or saved), and what the server spent today (UTC). At the ceiling every metered call is refused until midnight UTC."},
 		{Name: "set_spend_ceiling", Title: "Set the server spend ceiling", Group: "apps", Kind: ctlWrite, Role: sa, Method: put, Path: "/api/admin/settings/spend-ceiling",
-			Desc:  "Save the server's daily spend ceiling: usd in dollars, 0 for no ceiling, or reset: true to go back to ACNOLOGIA_DAILY_SPEND_CEILING_USD.",
-			Props: map[string]any{"usd": nProp("Dollars a day across every app; 0 turns the ceiling off"), "reset": bProp("Drop the saved ceiling and use the environment's")},
+			Desc:    "Save the server's daily spend ceiling: usd in dollars, 0 for no ceiling, or reset: true to go back to ACNOLOGIA_DAILY_SPEND_CEILING_USD.",
+			Props:   map[string]any{"usd": nProp("Dollars a day across every app; 0 turns the ceiling off"), "reset": bProp("Drop the saved ceiling and use the environment's")},
 			BodyDoc: map[string]any{"usd": map[string]any{"type": []string{"number", "null"}, "description": "Dollars a day, 0 for none, null for the environment's"}},
 			Prepare: func(_ *ctlCtx, in map[string]any, _ string) (any, error) {
 				if reset, _ := in["reset"].(bool); reset {
