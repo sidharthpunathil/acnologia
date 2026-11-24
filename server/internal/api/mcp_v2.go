@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,19 +48,35 @@ type mcpTool struct {
 	// For tools synced from an upstream MCP server configured on a service or provider.
 	upstreamMCP  bool
 	upstreamTool string
+	// upstreamRO is an upstream tool's effective read-only state: the
+	// admin's override, else the upstream's readOnlyHint.
+	upstreamRO bool
 	// capability is set on a capability's tool: its arguments are the
-	// capability's params, sent to /proxy/{capability}.
+	// capability's params, sent to /proxy/{capability}. routes are the
+	// services that serve it.
 	capability string
+	routes     []string
+	// routeCalls are the endpoints its routes call, "service METHOD path",
+	// to find the service tools that do the same call.
+	routeCalls []string
 	// keywords are extra words search_tools matches: the service's slug,
 	// name, provider, category, product group and hosts.
 	keywords string
+	// searchText is what search_tools reads as the tool's description when
+	// set: the tool's own words, without the text every service tool shares.
+	searchText string
 }
 
 // toolIsReadOnly reports whether a tool is safe to expose in read-only mode.
 // call_tool is allowed because it only runs tools already permitted by mcpTool.
+// An upstream MCP tool counts by its effective state, which an admin can
+// set whatever the upstream server claims.
 func toolIsReadOnly(t mcpTool) bool {
 	if t.Name == "call_tool" {
 		return true
+	}
+	if t.upstreamMCP {
+		return t.upstreamRO
 	}
 	if t.Annotations == nil {
 		return false
@@ -139,6 +157,7 @@ var coreTools = withTitles([]mcpTool{
 			"path":    str("Path on the provider, for example /v1/search"),
 			"query":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 			"body":    map[string]any{"description": "JSON body for POST, PUT or PATCH"},
+			"idempotency_key": str(idempotencyArgDesc),
 		}, "service", "path")},
 })
 
@@ -296,6 +315,10 @@ func upstreamMCPTool(sv *store.Service, sm *store.ServiceMCP, ut store.ServiceMC
 	if _, ok := ann["openWorldHint"]; !ok {
 		ann["openWorldHint"] = true
 	}
+	// Clients see the effective state, so an admin's override shows up as
+	// the tool's hint too.
+	ro := ut.ReadOnly()
+	ann["readOnlyHint"] = ro
 	return mcpTool{
 		Name:         name,
 		Title:        fullTitle,
@@ -307,6 +330,7 @@ func upstreamMCPTool(sv *store.Service, sm *store.ServiceMCP, ut store.ServiceMC
 		service:      sv.Slug,
 		upstreamMCP:  true,
 		upstreamTool: ut.Name,
+		upstreamRO:   ro,
 		keywords:     strings.Join([]string{sv.Slug, sv.Name, sv.Provider, sv.Category, sm.ServerName, ut.Name, ut.Title, "mcp"}, " "),
 	}
 }
@@ -345,22 +369,51 @@ func capabilityMCPTools(cs []*store.Capability, taken []mcpTool) []mcpTool {
 			}
 		}
 		routes := []string{}
+		// A capability only reads when every route it may take is a GET or
+		// HEAD, so read-only apps can use it.
+		reads := true
+		calls := []string{}
 		for _, rt := range c.Routes {
 			if !rt.Disabled {
 				routes = append(routes, rt.Service)
+				m := strings.ToUpper(orDefault(rt.Method, http.MethodGet))
+				if m != http.MethodGet && m != http.MethodHead {
+					reads = false
+				}
+				calls = append(calls, endpointKey(rt.Service, m, rt.Path))
 			}
 		}
+		reads = reads && len(routes) > 0
 		desc := strings.TrimSpace(c.Description + " Served by " + strings.Join(routes, ", ") +
 			": Acnologia picks one (" + c.Strategy + "), rotates keys, and moves to the next provider when one cannot serve the request.")
+		ann := map[string]any{"title": c.Name, "openWorldHint": true, "readOnlyHint": reads}
+		if reads {
+			ann["destructiveHint"] = false
+		}
 		out = append(out, mcpTool{
 			Name: name, Title: c.Name, Description: desc, Set: setService,
 			InputSchema: obj(props, required...),
-			Annotations: map[string]any{"title": c.Name, "openWorldHint": true},
+			Annotations: ann,
 			capability:  c.Slug,
-			keywords:    strings.Join(append([]string{c.Slug, c.Name}, routes...), " "),
+			routes:      routes,
+			routeCalls:  calls,
+			keywords:   strings.Join(append([]string{c.Slug, c.Name}, routes...), " "),
+			searchText:  c.Description,
 		})
 	}
 	return out
+}
+
+var placeholderRe = regexp.MustCompile(`\{\{?[^{}]*\}?\}`)
+
+// endpointKey names one endpoint of a service, with every path placeholder
+// ({id} in a provider example, {{param}} in a capability route) alike.
+func endpointKey(service, method, path string) string {
+	p := strings.ToLower(strings.Trim(placeholderRe.ReplaceAllString(path, "*"), "/"))
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		p = p[:i]
+	}
+	return service + " " + strings.ToUpper(orDefault(method, http.MethodGet)) + " " + p
 }
 
 type toolKey struct {
@@ -532,18 +585,41 @@ func findTool(tools []mcpTool, name string) *mcpTool {
 
 // callServiceTool fills the example's path and query from the arguments and proxies it.
 func (s *Server) callServiceTool(ctx context.Context, r *http.Request, t *mcpTool, raw json.RawMessage) (map[string]any, error) {
-	if t.capability != "" {
-		body := raw
-		if len(body) == 0 {
-			body = json.RawMessage(`{}`)
-		}
-		return s.mcpProxy(ctx, r, t.capability, http.MethodPost, "", nil, body)
-	}
 	var args map[string]any
-	if len(raw) > 0 {
+	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %v", err)
 		}
+	}
+	if err := checkToolArgs(t, args); err != nil {
+		return nil, err
+	}
+	if t.capability != "" {
+		if ro, _ := ctx.Value(mcpReadOnlyKey).(bool); ro && toolIsReadOnly(*t) {
+			// A read-only token may only send GET through the proxy, and
+			// every route of this capability reads, so the params go in
+			// the query, where the capability takes them too.
+			q := map[string]string{}
+			for k, v := range args {
+				if sv, ok := v.(string); ok {
+					q[k] = sv
+				} else if v != nil {
+					b, _ := json.Marshal(v)
+					q[k] = string(b)
+				}
+			}
+			return s.mcpProxy(ctx, r, t.capability, http.MethodGet, "", q, nil, nil)
+		}
+		body := raw
+		if len(args) == 0 {
+			body = json.RawMessage(`{}`)
+		}
+		return s.mcpProxy(ctx, r, t.capability, http.MethodPost, "", nil, body, nil)
+	}
+	var hdr map[string]string
+	idemArg := hasProp(t.InputSchema, "idempotency_key") && !slices.Contains(t.params, "idempotency_key")
+	if k, ok := args["idempotency_key"].(string); ok && idemArg && strings.TrimSpace(k) != "" {
+		hdr = map[string]string{"Idempotency-Key": strings.TrimSpace(k)}
 	}
 	path := t.example.Path
 	for _, m := range pathParamRe.FindAllStringSubmatch(path, -1) {
@@ -568,7 +644,61 @@ func (s *Server) callServiceTool(ctx context.Context, r *http.Request, t *mcpToo
 	if b, ok := args["body"]; ok && b != nil {
 		body, _ = json.Marshal(b)
 	}
-	return s.mcpProxy(ctx, r, t.service, orDefault(t.example.Method, "GET"), path, query, body)
+	return s.mcpProxy(ctx, r, t.service, orDefault(t.example.Method, "GET"), path, query, body, hdr)
+}
+
+// capControlArgs are the capability's own controls (pin one route, skip
+// the output mapping), which it takes next to its params.
+var capControlArgs = map[string]bool{"_service": true, "_raw": true}
+
+// checkToolArgs rejects argument names a generated service tool or a
+// capability does not take, before anything is sent upstream: dropping
+// them quietly would answer a different question than the one asked. A
+// schema that allows other properties takes anything; an upstream MCP
+// tool's schema is the upstream's to enforce.
+func checkToolArgs(t *mcpTool, args map[string]any) error {
+	if t.upstreamMCP || len(args) == 0 {
+		return nil
+	}
+	if ap, ok := t.InputSchema["additionalProperties"]; ok && ap != false {
+		return nil
+	}
+	props, _ := t.InputSchema["properties"].(map[string]any)
+	var unknown []string
+	for k := range args {
+		if _, ok := props[k]; ok || (t.capability != "" && capControlArgs[k]) {
+			continue
+		}
+		unknown = append(unknown, k)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	accepted := make([]string, 0, len(props))
+	for k := range props {
+		accepted = append(accepted, k)
+	}
+	sort.Strings(accepted)
+	msg := fmt.Sprintf("%s does not take %s. It takes: %s.", t.Name, quoteList(unknown), strings.Join(accepted, ", "))
+	if _, ok := props["extra_query"]; ok {
+		msg += " Put other query parameters in extra_query."
+	}
+	return errors.New(msg)
+}
+
+func quoteList(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+	return strings.Join(q, ", ")
+}
+
+func hasProp(schema map[string]any, name string) bool {
+	props, _ := schema["properties"].(map[string]any)
+	_, ok := props[name]
+	return ok
 }
 
 // ---- insights and manage ----

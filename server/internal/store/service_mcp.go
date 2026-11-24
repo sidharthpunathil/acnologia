@@ -16,6 +16,35 @@ type ServiceMCPTool struct {
 	InputSchema  map[string]any `json:"inputSchema,omitempty"`
 	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 	Annotations  map[string]any `json:"annotations,omitempty"`
+	// Access is the admin's word on whether the tool only reads: "" follows
+	// the upstream's readOnlyHint, "read" and "write" override it. The
+	// upstream's annotations are its own claim and can change on any sync.
+	Access string `json:"access,omitempty"`
+}
+
+// Upstream tool access overrides.
+const (
+	MCPToolAccessUpstream = ""
+	MCPToolAccessRead     = "read"
+	MCPToolAccessWrite    = "write"
+)
+
+// UpstreamReadOnly is what the upstream server says: its readOnlyHint.
+func (t ServiceMCPTool) UpstreamReadOnly() bool {
+	b, _ := t.Annotations["readOnlyHint"].(bool)
+	return b
+}
+
+// ReadOnly is whether the tool counts as read-only here: the admin's
+// override when set, else the upstream's hint.
+func (t ServiceMCPTool) ReadOnly() bool {
+	switch t.Access {
+	case MCPToolAccessRead:
+		return true
+	case MCPToolAccessWrite:
+		return false
+	}
+	return t.UpstreamReadOnly()
 }
 
 // ServiceMCP holds the last synced state and discovered tools of a service's
@@ -128,4 +157,58 @@ func (s *Store) DeleteServiceMCP(ctx context.Context, serviceID int64) error {
 	}
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM service_mcp WHERE service_id=?`, serviceID)
 	return err
+}
+
+// SetServiceMCPToolAccess sets the access override of one synced upstream
+// tool. It returns ErrNotFound when the service has no tool by that name.
+func (s *Store) SetServiceMCPToolAccess(ctx context.Context, serviceID int64, name, access string) error {
+	switch access {
+	case MCPToolAccessUpstream, MCPToolAccessRead, MCPToolAccessWrite:
+	default:
+		return errors.New("access must be empty, read or write")
+	}
+	m, err := s.GetServiceMCP(ctx, serviceID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range m.Tools {
+		if m.Tools[i].Name == name {
+			m.Tools[i].Access = access
+			found = true
+		}
+	}
+	if !found {
+		return ErrNotFound
+	}
+	raw, err := json.Marshal(m.Tools)
+	if err != nil {
+		return err
+	}
+	// Only the tools change, so a sync that finished meanwhile keeps its
+	// server details.
+	_, err = s.DB.ExecContext(ctx, `UPDATE service_mcp SET tools_json=? WHERE service_id=?`, string(raw), serviceID)
+	return err
+}
+
+// KeysRestingUntil gives, per service, when its first cooling key is free
+// again: the earliest cooldown of its active, visible keys still cooling.
+// One query covers every service, so search_tools can say when a service
+// whose keys all rest comes back without a query per tool.
+func (s *Store) KeysRestingUntil(ctx context.Context) (map[int64]time.Time, error) {
+	rows, err := s.r.QueryContext(ctx, `SELECT service_id, MIN(cooldown_until) FROM keys
+		WHERE hidden=0 AND status=? AND cooldown_until>? GROUP BY service_id`, StatusActive, now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]time.Time{}
+	for rows.Next() {
+		var id, until int64
+		if err := rows.Scan(&id, &until); err != nil {
+			return nil, err
+		}
+		out[id] = time.Unix(until, 0).UTC()
+	}
+	return out, rows.Err()
 }

@@ -145,6 +145,19 @@ func newMockMCPServer(t *testing.T, goodTok, limitedTok, badTok string, useSSE *
 					},
 				})
 			case "search_pages":
+				switch p.Arguments["q"] {
+				case "fail":
+					reply(map[string]any{
+						"content": []map[string]any{{"type": "text", "text": "index offline"}},
+						"isError": true,
+					})
+					return
+				case "huge":
+					reply(map[string]any{
+						"content": []map[string]any{{"type": "text", "text": strings.Repeat("x", 300<<10)}},
+					})
+					return
+				}
 				reply(map[string]any{
 					"content": []map[string]any{
 						{"type": "text", "text": fmt.Sprintf("found for %v", p.Arguments["q"])},
@@ -301,12 +314,50 @@ func TestUpstreamMCPServiceEndToEndAndReadOnly(t *testing.T) {
 	if isErr || found["matches"].(float64) < 1 {
 		t.Fatalf("expected search_tools to find scrapebox tools, got %v", found)
 	}
-	viaCallTool, isErr := full.tool("acnologia_call_tool", map[string]any{
-		"name":      "scrapebox_search_pages",
-		"arguments": map[string]any{"q": "golang"},
-	})
-	if isErr || !strings.Contains(fmt.Sprint(viaCallTool), "found for golang") {
-		t.Fatalf("call_tool failed on upstream MCP tool: %v (err=%v)", viaCallTool, isErr)
+	// call_tool returns the upstream result as is: the same shape as calling
+	// the upstream tool by name, not wrapped a second time.
+	direct := full.call("tools/call", map[string]any{"name": "scrapebox_search_pages", "arguments": map[string]any{"q": "golang"}})["result"].(map[string]any)
+	viaCall := full.call("tools/call", map[string]any{"name": "acnologia_call_tool",
+		"arguments": map[string]any{"name": "scrapebox_search_pages", "arguments": map[string]any{"q": "golang"}}})["result"].(map[string]any)
+	if fmt.Sprint(direct) != fmt.Sprint(viaCall) {
+		t.Fatalf("call_tool changed the upstream result:\n direct %v\n via    %v", direct, viaCall)
+	}
+	content := viaCall["content"].([]any)
+	if len(content) != 1 || content[0].(map[string]any)["text"] != "found for golang" || viaCall["structuredContent"] != nil || viaCall["isError"] != nil {
+		t.Fatalf("call_tool on upstream tool: %v", viaCall)
+	}
+	// An upstream failure stays a failure through call_tool.
+	failed := full.call("tools/call", map[string]any{"name": "acnologia_call_tool",
+		"arguments": map[string]any{"name": "scrapebox_search_pages", "arguments": map[string]any{"q": "fail"}}})["result"].(map[string]any)
+	if failed["isError"] != true || failed["content"].([]any)[0].(map[string]any)["text"] != "index offline" || failed["structuredContent"] != nil {
+		t.Fatalf("call_tool must keep the upstream isError: %v", failed)
+	}
+
+	// An answer over the app's max result size is an error, logged as one
+	// and not billed to the app.
+	huge := full.call("tools/call", map[string]any{"name": "scrapebox_search_pages", "arguments": map[string]any{"q": "huge"}})["result"].(map[string]any)
+	if huge["isError"] != true || !strings.Contains(fmt.Sprint(huge["content"]), "max result size") {
+		t.Fatalf("oversized upstream answer: %v", huge)
+	}
+	var evs struct {
+		Events []struct {
+			Kind   string  `json:"kind"`
+			Cost   float64 `json:"cost"`
+			Detail string  `json:"detail"`
+		} `json:"events"`
+	}
+	e.do(e.super, "GET", fmt.Sprintf("/api/admin/events?service_id=%d&limit=50", svcID), nil, 200, &evs)
+	logged := false
+	for _, ev := range evs.Events {
+		if strings.Contains(ev.Detail, "search_pages") && strings.Contains(ev.Detail, "max result size") {
+			logged = true
+			if ev.Kind != "error" || ev.Cost != 0 {
+				t.Fatalf("an oversized answer must be an unbilled error event: %+v", ev)
+			}
+		}
+	}
+	if !logged {
+		t.Fatalf("oversized answer not logged: %+v", evs.Events)
 	}
 
 	// Verify service_guide includes synced upstream MCP tools.

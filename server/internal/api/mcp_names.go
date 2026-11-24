@@ -94,13 +94,21 @@ func withPage(props map[string]any) map[string]any {
 }
 
 var proxyOutput = outObj(map[string]any{
-	"status":       typed("integer", "The provider's HTTP status"),
-	"content_type": typed("string", "The provider's Content-Type"),
-	"key_id":       typed("string", "Which pool key served the call"),
-	"body":         anyOf("The response body: JSON as is, text as a string"),
-	"body_base64":  typed("string", "A binary body, base64 encoded"),
-	"bytes":        typed("integer", "Size of a binary body"),
-	"note":         typed("string", "Why a body was left out"),
+	"status":               typed("integer", "The provider's HTTP status"),
+	"content_type":         typed("string", "The provider's Content-Type"),
+	"key_id":               typed("string", "Which pool key served the call"),
+	"body":                 anyOf("The response body: JSON as is, text as a string. A cut body is always a string"),
+	"body_base64":          typed("string", "A binary body, base64 encoded"),
+	"bytes":                typed("integer", "Size of a binary body"),
+	"note":                 typed("string", "Why a body was cut or left out"),
+	"truncated":            typed("boolean", "The body was longer than the app's max result size and was cut"),
+	"bytes_total":          typed("integer", "The whole body's size, when it was cut"),
+	"bytes_total_at_least": typed("boolean", "The body was too long to measure: bytes_total is a lower bound"),
+	"retry_after_sec":      typed("integer", "Seconds the provider or Acnologia asked to wait before trying again"),
+	"attempts":             typed("integer", "How many keys were tried"),
+	"served_by":            typed("string", "The service that answered"),
+	"tried":                typed("string", "For a capability: each service tried, with its status"),
+	"cache":                typed("string", "hit or miss in the response cache, replay for a repeated idempotency key, or bypass"),
 }, "status")
 
 var serviceItem = outObj(map[string]any{
@@ -144,7 +152,8 @@ var toolOutputs = map[string]map[string]any{
 	"service_guide": outObj(map[string]any{"service": typed("string", "Service slug"), "generated": typed("boolean", "Whether the guide was built from examples only"), "markdown": typed("string", "The guide")}, "markdown"),
 	"proxy_request": proxyOutput,
 	"search_tools":  outObj(map[string]any{}),
-	"call_tool":     outObj(map[string]any{}),
+	// call_tool has none: it answers in the called tool's shape, and an
+	// upstream MCP tool may return no structuredContent at all.
 	"list_keys":     outObj(withPage(map[string]any{"keys": listOf(keyItem, "Keys on this page")}), "keys"),
 	"key_details":   keyItem,
 	"service_stats": outObj(map[string]any{"service": typed("string", "Service slug"), "name": typed("string", "Display name"), "keys": anyOf("Key counts by state"), "requests_24h": anyOf("Requests in the last 24 hours")}, "service"),

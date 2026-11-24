@@ -37,12 +37,19 @@ type toolCatalog struct {
 
 	tools  []mcpTool
 	byName map[string]int
+	// svcs finds a tool's service by slug, for its live availability.
+	svcs map[string]svcRef
 
 	idxOnce sync.Once
 	idx     *toolIndex
 
 	mu    sync.Mutex
 	views map[string]*toolView
+}
+
+type svcRef struct {
+	id       int64
+	provider string
 }
 
 // toolView is what one access list sees: the tools' indexes in order, and
@@ -115,7 +122,7 @@ func (s *Server) toolCatalog(ctx context.Context) *toolCatalog {
 	if c != nil && c.key == key {
 		// Nothing changed: trust it again. A fresh value, so readers of the
 		// old pointer never race with this write.
-		next := &toolCatalog{key: c.key, gen: gen, checked: time.Now(), tools: c.tools, byName: c.byName, idx: c.idx, views: map[string]*toolView{}}
+		next := &toolCatalog{key: c.key, gen: gen, checked: time.Now(), tools: c.tools, byName: c.byName, svcs: c.svcs, idx: c.idx, views: map[string]*toolView{}}
 		if c.idx != nil {
 			next.idxOnce.Do(func() {})
 		}
@@ -134,7 +141,11 @@ func (s *Server) toolCatalog(ctx context.Context) *toolCatalog {
 	for i, t := range tools {
 		byName[t.Name] = i
 	}
-	next := &toolCatalog{key: key, gen: gen, checked: time.Now(), tools: tools, byName: byName, views: map[string]*toolView{}}
+	refs := make(map[string]svcRef, len(svcs))
+	for _, sv := range svcs {
+		refs[sv.Slug] = svcRef{id: sv.ID, provider: sv.Provider}
+	}
+	next := &toolCatalog{key: key, gen: gen, checked: time.Now(), tools: tools, byName: byName, svcs: refs, views: map[string]*toolView{}}
 	s.toolCatMu.Lock()
 	s.toolCat = next
 	s.toolCatMu.Unlock()
@@ -198,22 +209,33 @@ type posting struct {
 type toolIndex struct {
 	postings map[string][]posting
 	vocab    []string // sorted, for prefix and typo matches
+	// calls are the endpoints service tools make (endpointKey), to tell a
+	// capability route some tool makes from one none does.
+	calls map[string]bool
 }
 
 func (c *toolCatalog) index() *toolIndex {
 	c.idxOnce.Do(func() {
-		ix := &toolIndex{postings: map[string][]posting{}}
+		ix := &toolIndex{postings: map[string][]posting{}, calls: map[string]bool{}}
 		for i := range c.tools {
 			t := &c.tools[i]
+			if t.example != nil {
+				ix.calls[endpointKey(t.service, t.example.Method, t.example.Path)] = true
+			}
 			params := []string{}
 			if p, ok := t.InputSchema["properties"].(map[string]any); ok {
 				for k := range p {
-					if k != "extra_query" && k != "body" {
+					// The arguments every generated tool has say nothing about it.
+					if k != "extra_query" && k != "body" && (k != "idempotency_key" || t.upstreamMCP) {
 						params = append(params, k)
 					}
 				}
 			}
-			for f, text := range []string{t.keywords, t.Name + " " + t.Title, t.Description, strings.Join(params, " ")} {
+			desc := t.Description
+			if t.searchText != "" || t.capability != "" {
+				desc = t.searchText
+			}
+			for f, text := range []string{t.keywords, t.Name + " " + t.Title, desc, strings.Join(params, " ")} {
 				seen := map[string]bool{}
 				for _, w := range tokens(text) {
 					if !seen[w] {

@@ -29,6 +29,11 @@ const (
 
 var nextRPCID atomic.Int64
 
+// ErrTooLarge is wrapped by the error a call returns when the upstream's
+// answer was longer than the caller allowed. The upstream did the work; the
+// caller never saw the result.
+var ErrTooLarge = errors.New("upstream MCP response too large")
+
 // AuthFunc applies credentials (header, bearer, query param, basic, fields)
 // to an outbound HTTP request. May be nil for unauthenticated requests.
 type AuthFunc func(req *http.Request)
@@ -341,7 +346,7 @@ func postRPC(ctx context.Context, client *http.Client, sess *Session, auth AuthF
 		return nil, hres, resolvedURL, fmt.Errorf("upstream MCP returned HTTP %d: %s", resp.StatusCode, shortSnippet(raw))
 	}
 	if int64(len(raw)) > readLimit {
-		return nil, hres, resolvedURL, fmt.Errorf("upstream MCP response exceeded %d bytes", readLimit)
+		return nil, hres, resolvedURL, fmt.Errorf("%w: it exceeded %d bytes", ErrTooLarge, readLimit)
 	}
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	var env *rpcEnvelope

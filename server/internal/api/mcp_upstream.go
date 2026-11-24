@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -137,13 +138,6 @@ func upstreamToolName(sv *store.Service, upstreamName string) string {
 	return toolName(sv.Slug, upstreamName)
 }
 
-func upstreamToolReadOnly(annotations map[string]any) bool {
-	if annotations == nil {
-		return false
-	}
-	b, _ := annotations["readOnlyHint"].(bool)
-	return b
-}
 
 func scrubMCPText(s, secret string) string {
 	if secret == "" || s == "" {
@@ -205,7 +199,11 @@ func (s *Server) serviceMCPView(ctx context.Context, sv *store.Service) map[stri
 			"inputSchema":  ut.InputSchema,
 			"outputSchema": ut.OutputSchema,
 			"annotations":  ut.Annotations,
-			"read_only":    upstreamToolReadOnly(ut.Annotations),
+			// read_only is what /mcp enforces: access when the admin set
+			// it, else upstream_read_only, the upstream's own hint.
+			"read_only":          ut.ReadOnly(),
+			"upstream_read_only": ut.UpstreamReadOnly(),
+			"access":             ut.Access,
 		})
 	}
 	transport := "streamable_http"
@@ -269,6 +267,41 @@ func (s *Server) syncServiceMCP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, view)
 }
 
+// setServiceMCPToolAccess sets whether one synced upstream tool counts as
+// read-only: access "" follows the upstream's readOnlyHint, "read" and
+// "write" override it. Read-only apps and tokens follow the result.
+func (s *Server) setServiceMCPToolAccess(w http.ResponseWriter, r *http.Request) {
+	sv, ok := s.loadService(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Name   string `json:"name"`
+		Access string `json:"access"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	switch in.Access {
+	case store.MCPToolAccessUpstream, store.MCPToolAccessRead, store.MCPToolAccessWrite:
+	default:
+		writeErr(w, 400, "invalid", `access must be "" (follow the server), "read" or "write"`)
+		return
+	}
+	if err := s.Store.SetServiceMCPToolAccess(r.Context(), sv.ID, in.Name, in.Access); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, 404, "not_found", "this service has no synced MCP tool named "+strconv.Quote(in.Name))
+			return
+		}
+		writeStoreErr(w, err)
+		return
+	}
+	s.catalogChanged()
+	label := map[string]string{"": "follow the server's hint", "read": "always read-only", "write": "always write"}[in.Access]
+	s.Store.AddAudit(r.Context(), userFrom(r), "service.mcp_tool_access", sv.Slug+"/"+in.Name, label)
+	writeJSON(w, 200, s.serviceMCPView(r.Context(), sv))
+}
+
 var errNoMCPConfigured = errors.New("this service has no upstream MCP URL configured")
 
 func (s *Server) doSyncServiceMCP(ctx context.Context, sv *store.Service, allowHidden bool) error {
@@ -318,6 +351,16 @@ func (s *Server) doSyncServiceMCP(ctx context.Context, sv *store.Service, allowH
 		return syncErr
 	}
 
+	// An admin's access override outlives the sync: the upstream's hints
+	// are replaced, the admin's word on a tool is not.
+	access := map[string]string{}
+	if prev != nil {
+		for _, t := range prev.Tools {
+			if t.Access != "" {
+				access[t.Name] = t.Access
+			}
+		}
+	}
 	tools := make([]store.ServiceMCPTool, 0, len(res.Tools))
 	for _, t := range res.Tools {
 		tools = append(tools, store.ServiceMCPTool{
@@ -327,6 +370,7 @@ func (s *Server) doSyncServiceMCP(ctx context.Context, sv *store.Service, allowH
 			InputSchema:  t.InputSchema,
 			OutputSchema: t.OutputSchema,
 			Annotations:  t.Annotations,
+			Access:       access[t.Name],
 		})
 	}
 	now := time.Now().UTC()
@@ -504,6 +548,14 @@ func (s *Server) callUpstreamMCPTool(ctx context.Context, r *http.Request, a *st
 		s.Breakers.Success(sv.ID)
 		verdict = true
 		_ = s.Pool.ApplyProxied(ctx, sv, k, a.ID, providers.Result{Outcome: providers.OK, Quota: prov.ReadQuota(callRes.Headers)})
+		if errors.Is(callErr, mcpclient.ErrTooLarge) {
+			// The key and the upstream are fine, but the app never got an
+			// answer: logged as an error, not billed to the app.
+			s.Store.AddEvent(ctx, store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: status, LatencyMS: latency,
+				Detail: detail + ": response over the app's max result size"})
+			_ = s.Store.RecordAppUsage(ctx, a.ID, 0, false)
+			return nil, fmt.Errorf("%s answered with more than this app's max result size (%d KB), so the answer was dropped; ask for less, or raise max result size in the app's MCP settings", sv.Name, limit>>10)
+		}
 		s.Store.AddEvent(ctx, store.NewEvent{Kind: "proxy", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, StatusCode: status, LatencyMS: latency, Cost: cost, Detail: detail})
 		_ = s.Store.RecordAppUsage(ctx, a.ID, cost, false)
 

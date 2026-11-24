@@ -61,7 +61,7 @@ func (s *Server) serviceGuide(ctx context.Context, sv *store.Service, publicURL 
 				b.WriteString("- `")
 				b.WriteString(pub)
 				b.WriteString("`")
-				if upstreamToolReadOnly(ut.Annotations) {
+				if ut.ReadOnly() {
 					b.WriteString(" _(read-only)_")
 				}
 				if strings.TrimSpace(ut.Description) != "" {

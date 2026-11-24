@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -188,21 +189,10 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		}
 		t := s.mcpTool(ctx, a, st, p.Name)
 		if t == nil {
-			return nil, &rpcErr{-32602, publicText("unknown or disabled tool: " + p.Name + "; call tools/list, or search_tools to find a service tool")}
+			// The spec's answer to an unknown tool is a protocol error.
+			return nil, &rpcErr{-32602, publicText(s.unknownToolText(ctx, a, st, p.Name) + " Call tools/list, or search_tools to find a service tool.")}
 		}
-		if t.upstreamMCP {
-			res, err := s.callUpstreamMCPTool(ctx, r, a, st, t, p.Arguments)
-			if err != nil {
-				return map[string]any{"content": []map[string]any{{"type": "text", "text": publicText(err.Error())}}, "isError": true}, nil
-			}
-			return res, nil
-		}
-		out, err := s.runTool(ctx, r, a, st, t, p.Arguments)
-		if err != nil {
-			return map[string]any{"content": []map[string]any{{"type": "text", "text": publicText(err.Error())}}, "isError": true}, nil
-		}
-		b, _ := json.Marshal(out)
-		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}, nil
+		return s.toolCallResult(ctx, r, a, st, t, p.Arguments), nil
 	case "resources/list":
 		if !st.Resources {
 			return nil, &rpcErr{-32601, "resources are off for this app"}
@@ -252,6 +242,38 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 	return nil, &rpcErr{-32601, "method not found: " + req.Method}
 }
 
+// toolCallResult runs a tool and gives the tools/call result. call_tool is
+// unwrapped first, so a tool reached through it answers in the same shape
+// as when called by name: an upstream MCP tool's result as the upstream
+// gave it (isError included), any other tool's as text and
+// structuredContent.
+func (s *Server) toolCallResult(ctx context.Context, r *http.Request, a *store.App, st store.MCPSettings, t *mcpTool, args json.RawMessage) map[string]any {
+	if t.Name == "call_tool" {
+		target, inner, err := s.resolveCallTool(ctx, a, st, args)
+		if err != nil {
+			return toolErrorResult(err)
+		}
+		t, args = target, inner
+	}
+	if t.upstreamMCP {
+		res, err := s.callUpstreamMCPTool(ctx, r, a, st, t, args)
+		if err != nil {
+			return toolErrorResult(err)
+		}
+		return res
+	}
+	out, err := s.runTool(ctx, r, a, st, t, args)
+	if err != nil {
+		return toolErrorResult(err)
+	}
+	b, _ := json.Marshal(out)
+	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}
+}
+
+func toolErrorResult(err error) map[string]any {
+	return map[string]any{"content": []map[string]any{{"type": "text", "text": publicText(err.Error())}}, "isError": true}
+}
+
 func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw json.RawMessage) (map[string]any, error) {
 	a := ctx.Value(appKey).(*store.App)
 	ro, _ := ctx.Value(mcpReadOnlyKey).(bool)
@@ -275,6 +297,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		Path          string            `json:"path"`
 		Query         map[string]string `json:"query"`
 		Body          json.RawMessage   `json:"body"`
+		IdemKey       string            `json:"idempotency_key"`
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -388,64 +411,147 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		if err != nil {
 			return nil, err
 		}
-		return s.mcpProxy(withResolvedService(ctx, sv), r, args.Service, args.Method, args.Path, args.Query, args.Body)
+		var hdr map[string]string
+		if k := strings.TrimSpace(args.IdemKey); k != "" {
+			hdr = map[string]string{"Idempotency-Key": k}
+		}
+		return s.mcpProxy(withResolvedService(ctx, sv), r, args.Service, args.Method, args.Path, args.Query, args.Body, hdr)
 	}
 	return nil, fmt.Errorf("unknown tool %q", name)
 }
 
+// mcpDrainMax is how far past the result limit an MCP proxy call keeps
+// counting (and dropping) the body, to say how long the whole answer was.
+const mcpDrainMax = 8 << 20
+
 // mcpProxy runs the regular proxy handler in-process and captures the result.
-func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, method, path string, query map[string]string, body json.RawMessage) (map[string]any, error) {
+// hdr holds request headers the tool sets, such as Idempotency-Key.
+func (s *Server) mcpProxy(ctx context.Context, orig *http.Request, service, method, path string, query map[string]string, body json.RawMessage, hdr map[string]string) (map[string]any, error) {
 	limit := 200 << 10
 	if kb, ok := ctx.Value(mcpLimitKey).(int); ok && kb > 0 {
 		limit = min(kb, 2048) << 10
 	}
-	rec, err := s.proxyCapture(ctx, orig, service, method, path, query, body, nil, limit)
-	if err != nil {
+	rec := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), max: limit + 1, drain: mcpDrainMax}
+	if err := s.proxyCaptureInto(ctx, orig, service, method, path, query, body, hdr, rec); err != nil {
 		return nil, err
 	}
 	out := map[string]any{"status": rec.Code, "content_type": rec.Header().Get("Content-Type")}
-	// Share and person principals get no key id header, so no key_id either.
-	if id := rec.Header().Get("X-Acnologia-Key-Id"); id != "" {
-		out["key_id"] = id
+	liftProxyFacts(out, rec.Header())
+	full := rec.Body.Bytes()
+	b := full
+	cut := len(full) > limit
+	if cut {
+		b = full[:limit]
+		out["truncated"] = true
+		out["bytes_total"] = rec.seen
+		if rec.seen-rec.max > rec.drain {
+			// The proxy stopped reading: the body is longer still.
+			out["bytes_total_at_least"] = true
+		}
 	}
-	b := rec.Body.Bytes()
 	ct := rec.Header().Get("Content-Type")
+	text := !strings.HasPrefix(ct, "audio/") && !strings.HasPrefix(ct, "image/")
 	switch {
-	case strings.Contains(ct, "json") && len(b) <= limit && json.Valid(b) && utf8.Valid(b):
+	case strings.Contains(ct, "json") && !cut && json.Valid(b) && utf8.Valid(b):
 		// Embedded as is, not decoded into maps only to be encoded again.
 		// Invalid UTF-8 takes the decoding path below, which replaces it.
 		out["body"] = json.RawMessage(b)
-	case strings.Contains(ct, "json"):
+	case strings.Contains(ct, "json") && !cut:
 		var v any
-		if json.Unmarshal(b, &v) == nil && len(b) <= limit {
+		if json.Unmarshal(b, &v) == nil {
 			out["body"] = v
 		} else {
-			out["body"] = string(truncate(b, limit))
+			out["body"] = string(b)
 		}
-	case utf8.Valid(b) && !strings.HasPrefix(ct, "audio/") && !strings.HasPrefix(ct, "image/"):
-		out["body"] = string(truncate(b, limit))
-	default:
+	case strings.Contains(ct, "json") || (text && utf8.Valid(wholeRunes(b))):
+		// Cut JSON is no longer JSON: it comes back as text, marked cut.
+		out["body"] = string(wholeRunes(b))
+	case !cut:
 		out["bytes"] = len(b)
-		if len(b) <= limit {
-			out["body_base64"] = base64.StdEncoding.EncodeToString(b)
-		} else {
-			out["note"] = "binary response too large for MCP, use the HTTP proxy directly"
-		}
+		out["body_base64"] = base64.StdEncoding.EncodeToString(b)
+	default:
+		out["bytes"] = rec.seen
+		out["note"] = "binary response too large for MCP, use the HTTP proxy directly"
+	}
+	if cut && out["note"] == nil {
+		out["note"] = fmt.Sprintf("the body was cut at %d bytes; ask for less (a smaller page or fewer fields) or raise the app's max result size", limit)
 	}
 	return out, nil
+}
+
+// liftProxyFacts copies what the proxy says about a call from its headers
+// into an MCP result: which key and service answered, how many attempts it
+// took, which services a capability tried, whether the cache answered, and
+// how long the provider asked to wait.
+func liftProxyFacts(out map[string]any, h http.Header) {
+	// Share and person principals get no key id header, so no key_id either.
+	if id := h.Get(headerPrefix + "Key-Id"); id != "" {
+		out["key_id"] = id
+	}
+	if n, err := strconv.Atoi(h.Get(headerPrefix + "Attempts")); err == nil && n > 0 {
+		out["attempts"] = n
+	}
+	if v := h.Get(headerPrefix + "Service"); v != "" {
+		out["served_by"] = v
+	}
+	if v := h.Get(headerPrefix + "Tried"); v != "" {
+		out["tried"] = v
+	}
+	if v := h.Get(headerPrefix + "Cache"); v != "" {
+		out["cache"] = v
+	}
+	if sec, ok := retryAfterSec(h.Get("Retry-After")); ok {
+		out["retry_after_sec"] = sec
+	}
+}
+
+// retryAfterSec reads a Retry-After header: seconds, or an HTTP date.
+func retryAfterSec(v string) (int, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		return n, true
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return max(int(math.Ceil(time.Until(t).Seconds())), 0), true
+	}
+	return 0, false
+}
+
+// wholeRunes drops a UTF-8 sequence cut off at the end of b.
+func wholeRunes(b []byte) []byte {
+	i := len(b) - 1
+	for i >= 0 && i > len(b)-utf8.UTFMax && !utf8.RuneStart(b[i]) {
+		i--
+	}
+	if i >= 0 && !utf8.FullRune(b[i:]) {
+		return b[:i]
+	}
+	return b
 }
 
 // proxyCapture runs the proxy handler in process for the app in ctx and
 // keeps at most limit+1 bytes of the response: the HTTP proxy streams, but
 // MCP buffers.
 func (s *Server) proxyCapture(ctx context.Context, orig *http.Request, service, method, path string, query map[string]string, body json.RawMessage, hdr map[string]string, limit int) (*cappedRecorder, error) {
+	rec := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), max: limit + 1}
+	if err := s.proxyCaptureInto(ctx, orig, service, method, path, query, body, hdr, rec); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+// proxyCaptureInto is proxyCapture with the caller's recorder.
+func (s *Server) proxyCaptureInto(ctx context.Context, orig *http.Request, service, method, path string, query map[string]string, body json.RawMessage, hdr map[string]string, rec *cappedRecorder) error {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	switch method {
 	case "":
 		method = http.MethodGet
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 	default:
-		return nil, fmt.Errorf("method must be GET, POST, PUT, PATCH or DELETE")
+		return fmt.Errorf("method must be GET, POST, PUT, PATCH or DELETE")
 	}
 	q := url.Values{}
 	for k, v := range query {
@@ -461,7 +567,7 @@ func (s *Server) proxyCapture(ctx context.Context, orig *http.Request, service, 
 	}
 	req, err := http.NewRequestWithContext(ctx, method, "http://acnologia.local"+target, rdr)
 	if err != nil {
-		return nil, fmt.Errorf("bad path or query: %v", err)
+		return fmt.Errorf("bad path or query: %v", err)
 	}
 	if orig != nil {
 		req.RemoteAddr = orig.RemoteAddr
@@ -476,25 +582,36 @@ func (s *Server) proxyCapture(ctx context.Context, orig *http.Request, service, 
 	rctx.URLParams.Add("service", service)
 	rctx.URLParams.Add("*", strings.TrimPrefix(path, "/"))
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
-	rec := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), max: limit + 1}
 	s.proxy(rec, req)
-	return rec, nil
+	return nil
 }
 
 // cappedRecorder records a response but stops accepting body bytes past max,
-// which makes the proxy stop reading the upstream body.
+// which makes the proxy stop reading the upstream body. With drain set it
+// first keeps counting (and dropping) up to drain more bytes, so seen tells
+// how long the whole body was.
 type cappedRecorder struct {
 	*httptest.ResponseRecorder
-	max int
+	max   int
+	drain int
+	// seen counts the body bytes the proxy wrote, kept or not.
+	seen int
 }
 
 func (c *cappedRecorder) Write(p []byte) (int, error) {
+	c.seen += len(p)
 	room := c.max - c.Body.Len()
 	if room <= 0 {
+		if c.seen-c.max <= c.drain {
+			return len(p), nil
+		}
 		return 0, io.ErrShortWrite
 	}
 	if len(p) > room {
 		n, _ := c.ResponseRecorder.Write(p[:room])
+		if c.seen-c.max <= c.drain && c.drain > 0 {
+			return len(p), nil
+		}
 		return n, io.ErrShortWrite
 	}
 	return c.ResponseRecorder.Write(p)

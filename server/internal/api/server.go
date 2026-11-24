@@ -314,6 +314,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/services", s.createService)
 			r.Patch("/services/{id}", s.updateService)
 			r.Post("/services/{id}/mcp/sync", s.syncServiceMCP)
+			r.Patch("/services/{id}/mcp/tools", s.setServiceMCPToolAccess)
 			r.Post("/services/rotation", s.setServicesRotation)
 			r.Delete("/services/{id}", s.deleteService)
 			r.Post("/services/{id}/keys", s.createKeys)

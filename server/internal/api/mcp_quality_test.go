@@ -208,7 +208,6 @@ func TestMCPResultsMatchOutputSchemas(t *testing.T) {
 		{"service_guide", map[string]any{"service": "serpapi"}},
 		{"proxy_request", map[string]any{"service": "serpapi", "path": "/search.json", "query": map[string]any{"q": "x"}}},
 		{"search_tools", map[string]any{"query": "google search"}},
-		{"call_tool", map[string]any{"name": "serpapi_google_search", "arguments": map[string]any{"q": "x"}}},
 		{"list_keys", map[string]any{"limit": 1}},
 		{"key_details", map[string]any{"key_id": kid}},
 		{"service_stats", map[string]any{"service": "serpapi"}},
@@ -232,6 +231,14 @@ func TestMCPResultsMatchOutputSchemas(t *testing.T) {
 	out, _ := m.tool("serpapi_google_search", map[string]any{"q": "x"})
 	if bad := conforms(proxyOutput, out, "serpapi_google_search"); len(bad) > 0 {
 		t.Errorf("service tool result: %v", bad)
+	}
+	// call_tool answers in the called tool's shape, so it declares none.
+	if _, ok := toolOutputs["call_tool"]; ok {
+		t.Error("call_tool must not declare an output schema")
+	}
+	out, _ = m.tool("call_tool", map[string]any{"name": "serpapi_google_search", "arguments": map[string]any{"q": "x"}})
+	if bad := conforms(proxyOutput, out, "call_tool"); len(bad) > 0 {
+		t.Errorf("call_tool result: %v", bad)
 	}
 }
 
