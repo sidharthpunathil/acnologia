@@ -79,8 +79,19 @@ export function validateService(v: ServiceInput): ServiceErrors {
   if (!v.name.trim()) e.name = "Give the service a name.";
   if (!v.slug.trim()) e.slug = "Add a slug. Apps call it in /proxy/<slug>/.";
   else if (!/^[a-z0-9][a-z0-9_-]*$/.test(v.slug)) e.slug = "Use lowercase letters, numbers, dashes or underscores.";
-  if (!v.base_url.trim()) e.base_url = "Add the API address Acnologia forwards to, such as https://api.example.com.";
-  else if (!/^https?:\/\//i.test(v.base_url.trim())) e.base_url = "Start with http:// or https://.";
+  const mcpUrl = (v.mcp_url ?? "").trim();
+  if (mcpUrl && !/^(\/|https?:\/\/)/i.test(mcpUrl)) {
+    e.mcp_url = "Start with https://, http://, or a path like /mcp/.";
+  }
+  if (!v.base_url.trim()) {
+    if (v.provider === "mcp" && /^https?:\/\//i.test(mcpUrl)) {
+      // Base URL will be derived from the MCP URL on the server.
+    } else {
+      e.base_url = "Add the API address Acnologia forwards to, such as https://api.example.com.";
+    }
+  } else if (!/^https?:\/\//i.test(v.base_url.trim())) {
+    e.base_url = "Start with http:// or https://.";
+  }
   if ((v.max_concurrency ?? 0) < 0 || (v.max_concurrency ?? 0) > 1000) e.max_concurrency = "Between 0 (unlimited) and 1000.";
   if ((v.queue_timeout_sec ?? 0) < 0 || (v.queue_timeout_sec ?? 0) > 300) e.queue_timeout_sec = "Between 0 and 300 seconds.";
   if (v.max_attempts < 1 || v.max_attempts > 20) e.max_attempts = "Between 1 and 20.";
@@ -216,7 +227,7 @@ export function ServiceForm({
         <legend className={LEGEND}>Upstream</legend>
         <Input
           label="Base URL"
-          isRequired
+          isRequired={value.provider !== "mcp" || !value.mcp_url?.trim()}
           type="url"
           inputMode="url"
           value={value.base_url}
@@ -228,6 +239,21 @@ export function ServiceForm({
           inputDir="ltr"
           inputClassName="font-mono"
           className={cx("sm:col-span-2", f("base_url"))}
+        />
+        <Input
+          label="Upstream MCP URL"
+          type="url"
+          inputMode="url"
+          value={value.mcp_url ?? ""}
+          onChange={(v) => set("mcp_url", v)}
+          isInvalid={!!errors?.mcp_url}
+          errorMessage={errors?.mcp_url}
+          placeholder="https://mcp.example.com/mcp/ or /mcp/"
+          hint="Optional Streamable HTTP MCP endpoint. Tools are synced and exposed through Acnologia's /mcp server."
+          spellCheck="false"
+          inputDir="ltr"
+          inputClassName="font-mono"
+          className={cx("sm:col-span-2", f("mcp_url"))}
         />
         <BoardSelect
           label="Auth type"

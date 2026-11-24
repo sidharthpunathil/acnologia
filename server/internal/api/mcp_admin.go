@@ -37,7 +37,18 @@ func (s *Server) mcpView(ctx context.Context, a *store.App, st store.MCPSettings
 	list := []map[string]any{}
 	for _, t := range all {
 		// name is what disabled_tools stores, public_name what agents see.
-		list = append(list, map[string]any{"name": t.Name, "public_name": publicTool(t.Name), "title": t.Title, "description": t.Description, "set": t.Set, "enabled": enabled[t.Name], "listed": listed[t.Name]})
+		list = append(list, map[string]any{
+			"name":         t.Name,
+			"public_name":  publicTool(t.Name),
+			"title":        t.Title,
+			"description":  t.Description,
+			"set":          t.Set,
+			"service":      t.service,
+			"read_only":    toolIsReadOnly(t),
+			"upstream_mcp": t.upstreamMCP,
+			"enabled":      enabled[t.Name],
+			"listed":       listed[t.Name],
+		})
 	}
 	effective := toolModeAll
 	if s.searchModeFor(ctx, a, st) {
@@ -107,7 +118,11 @@ func (s *Server) putAppMCP(w http.ResponseWriter, r *http.Request) {
 			detail = append(detail, name)
 		}
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "app.mcp", a.Name, "tool sets: "+strings.Join(detail, ", ")+"; tool mode: "+in.ToolMode)
+	audit := "tool sets: " + strings.Join(detail, ", ") + "; tool mode: " + in.ToolMode
+	if in.ReadOnly {
+		audit += "; read-only"
+	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "app.mcp", a.Name, audit)
 	st, _ := s.Store.GetMCPSettings(r.Context(), a.ID)
 	writeJSON(w, 200, s.mcpView(r.Context(), a, st))
 }

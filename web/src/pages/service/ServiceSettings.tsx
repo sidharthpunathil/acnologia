@@ -28,7 +28,7 @@ import { applyServiceFields } from "../AddServiceModal";
 import { RotationCard } from "./RotationCard";
 
 function inputOf(s: Service): ServiceInput {
-  const { slug, name, provider, category, description, base_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon } = s;
+  const { slug, name, provider, category, description, base_url, mcp_url, auth_type, auth_name, strategy, cooldown_sec, max_attempts, icon } = s;
   return {
     slug,
     name,
@@ -36,6 +36,7 @@ function inputOf(s: Service): ServiceInput {
     category,
     description,
     base_url,
+    mcp_url: mcp_url ?? "",
     auth_type,
     auth_name,
     strategy,
@@ -558,6 +559,12 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
           <Row label="Slug" value={service.slug} />
           <Row label="Provider" value={provider ? `${provider.name} (${service.provider})` : service.provider} />
           <Row label="Base URL" value={service.base_url} />
+          {(service.mcp_url || provider?.spec?.mcp?.url) && (
+            <Row
+              label="Upstream MCP"
+              value={service.mcp_url || `${provider?.spec?.mcp?.url} (from provider)`}
+            />
+          )}
           <Row label="Auth" value={`${service.auth_type}${service.auth_name ? ` · ${service.auth_name}` : ""}`} />
           <Row label="Category" value={service.category} />
           <Row label="Description" value={service.description} />

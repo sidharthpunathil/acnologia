@@ -119,6 +119,9 @@ type serviceInput struct {
 	Category    *string `json:"category"`
 	Description *string `json:"description"`
 	BaseURL     *string `json:"base_url"`
+	// MCPURL is an optional upstream Streamable HTTP MCP endpoint URL (or path
+	// relative to base_url). Trailing slashes are preserved verbatim.
+	MCPURL      *string `json:"mcp_url"`
 	AuthType    *string `json:"auth_type"`
 	AuthName    *string `json:"auth_name"`
 	Strategy    *string `json:"strategy"`
@@ -164,6 +167,7 @@ func (in serviceInput) apply(sv *store.Service) string {
 	set(&sv.Category, in.Category)
 	set(&sv.Description, in.Description)
 	set(&sv.BaseURL, in.BaseURL)
+	set(&sv.MCPURL, in.MCPURL)
 	set(&sv.AuthType, in.AuthType)
 	set(&sv.AuthName, in.AuthName)
 	set(&sv.Strategy, in.Strategy)
@@ -210,7 +214,20 @@ func (in serviceInput) apply(sv *store.Service) string {
 			sv.Rotation = ""
 		}
 	}
+	// For pure MCP server services, passing mcp_url without base_url sets
+	// base_url too, and passing base_url with a trailing slash preserves it in
+	// mcp_url before BaseURL is right-trimmed.
+	if sv.Provider == providers.MCPSlug {
+		if in.MCPURL != nil && sv.MCPURL != "" && in.BaseURL == nil && (strings.HasPrefix(sv.MCPURL, "http://") || strings.HasPrefix(sv.MCPURL, "https://")) {
+			sv.BaseURL = sv.MCPURL
+		} else if in.BaseURL != nil && in.MCPURL == nil && sv.MCPURL == "" && strings.HasSuffix(strings.TrimSpace(*in.BaseURL), "/") {
+			sv.MCPURL = strings.TrimSpace(*in.BaseURL)
+		}
+	}
 	sv.BaseURL = strings.TrimRight(sv.BaseURL, "/")
+	if msg := providers.ValidateServiceMCPURL(sv.MCPURL); msg != "" {
+		return msg
+	}
 	switch {
 	case !validRotation[sv.Rotation]:
 		return "rotation must be off, fallback or round_robin"
@@ -364,6 +381,7 @@ func (s *Server) updateService(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.update", sv.Slug, "")
 	s.forgetRotating()
+	s.mcpSessions.deleteService(sv.ID)
 	// Settings decide what may be served from cache, so start fresh.
 	s.Cache.PurgePrefix(servicePrefix(sv.ID))
 	_ = s.Store.FillStats(r.Context(), []*store.Service{sv}, isSuper(r), s.Pool.InFlight())
@@ -377,7 +395,7 @@ func targetOf(sv *store.Service) string {
 	if sv.EgressID != nil {
 		egressID = *sv.EgressID
 	}
-	return sv.BaseURL + "\x00" + sv.AuthType + "\x00" + sv.AuthName + "\x00" + sv.Provider + "\x00" + strconv.FormatInt(egressID, 10)
+	return sv.BaseURL + "\x00" + sv.MCPURL + "\x00" + sv.AuthType + "\x00" + sv.AuthName + "\x00" + sv.Provider + "\x00" + strconv.FormatInt(egressID, 10)
 }
 
 func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
@@ -401,6 +419,7 @@ func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
 	}
 	// SQLite may hand the id to the next service: its cached answers go now.
 	s.Cache.PurgePrefix(servicePrefix(sv.ID))
+	s.mcpSessions.deleteService(sv.ID)
 	// Services that used its keys go back to their own.
 	_ = s.Store.ClearKeySourcesOf(r.Context(), sv.ID)
 	s.Store.AddAudit(r.Context(), userFrom(r), "service.delete", sv.Slug, "")
@@ -641,6 +660,9 @@ func (s *Server) createKeys(w http.ResponseWriter, r *http.Request) {
 	s.Store.AddAudit(r.Context(), userFrom(r), "key.create", sv.Slug, fmt.Sprintf("%d added, %d skipped", len(created), len(skipped)))
 	// Check new keys in the background so quotas show up without a manual click.
 	go s.checkMany(sv, created)
+	if len(created) > 0 {
+		go s.syncServiceMCPBackground(sv)
+	}
 	resp := map[string]any{"keys": created, "skipped": skipped}
 	if parsed != nil {
 		resp["ignored"] = len(parsed.Ignored)

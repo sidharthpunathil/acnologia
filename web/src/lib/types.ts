@@ -60,6 +60,8 @@ export interface Service {
   category: string;
   description: string;
   base_url: string;
+  /** Optional upstream Streamable HTTP MCP endpoint (absolute URL or path relative to base_url). */
+  mcp_url?: string;
   auth_type: AuthType;
   auth_name: string;
   /** The inputs one key takes when the credential has several parts. */
@@ -118,7 +120,7 @@ export type ServiceInput = Pick<
   | "max_attempts"
   | "icon"
 > &
-  Partial<Pick<Service, "max_concurrency" | "queue_timeout_sec" | "egress_id" | "cache_ttl_sec" | "cost_per_request" | "target_trusted">> & { rotation?: Rotation | "off" };
+  Partial<Pick<Service, "mcp_url" | "max_concurrency" | "queue_timeout_sec" | "egress_id" | "cache_ttl_sec" | "cost_per_request" | "target_trusted">> & { rotation?: Rotation | "off" };
 
 export type KeyStatus = "active" | "disabled" | "exhausted" | "invalid" | "banned";
 export type EffectiveStatus = KeyStatus | "cooling";
@@ -377,6 +379,8 @@ export interface AppToken {
   name: string;
   /** First 8 characters plus "...". */
   prefix: string;
+  /** When true, allows only GET/HEAD proxy calls and read-only MCP tools; blocks key leasing. */
+  read_only: boolean;
   created_at: string;
   created_by: number | null;
   created_by_email: string;
@@ -686,6 +690,15 @@ export interface ProviderSpec {
   guide?: Guide;
   /** The provider's other API hosts, picked with a "/~name" path prefix. */
   hosts?: SpecHost[];
+  /** Optional upstream Streamable HTTP MCP endpoint for this provider. */
+  mcp?: SpecMCP;
+}
+
+/** Upstream Streamable HTTP MCP server endpoint declared by a provider. */
+export interface SpecMCP {
+  url: string;
+  transport?: string;
+  headers?: Record<string, string>;
 }
 
 /** One more API host of a provider that serves each product on its own host. */
@@ -1056,6 +1069,8 @@ export interface MCPSettings {
   manage: boolean;
   resources: boolean;
   prompts: boolean;
+  /** When true, only read-only tools are listed and callable on this app's /mcp endpoint. */
+  read_only: boolean;
   /** get_key reserves the key for the caller unless the call says otherwise. */
   exclusive_default: boolean;
   /** Cap on tool result bodies sent to the model, 1 to 2048. */
@@ -1083,6 +1098,43 @@ export interface MCPTool {
   enabled: boolean;
   /** Shown by tools/list. False for a tool that is on but only found with search_tools. */
   listed: boolean;
+  /** True when the tool is safe for read-only mode and read-only tokens. */
+  read_only?: boolean;
+  /** True when the tool is bridged from an upstream remote MCP server. */
+  upstream_mcp?: boolean;
+  /** Service slug this tool belongs to, when scoped to one service. */
+  service?: string;
+}
+
+/** One tool discovered from an upstream Streamable HTTP MCP server. */
+export interface ServiceMCPTool {
+  name: string;
+  public_name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  annotations?: Record<string, unknown>;
+  read_only: boolean;
+}
+
+/** GET /api/admin/services/{id}/mcp and POST /api/admin/services/{id}/mcp/sync. */
+export interface ServiceMCPView {
+  service_id: number;
+  service_slug: string;
+  configured: boolean;
+  endpoint: string;
+  mcp_url: string;
+  from_provider: boolean;
+  transport: string;
+  server_name: string;
+  server_version: string;
+  protocol_version: string;
+  instructions: string;
+  tool_count: number;
+  tools: ServiceMCPTool[];
+  synced_at: string | null;
+  last_error: string;
 }
 
 /** What tools/list shows with the saved settings. */

@@ -224,7 +224,7 @@ func (s *Server) renewLease(ctx context.Context, a *store.App, id string, ttl ti
 	}
 	sv, err := s.Store.GetService(ctx, l.ServiceID)
 	k, kerr := s.Store.GetKey(ctx, l.KeyID)
-	if err != nil || kerr != nil || !a.AllowsLease() || !a.CanUse(sv.Slug) || sv.Provider == providers.PeerSlug || isHandoverService(sv) ||
+	if err != nil || kerr != nil || !a.AllowsLease() || a.TokenReadOnly || !a.CanUse(sv.Slug) || sv.Provider == providers.PeerSlug || isHandoverService(sv) ||
 		k.Status == store.StatusDisabled || k.Status == store.StatusBanned || !s.Pool.MayUse(ctx, sv, a.ID, a.LeaseHidden, k) {
 		if s.Store.ClaimLeaseOutcome(ctx, l.ID, "revoked") == nil {
 			s.Pool.ReleaseLease(l.ID)
@@ -268,6 +268,10 @@ func (s *Server) v1Lease(w http.ResponseWriter, r *http.Request) {
 	a := appFrom(r)
 	if !a.AllowsLease() {
 		writeErr(w, 403, "lease_not_allowed", "this app is proxy only, use /proxy/{service}/...")
+		return
+	}
+	if a.TokenReadOnly {
+		writeErr(w, 403, "read_only_token", "read-only tokens cannot lease raw API keys; use read-only /proxy or /mcp calls instead")
 		return
 	}
 	var body struct {

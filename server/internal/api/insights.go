@@ -173,7 +173,8 @@ type checkSummary struct {
 // checkKeys health checks keys four at a time and reports what it found.
 func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store.Key) checkSummary {
 	sum := checkSummary{Keys: []*store.Key{}}
-	if providers.Get(sv.Provider).Health == nil {
+	spec := providers.Get(sv.Provider)
+	if spec.Health == nil && providers.ResolveMCPURL(sv.BaseURL, sv.MCPURL, spec.MCP) == "" {
 		sum.Skipped = len(keys)
 		sum.Message = pool.ErrNoHealthCheck.Error()
 		return sum

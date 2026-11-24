@@ -68,6 +68,9 @@ const mcpLimitKey mcpCtxKey = 1
 // mcpBaseKey carries this server's public URL, for proxy URLs in guides.
 const mcpBaseKey mcpCtxKey = 2
 
+// mcpReadOnlyKey carries effective read-only mode into tool handlers.
+const mcpReadOnlyKey mcpCtxKey = 3
+
 // mcpBase is the public URL stored by mcpDispatch, else the configured one.
 func mcpBase(ctx context.Context, s *Server) string {
 	if b, ok := ctx.Value(mcpBaseKey).(string); ok && b != "" {
@@ -137,7 +140,14 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		// and service tools only: never key insights or key management.
 		st.Insights, st.Manage = false, false
 	}
+	if a.TokenReadOnly {
+		st.ReadOnly = true
+	}
+	if r != nil && (truthy(r.URL.Query().Get("read_only")) || truthy(r.Header.Get("X-Acnologia-MCP-Read-Only"))) {
+		st.ReadOnly = true
+	}
 	ctx = context.WithValue(ctx, mcpLimitKey, st.MaxResultKB)
+	ctx = context.WithValue(ctx, mcpReadOnlyKey, st.ReadOnly)
 	if r != nil {
 		ctx = context.WithValue(ctx, mcpBaseKey, s.publicURL(r))
 	}
@@ -152,6 +162,9 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 			caps["prompts"] = map[string]any{"listChanged": false}
 		}
 		instr := "Acnologia hands out API keys from a pool and rotates them on rate limits. Prefer the generated service tools or proxy_request: the key never reaches you. When a tool you need is not listed, search_tools finds it across every provider (for example: linkedin jobs) and call_tool runs it; the list follows the providers on this server and changes as they are added. Use get_key and report_key only when you must call the provider yourself; pass exclusive=true to keep a key to yourself. Read service_guide before calling a service you have not used: it lists the endpoints, parameters, limits and errors. When you build an app or application, give it Acnologia as its HTTPS_PROXY (the app token as the proxy password, the proxy CA from /api/v1/proxy/ca.pem trusted) and have it call the provider's own URL, so its code holds no key and no Acnologia client: the guide shows the proxy URL. Keep Acnologia out of the app's UI, copy, page titles and user facing errors; it is infrastructure the app's users never see."
+		if st.ReadOnly {
+			instr += " This connection is in read-only mode: only read-only tools are available."
+		}
 		if strings.TrimSpace(st.Instructions) != "" {
 			instr += "\n\n" + strings.TrimSpace(st.Instructions)
 		}
@@ -176,6 +189,13 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 		t := s.mcpTool(ctx, a, st, p.Name)
 		if t == nil {
 			return nil, &rpcErr{-32602, publicText("unknown or disabled tool: " + p.Name + "; call tools/list, or search_tools to find a service tool")}
+		}
+		if t.upstreamMCP {
+			res, err := s.callUpstreamMCPTool(ctx, r, a, st, t, p.Arguments)
+			if err != nil {
+				return map[string]any{"content": []map[string]any{{"type": "text", "text": publicText(err.Error())}}, "isError": true}, nil
+			}
+			return res, nil
 		}
 		out, err := s.runTool(ctx, r, a, st, t, p.Arguments)
 		if err != nil {
@@ -234,6 +254,10 @@ func (s *Server) mcpDispatch(ctx context.Context, r *http.Request, req rpcReq) (
 
 func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw json.RawMessage) (map[string]any, error) {
 	a := ctx.Value(appKey).(*store.App)
+	ro, _ := ctx.Value(mcpReadOnlyKey).(bool)
+	if a.TokenReadOnly {
+		ro = true
+	}
 	var args struct {
 		Service       string            `json:"service"`
 		ExcludeKeyIDs []int64           `json:"exclude_key_ids"`
@@ -266,7 +290,7 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 			return nil, fmt.Errorf("no service named %q; list_services shows the services this app can use", args.Service)
 		}
 		if !s.sharedAs(ctx, a, sv) {
-			return nil, fmt.Errorf("this app cannot use service %q; list_services shows the services it can use", args.Service)
+			return nil, fmt.Errorf("this app cannot use service %q; list_services shows the services this app can use", args.Service)
 		}
 		return sv, nil
 	}
@@ -296,6 +320,9 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		page, pg := paginate(list, args.Offset, args.Limit, 100, 500)
 		return pg.into(map[string]any{"services": page}), nil
 	case "get_key":
+		if ro {
+			return nil, errors.New("read-only mode cannot lease raw API keys")
+		}
 		if !a.AllowsLease() {
 			return nil, errors.New("this app is proxy only, use proxy_request")
 		}
@@ -323,12 +350,18 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		}
 		return toMap(l), nil
 	case "renew_key":
+		if ro {
+			return nil, errors.New("read-only mode cannot renew key leases")
+		}
 		exp, err := s.renewLease(ctx, a, args.LeaseID, time.Duration(args.TTLSec)*time.Second)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true, "expires_at": exp}, nil
 	case "report_key":
+		if ro {
+			return nil, errors.New("read-only mode cannot report key leases")
+		}
 		next, _, err := s.report(ctx, a, args.LeaseID, reportInput{Outcome: args.Outcome, RetryAfterSec: args.RetryAfterSec, Message: args.Message, Rotate: args.Rotate})
 		if err != nil {
 			return nil, err
@@ -345,6 +378,12 @@ func (s *Server) mcpCall(ctx context.Context, r *http.Request, name string, raw 
 		}
 		return map[string]any{"service": args.Service, "generated": d.Generated, "markdown": publicText(d.Render(false))}, nil
 	case "proxy_request":
+		if ro {
+			m := strings.ToUpper(strings.TrimSpace(args.Method))
+			if m != "" && m != http.MethodGet && m != http.MethodHead {
+				return nil, errors.New("this connection is read-only; only GET and HEAD requests are allowed")
+			}
+		}
 		sv, err := svcFor()
 		if err != nil {
 			return nil, err

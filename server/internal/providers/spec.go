@@ -29,6 +29,9 @@ type Spec struct {
 	// each product on its own host with one key (see hosts.go). Callers
 	// pick one with a "/~name" first path segment.
 	Hosts []Host `json:"hosts,omitempty"`
+	// MCP configures an upstream Streamable HTTP MCP server offered by this
+	// provider (see mcp.go).
+	MCP *MCPConfig `json:"mcp,omitempty"`
 }
 
 // Guide is a provider's usage guide, written for AI agents and developers.
@@ -285,6 +288,7 @@ func (s *Spec) Validate() []string {
 	s.validateOffers(add)
 	s.validateGuide(add)
 	s.validateHosts(add)
+	s.validateMCP(add)
 	if qh := s.Quota.Headers; qh != nil {
 		if qh.Limit == "" && qh.Remaining == "" && qh.Reset == "" {
 			add("quota.headers needs at least one of limit, remaining or reset")

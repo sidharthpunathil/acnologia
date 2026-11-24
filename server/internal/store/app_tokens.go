@@ -21,6 +21,7 @@ type AppToken struct {
 	LastUsedAt     *time.Time `json:"last_used_at"`
 	ExpiresAt      *time.Time `json:"expires_at"`
 	RevokedAt      *time.Time `json:"revoked_at"`
+	ReadOnly       bool       `json:"read_only"`
 }
 
 // Usable reports whether the token is neither revoked nor expired at t.
@@ -62,13 +63,16 @@ func migrateAppTokens(db *sql.DB) error {
 			return err
 		}
 	}
+	if _, err := addColumn(db, "app_tokens", "read_only", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if _, err := addColumn(db, "events", "token_id", "INTEGER"); err != nil {
 		return err
 	}
 	return migrateAppTokenIDs(db)
 }
 
-const appTokenCols = `t.id, t.app_id, t.name, t.prefix, t.created_at, t.created_by, COALESCE(u.email,''), t.last_used_at, t.expires_at, t.revoked_at`
+const appTokenCols = `t.id, t.app_id, t.name, t.prefix, t.created_at, t.created_by, COALESCE(u.email,''), t.last_used_at, t.expires_at, t.revoked_at, t.read_only`
 
 // tokenScan holds the Scan destinations of one app token row
 // (appTokenCols) and turns them into an AppToken. scanAppToken and
@@ -77,11 +81,12 @@ type tokenScan struct {
 	t                  AppToken
 	created            int64
 	by, last, exp, rev sql.NullInt64
+	readOnly           int
 }
 
 func (s *tokenScan) dests() []any {
 	t := &s.t
-	return []any{&t.ID, &t.AppID, &t.Name, &t.Prefix, &s.created, &s.by, &t.CreatedByEmail, &s.last, &s.exp, &s.rev}
+	return []any{&t.ID, &t.AppID, &t.Name, &t.Prefix, &s.created, &s.by, &t.CreatedByEmail, &s.last, &s.exp, &s.rev, &s.readOnly}
 }
 
 func (s *tokenScan) finish() *AppToken {
@@ -89,6 +94,7 @@ func (s *tokenScan) finish() *AppToken {
 	t.CreatedAt = time.Unix(s.created, 0).UTC()
 	t.CreatedBy = toInt(s.by)
 	t.LastUsedAt, t.ExpiresAt, t.RevokedAt = toTime(s.last), toTime(s.exp), toTime(s.rev)
+	t.ReadOnly = s.readOnly != 0
 	return t
 }
 
@@ -110,6 +116,11 @@ func TokenPrefixHint(tok string) string {
 
 // CreateAppToken adds a token to an app. createdBy 0 means the system.
 func (s *Store) CreateAppToken(ctx context.Context, appID int64, name, prefix, hash string, createdBy int64, expiresAt *time.Time) (*AppToken, error) {
+	return s.CreateAppTokenWithScope(ctx, appID, name, prefix, hash, createdBy, expiresAt, false)
+}
+
+// CreateAppTokenWithScope adds a token to an app with optional read-only enforcement.
+func (s *Store) CreateAppTokenWithScope(ctx context.Context, appID int64, name, prefix, hash string, createdBy int64, expiresAt *time.Time, readOnly bool) (*AppToken, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -119,8 +130,8 @@ func (s *Store) CreateAppToken(ctx context.Context, appID int64, name, prefix, h
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
-		id, appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_tokens(id,app_id,name,prefix,hash,created_at,created_by,expires_at,read_only) VALUES(?,?,?,?,?,?,?,?,?)`,
+		id, appID, name, prefix, hash, now(), nz(createdBy), fromTime(expiresAt), b2i(readOnly)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -204,6 +215,7 @@ func (s *Store) AppByToken(ctx context.Context, hash string) (*App, *AppToken, e
 	}
 	t, a := ts.finish(), as.finish()
 	a.TokenID = t.ID
+	a.TokenReadOnly = t.ReadOnly
 	return a, t, nil
 }
 

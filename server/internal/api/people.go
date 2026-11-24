@@ -607,7 +607,7 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		}
 		a = a2
 	}
-	out := map[string]any{"app": map[string]any{"id": a.ID, "name": a.Name}, "services": []meService{}, "share": nil}
+	out := map[string]any{"app": map[string]any{"id": a.ID, "name": a.Name, "read_only": a.TokenReadOnly}, "read_only": a.TokenReadOnly, "services": []meService{}, "share": nil}
 	limits, _ := s.Store.GetAppLimits(ctx, a.ID)
 	out["limits"] = limits
 	usage := meUsage{}

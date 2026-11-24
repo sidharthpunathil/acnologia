@@ -129,6 +129,7 @@ var (
 		"category":          sProp("Category, such as Search or LLM"),
 		"description":       sProp("Short description"),
 		"base_url":          sProp("Provider base URL, http(s)"),
+		"mcp_url":           sProp("Optional upstream Streamable HTTP MCP endpoint URL (or path relative to base_url, e.g. /mcp/)"),
 		"auth_type":         eProp("Where the key goes", "query", "header", "bearer"),
 		"auth_name":         sProp("Query parameter or header name for the key (Authorization for bearer)"),
 		"strategy":          eProp("How keys are picked", "round_robin", "fill_first", "least_used", "most_quota", "random"),
@@ -285,6 +286,7 @@ var (
 		"instructions":      sProp("Extra instructions sent to MCP clients"),
 		"disabled_tools":    aProp(map[string]any{"type": "string"}, "Tool names to hide; replaces the list"),
 		"tool_mode":         eProp("How tools/list shows service tools: all of them, only core tools plus search_tools and call_tool, or auto (all while 30 or fewer)", "auto", "all", "search"),
+		"read_only":         bProp("Expose only read-only tools (GET endpoints, read-only upstream MCP tools, and read-only built-in tools)"),
 	}
 )
 
@@ -395,6 +397,10 @@ func buildCtlTools() []ctlTool {
 			Desc: "Drop a service's cached responses.", Props: map[string]any{"service": svcIn}, Required: []string{"service"}},
 		{Name: "check_service_keys", Title: "Check a service's keys", Group: "services", Kind: ctlWrite, Role: a, Method: post, Path: "/api/admin/services/{service}/check", OpenWorld: true,
 			Desc: "Run the provider health check on every key of a service: confirms keys work and refreshes quota.", Props: map[string]any{"service": svcIn}, Required: []string{"service"}},
+		{Name: "get_service_mcp", Title: "Service upstream MCP", Group: "services", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/services/{service}/mcp",
+			Desc: "Show a service's upstream MCP endpoint, server info, sync status, and synced upstream tools.", Props: map[string]any{"service": svcIn}, Required: []string{"service"}},
+		{Name: "sync_service_mcp", Title: "Sync service MCP tools", Group: "services", Kind: ctlWrite, Role: a, Method: post, Path: "/api/admin/services/{service}/mcp/sync", OpenWorld: true,
+			Desc: "Connect to a service's upstream Streamable HTTP MCP server with a pooled key and refresh its tool catalog.", Props: map[string]any{"service": svcIn}, Required: []string{"service"}},
 
 		// ---- keys ----
 		{Name: "list_keys", Title: "List keys", Group: "keys", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/keys",
@@ -473,9 +479,14 @@ func buildCtlTools() []ctlTool {
 		{Name: "list_app_tokens", Title: "List app tokens", Group: "apps", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/apps/{app_id}/tokens",
 			Desc: "An app's tokens: id, name, prefix, created, last used, expiry and whether revoked. Values are never shown.", Props: map[string]any{"app_id": id("App id")}, Required: []string{"app_id"}},
 		{Name: "create_app_token", Title: "Create an app token", Group: "apps", Kind: ctlWrite, Role: a, Method: post, Path: "/api/admin/apps/{app_id}/tokens",
-			Desc:     "Add a named token to an app; its other tokens keep working. The token is in the result, shown once.",
-			Props:    map[string]any{"app_id": id("App id"), "name": sProp("What the token is for, such as ci or staging"), "expires_in_days": iProp("Days until it expires; omit for no expiry")},
-			Required: []string{"app_id", "name"}, Body: []string{"name", "expires_in_days"}},
+			Desc: "Add a named token to an app; its other tokens keep working. Set read_only=true when an app or teammate only needs read-only access. The token is in the result, shown once.",
+			Props: map[string]any{
+				"app_id":          id("App id"),
+				"name":            sProp("What the token is for, such as ci, staging or a teammate's name"),
+				"expires_in_days": iProp("Days until it expires; omit for no expiry"),
+				"read_only":       bProp("When true, the token can only make GET/HEAD proxy calls and use read-only MCP tools (cannot lease raw keys)"),
+			},
+			Required: []string{"app_id", "name"}, Body: []string{"name", "expires_in_days", "read_only"}},
 		{Name: "revoke_app_token", Title: "Revoke an app token", Group: "apps", Kind: ctlDestructive, Role: a, Method: del, Path: "/api/admin/apps/{app_id}/tokens/{token_id}",
 			Desc:  "Revoke one token of an app; it stops working at once and the app's other tokens keep working.",
 			Props: map[string]any{"app_id": id("App id"), "token_id": id("Token id from list_app_tokens")}, Required: []string{"app_id", "token_id"},

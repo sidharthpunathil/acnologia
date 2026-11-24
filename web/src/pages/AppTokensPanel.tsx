@@ -14,6 +14,7 @@ import { Input } from "@/components/base/input/input";
 import { Select, SelectItem } from "@/components/base/select/select";
 import { Skeleton } from "@/components/base/skeleton/skeleton";
 import { ButtonSpinner } from "@/components/base/spinner/spinner";
+import { Switch } from "@/components/base/switch/switch";
 import { Callout, EmptyState } from "@/components/acn";
 import { ConfirmButton } from "@/components/acn/confirm-button";
 import { SecretBox } from "@/components/acn/copy-button";
@@ -49,6 +50,11 @@ function TokenRow({ app, t, now, canEdit, onRevoked }: { app: App; t: AppToken; 
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className={cx("min-w-0 wrap-anywhere text-body-2-medium", live ? "text-text-primary" : "text-text-secondary")}>{t.name}</span>
+          {t.read_only && (
+            <Chip variant="caption" color="purple" className="font-mono">
+              read-only
+            </Chip>
+          )}
           {status === "revoked" && (
             <Chip variant="caption" color="neutral" className="font-mono" title={dateTime(t.revoked_at)}>
               revoked
@@ -106,6 +112,7 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
   const [name, setName] = useState("");
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [days, setDays] = useState(0);
+  const [readOnly, setReadOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{ token: string; info: AppToken } | null>(null);
   const id = app?.id;
@@ -133,6 +140,7 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
     setName("");
     setNameErr(null);
     setDays(0);
+    setReadOnly(false);
     setCreated(null);
     setView("new");
   };
@@ -147,7 +155,10 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
     }
     setBusy(true);
     try {
-      const res = await api.createAppToken(app.id, days ? { name: n, expires_in_days: days } : { name: n });
+      const body: { name: string; expires_in_days?: number; read_only?: boolean } = { name: n };
+      if (days) body.expires_in_days = days;
+      if (readOnly) body.read_only = true;
+      const res = await api.createAppToken(app.id, body);
       setCreated({ token: res.token, info: res.app_token });
       setTokens((list) => [res.app_token, ...(list ?? [])]);
       void refreshApps().catch(() => undefined);
@@ -198,7 +209,14 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
     <div className="flex flex-col gap-3">
       <Callout tone="warning">Copy this token now. You will not see it again: Acnologia stores only a hash.</Callout>
       <SecretBox value={created.token} />
-      <div className="font-mono text-caption-1-regular wrap-anywhere text-text-secondary">Send it as Authorization: Bearer {created.info.prefix}</div>
+      <div className="flex flex-wrap items-center gap-2 font-mono text-caption-1-regular wrap-anywhere text-text-secondary">
+        <span>Send it as Authorization: Bearer {created.info.prefix}</span>
+        {created.info.read_only && (
+          <Chip variant="caption" color="purple" className="font-mono">
+            read-only
+          </Chip>
+        )}
+      </div>
     </div>
   ) : (
     <form id="app-token-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
@@ -223,6 +241,17 @@ export function AppTokensPanel({ app, canEdit, onClose }: { app: App | null; can
           </SelectItem>
         ))}
       </Select>
+      <div className="rounded-2xl border border-border-button-default px-4 py-3.5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-body-medium text-text-primary">Read-only token</div>
+            <p className="mt-0.5 text-caption-1-regular text-text-secondary">
+              Only allows GET/HEAD proxy requests and read-only MCP tools. Blocks raw key leasing and any write or mutating tool.
+            </p>
+          </div>
+          <Switch isSelected={readOnly} onChange={setReadOnly} aria-label="Read-only token" className="mt-0.5 shrink-0" />
+        </div>
+      </div>
     </form>
   );
 

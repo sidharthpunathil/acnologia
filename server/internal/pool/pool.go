@@ -15,6 +15,7 @@ import (
 	"github.com/sidharthpunathil/acnologia/server/internal/catalog"
 	"github.com/sidharthpunathil/acnologia/server/internal/crypto"
 	"github.com/sidharthpunathil/acnologia/server/internal/egress"
+	"github.com/sidharthpunathil/acnologia/server/internal/mcpclient"
 	"github.com/sidharthpunathil/acnologia/server/internal/notify"
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
@@ -527,7 +528,8 @@ func (p *Pool) check(ctx context.Context, svc *store.Service, k *store.Key) erro
 		return err
 	}
 	spec := providers.Get(svc.Provider)
-	if spec.Health == nil {
+	mcpURL := providers.ResolveMCPURL(svc.BaseURL, svc.MCPURL, spec.MCP)
+	if spec.Health == nil && mcpURL == "" {
 		return ErrNoHealthCheck
 	}
 	if k.Hidden && !svc.TargetTrusted {
@@ -540,7 +542,12 @@ func (p *Pool) check(ctx context.Context, svc *store.Service, k *store.Key) erro
 	if err != nil {
 		return err
 	}
-	res, err := spec.Check(ctx, client, svc.BaseURL, secret)
+	var res *providers.CheckResult
+	if spec.Health != nil {
+		res, err = spec.Check(ctx, client, svc.BaseURL, secret)
+	} else {
+		res, err = checkMCPKey(ctx, client, svc, spec, mcpURL, secret)
+	}
 	e := store.KeyEffect{Checked: true}
 	if err != nil {
 		// Transport errors quote the request URL, which carries query-auth keys.
@@ -631,3 +638,50 @@ var ErrWrongService = errors.New("this key belongs to another service")
 // ErrNoHealthCheck means the provider has no free endpoint to test keys, so
 // validity is learned from real traffic instead.
 var ErrNoHealthCheck = errors.New("This provider has no health check, so key validity is learned from real requests.")
+
+// checkMCPKey validates a key against an upstream Streamable HTTP MCP server
+// by running an initialize handshake and classifying any error response.
+func checkMCPKey(ctx context.Context, client *http.Client, svc *store.Service, spec *providers.Spec, mcpURL, secret string) (*providers.CheckResult, error) {
+	auth := providers.Auth{Type: svc.AuthType, Name: svc.AuthName}
+	if spec.Auth.Type == svc.AuthType {
+		auth.Prefix = spec.Auth.Prefix
+		auth.Fields = spec.Auth.Fields
+	}
+	if (auth.Type == "bearer" || auth.Type == "basic") && auth.Name == "" {
+		auth.Name = "Authorization"
+	}
+	apply := func(req *http.Request) {
+		q := req.URL.Query()
+		auth.Apply(req, q, secret)
+		req.URL.RawQuery = q.Encode()
+	}
+	var hdrs map[string]string
+	if spec.MCP != nil {
+		hdrs = spec.MCP.Headers
+	}
+	_, hres, err := mcpclient.Initialize(ctx, client, mcpURL, apply, hdrs, "")
+	if err == nil {
+		return &providers.CheckResult{Valid: true, HTTPStatus: hres.HTTPStatus}, nil
+	}
+	if hres.HTTPStatus == 401 || hres.HTTPStatus == 403 {
+		return &providers.CheckResult{Valid: false, HTTPStatus: hres.HTTPStatus, Message: err.Error()}, nil
+	}
+	if hres.HTTPStatus > 0 {
+		cls := spec.Classify(hres.HTTPStatus, hres.Headers, hres.RawBody)
+		switch cls.Outcome {
+		case providers.Invalid, providers.Banned:
+			return &providers.CheckResult{Valid: false, HTTPStatus: hres.HTTPStatus, Message: cls.Message}, nil
+		case providers.QuotaExhausted:
+			zero := int64(0)
+			return &providers.CheckResult{Valid: true, HTTPStatus: hres.HTTPStatus, QuotaRemaining: &zero, ResetAt: cls.ResetAt, Message: cls.Message}, nil
+		case providers.RateLimited, providers.Busy:
+			wait := cls.RetryAfter
+			if wait <= 0 {
+				wait = time.Duration(max(svc.CooldownSec, 60)) * time.Second
+			}
+			until := time.Now().Add(wait)
+			return &providers.CheckResult{Valid: true, HTTPStatus: hres.HTTPStatus, CooldownUntil: &until, Message: cls.Message}, nil
+		}
+	}
+	return nil, err
+}

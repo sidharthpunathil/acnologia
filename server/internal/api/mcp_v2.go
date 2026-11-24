@@ -43,12 +43,28 @@ type mcpTool struct {
 	service string
 	example *providers.Example
 	params  []string
+	// For tools synced from an upstream MCP server configured on a service or provider.
+	upstreamMCP  bool
+	upstreamTool string
 	// capability is set on a capability's tool: its arguments are the
 	// capability's params, sent to /proxy/{capability}.
 	capability string
 	// keywords are extra words search_tools matches: the service's slug,
 	// name, provider, category, product group and hosts.
 	keywords string
+}
+
+// toolIsReadOnly reports whether a tool is safe to expose in read-only mode.
+// call_tool is allowed because it only runs tools already permitted by mcpTool.
+func toolIsReadOnly(t mcpTool) bool {
+	if t.Name == "call_tool" {
+		return true
+	}
+	if t.Annotations == nil {
+		return false
+	}
+	ro, _ := t.Annotations["readOnlyHint"].(bool)
+	return ro
 }
 
 func readOnly(title string) map[string]any {
@@ -187,13 +203,20 @@ func (s *Server) serviceTools(ctx context.Context, a *store.App) []mcpTool {
 	return out
 }
 
-// buildServiceTools makes the tools of every service and capability, named
-// as for an app that may use them all. Each app sees the ones it may use
-// (toolCatalog.view), so a tool keeps its name whatever the app's access.
-func buildServiceTools(svcs []*store.Service, caps []*store.Capability) []mcpTool {
+// buildServiceTools makes the tools of every service (both REST examples/guide
+// and synced upstream MCP tools) and capability, named as for an app that may
+// use them all. Each app sees the ones it may use (toolCatalog.view), so a
+// tool keeps its name whatever the app's access.
+func buildServiceTools(svcs []*store.Service, caps []*store.Capability, svcMCP map[int64]*store.ServiceMCP) []mcpTool {
 	all := &store.App{}
 	names := serviceToolNames(svcs, all)
 	out := []mcpTool{}
+	seen := map[string]bool{}
+	for _, set := range [][]mcpTool{coreTools, insightTools, manageTools, discoveryTools} {
+		for _, t := range set {
+			seen[t.Name], seen[toolPrefix+t.Name] = true, true
+		}
+	}
 	for _, sv := range svcs {
 		spec := docSpec(sv)
 		for i, src := range toolSources(spec) {
@@ -201,10 +224,91 @@ func buildServiceTools(svcs []*store.Service, caps []*store.Capability) []mcpToo
 			if name == "" {
 				continue
 			}
+			seen[name] = true
 			out = append(out, sourceTool(sv, spec, src, name))
 		}
 	}
+	// Synced upstream MCP tools, named deterministically (local services first,
+	// oldest first) without colliding with built-in or REST tools.
+	if len(svcMCP) > 0 {
+		ordered := make([]*store.Service, len(svcs))
+		copy(ordered, svcs)
+		sort.SliceStable(ordered, func(i, j int) bool {
+			li, lj := ordered[i].PeerLinkID == nil, ordered[j].PeerLinkID == nil
+			if li != lj {
+				return li
+			}
+			return ordered[i].ID < ordered[j].ID
+		})
+		for _, sv := range ordered {
+			sm := svcMCP[sv.ID]
+			if sm == nil || len(sm.Tools) == 0 {
+				continue
+			}
+			endpoint, _, _ := serviceMCPInfo(sv)
+			if endpoint == "" {
+				continue
+			}
+			for _, ut := range sm.Tools {
+				base := upstreamToolName(sv, ut.Name)
+				if base == "" {
+					continue
+				}
+				name := base
+				for n := 0; seen[name]; n++ {
+					sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00mcp\x00%s\x00%d", sv.Slug, ut.Name, n)))
+					suffix := "_" + hex.EncodeToString(sum[:])[:6]
+					b := base
+					if len(b) > 64-len(suffix) {
+						b = b[:64-len(suffix)]
+					}
+					name = b + suffix
+				}
+				seen[name] = true
+				out = append(out, upstreamMCPTool(sv, sm, ut, name))
+			}
+		}
+	}
 	return append(out, capabilityMCPTools(caps, out)...)
+}
+
+func upstreamMCPTool(sv *store.Service, sm *store.ServiceMCP, ut store.ServiceMCPTool, name string) mcpTool {
+	title := strings.TrimSpace(ut.Title)
+	if title == "" {
+		title = ut.Name
+	}
+	fullTitle := sv.Name + ": " + title
+	desc := strings.TrimSpace(ut.Description)
+	if desc == "" {
+		desc = fmt.Sprintf("%s on %s (upstream MCP tool).", title, sv.Name)
+	}
+	schema := ut.InputSchema
+	if schema == nil {
+		schema = obj(map[string]any{})
+	}
+	ann := map[string]any{}
+	for k, v := range ut.Annotations {
+		ann[k] = v
+	}
+	if _, ok := ann["title"]; !ok {
+		ann["title"] = fullTitle
+	}
+	if _, ok := ann["openWorldHint"]; !ok {
+		ann["openWorldHint"] = true
+	}
+	return mcpTool{
+		Name:         name,
+		Title:        fullTitle,
+		Description:  desc,
+		InputSchema:  schema,
+		OutputSchema: ut.OutputSchema,
+		Annotations:  ann,
+		Set:          setService,
+		service:      sv.Slug,
+		upstreamMCP:  true,
+		upstreamTool: ut.Name,
+		keywords:     strings.Join([]string{sv.Slug, sv.Name, sv.Provider, sv.Category, sm.ServerName, ut.Name, ut.Title, "mcp"}, " "),
+	}
 }
 
 // capabilityMCPTools makes one tool per capability the app may call, with the
@@ -372,6 +476,9 @@ func (s *Server) mcpTool(ctx context.Context, a *store.App, st store.MCPSettings
 		return nil
 	}
 	t := c.tools[id]
+	if st.ReadOnly && !toolIsReadOnly(t) {
+		return nil
+	}
 	return &t
 }
 
@@ -403,9 +510,13 @@ func (s *Server) mcpToolSet(ctx context.Context, a *store.App, st store.MCPSetti
 	off := disabledSet(st.DisabledTools)
 	out := make([]mcpTool, 0, len(all))
 	for _, t := range all {
-		if !off[t.Name] {
-			out = append(out, t)
+		if off[t.Name] {
+			continue
 		}
+		if st.ReadOnly && !toolIsReadOnly(t) {
+			continue
+		}
+		out = append(out, t)
 	}
 	return out
 }

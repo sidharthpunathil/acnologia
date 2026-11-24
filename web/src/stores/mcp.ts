@@ -5,7 +5,12 @@ import type { MCPSettings, MCPSettingsInput, MCPView } from "../lib/types";
 export function inputOf(s: MCPSettings): MCPSettingsInput {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { updated_at, ...rest } = s;
-  return { ...rest, disabled_tools: [...(rest.disabled_tools ?? [])], tool_mode: rest.tool_mode || "auto" };
+  return {
+    ...rest,
+    read_only: Boolean(rest.read_only),
+    disabled_tools: [...(rest.disabled_tools ?? [])],
+    tool_mode: rest.tool_mode || "auto",
+  };
 }
 
 export function sameInput(a: MCPSettingsInput, b: MCPSettingsInput): boolean {
@@ -20,7 +25,8 @@ export function sameInput(a: MCPSettingsInput, b: MCPSettingsInput): boolean {
 }
 
 /** Whether a tool is on under the given settings. */
-export function toolOn(s: MCPSettingsInput, t: { name: string; set: keyof MCPSettingsInput }): boolean {
+export function toolOn(s: MCPSettingsInput, t: { name: string; set: keyof MCPSettingsInput; read_only?: boolean }): boolean {
+  if (s.read_only && t.read_only === false) return false;
   return !!s[t.set] && !s.disabled_tools.includes(t.name);
 }
 

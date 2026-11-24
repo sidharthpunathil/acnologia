@@ -93,6 +93,101 @@ func callTools() []*chatTool {
 					fmt.Sprintf("Set rotation %s on %d services", orDefault(mode, "off"), len(ids)), nil)
 			},
 		},
+		{
+			Name: "list_service_mcp_tools", Role: store.RoleMember, Required: []string{"service"},
+			Props: map[string]any{"service": map[string]any{"type": "string", "description": "slug, name or id"}},
+			Desc:  "Read only. Show a service's upstream MCP endpoint, server info, sync status, and synced upstream tools.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				sv, err := cs.resolveService(argStr(in, "service"))
+				if err != nil {
+					return toolFail(err.Error())
+				}
+				out := cs.simple("GET", fmt.Sprintf("/api/admin/services/%d/mcp", sv.ID), nil, "Read MCP tools of "+sv.Slug, nil)
+				out.Link = fmt.Sprintf("/services/%d", sv.ID)
+				return out
+			},
+		},
+		{
+			Name: "sync_service_mcp", Role: store.RoleAdmin, Required: []string{"service"},
+			Props: map[string]any{"service": map[string]any{"type": "string", "description": "slug, name or id"}},
+			Desc:  "Connect to a service's upstream Streamable HTTP MCP endpoint with a pooled key, discover its tools, and save them so apps can call them through /mcp.",
+			Run: func(cs *chatSession, in map[string]any) toolOut {
+				sv, err := cs.resolveService(argStr(in, "service"))
+				if err != nil {
+					return toolFail(err.Error())
+				}
+				out := cs.simple("POST", fmt.Sprintf("/api/admin/services/%d/mcp/sync", sv.ID), map[string]any{}, "Synced MCP tools for "+sv.Slug, nil)
+				out.Link = fmt.Sprintf("/services/%d", sv.ID)
+				return out
+			},
+		},
+		{
+			Name: "call_mcp_tool", Role: store.RoleAdmin, Confirm: true, Required: []string{"service", "tool"},
+			MaxModel: callServiceText,
+			Props: map[string]any{
+				"service":   map[string]any{"type": "string", "description": "service slug, name or id"},
+				"tool":      map[string]any{"type": "string", "description": "upstream tool name (or public MCP tool name) from list_service_mcp_tools"},
+				"arguments": map[string]any{"type": "object", "description": "JSON arguments matching the tool's inputSchema"},
+			},
+			Desc: "Call one synced upstream MCP tool on a service through the key pool, as the Assistant app. Always asks the user to confirm before running.",
+			Describe: func(cs *chatSession, in map[string]any) (string, error) {
+				return fmt.Sprintf("Call upstream MCP tool %q on %s through the key pool.", argStr(in, "tool"), argStr(in, "service")), nil
+			},
+			Run: callUpstreamMCPAssistantTool,
+		},
+	}
+}
+
+func callUpstreamMCPAssistantTool(cs *chatSession, in map[string]any) toolOut {
+	sv, err := cs.resolveService(argStr(in, "service"))
+	if err != nil {
+		return toolFail(err.Error())
+	}
+	want := strings.TrimSpace(argStr(in, "tool"))
+	if want == "" {
+		return toolFail("give the tool name to call")
+	}
+	a, err := cs.assistantApp()
+	if err != nil {
+		return toolFail(err.Error())
+	}
+	if !a.Active {
+		return toolFail("the Assistant app is turned off; turn it on in Apps to call services")
+	}
+	cat := cs.s.toolCatalog(cs.ctx)
+	var target *mcpTool
+	for i := range cat.tools {
+		t := &cat.tools[i]
+		if t.upstreamMCP && t.service == sv.Slug && (t.Name == want || t.upstreamTool == want) {
+			cp := *t
+			target = &cp
+			break
+		}
+	}
+	if target == nil {
+		return toolFail(fmt.Sprintf("no synced MCP tool %q on %s; run sync_service_mcp first", want, sv.Slug))
+	}
+	var rawArgs json.RawMessage
+	if args, ok := in["arguments"]; ok && args != nil {
+		rawArgs, _ = json.Marshal(args)
+	}
+	ctx := store.WithAppToken(context.WithValue(cs.ctx, appKey, a), a.TokenID)
+	st, _ := cs.s.Store.GetMCPSettings(ctx, a.ID)
+	res, err := cs.s.callUpstreamMCPTool(ctx, cs.r, a, st, target, rawArgs)
+	if err != nil {
+		return toolFail(err.Error())
+	}
+	b := asJSON(res)
+	if len(b) > callServiceText {
+		b = b[:callServiceText] + "\n...(cut)"
+	}
+	isErr, _ := res["isError"].(bool)
+	return toolOut{
+		OK:      !isErr,
+		Model:   b,
+		Summary: fmt.Sprintf("Called MCP tool %s on %s", target.upstreamTool, sv.Slug),
+		Link:    fmt.Sprintf("/services/%d", sv.ID),
+		Entities: []chatEntity{{Type: "service", ID: sv.ID, Slug: sv.Slug, Name: sv.Name}},
 	}
 }
 

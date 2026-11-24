@@ -57,7 +57,7 @@ func presentTools(ts []mcpTool) []mcpTool {
 			t.OutputSchema = toolOutputs[t.Name]
 			t.Name = publicTool(t.Name)
 			t.Description = publicText(t.Description)
-		} else if t.Set == setService {
+		} else if t.Set == setService && !t.upstreamMCP {
 			t.OutputSchema = proxyOutput
 		}
 		out[i] = t

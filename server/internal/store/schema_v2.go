@@ -89,6 +89,7 @@ func migrateV2(db *sql.DB) error {
 		{"service_groups", "strategy", "TEXT NOT NULL DEFAULT 'priority'"},
 		{"services", "key_source_id", "INTEGER"},
 		{"services", "rotation", "TEXT NOT NULL DEFAULT ''"},
+		{"services", "mcp_url", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range cols {
 		if _, err := addColumn(db, c.table, c.col, c.def); err != nil {

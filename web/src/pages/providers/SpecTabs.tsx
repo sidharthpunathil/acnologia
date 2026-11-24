@@ -413,6 +413,20 @@ export function ConnectionTab({ spec, onChange, readOnly }: SpecTabProps) {
             placeholder="https://api.example.com"
             spellCheck={false}
           />
+          <TextInput
+            label="Upstream MCP endpoint (optional)"
+            hint="Streamable HTTP MCP URL or path relative to Base URL (e.g. /mcp/). Services using this provider automatically sync and expose its tools."
+            className="sm:col-span-3"
+            type="url"
+            inputMode="url"
+            dir="ltr"
+            mono
+            value={spec.mcp?.url ?? ""}
+            disabled={readOnly}
+            onChange={(v) => set({ mcp: v.trim() ? { ...(spec.mcp ?? {}), url: v } : undefined })}
+            placeholder="https://mcp.example.com/mcp/ or /mcp/"
+            spellCheck={false}
+          />
           <SelectField
             label="Auth type"
             value={spec.auth.type}

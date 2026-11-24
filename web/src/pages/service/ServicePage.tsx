@@ -19,7 +19,7 @@ import { useEvents } from "../../stores/events";
 import { useInsights } from "../../stores/insights";
 import { useAuth } from "../../stores/auth";
 import { toast } from "../../stores/toast";
-import { ApiError, errorMessage } from "../../lib/api";
+import { api, ApiError, errorMessage } from "../../lib/api";
 import { can } from "../../lib/perms";
 import { STRATEGY_LABEL, compact, num } from "../../lib/format";
 import type { Key } from "../../lib/types";
@@ -43,6 +43,7 @@ import { KeyDrawer } from "./KeyDrawer";
 import { IntegratePanel } from "./IntegratePanel";
 import { LlmBriefButton } from "./LlmBrief";
 import { ServiceSettings } from "./ServiceSettings";
+import { ServiceMcpPanel } from "./ServiceMcpPanel";
 import { ServiceChat } from "./ServiceChat";
 import { liveStatus } from "./keyUtil";
 import { EmptyState, PageHeader, StatTile } from "@/components/acn";
@@ -54,7 +55,7 @@ import { docProviderSlug } from "../../lib/peerProviders";
 import { PeerProviderNote } from "./PeerProviderNote";
 import { KeyRingArt, LostPathArt, PulseArt } from "@/components/foundations/illustrations";
 
-type Tab = "keys" | "activity" | "integrate" | "settings";
+type Tab = "keys" | "mcp" | "activity" | "integrate" | "settings";
 
 const EMPTY_KEYS: Key[] = [];
 
@@ -89,7 +90,11 @@ export function ServicePage() {
   const [openKey, setOpenKey] = useState<Key | null>(null);
   const [checking, setChecking] = useState(false);
   const [chatting, setChatting] = useState(false);
+  const [mcpToolCount, setMcpToolCount] = useState<number | undefined>(undefined);
   const checkService = useInsights((s) => s.checkService);
+
+  const hasMcp = Boolean(service?.mcp_url || provider?.spec?.mcp?.url);
+  const hasHealthCheck = Boolean(provider?.spec?.health || hasMcp);
 
   const perms = { manage: can.manage(role), hidden: can.hidden(role), reveal: can.reveal(role), super: can.users(role) };
   const fetchProviders = useProviders((s) => s.fetch);
@@ -111,6 +116,7 @@ export function ServicePage() {
 
   useEffect(() => {
     setNotFound(false);
+    setMcpToolCount(undefined);
     void refresh(true);
   }, [refresh]);
   // Every 4s while the tab is visible, so in use and busy counts stay live.
@@ -121,6 +127,24 @@ export function ServicePage() {
     if (perms.manage) fetchApps().catch(() => undefined);
     ensureProviders().catch(() => undefined);
   }, [perms.manage, fetchApps, ensureProviders]);
+
+  useEffect(() => {
+    if (!hasMcp || !service) {
+      setMcpToolCount(undefined);
+      if (tab === "mcp") setTab("keys");
+      return;
+    }
+    let live = true;
+    api
+      .getServiceMcp(service.id)
+      .then((v) => {
+        if (live) setMcpToolCount(v.tool_count);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [hasMcp, service, tab]);
 
   // Keep the editing modal pointed at the freshest copy of the key.
   const editingKey = useMemo(() => (editing ? keys.find((k) => k.id === editing.id) ?? editing : null), [editing, keys]);
@@ -194,6 +218,7 @@ export function ServicePage() {
 
   const tabs = [
     { id: "keys" as Tab, label: "Keys", count: counts.total },
+    ...(hasMcp ? [{ id: "mcp" as Tab, label: "MCP", count: mcpToolCount }] : []),
     { id: "activity" as Tab, label: "Activity", count: events?.length },
     { id: "integrate" as Tab, label: "Integrate" },
     { id: "settings" as Tab, label: "Settings" },
@@ -255,7 +280,7 @@ export function ServicePage() {
             )}
             <span aria-hidden="true">·</span>
             <span className="wrap-anywhere min-w-0 max-w-full" dir="ltr">
-              {service.base_url}
+              {service.mcp_url || service.base_url}
             </span>
           </div>
         }
@@ -270,7 +295,7 @@ export function ServicePage() {
             <Button variant="secondary" leadingIcon={RiSparkling2Line} onClick={() => setChatting(true)} className="max-2xl:hidden">
               Ask AI
             </Button>
-            {perms.manage && keys.length > 0 && provider?.spec?.health && (
+            {perms.manage && keys.length > 0 && hasHealthCheck && (
               <Button
                 variant="secondary"
                 leadingIcon={checking ? ButtonSpinner : RiPulseLine}
@@ -291,7 +316,7 @@ export function ServicePage() {
         className="mb-0"
       />
       {service.description && <p className="mt-4 max-w-2xl text-body-2-regular text-text-secondary">{service.description}</p>}
-      {perms.manage && keys.length > 0 && provider && !provider.spec?.health && (
+      {perms.manage && keys.length > 0 && provider && !hasHealthCheck && (
         <p className="mt-3 flex items-start gap-1.5 text-body-2-regular text-text-secondary">
           <RiInformationLine className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           This provider has no health check. Validity comes from real requests.
@@ -412,6 +437,12 @@ export function ServicePage() {
             />
           )}
         </TabPanel>
+
+        {hasMcp && (
+          <TabPanel id="mcp" className="fade-up">
+            <ServiceMcpPanel service={service} canManage={perms.manage} onCount={setMcpToolCount} />
+          </TabPanel>
+        )}
 
         <TabPanel id="activity" className="fade-up">
           {events === undefined ? (

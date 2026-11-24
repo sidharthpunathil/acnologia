@@ -243,7 +243,18 @@ func (s *Server) searchModeFor(ctx context.Context, a *store.App, st store.MCPSe
 	case toolModeSearch:
 		return true
 	case toolModeAuto:
-		return len(s.toolCatalog(ctx).view(a).ids) > mcpAutoListMax
+		c := s.toolCatalog(ctx)
+		ids := c.view(a).ids
+		if !st.ReadOnly {
+			return len(ids) > mcpAutoListMax
+		}
+		n := 0
+		for _, id := range ids {
+			if toolIsReadOnly(c.tools[id]) {
+				n++
+			}
+		}
+		return n > mcpAutoListMax
 	}
 	return false
 }
@@ -373,7 +384,7 @@ func (s *Server) searchTools(ctx context.Context, a *store.App, st store.MCPSett
 	ids := []int{}
 	for _, id := range v.ids {
 		t := &c.tools[id]
-		if off[t.Name] || (in.Service != "" && t.service != in.Service && t.capability != in.Service) {
+		if off[t.Name] || (st.ReadOnly && !toolIsReadOnly(*t)) || (in.Service != "" && t.service != in.Service && t.capability != in.Service) {
 			continue
 		}
 		usable[id] = true
@@ -437,6 +448,10 @@ func (s *Server) searchTools(ctx context.Context, a *store.App, st store.MCPSett
 		if t.capability != "" {
 			m["capability"] = t.capability
 		}
+		if t.upstreamMCP {
+			m["upstream_mcp"] = true
+			m["read_only"] = toolIsReadOnly(*t)
+		}
 		out = append(out, m)
 	}
 	res := map[string]any{"tools": out, "matches": total, "catalog_size": len(ids)}
@@ -477,6 +492,8 @@ func (s *Server) runTool(ctx context.Context, r *http.Request, a *store.App, st 
 		return s.searchTools(ctx, a, st, args)
 	case t.Name == "call_tool":
 		return s.callTool(ctx, r, a, st, args)
+	case t.upstreamMCP:
+		return s.callUpstreamMCPTool(ctx, r, a, st, t, args)
 	case t.Set == setService:
 		return s.callServiceTool(ctx, r, t, args)
 	case t.Set == setInsights, t.Set == setManage:
