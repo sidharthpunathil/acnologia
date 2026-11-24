@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -51,5 +52,21 @@ func TestOAuthAuditNamesTheGrant(t *testing.T) {
 	e.do(e.super, "GET", "/api/admin/audit?via=app_mcp&action=key.create", nil, 200, &audit)
 	if len(audit.Audit) != 1 || strings.HasPrefix(audit.Audit[0].Client, oauthGrantPrefix) || audit.Audit[0].TokenID == nil {
 		t.Fatalf("app token audit row %+v", audit.Audit)
+	}
+}
+
+// The acn CLI names itself in its User-Agent (acn/<version>); a call that
+// sends only that is still recorded as the CLI, with the version.
+func TestCLIUserAgentAttribution(t *testing.T) {
+	e := newEnv(t)
+	tok := adminToken(e, "admin")
+	e.do(http.DefaultClient, "POST", "/api/admin/apps", map[string]any{"name": "from acn"}, 201, nil,
+		"Authorization", "Bearer "+tok, "User-Agent", "acn/1.4.0", "X-Requested-With", "")
+	var audit struct {
+		Audit []store.AuditEntry `json:"audit"`
+	}
+	e.do(e.super, "GET", "/api/admin/audit?via=cli&action=app.create", nil, 200, &audit)
+	if len(audit.Audit) != 1 || audit.Audit[0].Client != "acn/1.4.0" || audit.Audit[0].Target != "from acn" {
+		t.Fatalf("cli audit rows %+v", audit.Audit)
 	}
 }

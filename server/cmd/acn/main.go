@@ -21,15 +21,17 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
-		v := version
-		if v == "dev" {
-			if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-				v = bi.Main.Version
-			}
+	v := version
+	if v == "dev" {
+		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			v = bi.Main.Version
 		}
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
 		fmt.Println("acn", v)
 		return
 	}
+	// The server's audit log records the client as acn/<version>.
+	ctl.Version = v
 	os.Exit(ctl.RunAs("acn", os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

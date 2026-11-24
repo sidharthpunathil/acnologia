@@ -46,18 +46,44 @@ Commands:
   services                       services with key counts
   keys <service>                 keys of a service and their state
   keys add <service> [file]      add keys, one per line: secret or label,secret (stdin when no file)
-  keys check <service>           health check every key of a service
-  events [--service s] [--limit n] [--kind k]
-                                 recent activity
+  keys check <service> [--async] health check every key of a service
+  keys check --all [--async]     health check every key of every service
+  events [--service s] [--app a] [--token id] [--kind k] [--since 1h] [--after id] [--limit n]
+                                 recent activity; --after takes the cursor a run printed
+  events --follow [filters]      print new events as they happen (Ctrl-C stops)
+  audit [--via v] [--action a] [--client c] [--app a] [--token id] [--service s] [--since 24h]
+                                 who changed what, and how it came in
+  jobs [--kind k] [--status s] [--mine]
+                                 background jobs (checks and syncs)
+  jobs <id> [--wait]             one job's status and result
   breaker <service> [--reset]    circuit breaker state, or close it
   cache purge <service>          drop cached responses of a service
   usage <app-id>                 an app's requests, spend and limits
+  try <service> [METHOD] <path> [--data json|@file|@-] [--app a] [--read-only]
+                                 send one request through the proxy and show the answer
+  demo [status|load|remove] [--force]
+                                 sample service, keys and app for a first call
   apps                           apps with their mode and token count
   apps create <name> [--mode proxy|lease|both] [--services a,b] [--description d]
                                  create an app; prints its token once
   tokens list --app <id|name>    an app's tokens (never their values)
-  tokens create --app <id|name> [--name ci] [--read-only] [--expires 30]
+  tokens create --app <id|name> [--name ci] [--read-only] [--expires 30] [limit flags] [--pin k=v]
                                  add a token to an app (expires in days); prints it once
+
+Access controls (limit flags: --daily-requests n --monthly-requests n --daily-budget usd --monthly-budget usd):
+  limits <app>                   per-token default, tag budgets and deny rule count
+  limits <app> [limit flags|--clear]
+                                 set the limits every token of the app gets
+  limits <app> --token <id|name> [limit flags|--clear] [--pin k=v] [--clear-pins]
+                                 show or set one token's own limits and pinned tags
+  tags <app> [--days 30]         usage per caller tag value, with the tag budgets
+  tags <app> --budget <key> [limit flags|--clear]
+                                 set or remove the budget each value of a tag key gets
+  deny list <app>                the app's deny rules
+  deny add <app> [--method M] [--service s | --host h] [--path /prefix] [--note text]
+                                 block matching requests with 403 denied_by_rule
+  deny rm <app> <rule-id>        remove a deny rule
+  ceiling [set <usd>|off|reset]  the server's daily spend ceiling
 
 Everything else (agents and scripts):
   api <METHOD> <path> [--data json|@file|@-]
@@ -309,6 +335,22 @@ func (c *cli) run(args []string) error {
 		return c.tokens(args[1:])
 	case "scan":
 		return c.scan(args[1:])
+	case "limits":
+		return c.limitsCmd(args[1:])
+	case "deny":
+		return c.deny(args[1:])
+	case "tags":
+		return c.tags(args[1:])
+	case "ceiling":
+		return c.ceiling(args[1:])
+	case "audit":
+		return c.audit(args[1:])
+	case "jobs":
+		return c.jobs(args[1:])
+	case "demo":
+		return c.demo(args[1:])
+	case "try":
+		return c.try(args[1:])
 	}
 	return usageErrorf("unknown command %q; run %s help", args[0], c.name())
 }
@@ -1025,71 +1067,6 @@ func (c *cli) keysAdd(args []string) error {
 	}
 	fmt.Fprintln(c.out, ".")
 	return nil
-}
-
-func (c *cli) keysCheck(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: %s keys check <service>", c.name())
-	}
-	sv, err := c.serviceBySlug(args[0])
-	if err != nil {
-		return err
-	}
-	var out map[string]any
-	if err := c.call("POST", fmt.Sprintf("/api/admin/services/%d/check", sv.ID), nil, &out); err != nil {
-		return err
-	}
-	if msg, ok := out["message"].(string); ok && msg != "" {
-		fmt.Fprintln(c.out, clean(msg))
-		return nil
-	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.out, string(cleanJSON(b)))
-	return nil
-}
-
-func (c *cli) events(args []string) error {
-	fs := flag.NewFlagSet("events", flag.ContinueOnError)
-	fs.SetOutput(c.err)
-	svc := fs.String("service", "", "service slug")
-	limit := fs.Int("limit", 30, "how many events")
-	kind := fs.String("kind", "", "only this kind, for example rate_limited")
-	if _, err := parseInterleaved(fs, args); err != nil {
-		return err
-	}
-	q := url.Values{"limit": {strconv.Itoa(*limit)}}
-	if *kind != "" {
-		q.Set("kind", *kind)
-	}
-	if *svc != "" {
-		sv, err := c.serviceBySlug(*svc)
-		if err != nil {
-			return err
-		}
-		q.Set("service_id", strconv.FormatInt(sv.ID, 10))
-	}
-	var out struct {
-		Events []struct {
-			TS      time.Time `json:"ts"`
-			Kind    string    `json:"kind"`
-			Service string    `json:"service_slug"`
-			Key     string    `json:"key_label"`
-			App     string    `json:"app_name"`
-			Status  int       `json:"status_code"`
-			Latency int64     `json:"latency_ms"`
-			Detail  string    `json:"detail"`
-		} `json:"events"`
-	}
-	if done, err := c.callJSON("GET", "/api/admin/events?"+q.Encode(), &out); done || err != nil {
-		return err
-	}
-	tw := tabwriter.NewWriter(c.out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "TIME\tKIND\tSERVICE\tKEY\tAPP\tSTATUS\tMS\tDETAIL")
-	for _, e := range out.Events {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", e.TS.Local().Format("Jan 02 15:04:05"),
-			clean(e.Kind), clean(e.Service), clean(e.Key), clean(e.App), e.Status, e.Latency, clip(e.Detail, 70))
-	}
-	return tw.Flush()
 }
 
 func (c *cli) breaker(args []string) error {
