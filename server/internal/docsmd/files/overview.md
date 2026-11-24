@@ -208,6 +208,17 @@ acn services
 
 On Windows: `irm https://raw.githubusercontent.com/sidharthpunathil/acnologia/main/install.ps1 | iex`.
 
+**From your agent.** After `acn login`, `acn mcp install` adds Acnologia to
+Claude Code, Cursor and Codex in one step, with no token in their config
+files. In Claude Code you can install the plugin instead, which brings the
+same MCP server and a skill that teaches the agent to find a tool, read the
+service guide and call through the pool:
+
+```
+/plugin marketplace add sidharthpunathil/acnologia
+/plugin install acnologia@acnologia
+```
+
 Each service's **Integrate** tab has ready snippets in curl, Python,
 TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart, and
 there are [SDKs](sdk/README.md) for seventeen languages, including C, Zig, Elixir, Haskell and Lua.
