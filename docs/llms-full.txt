@@ -1074,7 +1074,7 @@ Each proxied response then updates the key's quota. When the provider reports 0 
 
 A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Acnologia-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Acnologia never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `ACNOLOGIA_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
 
-`Idempotency-Key` works on any method. The first final response is stored per token for 10 minutes and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice. Answers of 408, 425, 429 and 5xx are not stored, so a retry after them goes upstream again. A retry that arrives while the first request is still running gets 409 `idempotency_in_progress`, and the same key with a different body gets 422 `idempotency_key_reused`.
+`Idempotency-Key` works on any method. The first final response is stored per token for 24 hours, in the database so it survives a restart, and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice. An answer over 4 MB, or an event stream, is delivered once and a retry gets 422 `idempotency_unreplayable`. Answers of 408, 425, 429 and 5xx are not stored, so a retry after them goes upstream again. A retry that arrives while the first request is still running gets 409 `idempotency_in_progress`, and the same key with a different body gets 422 `idempotency_key_reused`.
 
 ## Service groups
 

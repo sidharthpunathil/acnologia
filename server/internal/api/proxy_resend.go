@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/providers"
-	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
 // When a request may go to another key, service or capability route.
@@ -82,22 +81,6 @@ func idemStorable(status int) bool {
 func bodyFingerprint(body []byte) string {
 	h := sha256.Sum256(body)
 	return hex.EncodeToString(h[:])
-}
-
-// replayIdempotent answers from a stored idempotent response, or with 422
-// when the key was used with another body. It reports whether it answered.
-// A replay records no usage: the request was paid for when it first ran.
-func (s *Server) replayIdempotent(w http.ResponseWriter, a *store.App, key, fp string) bool {
-	e, ok := s.Cache.Get(key)
-	if !ok {
-		return false
-	}
-	if e.Fingerprint != fp {
-		writeErr(w, 422, "idempotency_key_reused", "this Idempotency-Key was already used with a different request body")
-		return true
-	}
-	writeCached(w, e, "replay", hidesKey(a))
-	return true
 }
 
 // isEventStream reports whether an answer is a server-sent event stream,

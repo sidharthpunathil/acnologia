@@ -452,9 +452,8 @@ func (e *Evidence) Endpoints(serviceID int64) []*EndpointStat {
 var evidenceTTL = 30 * time.Second
 
 type evidenceCache struct {
-	mu  sync.Mutex
-	ev  *Evidence
-	err error
+	mu sync.Mutex
+	ev *Evidence
 }
 
 var evidenceCaches sync.Map // *Store -> *evidenceCache

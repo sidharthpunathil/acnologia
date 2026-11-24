@@ -516,6 +516,20 @@ func openAIBuiltin() Builtin {
 			},
 			UseStandardRules: true,
 			Health:           &Health{Method: "GET", Path: "/v1/models"},
+			// Files, batches and fine-tuning jobs belong to the organization
+			// (and project) of the key that created them; another key gets 404.
+			Affinity: []AffinityRule{
+				{Create: AffinityCreate{Method: "POST", Path: "/v1/files$"}, ID: "id", Follow: []AffinityFollow{
+					{Path: "/v1/files/{id}"},
+					{Method: "POST", Path: "/v1/batches$", Body: "input_file_id"},
+					{Method: "POST", Path: "/v1/fine_tuning/jobs$", Body: "training_file"},
+				}},
+				{Create: AffinityCreate{Method: "POST", Path: "/v1/batches$"}, ID: "id",
+					Follow:  []AffinityFollow{{Path: "/v1/batches/{id}"}},
+					Related: []string{"output_file_id", "error_file_id"}},
+				{Create: AffinityCreate{Method: "POST", Path: "/v1/fine_tuning/jobs$"}, ID: "id",
+					Follow: []AffinityFollow{{Path: "/v1/fine_tuning/jobs/{id}"}}},
+			},
 			Examples: []Example{
 				{Name: "List models", Method: "GET", Path: "/v1/models", Safe: true},
 				chatExample("/v1/chat/completions", "gpt-6-luna"),

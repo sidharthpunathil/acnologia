@@ -80,7 +80,7 @@ file in the next section.
 | `cmd/acn` | The `acn` command line client. |
 | `internal/config` | Reads `ACNOLOGIA_*` environment variables and an optional `.env` file, picks the default data directory per OS and manages the generated `access-password` file. See [configuration](configuration.md). |
 | `internal/api` | Every HTTP handler, the router and its middleware. See [Inside internal/api](#inside-internalapi). |
-| `internal/pool` | Picks a key for a request, holds per key concurrency slots (`slots.go`), paces keys under the limits their provider publishes (`pacer.go`), applies outcomes (cooldown, exhausted, invalid, banned) and runs health checks. `corroborate.go` stops one caller's request shape from marking a working key as rejected. |
+| `internal/pool` | Picks a key for a request, holds per key concurrency slots (`slots.go`), shares a busy service's wait queue fairly between apps (`fair.go`), paces keys under the limits their provider publishes (`pacer.go`), applies outcomes (cooldown, exhausted, invalid, banned) and runs health checks. `corroborate.go` stops one caller's request shape from marking a working key as rejected. |
 | `internal/providers` | The provider spec format and engine: classifying upstream responses into outcomes, reading quota headers, running health checks, auth placement, offers, usage guides, fixture tests and the 27 built in specs (`builtin*.go`). |
 | `internal/catalog` | Provider records on top of the store: validation, publishing with version history, service defaults, live checks, logo discovery and the SSRF safe HTTP client (`SafeClient`, with the address rules in `netguard.go`). |
 | `internal/agent` | The shared Claude client and everything that calls it: the AI provider builder (a background run that drives Claude with tools to research a provider and produce a spec), Fill with AI (`assist.go`), the Assistant and its compaction summaries (`chat.go`), usage guide writing (`guide.go`), and the offers and Claude price research the refresh calls (`refresh.go`). Also the model per feature and price overrides (`models.go`, `pricing.go`, `prices.go`). |
@@ -91,7 +91,7 @@ file in the next section.
 | `internal/redact` | Keeps secrets out of everything that is not the key store: requests to Claude, agent steps, events, the audit log, webhook payloads and log lines. See [security](security.md#what-the-model-can-and-cannot-see). |
 | `internal/keyparse` | Pulls keys out of pasted or dropped text: JSON arrays, CSV with a header row, `.env` files and free form lists. |
 | `internal/breaker` | The per service circuit breaker that pauses traffic to a provider that keeps failing. Failures less than a second apart count as one strike, so one burst of concurrent failures is one strike. |
-| `internal/respcache` | The in-memory response cache and idempotent replays: a byte bounded LRU with per entry expiry, plus the claims that hold an `Idempotency-Key` while its first request runs. |
+| `internal/respcache` | The in-memory response cache: a byte bounded LRU with per entry expiry, plus the in-process claims that mark an `Idempotency-Key` whose request runs now. |
 | `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. Upstream transports keep up to 256 idle connections per host and resume TLS sessions, so a burst to one provider reuses connections instead of redialing. |
 | `internal/notify` | Delivers pool and sharing events to webhooks: Slack, Discord, Telegram or signed JSON. |
 | `internal/worker` | The background loops. See [Background work](#background-work). |
@@ -116,6 +116,7 @@ file in the next section.
 | Share modes, timers and key handover | `handover.go` |
 | Sharing with people (claim links) | `people.go` |
 | Consumer API | `consumer.go` |
+| Proxy: retries and resends, idempotency, key affinity | `proxy.go`, `proxy_resend.go`, `proxy_idem.go`, `proxy_affinity.go` |
 | Proxy, and scrubbing keys an upstream echoes back | `proxy.go`, `proxy_extras.go`, `proxy_scrub.go` |
 | Forward proxy (apps set Acnologia as `HTTPS_PROXY`): routing by host, its CA, setup routes | `forward.go`, `forward_ca.go`, `forward_api.go` |
 | App MCP | `mcp.go`, `mcp_v2.go` (tools, resources, prompts), `mcp_catalog.go` (service tools from provider examples and guide endpoints, tool modes, `acnologia_search_tools` and `acnologia_call_tool`), `mcp_notify.go` (the `GET /mcp` list changed stream), `mcp_admin.go` |
@@ -406,6 +407,12 @@ obvious:
 - **Provider refresh.** `refresh_runs` and their `refresh_items` record each
   run, `refresh_reviews` the proposals waiting for a superadmin, and
   `provider_refresh` when each provider was last checked and last changed.
+- **Proxy records.** `idempotency` holds one row per `Idempotency-Key`
+  (the SHA-256 of the key scoped to app, token, target and request line):
+  pending while its request runs, then the stored answer, encrypted with
+  the master key. `key_affinity` binds a resource a provider keeps on one
+  account (or a caller's affinity value) to the key that must serve it.
+  Both expire, and the prune deletes them.
 - **Other tables:** `admin_tokens` (dashboard API tokens), `service_groups`
   (several services behind one `/proxy` slug), `webhooks`, `egress_proxies`,
   `app_mcp` (what each app's MCP server exposes), `lease_exclusive`, `audit`
@@ -441,19 +448,88 @@ obvious:
 ## In memory state
 
 Almost all state is in SQLite. The exception is **concurrency slots**
-(`internal/pool/slots.go`): how many requests are in flight on each key, which
-leases hold a slot, and a wake channel per service for requests queued on a
-busy service. Acnologia runs as a single instance, and on boot it rebuilds
+(`internal/pool/slots.go`): how many requests are in flight on each key and
+each app, which leases hold a slot, and the wait queue of each busy service
+(`fair.go`). Acnologia runs as a single instance, and on boot it rebuilds
 lease slots from the open leases in the database (`RestoreLeases`). The
 response cache (`internal/respcache`) and the circuit breakers also live in
-memory and start empty, as do the idempotency claims: while a request with
-an `Idempotency-Key` runs, a second one with the same key (same app, token,
-target and request line) gets 409 `idempotency_in_progress` with
-`Retry-After: 1`. Its answer is replayed for 10 minutes, unless it was a
-408, 425, 429 or 5xx, and only to a request with the same body; another
-body gets 422 `idempotency_key_reused`. A replay comes before the app's
-limits and records no usage. The key also pins the API key the pool picks,
-so a retry reaches the same vendor account.
+memory and start empty. Idempotency records and key affinities are in the
+database, so they survive a restart and do not depend on the cache.
+
+## Waiting for a key
+
+A service with a queue timeout (`queue_timeout_sec`) lets a request wait
+when no key can take it now, instead of answering 503 at once. It waits
+when every usable key is busy (at its concurrency limit, or at a rate limit
+the provider publishes), and when a key is cooling down but its cooldown
+ends before the queue timeout does: that key counts as soon free. A key
+cooling down for longer, or exhausted, disabled or banned, is not waited
+for, and the answer is 503 `no_key_available` with `Retry-After`.
+
+The wait queue is per service and fair between apps. A freed slot wakes one
+waiter, not all of them: the waiter of the app with the fewest requests in
+flight on the service, then of the app woken longest ago, then the earliest
+arrival; within one app, first in, first out. While anyone waits, a new
+request queues behind them rather than taking the slot a wake is on its way
+to, so one app's swarm cannot starve another app that sends a request now
+and then. A woken waiter that still cannot use a key (it is bound to
+another key, or a request without a queue timeout got there first) passes
+the wake on, and each waiter tries once per freed slot, so a slot nobody can
+use ends the chain. Waiters also wake on a timer: when a cooldown or a
+published rate limit ends, and once a second to free the slots of expired
+leases.
+
+## Idempotency
+
+A proxied request with an `Idempotency-Key` header (or the MCP
+`proxy_request` tool's `idempotency_key`) runs once. Its key is scoped to the
+app, the token, the target and the request line, and stored as a SHA-256
+hash in the `idempotency` table:
+
+1. Before any upstream call, the request inserts a pending row. Losing that
+   insert means another request owns the key: 409 `idempotency_in_progress`
+   with `Retry-After: 1`.
+2. The owner stores its final answer (status, headers and body, encrypted)
+   for 24 hours. A retry with the same body gets it back with
+   `Idempotent-Replayed: true`, before the app's limits and without
+   recording usage; another body gets 422 `idempotency_key_reused`.
+3. A 408, 425, 429 or 5xx says nothing about the request, so it is not
+   stored: the owner deletes its pending row and a retry runs again. So does
+   a request that ends without an answer: the client hung up, no key was
+   free, or the handler panicked.
+4. An answer that ran but cannot be kept (an event stream, or a body over
+   4 MB) is delivered once, and the row records that. A retry gets 422
+   `idempotency_unreplayable` instead of running the request a second time.
+5. A pending row left by a server that stopped mid request is taken over
+   once it is older than 5 minutes, longer than the proxy waits for an
+   upstream's answer headers. Within one process, an in-memory claim tells a
+   request that runs now from such a leftover.
+
+The key also pins the API key the pool picks, so a retry reaches the same
+vendor account and the provider's own idempotency sees the same caller. All
+of this works with the response cache off, and the cache's traffic never
+evicts an idempotent answer.
+
+## Key affinity
+
+Some providers keep what a request creates (a prediction, an actor run, a
+batch, an uploaded file) on the account that created it, and answer 404 to
+any other account. A provider spec's `affinity` rules (see
+[providers](providers.md#key-affinity)) say which requests create such a
+resource, where its id is in the answer, and which later requests name it.
+When a create succeeds, the proxy reads the ids from the answer while it
+relays it and records each one against the key that served it, for 7 days.
+A later request that names a recorded id must use that key: the pool picks
+it alone (`pool.Request.Key`), waiting for its slot like any request. When
+it cannot serve (cooling down past the queue timeout, disabled, deleted or
+not allowed for the app), the answer is 503 `key_unavailable_for_resource`
+rather than a 404 from another key. A refusal from that key (a 429) is
+relayed as is.
+
+A caller can bind its own requests too: every request on a service that
+carries the same `X-Acnologia-Key-Affinity` value (per app) uses one key,
+for 30 minutes after the last answer. The header never reaches the
+provider.
 
 ## Boot sequence
 
@@ -501,7 +577,7 @@ never holds up another.
 
 | Loop | Interval | Does |
 |---|---|---|
-| Housekeeping | 30 s | Resets daily usage at UTC midnight, frees the slots of expired leases and reactivates exhausted keys whose quota reset time has passed. Every 10 minutes it also prunes expired sessions, leases older than 7 days and events past `ACNOLOGIA_EVENT_RETENTION_DAYS`. |
+| Housekeeping | 30 s | Resets daily usage at UTC midnight, frees the slots of expired leases and reactivates exhausted keys whose quota reset time has passed. Every 10 minutes it also prunes expired sessions, leases older than 7 days, events past `ACNOLOGIA_EVENT_RETENTION_DAYS`, and expired idempotency records and key affinities. |
 | Health | 1 min tick | Re-checks keys whose last check is older than the interval (the one set in Settings, else `ACNOLOGIA_HEALTH_INTERVAL`); exhausted keys hourly. Skips disabled and banned keys, keys at their concurrency cap, providers without a health check, and hidden keys on services whose target is not trusted. |
 | Peers | 10 min | Reads the manifest of every share another server gave this one: imports the providers of shared services this server lacks, adds new services, disables removed ones, and for handover links fetches, renews or deletes the sealed keys (`internal/peer`). |
 | Sharing | 1 min | Deletes handed over keys whose lease ended without renewal (no network needed), ends shares whose timer ran out, and records lapsed handovers on the owner's side. |

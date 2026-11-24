@@ -250,7 +250,7 @@ func (s *Server) revokeAppToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	t, err := s.Store.GetAppToken(r.Context(), a.ID, tid)
+	_, err := s.Store.GetAppToken(r.Context(), a.ID, tid)
 	if err == nil {
 		err = s.Store.RevokeAppToken(r.Context(), a.ID, tid)
 	}
@@ -258,7 +258,7 @@ func (s *Server) revokeAppToken(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	t, err = s.Store.GetAppToken(r.Context(), a.ID, tid)
+	t, err := s.Store.GetAppToken(r.Context(), a.ID, tid)
 	if err != nil {
 		writeStoreErr(w, err)
 		return

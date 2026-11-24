@@ -125,6 +125,7 @@ A shortened spec, modeled on the built in `serpapi` one:
 | `examples` | Requests for the Integrate panel. Live checks only run `safe` GET or HEAD examples. |
 | `tests` | Fixture responses with the expected outcome, run on every save. |
 | `guide` | Optional. How to call the provider through Acnologia, for apps and AI agents. See [Usage guides](#usage-guides). |
+| `affinity` | Optional. Requests that create something the provider keeps on the creating account (a job, a run, a file), so later requests for it use the same key. See [Key affinity](#key-affinity). |
 
 When you write rules, start from what the provider's docs say each error
 looks like, and add a `tests` entry for each rule so a later edit cannot
@@ -577,6 +578,66 @@ Requests to an entry only one provider lists stay with that provider, and a
 service group still works for services that share a request shape without
 a catalog.
 
+## Key affinity
+
+Some providers keep what a request creates on the account that created it:
+a Replicate prediction, an Apify actor run and its dataset, an OpenAI batch
+or uploaded file. Poll it with another key from the pool and the provider
+answers 404. An `affinity` rule tells Acnologia which request creates such a
+resource, where the new id is in the answer, and which later requests name
+it:
+
+```jsonc
+"affinity": [
+  { "create": { "method": "POST", "path": "/v1/predictions$" },
+    "id": "id",
+    "follow": [ { "path": "/v1/predictions/{id}" } ] },
+  { "create": { "method": "POST", "path": "/v2/acts/*/runs$" },
+    "id": "data.id",
+    "related": [ "data.defaultDatasetId" ],
+    "follow": [ { "path": "/v2/actor-runs/{id}" },
+                { "method": "GET", "path": "/v2/datasets/{id}/items$" } ] },
+  { "create": { "method": "POST", "path": "/v1/batches$" },
+    "id": "id",
+    "related": [ "output_file_id", "error_file_id" ],
+    "follow": [ { "path": "/v1/batches/{id}" } ] },
+  { "create": { "method": "POST", "path": "/v1/files$" },
+    "id": "id",
+    "follow": [ { "path": "/v1/files/{id}" },
+                { "method": "POST", "path": "/v1/batches$", "body": "input_file_id" } ] }
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `create` | The request that creates the resource. `path` matches like an offer's: a prefix, `*` for one segment, `$` at the end for the exact path. Use `$` so a follow-up such as `/v1/predictions/{id}/cancel` is not taken for a create. |
+| `id` | The JSON path of the new resource's id in a successful (2xx) answer, such as `id` or `data.id`. |
+| `related` | Optional. JSON paths of more ids in the answers to the create and follow requests that live on the same account: a run's dataset, a finished batch's output file. |
+| `follow` | Requests about the resource. `path` holds `{id}` as one whole segment where the id goes, and also matches longer paths (`/v1/predictions/{id}` covers `/v1/predictions/{id}/cancel`) unless it ends with `$`. Or `body` is the JSON path in the request body that holds the id, and `path` has no `{id}`. An empty `method` matches any. |
+
+When a create succeeds, the proxy reads the ids from the answer as it
+relays it (the first 1 MB; an event stream is not read) and records each
+against the key that served it, for 7 days. A request that matches a
+`follow` and names a recorded id then uses that key only. If that key
+cannot take it now (cooling down past the queue timeout, disabled, deleted
+or not allowed for the app), the answer is 503
+`key_unavailable_for_resource`, with `Retry-After` when the key comes back
+at a known time, instead of a 404 from another key. A 429 from that key is
+relayed as is. An id that was never recorded (created before the rule
+existed, or outside Acnologia) is not bound, and the request picks a key as
+usual.
+
+The built in OpenAI provider ships rules for files, batches (including the
+input, output and error files) and fine-tuning jobs. Installs that seeded it
+before get them once on boot, unless the spec already has an `affinity`.
+
+A caller can also keep its own requests on one key, for a conversation or a
+session the provider tracks per account: send `X-Acnologia-Key-Affinity`
+with any value up to 200 characters. Every request on the service with the
+same value (per app) uses one key, for 30 minutes after the last answer,
+with the same 503 when that key cannot serve. The header never reaches the
+provider.
+
 ## Validation rules
 
 - `slug`: lowercase letters, digits and hyphens.
@@ -601,6 +662,11 @@ a catalog.
   endpoints (400 with hosts) each with a name, a path starting with `/` and a method of GET,
   POST, PUT, PATCH or DELETE, params `in` query, path, body or header, at
   most 30 notes and 20,000 characters of Markdown.
+- Affinity: at most 20 rules, each with a `create` method of GET, POST, PUT,
+  PATCH or DELETE and a path starting with `/` (no `{id}`, query or
+  fragment), an `id` JSON path, and 1 to 20 `follow` requests. A follow
+  path holds `{id}` exactly once as a whole segment, or sets `body` and has
+  no `{id}`.
 - Rule regexes are RE2, so they cannot backtrack catastrophically. JSON paths
   are depth limited.
 
