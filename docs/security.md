@@ -288,9 +288,11 @@ What is particular to it:
   certificates last 30 days and are cached in memory.
 - **Trust the CA per process, not system wide.** Give it to the app's own
   environment (`NODE_EXTRA_CA_CERTS`, which adds to the system roots rather
-  than replacing them, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`,
-  `curl --cacert`) instead of the machine's trust store, so a leaked CA
-  key reaches only those apps.
+  than replacing them, `curl --cacert`, or `REQUESTS_CA_BUNDLE` and
+  `SSL_CERT_FILE` pointed at a bundle of the system roots plus the CA, since
+  those two replace the trust store) instead of the machine's trust store,
+  so a leaked CA key reaches only those apps. `acn proxy env` writes that
+  bundle next to the CLI config.
 - **Keys go only to their service.** The proxy picks a service by matching
   the request's host, port and path against service base URLs and the
   provider's listed hosts; a key the app sent is replaced by the pool key.
@@ -300,8 +302,9 @@ What is particular to it:
   when `ACNOLOGIA_FORWARD_PASSTHROUGH` is on (the default), joined to that
   host without opening it and without a key. It needs a valid app token,
   reaches public addresses only (the same checks as `SafeClient`) on port
-  443 or 8443, and is never offered to a share's token. Turn it off to keep
-  app traffic other than service calls off the server.
+  443 or 8443, and is never offered to a share's token or a read-only
+  token. Turn it off to keep app traffic other than service calls off the
+  server.
 - **The token rides in the proxy URL.** `http://app:acn_...@host:port` sits in
   the app's environment, where process listings, crash dumps and some
   client logs can show it. Over the internet, prefer an `https://` proxy URL

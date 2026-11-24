@@ -55,7 +55,7 @@ Key facts for agents:
 
 - SerpAPI search: `GET /proxy/serpapi/search.json?engine=google&q=coffee` with `Authorization: Bearer acn_...`. Do not send `api_key`.
 - ElevenLabs text to speech: `POST /proxy/elevenlabs/v1/text-to-speech/{voice_id}` with JSON `{"text": "Hello", "model_id": "eleven_multilingual_v2"}` and `Accept: audio/mpeg`. Do not send `xi-api-key`.
-- Forward proxy (Node 24+): `curl -o acnologia-ca.pem <base>/api/v1/proxy/ca.pem`, then `HTTPS_PROXY=http://app:acn_...@host:8888 NODE_EXTRA_CA_CERTS=acnologia-ca.pem node --use-env-proxy app.js`. Python `requests`: `HTTPS_PROXY` plus `REQUESTS_CA_BUNDLE=acnologia-ca.pem`. curl: `curl -x http://app:acn_...@host:8888 --cacert acnologia-ca.pem "https://serpapi.com/search.json?q=coffee"`.
+- Forward proxy (Node 24+): `curl -o acnologia-ca.pem <base>/api/v1/proxy/ca.pem`, then `HTTPS_PROXY=http://app:acn_...@host:8888 NODE_EXTRA_CA_CERTS=acnologia-ca.pem node --use-env-proxy app.js`. Python `requests`: `HTTPS_PROXY` plus `REQUESTS_CA_BUNDLE` pointed at a bundle of the system roots plus the CA (`cat "$(python -m certifi)" acnologia-ca.pem > acnologia-ca-bundle.pem`), never the CA alone. `acn proxy env` writes the bundle and prints every line, `NO_PROXY=localhost,127.0.0.1,::1` included. curl: `curl -x http://app:acn_...@host:8888 --cacert acnologia-ca.pem "https://serpapi.com/search.json?q=coffee"`.
 - The dashboard's Integrate tab has the same calls in curl, Python, TypeScript, Go, Rust, Java, C#, C++, Swift, Kotlin, PHP, Ruby and Dart.
 
 ## MCP

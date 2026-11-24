@@ -335,16 +335,24 @@ curl -s http://localhost:8080/api/v1/proxy -H "Authorization: Bearer acn_xxx"
   "env": {
     "HTTPS_PROXY": "http://app:<app token>@acnologia.example.com:8888",
     "HTTP_PROXY": "http://app:<app token>@acnologia.example.com:8888",
+    "NO_PROXY": "localhost,127.0.0.1,::1",
+    "no_proxy": "localhost,127.0.0.1,::1",
     "NODE_USE_ENV_PROXY": "1",
     "NODE_EXTRA_CA_CERTS": "acnologia-ca.pem",
-    "REQUESTS_CA_BUNDLE": "acnologia-ca.pem",
-    "SSL_CERT_FILE": "acnologia-ca.pem"
+    "REQUESTS_CA_BUNDLE": "acnologia-ca-bundle.pem",
+    "SSL_CERT_FILE": "acnologia-ca-bundle.pem"
+  },
+  "env_notes": {"SSL_CERT_FILE": "replaces the whole trust store: point it at a bundle of the system roots plus the CA, never the CA alone", "...": "..."},
+  "ca_bundle": {
+    "file": "acnologia-ca-bundle.pem",
+    "build": "cat /etc/ssl/certs/ca-certificates.crt acnologia-ca.pem > acnologia-ca-bundle.pem",
+    "note": "the system roots first, then the Acnologia CA. ..."
   },
   "service_header": "X-Acnologia-Service"
 }
 ```
 
-`ca_fingerprint` is the SHA-256 of the CA certificate, as colon separated hex. `hosts` lists every host the proxy puts your keys on (a row has `path` when the service sits under a base path). Put your token where `<app token>` is.
+`ca_fingerprint` is the SHA-256 of the CA certificate, as colon separated hex. `NODE_EXTRA_CA_CERTS` names the CA alone, since Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so they name a bundle of the system roots plus the CA; `ca_bundle.build` shows how to make it. Pointing them at the CA alone breaks TLS to every host the proxy passes through untouched. `hosts` lists every host the proxy puts your keys on (a row has `path` when the service sits under a base path). Put your token where `<app token>` is.
 
 2. Download the CA certificate. It is public, needs no token, and stays open behind the access password:
 
@@ -356,7 +364,7 @@ Acnologia opens HTTPS to a service's host with a certificate for that host signe
 
 3. Set the proxy, with the token in the proxy URL. `http://app:acn_xxx@host:port` sends `Proxy-Authorization: Basic` with the token as the password; the token as the user name, or `Proxy-Authorization: Bearer acn_xxx`, also work.
 
-With the `acn` CLI, `acn proxy ca` saves the CA file (`acnologia-ca.pem`) and `acn proxy env [--token acn_...]` prints the `export` lines.
+With the `acn` CLI, `acn proxy ca` saves the CA file (`acnologia-ca.pem`), `acn proxy ca --bundle` saves the system roots plus the CA (`acnologia-ca-bundle.pem`), and `acn proxy env [--token acn_...]` prints the `export` lines: it saves both files next to the CLI config, points `NODE_EXTRA_CA_CERTS` at the CA and `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` at the bundle, and sets `NO_PROXY=localhost,127.0.0.1,::1`.
 
 ### Node.js (24 and later)
 
@@ -378,8 +386,8 @@ console.log(r.status, r.headers.get("x-acnologia-service"), await r.json());
 
 ```bash
 export HTTPS_PROXY=http://app:acn_xxx@acnologia.example.com:8888
-# REQUESTS_CA_BUNDLE replaces the default roots, so combine them when the app
-# also calls other HTTPS hosts through the proxy:
+# REQUESTS_CA_BUNDLE replaces the default roots, so always give it a bundle
+# of those roots plus the CA, never the CA alone:
 cat "$(python -m certifi)" acnologia-ca.pem > ca-bundle.pem
 export REQUESTS_CA_BUNDLE=$PWD/ca-bundle.pem
 ```
@@ -414,7 +422,7 @@ curl -x http://app:acn_xxx@acnologia.example.com:8888 --cacert acnologia-ca.pem 
 
 ### Other hosts and NO_PROXY
 
-- HTTPS (`CONNECT`) to a host that is no service is a blind tunnel when the server allows passthrough (`passthrough: true` in the setup): no key, no interception, public addresses only, ports 443 and 8443 only. A share's token never gets passthrough.
+- HTTPS (`CONNECT`) to a host that is no service is a blind tunnel when the server allows passthrough (`passthrough: true` in the setup): no key, no interception, public addresses only, ports 443 and 8443 only. A share's token and a read-only token never get passthrough.
 - With passthrough off, `CONNECT` to another host gets 403 `not_a_service`. Plain HTTP to another host is always refused, so Acnologia is never an open proxy and a key only ever goes to its own service's base URL.
 - Either way, it is simplest to send only provider traffic through Acnologia: `NO_PROXY=localhost,127.0.0.1,.internal,your-db-host`.
 - A plain `http://` URL is routed the same way, and `http://host/...` also matches a service on `https://host`. The upstream call always uses the service's own base URL, so it goes out over TLS; the hop from the app to Acnologia is then unencrypted, so prefer `https://` URLs.
@@ -431,7 +439,7 @@ If the operator rotates the CA (`POST /api/admin/forward-proxy/ca/rotate`), down
 |---|---|---|
 | 407 | `proxy_auth_required` | No app token in the proxy URL, or a wrong, revoked or expired one. Comes with `Proxy-Authenticate: Basic realm="Acnologia"`. |
 | 403 | `proxy_not_allowed` | The app is lease only. |
-| 403 | `not_a_service` | Plain HTTP to a host that is no service, or HTTPS to one with passthrough off (or with a share's token). Call it directly or add it to `NO_PROXY`. |
+| 403 | `not_a_service` | Plain HTTP to a host that is no service, or HTTPS to one with passthrough off (or with a share's or read-only token). Call it directly or add it to `NO_PROXY`. |
 | 403 | `port_not_allowed` | A passthrough tunnel to a port other than 443 or 8443. |
 | 502 | (no body) | A passthrough tunnel could not reach the host. |
 

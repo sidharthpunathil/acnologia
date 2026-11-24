@@ -38,7 +38,7 @@ limited time.
 | `POST /api/v1/leases/{id}/renew` | Extend an open lease: `{ttl_sec}`, returns `{ok, expires_at}`. 404 `lease_not_found` when it is not yours or no longer open. 403 `lease_revoked` ends the lease when the app may no longer hold the key: lease mode or the service was taken away, its hidden key grant or share scope no longer covers the key, or the key was disabled. |
 | `GET /api/v1/capabilities` | The capabilities the app may call: `{capabilities: [{slug, name, description, strategy, params, routes: [{service, mapped}], url}]}`. Empty for a share's token. |
 | `ANY /proxy/{service}/{path}` | Call the provider through Acnologia with a key injected. Apps in mode `proxy` or `both`. `{service}` may also be a service group or a capability (see llms-full.txt, Capabilities). Honors `Cache-Control: no-cache` and `Idempotency-Key`; answers carry `X-Acnologia-Key-Id` and `X-Acnologia-Attempts` (not for a share's or a person's token), `X-Acnologia-Service` and, when caching applies, `X-Acnologia-Cache`, plus `Idempotent-Replayed: true` on a replay. A caller that may not lease the key gets bodies with the key replaced by `[key]`. A share's token reaches only the services it was made with: a slug that now names another service or a group answers 403 `service_not_allowed`. |
-| `GET /api/v1/proxy` | How to use the [forward proxy](#forward-proxy): `{proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts: [{host, service, name, path}], env: {HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE}, service_header}`. `hosts` lists the hosts of the services the token may use; `proxy_url_with_token` has `<app token>` where the token goes. |
+| `GET /api/v1/proxy` | How to use the [forward proxy](#forward-proxy): `{proxy_url, proxy_url_with_token, ca_url, ca_fingerprint, passthrough, hosts: [{host, service, name, path}], env: {HTTPS_PROXY, HTTP_PROXY, NO_PROXY, no_proxy, NODE_USE_ENV_PROXY, NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE}, env_notes, ca_bundle: {file, build, note}, service_header}`. `hosts` lists the hosts of the services the token may use; `proxy_url_with_token` has `<app token>` where the token goes. `NODE_EXTRA_CA_CERTS` names the CA alone (`acnologia-ca.pem`), since Node adds it to its own roots. `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` replace the whole trust store, so they name a bundle of the system roots plus the CA (`acnologia-ca-bundle.pem`); `ca_bundle.build` shows how to make it, and `acn proxy env` makes it for you. `passthrough` is false for a share's token and a read-only token. |
 | `GET /api/v1/proxy/ca.pem` | The forward proxy's CA certificate (PEM, `acnologia-ca.pem`). Public: no token, and open behind the access password. |
 | `CONNECT`, or any method with an absolute URL | The forward proxy itself: the app sets Acnologia as its `HTTPS_PROXY` / `HTTP_PROXY` and calls provider URLs as they are. A request to a service's host runs exactly as `/proxy/{service}/...`. Apps in mode `proxy` or `both`. |
 | `POST /mcp` | MCP over JSON-RPC (streamable HTTP, JSON responses). Built in tools are listed as `acnologia_<name>` (old names still work) with an `outputSchema`. Tools depend on the app's tool sets: core (`acnologia_list_services`, `acnologia_pool_status`, `acnologia_service_guide`, `acnologia_get_key`, `acnologia_renew_key`, `acnologia_report_key`, `acnologia_proxy_request`), service tools generated from every provider example and every usage guide endpoint no example covers (named `<service slug>_<group>_<endpoint name>`; a new provider or guide adds its tools without a restart), with `acnologia_search_tools` and `acnologia_call_tool` to find and call them, insights (`acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats`) and manage (`acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys`). The app's `tool_mode` decides what `tools/list` shows: `auto` (default) lists every tool while there are 30 or fewer service tools, else works as `search`; `all` lists every tool; `search` lists the other tools plus `acnologia_search_tools` and `acnologia_call_tool`, and unlisted service tools stay callable by name. `initialize` advertises `tools.listChanged`. Also resources (including `acnologia://services/{slug}/guide`, the usage guide as Markdown) and prompts. |
@@ -51,7 +51,7 @@ Status codes an app should handle:
 | 401 | `unauthenticated` | Token missing or wrong. |
 | 403 | `unauthenticated`, `service_not_allowed`, `proxy_not_allowed`, `lease_not_allowed` | App disabled, or not allowed this service or mode. |
 | 407 | `proxy_auth_required` | Forward proxy only: the proxy URL has no app token, or a wrong one. Carries `Proxy-Authenticate: Basic realm="Acnologia"`. |
-| 403 | `not_a_service` | Forward proxy only: plain HTTP to a host that is no service, or HTTPS to one when passthrough is off (or the token is a share's). Call that host directly or list it in `NO_PROXY`. |
+| 403 | `not_a_service` | Forward proxy only: plain HTTP to a host that is no service, or HTTPS to one when passthrough is off (or the token is a share's or read-only). Call that host directly or list it in `NO_PROXY`. |
 | 403 | `port_not_allowed` | Forward proxy only: a passthrough tunnel to a port other than 443 or 8443. |
 | 400 | `bad_path` | Proxy path with a literal `?`, `#`, or a `.` / `..` segment. |
 | 400 | `bad_body` | The proxy could not read the request body. |
@@ -102,8 +102,10 @@ NODE_EXTRA_CA_CERTS=acnologia-ca.pem node --use-env-proxy app.js
 - **HTTPS.** The client sends `CONNECT host:443`. For a service's host,
   Acnologia answers the TLS handshake itself with a certificate for that
   host signed by the server's own CA, so the app must trust
-  `GET /api/v1/proxy/ca.pem` (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`,
-  `SSL_CERT_FILE`, `curl --cacert`).
+  `GET /api/v1/proxy/ca.pem` (`NODE_EXTRA_CA_CERTS`, `curl --cacert`).
+  `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` replace the whole trust store, so
+  point them at a bundle of the system roots plus the CA, never the CA
+  alone, or TLS to every other host fails.
 - **Plain HTTP.** An absolute URL in the request line is routed the same
   way, and an `http://` URL on port 80 also matches a service whose base
   URL is `https://` on the same host. The upstream call always uses the
@@ -112,8 +114,9 @@ NODE_EXTRA_CA_CERTS=acnologia-ca.pem node --use-env-proxy app.js
   `not_a_service`), so the proxy is never open and a key only goes to its
   service's base URL. HTTPS to another host is a blind tunnel (no keys, no
   interception) to public addresses on port 443 or 8443, when
-  `ACNOLOGIA_FORWARD_PASSTHROUGH` is on (the default). A share's token never
-  gets passthrough. Without it, list other hosts in `NO_PROXY`.
+  `ACNOLOGIA_FORWARD_PASSTHROUGH` is on (the default). A share's token and a
+  read-only token never get passthrough. Without it, list other hosts in
+  `NO_PROXY`.
 - **Where it listens.** The main port answers `CONNECT` and absolute URL
   requests. Behind an HTTPS edge (Railway, most PaaS) `CONNECT` does not
   pass, so set `ACNOLOGIA_FORWARD_PROXY_ADDR` and expose that port; see

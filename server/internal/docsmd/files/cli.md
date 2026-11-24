@@ -156,8 +156,8 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 | `acn cache purge <service>` | Drop the service's cached responses. |
 | `acn usage <app-id>` | An app's requests, spend and limits today and this month. |
 | `acn proxy` | The [forward proxy](api.md#forward-proxy): its URL, the CA fingerprint and the hosts that get keys. |
-| `acn proxy ca [--out file\|-]` | Save the CA certificate apps must trust (`acnologia-ca.pem` by default; `-` prints it). |
-| `acn proxy env [--token acn_...] [--ca file]` | Print `export` lines (`HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS` and the like) for an app to use the forward proxy, with a placeholder where the app token goes unless you pass `--token`. |
+| `acn proxy ca [--out file\|-] [--bundle]` | Save the CA certificate apps must trust (`acnologia-ca.pem` by default; `-` prints it). `--bundle` saves the system roots plus the CA instead (`acnologia-ca-bundle.pem`), for `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`. |
+| `acn proxy env [--token acn_...] [--ca file] [--bundle file]` | Print `export` lines (`HTTPS_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS` and the like) for an app to use the forward proxy, with a placeholder where the app token goes unless you pass `--token`. It saves the CA and a bundle of the system roots plus the CA next to the CLI config: `NODE_EXTRA_CA_CERTS` gets the CA alone, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` get the bundle, because they replace the whole trust store. The system roots come from `SSL_CERT_FILE` or the usual Linux and macOS bundle paths; on Windows, or when none is found, it sets `NODE_EXTRA_CA_CERTS` only and says so on stderr. |
 | `acn mcp` | A stdio MCP server for Claude and other MCP clients. See [Connect Claude](#connect-claude). |
 | `acn mcp config` | Print the snippet that adds `acn mcp` to Claude Code, Claude Desktop or Cursor. |
 | `acn version` | The client's version. |
