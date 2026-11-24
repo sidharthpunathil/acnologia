@@ -412,6 +412,12 @@ func migrate(db *sql.DB) error {
 	if err := migrateAccessControls(db); err != nil {
 		return err
 	}
+	if err := migrateIdempotency(db); err != nil {
+		return err
+	}
+	if err := migrateAffinity(db); err != nil {
+		return err
+	}
 	if err := migrateTrash(db); err != nil {
 		return err
 	}

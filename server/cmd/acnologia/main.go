@@ -52,6 +52,7 @@ func main() {
 		os.Exit(runMCPBridge(os.Args[2:]))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "ctl" {
+		ctl.Version = version
 		os.Exit(ctl.Run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	// Every log line passes the redactor: patterns from the start, the pool's

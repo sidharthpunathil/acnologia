@@ -1,0 +1,42 @@
+# Weekly dependency updates, grouped so each ecosystem opens at most one
+# pull request for version bumps a week (npm majors open on their own).
+# Version updates target stage like other work, and main tests them with the
+# next batch; CI does not run on pull requests. Security updates open against
+# main on their own as soon as an advisory lands.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+    target-branch: stage
+    open-pull-requests-limit: 3
+    groups:
+      go:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    target-branch: stage
+    open-pull-requests-limit: 3
+    groups:
+      # Minor and patch bumps together; a major version gets its own pull
+      # request, since it can need code changes.
+      web:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    target-branch: stage
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]

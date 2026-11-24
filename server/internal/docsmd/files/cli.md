@@ -150,15 +150,32 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 | `acn services` | Services with key counts and requests in the last 24 hours. |
 | `acn keys <service>` | Keys of a service: label, hint, state, quota and notes. |
 | `acn keys add <service> [file]` | Add keys, one per line: `secret` or `label,secret`. Reads stdin without a file. Duplicates are skipped. |
-| `acn keys check <service>` | Health check every key of a service. |
-| `acn events [--service s] [--limit n] [--kind k]` | Recent activity, 30 events by default, for example `--kind rate_limited`. |
+| `acn keys check <service> [--async]` | Health check every key of a service. `--async` starts a background job and prints its id instead of waiting. |
+| `acn keys check --all [--async]` | Health check every key of every service. |
+| `acn events [--service s] [--app a] [--token id] [--kind k] [--since t] [--after id] [--before id] [--limit n]` | Recent activity, 30 events by default, newest first, for example `--kind rate_limited`. `--since` takes RFC 3339, Unix seconds or a duration such as `15m`. The cursor to pass as `--after` next time goes to stderr (`next: acn events --after 1234`); with `--after` the events come oldest first. |
+| `acn events --follow [--after id] [filters]` | Print events as they happen, from the [event stream](api.md#event-streams), until Ctrl-C. With `--json` each event is one JSON object per line. When the server closes the stream (after an hour, or on a restart) it reconnects from the last event it printed. |
+| `acn audit [--via v] [--action a] [--client c] [--app a] [--token id] [--service s] [--since t] [--after id] [--limit n]` | Who changed what, with how it came in (`dashboard`, `api`, `cli`, `control_mcp`, `app_mcp`, `assistant`, `oauth`) and the client. Needs the superadmin role. |
+| `acn jobs [--kind k] [--status s] [--mine] [--limit n]` | Background [jobs](api.md#jobs): key checks, peer and MCP syncs, with status and progress. |
+| `acn jobs <id> [--wait]` | One job's status, progress and result. `--wait` polls until it is done or failed. |
 | `acn breaker <service> [--reset]` | The service's circuit breaker, or close it. |
 | `acn cache purge <service>` | Drop the service's cached responses. |
 | `acn usage <app-id>` | An app's requests, spend and limits today and this month. |
+| `acn try <service> [METHOD] <path> [--data json\|@file\|@-] [--app a] [--read-only]` | Send one request through the proxy the way an app's request goes, as the internal Try it app or `--app`, and print the body. Status, latency and the app go to stderr. The method is GET, or POST with `--data`. See [Try it](api.md#try-it). |
+| `acn demo [status\|load\|remove] [--force]` | [Demo data](api.md#demo-data): a service backed by a fake provider, two keys and an app, so a first call works before you have a real key. `load` prints the app's token once; `--force` loads it on a server that already has services. Needs the superadmin role. |
 | `acn apps` | Apps with their mode, whether they are on, token count and allowed services. |
 | `acn apps create <name> [--mode proxy\|lease\|both] [--services a,b] [--description d]` | Create an app and print its first token, which is shown only this once. Without `--services` the app may use every service. |
 | `acn tokens list --app <id\|name>` | An app's tokens: name, prefix, read only, last use, expiry. Never their values. |
-| `acn tokens create --app <id\|name> [--name ci] [--read-only] [--expires 30]` | Add a token to an app and print it once. The app's other tokens keep working. `--expires` takes days (`30` or `30d`). |
+| `acn tokens create --app <id\|name> [--name ci] [--read-only] [--expires 30] [limit flags] [--pin key=value]` | Add a token to an app and print it once. The app's other tokens keep working. `--expires` takes days (`30` or `30d`). The limit flags give the token its own caps, and `--pin` (repeatable) fixes a caller tag on every call it makes. |
+| `acn limits <app>` | The app's per-token default limits, its tag budgets and how many deny rules it has. |
+| `acn limits <app> [limit flags \| --clear]` | Set the limits every token of the app gets unless it sets its own. The flags given replace the whole default; `--clear` removes it. |
+| `acn limits <app> --token <id\|name> [limit flags \| --clear] [--pin key=value] [--clear-pins]` | Show one token's own limits and pinned tags, or change them. |
+| `acn tags <app> [--days 30]` | The app's use per caller tag value (`X-Acnologia-Meta`), most expensive first, with its tag budgets. |
+| `acn tags <app> --budget <key> [limit flags \| --clear]` | Set the budget each value of a tag key gets, such as `--budget customer --daily-budget 2`, or remove it. Other keys' budgets stay. |
+| `acn deny list <app>` | The app's deny rules. |
+| `acn deny add <app> [--method M] [--service s \| --host h] [--path /prefix] [--note text]` | Block the app's matching requests with 403 `denied_by_rule`. See [deny rules](api.md#limits-caller-tags-and-deny-rules). |
+| `acn deny rm <app> <rule-id>` | Remove a deny rule. |
+| `acn ceiling` | The server's daily spend ceiling, where it comes from and today's spend. |
+| `acn ceiling set <usd>`, `acn ceiling off`, `acn ceiling reset` | Save a ceiling in dollars, turn it off (`0`), or go back to `ACNOLOGIA_DAILY_SPEND_CEILING_USD`. Needs the superadmin role. |
 | `acn api <METHOD> <path> [--data json\|@file\|@-]` | Call any route with the saved admin token and print the JSON answer. See [Any route, any tool](#any-route-any-tool). |
 | `acn tool <name> [key=value ...] [--args json\|@file] [--yes]` | Run any control MCP tool. |
 | `acn tool --list` | The control MCP tools your role can use, with their kind (read, write or destructive). |
@@ -175,9 +192,18 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 a table, and when a command fails it prints the error as JSON on stdout
 (see [Exit codes](#exit-codes)).
 
+The limit flags are `--daily-requests n`, `--monthly-requests n`,
+`--daily-budget usd` and `--monthly-budget usd`, with days and months in
+UTC. A flag you leave out sets no cap.
+
 What a command may do depends on the token's scope: `read` acts as a
 member, `write` as an admin (add keys, reset breakers, purge caches) and
 `admin` as a superadmin.
+
+Every request sends `User-Agent: acn/<version>` and
+`X-Requested-With: acnologia-ctl`, so the audit log records a change made
+with acn as `via: cli` and the client as `acn/<version>`.
+`acn audit --via cli` lists them.
 
 ### Any route, any tool
 

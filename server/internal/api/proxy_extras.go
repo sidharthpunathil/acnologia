@@ -27,10 +27,8 @@ import (
 )
 
 const (
-	// maxCachedBody is the largest response the cache or idempotency layer keeps.
+	// maxCachedBody is the largest response the response cache keeps.
 	maxCachedBody = 1 << 20
-	// idempotencyTTL is how long a response is replayed for a repeated Idempotency-Key.
-	idempotencyTTL = 10 * time.Minute
 )
 
 // resolvedServiceKey carries a service that an in-process caller (MCP's

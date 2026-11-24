@@ -574,7 +574,7 @@ The built in tools are listed with an `acnologia_` prefix (`acnologia_get_key`, 
 | service tools | one per provider example and per usage guide endpoint that no example covers, named `<service slug>_<group>_<endpoint name>` (such as `serpapi_google_search`) | ready to call endpoints; the description names the matching offer, whether it is free and its per key limits | path parameters (required), query parameters from the example or the guide's params, `extra_query`, and `body` (the guide's body params) |
 | service tools | `acnologia_search_tools`, `acnologia_call_tool` | find service tools by words and call one by name; listed in every tool mode while service tools are on | `query`, optional `service`, `limit`; `name`, `arguments` |
 | insights | `acnologia_list_keys`, `acnologia_key_details`, `acnologia_service_stats` | read only key health, quota and recent events, never a secret | `service`, `validity`, `key_id`; `acnologia_list_keys` pages with `limit` (default 50, max 200) and `offset` |
-| manage | `acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys` | run health checks, enable or disable a key, add keys | `service`, `key_id`, `status`, `keys` |
+| manage | `acnologia_check_keys`, `acnologia_set_key_status`, `acnologia_add_keys` | run health checks, enable or disable a key, add keys (new keys are checked by a background job named by `check_job_id`) | `service`, `key_id`, `status`, `keys` |
 
 `acnologia_list_services` and `acnologia_list_keys` return their items (`services` or `keys`) with `total`, `count`, `offset`, `has_more` and `next_offset`: pass `next_offset` as `offset` for the next page. Every built in tool states `readOnlyHint`, `destructiveHint` and `openWorldHint` (only `acnologia_proxy_request`, `acnologia_call_tool` and `acnologia_set_key_status` are marked destructive) and has a top level `title`. `initialize` answers with the client's protocol version when the server speaks it (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`), else `2025-06-18`. Errors name the tool that helps next, such as `acnologia_list_services` for an unknown service.
 
@@ -643,7 +643,7 @@ claude mcp add --transport http acnologia-control http://localhost:8080/mcp/cont
 
 Tools are listed as `acnologia_<name>` (`acnologia_list_keys`, `acnologia_call_service`); the old names without the prefix still call. Each tool calls the matching `/api/admin` route as you, so roles, validation and the audit log apply. Services are named by id, slug or name. Destructive tools (deletes, revokes, rotate, disconnect) do nothing at first and say what would happen; call again with `confirm: true` to do it (add `?confirm=off` to the URL when your client asks the user itself). `call_service` `{service, method, path, query, body}` calls a provider through the proxy as an app named `Control MCP` (made on first use, admin role needed), so keys rotate and never reach you. Read `service_guide` (or `provider_guide`) first: endpoints, params, example bodies and limits; `list_service_examples` gives ready arguments. `write_provider_guide` has the AI write a missing guide. `forward_proxy_setup` (admin, read) returns the forward proxy setup for every service, as `GET /api/admin/forward-proxy` does; `rotate_forward_proxy_ca` replaces its CA.
 
-Groups: `overview`, `services`, `keys`, `apps`, `providers`, `call`, `ai`, `routing`, `sharing`, `refresh` (on by default), and `admin`, `secrets`, `raw` (off). Pick with `?groups=services,keys` or `all`, drop tools with `exclude=` (either name form), and list only reads with `read_only=1`. The same choices work as headers `X-Acnologia-MCP-Groups`, `X-Acnologia-MCP-Exclude`, `X-Acnologia-MCP-Read-Only` and `X-Acnologia-MCP-Confirm`. List tools (`list_keys`, `list_services`, `list_events`, `list_apps`, `list_providers`, `search` and the other lists) return one page: pass `limit` and `offset`, and read `total`, `has_more` and `next_offset` (pass it as `offset` for the next page). `whoami`, `search` and most list tools declare an `outputSchema`. Results are capped at 64 KB: list tools take `summary: true` for counts and the first rows, and cut a page that would not fit. A failed call carries `structuredContent` `{code, message, status, hint}`. `checklist` says what is left to set up on a new server and `quickstart` adds a provider, its keys and an app in one call. Every route is described at `/api/openapi.json`. Resources: `acnologia://overview`, `acnologia://services`, `acnologia://docs/{slug}`, `acnologia://llms-full.txt`.
+Groups: `overview`, `services`, `keys`, `apps`, `providers`, `call`, `ai`, `routing`, `sharing`, `refresh` (on by default), and `admin`, `secrets`, `raw` (off). Pick with `?groups=services,keys` or `all`, drop tools with `exclude=` (either name form), and list only reads with `read_only=1`. The same choices work as headers `X-Acnologia-MCP-Groups`, `X-Acnologia-MCP-Exclude`, `X-Acnologia-MCP-Read-Only` and `X-Acnologia-MCP-Confirm`. List tools (`list_keys`, `list_services`, `list_events`, `list_apps`, `list_providers`, `search` and the other lists) return one page: pass `limit` and `offset`, and read `total`, `has_more` and `next_offset` (pass it as `offset` for the next page). `whoami`, `search` and most list tools declare an `outputSchema`. Results are capped at 64 KB: list tools take `summary: true` for counts and the first rows, and cut a page that would not fit. A failed call carries `structuredContent` `{code, message, status, hint}`. `checklist` says what is left to set up on a new server and `quickstart` adds a provider, its keys and an app in one call. `list_events` and `list_audit` take the cursors and filters of their routes (`after_id`, `before_id`, `since`, `app_id`, `token_id`; `via`, `client` and `action` for the audit log), and `next_cursor` passed back as `after_id` reads only what is new. `check_all_keys`, `check_service_keys`, `sync_service_mcp` and `sync_peer` take `async: true` and answer with a job id; `get_job` and `list_jobs` read jobs. Access controls have their own tools: `app_controls`, `set_token_limits`, `set_tag_budgets`, `tag_usage`, `list_deny_rules`, `add_deny_rule`, `delete_deny_rule`, `update_app_token` (a token's name, limits and pinned tags; `create_app_token` takes limits and pinned tags too), `get_spend_ceiling` and `set_spend_ceiling`. `try_service` runs one request as an app the way the dashboard's Try it panel does, and `demo_status`, `load_demo` and `remove_demo` manage the demo data. Every route is described at `/api/openapi.json`. Resources: `acnologia://overview`, `acnologia://services`, `acnologia://docs/{slug}`, `acnologia://llms-full.txt`.
 
 ## SDKs
 
@@ -1074,7 +1074,7 @@ Each proxied response then updates the key's quota. When the provider reports 0 
 
 A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches successful GET responses up to 1 MB in memory, keyed by path, sorted query and `Accept`. Hits cost no quota and add `X-Acnologia-Cache: hit`. Misses say `miss`; uncacheable responses say `bypass`. Acnologia never caches responses made with hidden or restricted keys, responses marked `no-store` or `private`, or bodies that contain the key. Send `Cache-Control: no-cache` to skip the cache for one request. `ACNOLOGIA_CACHE_MB` sets the memory cap (default 64, 0 turns caching off).
 
-`Idempotency-Key` works on any method. The first final response is stored per token for 10 minutes and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice. Answers of 408, 425, 429 and 5xx are not stored, so a retry after them goes upstream again. A retry that arrives while the first request is still running gets 409 `idempotency_in_progress`, and the same key with a different body gets 422 `idempotency_key_reused`.
+`Idempotency-Key` works on any method. The first final response is stored per token for 24 hours, in the database so it survives a restart, and replayed with `Idempotent-Replayed: true`, so a retried POST does not spend twice. An answer over 4 MB, or an event stream, is delivered once and a retry gets 422 `idempotency_unreplayable`. Answers of 408, 425, 429 and 5xx are not stored, so a retry after them goes upstream again. A retry that arrives while the first request is still running gets 409 `idempotency_in_progress`, and the same key with a different body gets 422 `idempotency_key_reused`.
 
 ## Safe admin changes: dry runs, Idempotency-Key, the trash, backups
 
@@ -1099,7 +1099,7 @@ The group's strategy picks which member goes first: `priority` (the listed order
 
 ## Provider rotation
 
-A service with `rotation` on (`fallback` or `round_robin`) shares its requests with the other services, also with rotation on, that serve the same endpoint: services of the same provider on its plain base URL with the same path, or services of providers whose catalog lists an entry of the same name (`/~amazon-scraper/products/details` on Omkar Cloud and on a self-hosted scraper server). Each service gets the path in its own form. `fallback` tries the named service first; `round_robin` starts each request at the next service. Acnologia moves on under the same rules as a group, and `X-Acnologia-Service` names the service that answered. An app only reaches services it may use, and a share's token never rotates.
+A service with `rotation` on (`fallback` or `round_robin`) shares its requests with the other services, also with rotation on, that serve the same endpoint: services of the same provider on its plain base URL with the same path, or services of providers whose catalog lists an entry of the same name (`/~amazon-scraper/products/details` on Omkar Cloud and on a self-hosted scraper server). Each service gets the path in its own form. `fallback` tries the named service first; `round_robin` starts each request at the next service. Acnologia moves on under the same rules as a group, and `X-Acnologia-Service` names the service that answered. An app only reaches services it may use, a service one of its deny rules covers drops out of the rotation, and a share's token never rotates.
 
 ## Shared keys
 
@@ -1145,7 +1145,7 @@ Send `X-Acnologia-Meta: customer=cust_A,workspace=w1` (up to 5 pairs; keys `a-z 
 
 ### Deny rules
 
-An app's deny rules block matching requests with 403 `denied_by_rule`, and the answer's `rule` names the rule. A rule has a method (or `*`), a service slug or a host, and a path prefix compared after decoding and cleaning the path. Upstream MCP tools match as `POST /tools/<tool name>`.
+An app's deny rules block matching requests with 403 `denied_by_rule`, and the answer's `rule` names the rule. A rule has a method (or `*`), a service slug or a host, and a path prefix compared after decoding and cleaning the path. Upstream MCP tools match as `POST /tools/<tool name>`. Provider rotation skips a service a rule covers, so it never routes around one.
 
 ## Egress proxies
 
@@ -1288,7 +1288,21 @@ acn breaker serpapi --reset
 acn usage 3
 acn services --json
 acn logout                                     # revokes the token, then forgets the server
+acn events --follow --json                     # one JSON event per line as they happen
+acn events --after 1234                        # only events after a cursor, oldest first
+acn audit --via control_mcp --since 24h        # what agents changed today
+acn keys check --all --async                   # start a background check job
+acn jobs 12 --wait                             # wait for it and print the result
+acn limits billing --daily-budget 2            # every token of app billing gets $2 a day
+acn limits billing --token ci --pin customer=cust_A
+acn tags billing --budget customer --daily-budget 2
+acn deny add billing --method POST --service openai --path /v1/files
+acn ceiling set 50                             # server wide daily spend ceiling
+acn try serpapi '/search.json?q=coffee'        # one request through the proxy
+acn demo load                                  # a fake provider for a first call
 ```
+
+Every request sends `User-Agent: acn/<version>`, and the audit log records it as `via: cli` with that client.
 
 The CLI stores servers per host in `acnologia/ctl.json` under the user config folder (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%AppData%` on Windows; mode 0600, folder 0700, and on Windows the profile folder's ACL). `ACNOLOGIA_URL` and `ACNOLOGIA_TOKEN` override it for one command, for CI. `acn contexts` lists saved servers and `acn use <host>` switches; `services`, `keys <service>` and `cache purge <service>` round out the commands, and `--json` prints raw JSON for `whoami`, `status`, `services`, `keys`, `events` and `usage`. Every command also works as `acnologia ctl <command>` from the server binary.
 

@@ -299,6 +299,9 @@ type App struct {
 	// TokenReadOnly is true when the current request authenticated with a
 	// read-only app token.
 	TokenReadOnly bool `json:"-"`
+	// OAuthGrantID is the OAuth grant the current request authenticated
+	// with, when it came with an OAuth access token instead of an app token.
+	OAuthGrantID string `json:"-"`
 	// ShareID is set on an app that backs a share to another server. Such
 	// apps are managed on the Sharing page, not the Apps page.
 	ShareID *string `json:"share_id,omitempty"`

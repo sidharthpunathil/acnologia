@@ -350,13 +350,19 @@ func buildCtlTools() []ctlTool {
 			Desc:  "Requests, errors and spend per day, service and app over the last days, plus AI spend.",
 			Props: map[string]any{"days": iProp("Days to cover, default 30")}, Query: []string{"days"}},
 		{Name: "list_events", Title: "List events", Group: "overview", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/events",
-			Desc: "Recent request and health check events, newest first, paging through the newest 500.",
+			Desc: "Request and health check events, newest first, paging through up to 500 of them. To follow new events, keep next_cursor and call again with after_id set to it: " +
+				"you get only the events after it, oldest first, and a new next_cursor.",
 			Props: map[string]any{
-				"service": sProp("Only this service: id, slug or name"),
-				"key_id":  iProp("Only this key"),
-				"kind":    sProp("Event kind: proxy, lease, rate_limited, quota_exhausted, invalid, error or health"),
+				"service":   sProp("Only this service: id, slug or name"),
+				"key_id":    iProp("Only this key"),
+				"app_id":    iProp("Only this app"),
+				"token_id":  iProp("Only this app token"),
+				"kind":      sProp("Event kind: proxy, lease, rate_limited, quota_exhausted, invalid, error, health or try"),
+				"after_id":  iProp("Only events after this id, oldest first: pass next_cursor from the last call (0 starts from the oldest)"),
+				"before_id": iProp("Only events before this id, newest first, to read further back"),
+				"since":     sProp("Only events since this time: RFC 3339, Unix seconds, or a duration back from now such as 15m or 24h"),
 			},
-			Query: []string{"service", "key_id", "kind"}, Rename: map[string]string{"service": "service_id"}},
+			Query: []string{"service", "key_id", "app_id", "token_id", "kind", "after_id", "before_id", "since"}, Rename: map[string]string{"service": "service_id"}},
 		{Name: "settings_summary", Title: "Server settings", Group: "overview", Kind: ctlRead, Role: a, Method: get, Path: "/api/admin/settings",
 			Desc: "The server's configuration from its environment, with secrets shown only as set or not set."},
 		{Name: "whoami", Title: "Who am I", Group: "overview", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/me",
@@ -482,14 +488,17 @@ func buildCtlTools() []ctlTool {
 		{Name: "list_app_tokens", Title: "List app tokens", Group: "apps", Kind: ctlRead, Role: m, Method: get, Path: "/api/admin/apps/{app_id}/tokens",
 			Desc: "An app's tokens: id, name, prefix, created, last used, expiry and whether revoked. Values are never shown.", Props: map[string]any{"app_id": id("App id")}, Required: []string{"app_id"}},
 		{Name: "create_app_token", Title: "Create an app token", Group: "apps", Kind: ctlWrite, Role: a, Method: post, Path: "/api/admin/apps/{app_id}/tokens",
-			Desc: "Add a named token to an app; its other tokens keep working. Set read_only=true when an app or teammate only needs read-only access. The token is in the result, shown once.",
+			Desc: "Add a named token to an app; its other tokens keep working. Set read_only=true when an app or teammate only needs read-only access. " +
+				"limits gives the token a cap of its own inside the app's, and pinned_tags fixes caller tags on every call it makes. The token is in the result, shown once.",
 			Props: map[string]any{
 				"app_id":          id("App id"),
 				"name":            sProp("What the token is for, such as ci, staging or a teammate's name"),
 				"expires_in_days": iProp("Days until it expires; omit for no expiry"),
 				"read_only":       bProp("When true, the token can only make GET/HEAD proxy calls and use read-only MCP tools (cannot lease raw keys)"),
+				"limits":          tokenLimitsIn,
+				"pinned_tags":     pinnedTagsIn,
 			},
-			Required: []string{"app_id", "name"}, Body: []string{"name", "expires_in_days", "read_only"}},
+			Required: []string{"app_id", "name"}, Body: []string{"name", "expires_in_days", "read_only", "limits", "pinned_tags"}},
 		{Name: "revoke_app_token", Title: "Revoke an app token", Group: "apps", Kind: ctlDestructive, Role: a, Method: del, Path: "/api/admin/apps/{app_id}/tokens/{token_id}",
 			Desc:  "Revoke one token of an app; it stops working at once and the app's other tokens keep working.",
 			Props: map[string]any{"app_id": id("App id"), "token_id": id("Token id from list_app_tokens")}, Required: []string{"app_id", "token_id"},
@@ -795,7 +804,21 @@ func buildCtlTools() []ctlTool {
 				return fmt.Sprintf("delete user %s (%s)", argStr(u, "email"), argStr(u, "role")), nil
 			}},
 		{Name: "list_audit", Title: "Audit log", Group: "admin", Kind: ctlRead, Role: sa, Method: get, Path: "/api/admin/audit",
-			Desc: "Who changed what, newest first, paging through the newest 1,000 entries."},
+			Desc: "Who changed what and how it came in (via: dashboard, api, cli, control_mcp, app_mcp, assistant or oauth, with the token and client), newest first, paging through up to 1,000 entries. " +
+				"after_id with next_cursor reads only the newer entries, oldest first.",
+			Props: map[string]any{
+				"via":       eProp("Only changes that came in this way", "dashboard", "api", "cli", "control_mcp", "app_mcp", "assistant", "oauth"),
+				"token_id":  iProp("Only changes made with this admin API token or app token"),
+				"app_id":    iProp("Only changes made by this app"),
+				"client":    sProp("Only changes whose client contains this text, any case, such as claude-code, acn/ or oauth-grant/<grant id>"),
+				"action":    sProp("Only this action, such as key.create or app.deny_rule_add"),
+				"service":   sProp("Only changes to this service and its keys: id, slug or name"),
+				"after_id":  iProp("Only entries after this id, oldest first: pass next_cursor from the last call (0 starts from the oldest)"),
+				"before_id": iProp("Only entries before this id, newest first"),
+				"since":     sProp("Only entries since this time: RFC 3339, Unix seconds, or a duration back from now such as 24h"),
+			},
+			Query:  []string{"via", "token_id", "app_id", "client", "action", "service", "after_id", "before_id", "since"},
+			Rename: map[string]string{"service": "service_id"}},
 
 		// ---- secrets ----
 		{Name: "reveal_key", Title: "Reveal a key", Group: "secrets", Kind: ctlWrite, Role: sa, Method: post, Path: "/api/admin/keys/{key_id}/reveal",
@@ -815,5 +838,7 @@ func buildCtlTools() []ctlTool {
 				return "send " + strings.ToUpper(argStr(in, "method")) + " " + argStr(in, "path"), nil
 			}},
 	}
-	return withSafetyTools(append(append(tools, ctlFlexTools()...), ctlParityTools()...))
+	tools = append(append(append(tools, ctlFlexTools()...), ctlParityTools()...), ctlAgentTools()...)
+	withAsync(tools)
+	return withSafetyTools(tools)
 }

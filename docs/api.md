@@ -175,7 +175,8 @@ The path prefix matches itself and everything under it on whole segments
 makes it a plain string prefix (`/v1/file*`). Paths are compared after
 percent decoding (repeated, so `%252F` counts as `/`), with backslashes read
 as slashes, dot segments and repeated slashes cleaned, `;parameters`
-tried both kept and dropped, and case ignored. A group drops the members a
+tried both kept and dropped, and case ignored. Provider rotation skips a
+service a rule covers. A group drops the members a
 rule covers and is refused only when none are left. A capability is checked
 by its own slug, and each route again as it runs. An upstream MCP tool is
 matched as `POST /tools/<tool name>` on its service. Leases hand the key to
@@ -446,13 +447,18 @@ Every audit row says how the change came in:
 | `dashboard` | A signed in browser session. | none |
 | `assistant` | The dashboard's Assistant, during a chat turn. | none |
 | `api` | An admin API token, or an app token outside MCP. | the admin token, or the app token |
-| `cli` | The `acn` command line (it sends `X-Requested-With: acnologia-ctl`). | the admin token |
+| `cli` | The `acn` command line (it sends `X-Requested-With: acnologia-ctl` and `User-Agent: acn/<version>`; either one is enough). | the admin token |
 | `control_mcp` | The control MCP. | the admin token |
 | `app_mcp` | An app's MCP with an app token. | the app token |
-| `oauth` | An app's MCP with an OAuth access token. | none |
+| `oauth` | An app's MCP with an OAuth access token. | none; the grant is in `client` |
 
 `client` is the MCP client's `name/version` from `initialize` (remembered
-for the calls after it), else the `User-Agent`, cut to 120 characters.
+for the calls after it), else the `User-Agent`, cut to 120 characters. A
+call made with an OAuth access token has no app token id, so its `client`
+starts with `oauth-grant/<grant id>` and a space, then the client name
+(`oauth-grant/Xy12... claude-ai/1.0`). The grant id is the connection's
+`id` in `GET /api/oauth/apps/{id}/connections`, and
+`?client=oauth-grant/<grant id>` finds that connection's rows.
 `app_id` is set for app calls. Rows the server writes on its own (timers,
 background work) have an empty `via`.
 
@@ -499,7 +505,9 @@ created_by_email, via, created_at, started_at, finished_at}`. `status` is
 the key checks. `result` is what the call would have answered without the
 flag; a call that would have failed makes a failed job with its message in
 `error`. Kinds are `keys.check_all`, `keys.check`, `keys.check_new` (the
-check after adding keys), `peer.sync` and `service.mcp_sync`.
+check after adding keys, through the admin route or the app MCP's
+`add_keys`, whose result carries `check_job_id`), `peer.sync` and
+`service.mcp_sync`.
 
 A second request for the same work while yours is queued or running joins
 it and gets the same job. Two jobs run at a time and the rest wait. A job
@@ -583,8 +591,15 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
   50), `list_audit` 200, `list_ai_runs` 50, and the refresh lists and
   `search` 50 (at most 200). `filter` runs before paging, so `total` counts
   the matches, and `fields` keeps the paging fields. `list_events` pages
-  through the newest 500 events and `list_audit` through the newest 1,000
-  entries. `summary: true` returns counts instead of the whole list:
+  through up to 500 events and `list_audit` through up to 1,000 entries,
+  and both pass their route's cursors and filters through (see
+  [Reading events and the audit log](#reading-events-and-the-audit-log)):
+  `list_events` takes `service`, `key_id`, `app_id`, `token_id`, `kind`,
+  `after_id`, `before_id` and `since`; `list_audit` takes `via`,
+  `token_id`, `app_id`, `client`, `action`, `service`, `after_id`,
+  `before_id` and `since`. Their `next_cursor` covers the rows up to the
+  end of the page returned, so calling again with `after_id` set to it
+  skips nothing the page left out. `summary: true` returns counts instead of the whole list:
   `summarized: true`, `counts` by fields such as `status`, `kind`, `mode`
   and `provider` over every match, and only the first 5 rows (or `limit`
   rows), with the paging fields.
@@ -617,6 +632,30 @@ responses, protocol `2025-06-18`, or the client's own when it is one of
   apply, and the key never reaches the client. It needs the admin role. Turn
   the app off or limit it on the Apps page. `list_service_examples` returns
   a service's documented calls as ready `call_service` arguments.
+  `try_service` `{service, method, path, query, body, app_id, read_only}`
+  is the [Try it](#try-it) panel: it runs as `app_id` or the internal Try it
+  app and returns status, headers, latency and body. An object `body` is
+  sent as JSON text.
+- **Background jobs.** `check_all_keys`, `check_service_keys`,
+  `sync_service_mcp` and `sync_peer` take `async: true` and answer at once
+  with `{job_id, status, status_url, job}` (see [Jobs](#jobs)). `get_job`
+  `{job_id}` reads one job and `list_jobs` `{kind, status, limit, mine}`
+  lists them.
+- **Access controls** (the `apps` group). `app_controls` reads an app's
+  per-token default, tag budgets and deny rules in one call.
+  `set_token_limits` `{app_id, limits}` and `set_tag_budgets` `{app_id,
+  budgets}` replace them (`{}` and `[]` remove them), and `tag_usage`
+  `{app_id, days}` is the use per caller tag value. `list_deny_rules`,
+  `add_deny_rule` `{app_id, method, service, host, path_prefix, note}` and
+  `delete_deny_rule` `{app_id, rule_id}` manage deny rules; the delete asks
+  first. `create_app_token` takes `limits` and `pinned_tags`, and
+  `update_app_token` `{app_id, token_id, name, limits, pinned_tags}`
+  changes a token (`{}` clears limits or pinned tags). `get_spend_ceiling`
+  reads the server's daily spend ceiling and `set_spend_ceiling` `{usd}` or
+  `{reset: true}` saves it (superadmin).
+- **Demo data** (the `services` group, superadmin). `demo_status`,
+  `load_demo` `{force}` and `remove_demo` (asks first) call
+  [`/api/admin/demo`](#demo-data).
 
 Options go in the endpoint URL's query or in headers. The header wins when
 both are set:
@@ -630,12 +669,12 @@ both are set:
 
 | Group | Tools |
 |---|---|
-| `overview` | `overview`, `checklist`, `usage_report`, `list_events`, `settings_summary`, `whoami`, `health_settings`, `update_health_settings` |
-| `services` | `list_services`, `get_service`, `create_service`, `update_service`, `delete_service`, `quickstart`, `service_breaker`, `reset_breaker`, `cache_stats`, `purge_cache`, `check_service_keys`, `get_service_mcp`, `sync_service_mcp`, `set_service_mcp_tool_access`, `service_rotation`, `set_rotation`, `fetch_service_logo`, `set_service_logo`, `delete_service_logo`, `fill_service_logos` |
+| `overview` | `overview`, `checklist`, `usage_report`, `list_events`, `settings_summary`, `whoami`, `health_settings`, `update_health_settings`, `list_jobs`, `get_job` |
+| `services` | `list_services`, `get_service`, `create_service`, `update_service`, `delete_service`, `quickstart`, `service_breaker`, `reset_breaker`, `cache_stats`, `purge_cache`, `check_service_keys`, `get_service_mcp`, `sync_service_mcp`, `set_service_mcp_tool_access`, `service_rotation`, `set_rotation`, `fetch_service_logo`, `set_service_logo`, `delete_service_logo`, `fill_service_logos`, `demo_status`, `load_demo`, `remove_demo` |
 | `keys` | `list_keys`, `key_details`, `add_keys`, `update_key`, `delete_key`, `check_key`, `check_all_keys`, `reset_key`, `shared_keys`, `link_service_keys`, `link_all_shared_keys`, `link_service_family` |
-| `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `rename_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp` |
+| `apps` | `list_apps`, `create_app`, `update_app`, `delete_app`, `rotate_app_token`, `list_app_tokens`, `create_app_token`, `rename_app_token`, `revoke_app_token`, `app_usage`, `get_app_mcp`, `update_app_mcp`, `update_app_token`, `app_controls`, `set_token_limits`, `set_tag_budgets`, `tag_usage`, `list_deny_rules`, `add_deny_rule`, `delete_deny_rule`, `get_spend_ceiling`, `set_spend_ceiling` |
 | `providers` | `list_providers`, `get_provider`, `provider_guide`, `write_provider_guide`, `validate_provider`, `create_provider`, `update_provider`, `delete_provider`, `rollback_provider`, `live_check_provider`, `fetch_provider_logo`, `set_provider_logo`, `delete_provider_logo`, `check_provider_offers` |
-| `call` | `call_service`, `service_guide`, `list_service_examples`, `forward_proxy_setup`, `rotate_forward_proxy_ca` |
+| `call` | `call_service`, `service_guide`, `list_service_examples`, `forward_proxy_setup`, `rotate_forward_proxy_ca`, `try_service` |
 | `ai` | `ai_status`, `ai_models`, `update_ai_models`, `set_ai_price`, `reset_ai_price`, `ai_rules`, `update_ai_rules`, `ai_assist`, `start_provider_build`, `list_ai_runs`, `get_ai_run`, `cancel_ai_run`, `publish_ai_run`, `delete_ai_run`, `clear_ai_runs`, and the Assistant: `assistant_threads`, `assistant_thread`, `assistant_new_thread`, `assistant_send`, `assistant_confirm`, `assistant_answer`, `assistant_steer`, `assistant_stop`, `assistant_compact`, `delete_assistant_thread` |
 | `routing` | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `test_webhook`, `list_egress`, `create_egress`, `update_egress`, `delete_egress`, `test_egress`, `list_groups`, `create_group`, `update_group`, `delete_group`, `list_capabilities`, `get_capability`, `create_capability`, `update_capability`, `delete_capability`, `try_capability` |
 | `sharing` | `get_identity`, `update_identity`, `list_shares`, `get_share`, `share_analytics`, `create_share`, `update_share`, `pause_share`, `resume_share`, `revoke_share`, `extend_share`, `share_invite`, `share_claim_link`, `list_peers`, `preview_peer`, `connect_peer`, `sync_peer`, `disconnect_peer`, `list_peer_providers`, `pull_peer_provider` |

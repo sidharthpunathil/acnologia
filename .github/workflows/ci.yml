@@ -22,9 +22,11 @@
 #   go-sdk      sdk/go          python-sdk  sdk/python
 #   ruby-sdk    sdk/ruby        ts-sdk      sdk/typescript
 #   (and the c, cpp, elixir, haskell, lua and zig SDKs under sdk/)
-#   web         web/
+#   web         web/ (and the key paste cases web tests share with Go)
 #   windows     the build tooling (build.ps1, install.ps1, go.mod, the web
 #               lockfile), full runs only
+# The secrets job runs on every push and scans the commits since the last
+# passing run (the whole history on a manual run or a push it cannot diff).
 # Editing this file does not run anything by itself (lint it locally with
 # actionlint). A manual run, or a push it cannot diff, runs them all. A skipped job counts as passed for
 # branch protection. A push that only changes docs, Markdown, the video or
@@ -32,6 +34,9 @@
 #
 # checkout and setup-go are pinned to the same commits as the release
 # workflows; the other first-party actions to a major version.
+# golangci-lint-action is pinned to a commit, and gitleaks is a release
+# binary checked against its SHA-256. `make check` runs the same checks
+# locally.
 name: ci
 
 on:
@@ -71,6 +76,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       full: ${{ steps.diff.outputs.full }}
+      base: ${{ steps.diff.outputs.base }}
       go: ${{ steps.diff.outputs.go }}
       docs: ${{ steps.diff.outputs.docs }}
       gosdk: ${{ steps.diff.outputs.gosdk }}
@@ -124,6 +130,9 @@ jobs:
             files=$(git diff --name-only "$range")
             printf 'Changed files:\n%s\n' "$files"
           fi
+          # The secrets job scans from here; empty means the whole history.
+          if [ "$all" = true ]; then base=""; else base="$from"; fi
+          echo "base=$base" | tee -a "$GITHUB_OUTPUT"
           # The docs copied into the server (make llms) are not Go code.
           embedded='^server/internal/(docsmd/(files|assets)/|llmstxt/.*\.txt$)'
           code=$(grep -vE "$embedded" <<<"$files" || true)
@@ -142,7 +151,7 @@ jobs:
           area lua-sdk "$files" '^sdk/lua/'
           area zig-sdk "$files" '^sdk/zig/'
           area typescript "$files" '^sdk/typescript/'
-          area web "$files" '^web/'
+          area web "$files" '^web/|^server/internal/keyparse/testdata/'
           area windows "$files" '^scripts/|^install\.ps1$|^setup\.ps1$|^Makefile$|^server/go\.(mod|sum)$|^server/cmd/|^web/(package\.json|pnpm-lock\.yaml|vite\.config\.ts)$'
           # The docs tests alone, when the docs changed but no Go code did
           # (go runs every test anyway).
@@ -174,6 +183,25 @@ jobs:
       - name: Vet
         working-directory: server
         run: go vet ./...
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        working-directory: server
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            printf 'Run gofmt -w on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      # staticcheck, govet, errcheck (non-test code), ineffassign and unused,
+      # set up in server/.golangci.yml. The action caches its analysis.
+      - name: Lint
+        if: runner.os == 'Linux'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          working-directory: server
 
       # -race only in a full run: it is several times slower (internal/api
       # takes about 5 minutes with it). It needs cgo and a C toolchain, which
@@ -497,7 +525,7 @@ jobs:
           pnpm typecheck
 
   web:
-    name: dashboard build
+    name: dashboard
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
@@ -509,12 +537,56 @@ jobs:
         with:
           node-version: 22
 
-      - name: Build
+      - name: Install
         working-directory: web
         run: |
           npm install -g pnpm@10.24.0
           pnpm install --frozen-lockfile
-          pnpm build
+
+      - name: Unit tests
+        working-directory: web
+        run: pnpm test
+
+      # Type checks, then builds.
+      - name: Build
+        working-directory: web
+        run: pnpm build
+
+  # Secrets in the commits since the last passing run, with the default
+  # gitleaks rules and the fake test keys allowed (.github/gitleaks.toml).
+  secrets:
+    name: secret scan
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          tarball="gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/$tarball"
+          echo "$SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Scan
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -n "$BASE" ]; then
+            echo "Scanning $BASE..$SHA"
+            gitleaks git --no-banner --redact --config .github/gitleaks.toml --log-opts="$BASE..$SHA" .
+          else
+            echo "Scanning the whole history"
+            gitleaks git --no-banner --redact --config .github/gitleaks.toml .
+          fi
 
   # The Windows developer path: scripts/build.ps1 instead of make, the
   # dashboard built by pnpm on Windows, and both binaries started once.

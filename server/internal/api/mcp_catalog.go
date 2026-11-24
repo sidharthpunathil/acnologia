@@ -223,7 +223,7 @@ func sourceTool(sv *store.Service, spec *providers.Spec, src toolSource, name st
 	}
 }
 
-const idempotencyArgDesc = "Optional: sent as the Idempotency-Key header. A retry with the same key within 10 minutes gets the first answer back instead of calling the provider again (when the server's response cache is on). Use one per logical request on calls that create or charge."
+const idempotencyArgDesc = "Optional: sent as the Idempotency-Key header. A retry with the same key within 24 hours gets the first answer back instead of calling the provider again. Use one per logical request on calls that create or charge."
 
 // hostsText names the provider host a path is on ("/~tiktok-scraper/..."),
 // so a search for the product finds its tools.
