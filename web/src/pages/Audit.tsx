@@ -16,6 +16,30 @@ import { EmptyState } from "@/components/acn/empty-state";
 import { PageHeader } from "@/components/acn/page-header";
 import { PageSkeleton } from "@/components/acn/page-skeleton";
 import { PulseArt, SearchArt } from "@/components/foundations/illustrations";
+import type { AuditEntry } from "@/lib/types";
+
+/** Who acted beyond the person: how the call came in, the token and the client. */
+type Attributed = AuditEntry & { via?: string; client?: string; token_id?: number | null; app_id?: number | null };
+
+const VIA_LABEL: Record<string, string> = {
+  dashboard: "dashboard",
+  api: "API",
+  cli: "CLI",
+  control_mcp: "control MCP",
+  app_mcp: "app MCP",
+  assistant: "Assistant",
+  oauth: "OAuth MCP",
+};
+
+/** "via control MCP, token 3, claude-code/2.1", or "" for the server's own work. */
+function attribution(a: Attributed): string {
+  const parts: string[] = [];
+  if (a.via) parts.push(`via ${VIA_LABEL[a.via] ?? a.via}`);
+  if (a.token_id) parts.push(`token ${a.token_id}`);
+  if (a.app_id) parts.push(`app ${a.app_id}`);
+  if (a.client) parts.push(a.client);
+  return parts.join(", ");
+}
 
 function actionColor(action: string): ChipColor {
   if (action.includes("reveal")) return "yellow";
@@ -54,7 +78,9 @@ export function AuditPage() {
   const shown = useMemo(() => {
     const n = q.trim().toLowerCase();
     if (!n) return audit;
-    return audit.filter((a) => [a.user_email, a.action, a.target, a.detail].some((f) => f?.toLowerCase().includes(n)));
+    return audit.filter((a) =>
+      [a.user_email, a.action, a.target, a.detail, attribution(a as Attributed)].some((f) => f?.toLowerCase().includes(n)),
+    );
   }, [audit, q]);
 
   // A refresh or a filter can leave fewer pages than the one we were on.
@@ -81,7 +107,7 @@ export function AuditPage() {
           setQ(v);
           setPage(1);
         }}
-        placeholder="Filter by person, action or target"
+        placeholder="Filter by person, action, target or client"
         aria-label="Filter the audit log"
         enterKeyHint="search"
         className="mb-5 max-w-md"
@@ -127,6 +153,11 @@ export function AuditPage() {
                       {a.detail && (
                         <div className="line-clamp-2 text-caption-1-regular wrap-anywhere text-text-secondary" title={a.detail}>
                           {a.detail}
+                        </div>
+                      )}
+                      {attribution(a as Attributed) && (
+                        <div className="truncate font-mono text-caption-2-regular text-text-tertiary" title={attribution(a as Attributed)}>
+                          {attribution(a as Attributed)}
                         </div>
                       )}
                     </TableCell>
