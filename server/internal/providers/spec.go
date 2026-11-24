@@ -32,6 +32,43 @@ type Spec struct {
 	// MCP configures an upstream Streamable HTTP MCP server offered by this
 	// provider (see mcp.go).
 	MCP *MCPConfig `json:"mcp,omitempty"`
+	// Affinity names what the provider keeps on the account that created
+	// it (a job, a run, a file), so later requests for it use the same key
+	// (see affinity.go). Optional.
+	Affinity []AffinityRule `json:"affinity,omitempty"`
+}
+
+// AffinityRule binds a resource the provider creates to the key that
+// created it. When a request matches Create and succeeds, the id at the
+// JSON path ID in the answer is recorded for the key; a later request that
+// matches one of Follow and names that id uses that key only.
+type AffinityRule struct {
+	Create AffinityCreate   `json:"create"`
+	ID     string           `json:"id"`
+	Follow []AffinityFollow `json:"follow"`
+	// Related are JSON paths of more ids in the answers to Create and
+	// Follow requests that live on the same account, such as a finished
+	// batch's output file. Optional.
+	Related []string `json:"related,omitempty"`
+}
+
+// AffinityCreate is the request that creates a resource. Path is matched
+// like an offer's: a prefix, * for one segment, and $ at the end for an
+// exact path.
+type AffinityCreate struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+}
+
+// AffinityFollow is a request about a created resource. Path holds {id} as
+// one whole segment where the resource id goes, and matches longer paths
+// too (/v1/predictions/{id} covers /v1/predictions/{id}/cancel) unless it
+// ends with $. Or Body is the JSON path in the request body that holds the
+// id, and Path has no {id}. An empty Method matches any method.
+type AffinityFollow struct {
+	Method string `json:"method,omitempty"`
+	Path   string `json:"path"`
+	Body   string `json:"body,omitempty"`
 }
 
 // Guide is a provider's usage guide, written for AI agents and developers.
@@ -289,6 +326,7 @@ func (s *Spec) Validate() []string {
 	s.validateGuide(add)
 	s.validateHosts(add)
 	s.validateMCP(add)
+	s.validateAffinity(add)
 	if qh := s.Quota.Headers; qh != nil {
 		if qh.Limit == "" && qh.Remaining == "" && qh.Reset == "" {
 			add("quota.headers needs at least one of limit, remaining or reset")
