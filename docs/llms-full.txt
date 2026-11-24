@@ -634,7 +634,7 @@ Apps and applications you write call the provider's own URL with Acnologia as th
 
 ### Control MCP
 
-`POST /mcp/control` is a separate MCP server for operating Acnologia itself (adding services and keys, making apps and tokens, reading usage, building providers, sharing). It takes an admin API token, never an app token: `Authorization: Bearer acnadm_...`, and acts as that token's owner with the lower of their role and the token scope. Tools the role cannot use are not listed.
+`POST /mcp/control` is a separate MCP server for operating Acnologia itself (adding services and keys, making apps and tokens, reading usage, building providers, sharing). It takes an admin API token, never an app token: `Authorization: Bearer acnadm_...`, and acts as that token's owner with the lower of their role and the token scope. A hosted client can sign in with OAuth instead (resource `/mcp/control`, scope `mcp:control`); the connection then acts as the person who approved it, with the scope they picked, and works on `/mcp/control` only. Tools the role cannot use are not listed.
 
 ```sh
 claude mcp add --transport http acnologia-control http://localhost:8080/mcp/control \
