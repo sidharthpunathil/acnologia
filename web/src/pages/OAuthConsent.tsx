@@ -4,6 +4,8 @@ import { RiCloseCircleLine, RiPlugLine } from "@remixicon/react";
 import { useAuth } from "@/stores/auth";
 import { errorMessage } from "@/lib/api";
 import { oauth, type OAuthRequestInfo } from "@/lib/oauth";
+import type { TokenScope } from "@/lib/ops";
+import { SCOPE_HELP } from "@/components/ApiTokens";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select, SelectItem } from "@/components/base/select/select";
@@ -35,10 +37,19 @@ type View =
   | { kind: "ask"; info: OAuthRequestInfo }
   | { kind: "leaving"; to: string; approved: boolean };
 
+/** What a control MCP connection can do at each scope, in plain words. */
+const CONTROL_RISK: Record<TokenScope, string> = {
+  read: "It can see your services, keys, apps and activity, but not change them.",
+  write: "This connection can change your server: add and delete services, keys and apps, and change providers.",
+  admin: "This connection can change your server and everyone's access: hidden keys, secret reveals, users and the audit log.",
+};
+
 /**
  * /oauth/consent?request=<id>: an MCP client (claude.ai, ChatGPT, Claude
- * Code, Cursor) asks to connect. The person picks the app it acts as and
- * whether it is read only, then the browser goes back to the client.
+ * Code, Cursor) asks to connect. For /mcp the person picks the app it acts
+ * as and whether it is read only. For the control MCP (/mcp/control) it acts
+ * as the person, and they pick the scope, read by default. Then the browser
+ * goes back to the client.
  */
 export function OAuthConsentPage() {
   const [params] = useSearchParams();
@@ -49,6 +60,7 @@ export function OAuthConsentPage() {
   const [newName, setNewName] = useState("");
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
+  const [scope, setScope] = useState<TokenScope>("read");
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
 
@@ -77,14 +89,19 @@ export function OAuthConsentPage() {
   const decide = async (approve: boolean) => {
     if (view.kind !== "ask") return;
     setActionErr(null);
-    if (approve && choice === NEW_APP && !newName.trim()) {
+    const control = view.info.request.kind === "control";
+    if (approve && !control && choice === NEW_APP && !newName.trim()) {
       setNameErr("Name the new app.");
       return;
     }
     setBusy(approve ? "approve" : "deny");
     try {
       if (approve) {
-        const body = choice === NEW_APP ? { new_app: newName.trim(), read_only: readOnly } : { app_id: Number(choice), read_only: readOnly };
+        const body = control
+          ? { scope }
+          : choice === NEW_APP
+            ? { new_app: newName.trim(), read_only: readOnly }
+            : { app_id: Number(choice), read_only: readOnly };
         leave((await oauth.approve(id, body)).redirect, true);
       } else {
         leave((await oauth.deny(id)).redirect, false);
@@ -125,13 +142,21 @@ export function OAuthConsentPage() {
       </Card>
     );
   } else {
-    const { request: req, apps, can_approve } = view.info;
+    const { request: req, apps, scopes, can_approve } = view.info;
+    const control = req.kind === "control";
     body = (
-      <Card icon={icon} title={`Connect ${req.client_name}`}>
-        <p className="mt-1.5 text-body-regular text-text-secondary">
-          <span className="wrap-anywhere text-text-primary">{req.client_name}</span> wants to use this server's MCP tools as one of your apps. Approve
-          only if you just started this from that app.
-        </p>
+      <Card icon={icon} title={control ? `Let ${req.client_name} manage this server` : `Connect ${req.client_name}`}>
+        {control ? (
+          <p className="mt-1.5 text-body-regular text-text-secondary">
+            <span className="wrap-anywhere text-text-primary">{req.client_name}</span> wants the control MCP: the dashboard's tools, acting as you.
+            Approve only if you just started this from that app.
+          </p>
+        ) : (
+          <p className="mt-1.5 text-body-regular text-text-secondary">
+            <span className="wrap-anywhere text-text-primary">{req.client_name}</span> wants to use this server's MCP tools as one of your apps.
+            Approve only if you just started this from that app.
+          </p>
+        )}
 
         <dl className="mt-5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-body-regular">
           {req.verified_domain && (
@@ -148,7 +173,33 @@ export function OAuthConsentPage() {
           <dd className="wrap-anywhere text-text-primary">{user?.email}</dd>
         </dl>
 
-        {can_approve ? (
+        {control && can_approve ? (
+          <div className="mt-6 flex flex-col gap-4">
+            <Select
+              label="Access"
+              selectedKey={scope}
+              onSelectionChange={(k) => k != null && setScope(k as TokenScope)}
+              className="w-full"
+              isDisabled={!!busy || scopes.length < 2}
+            >
+              {scopes.map((s) => (
+                <SelectItem key={s} id={s}>
+                  {s}
+                </SelectItem>
+              ))}
+            </Select>
+            <p className="-mt-2 text-caption-1-regular text-text-secondary">{SCOPE_HELP[scope]}</p>
+            <Callout tone={scope === "read" ? "info" : "warning"}>{CONTROL_RISK[scope]}</Callout>
+            <p className="text-caption-1-regular text-text-secondary">
+              It can never do more than your own role, and stops if your role drops below this scope. Revoke it any time under API tokens on your
+              account page.
+            </p>
+          </div>
+        ) : control ? (
+          <div className="mt-6">
+            <Callout tone="warning">Sign in to the dashboard yourself to approve this, or deny it.</Callout>
+          </div>
+        ) : can_approve ? (
           <div className="mt-6 flex flex-col gap-4">
             <Select
               label="Acts as app"

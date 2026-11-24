@@ -12,6 +12,7 @@ import { ButtonSpinner } from "@/components/base/spinner/spinner";
 import { PageHeader } from "@/components/acn/page-header";
 import { Section } from "@/components/acn/section";
 import { ApiTokens } from "@/components/ApiTokens";
+import { ControlConnections } from "@/components/ControlConnections";
 
 export function AccountPage() {
   useTitle("Account");
@@ -120,6 +121,7 @@ export function AccountPage() {
         </Section>
 
         <ApiTokens />
+        <ControlConnections />
       </div>
     </div>
   );
