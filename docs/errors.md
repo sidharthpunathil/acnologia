@@ -291,6 +291,14 @@ This Idempotency-Key was already used with a different request body.
 
 What to do: Use a new Idempotency-Key for a different request.
 
+### `idempotency_unreplayable`
+
+HTTP 422. Retry: no, not without a change.
+
+The first answer for this Idempotency-Key was over 4 MB or a stream, so it was delivered once and cannot be replayed.
+
+What to do: Treat the first call as done. Use a new Idempotency-Key only for a new logical request.
+
 ### `invalid_key`
 
 HTTP 401. Retry: no, not without a change.
@@ -298,6 +306,14 @@ HTTP 401. Retry: no, not without a change.
 The demo provider was called without a demo key.
 
 What to do: Call the demo service through /proxy/demo so Acnologia adds a demo key.
+
+### `key_unavailable_for_resource`
+
+HTTP 503. Retry: yes, after `retry_after_sec` when the error gives one.
+
+The job or file was created on one key, and that key cannot serve right now. Other keys would answer 404 for it.
+
+What to do: Retry after retry_after_sec. If the key was removed, the resource has to be created again.
 
 ### `lease_not_allowed`
 
