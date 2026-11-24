@@ -27,6 +27,7 @@ Key facts for agents:
 - `Authorization: Bearer acn_...` (preferred), or `X-Acnologia-Token: acn_...`.
 - Proxy only: query parameter `?acn_token=acn_...` for tools that only accept a URL.
 - Forward proxy: the token goes in the proxy URL, `http://app:acn_...@host:port` (sent as `Proxy-Authorization`).
+- MCP clients that sign in (claude.ai and ChatGPT connectors, Claude Code, Cursor): OAuth 2.1 with PKCE on `/mcp`. Discovery at `/.well-known/oauth-protected-resource/mcp`; an admin approves on the consent page and picks the app; the client then sends `Authorization: Bearer acno_...`, valid on `/mcp` only. See [MCP sign in](/docs/mcp-oauth.md).
 - Acnologia strips these before forwarding upstream.
 
 ## Consumer API
@@ -95,6 +96,7 @@ Every page of the docs is also served as raw Markdown. Fetch these when you need
 
 - [Overview](/docs/overview.md): what Acnologia does, quick start and features.
 - [HTTP API](/docs/api.md): consumer error codes, the forward proxy and every dashboard route with its required role.
+- [MCP sign in](/docs/mcp-oauth.md): connect claude.ai, ChatGPT, Claude Code or Cursor to `/mcp` with OAuth instead of an app token.
 - [Command line](/docs/cli.md): install the acn CLI, sign in through the browser, commands and CI variables.
 - [SDKs](/docs/sdks.md): the seventeen client libraries, how to install each today, the shared surface and running their tests.
 - [Configuration](/docs/configuration.md): environment variables, per service settings, self-hosting, Windows, the access password, backups and upgrading.
