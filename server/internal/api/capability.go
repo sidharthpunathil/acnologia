@@ -49,12 +49,18 @@ func capabilityGrants(r *http.Request, slug string) bool {
 // route: the provider had no key that worked, was out of quota or rate
 // limited, or failed on its side. A request the provider understood and
 // answered (2xx, or 400, 404, 422 and the like) is the answer.
-func capFallback(status int) bool {
-	switch status {
-	case 401, 402, 403, 408, 425, 429:
-		return true
+//
+// Moving on re-sends the request to another provider, so it follows the
+// rule in proxy_resend.go: when the route's provider may have done the work
+// (mayHaveRun: a 5xx, 408 or 425 from it, or a request lost in flight), it
+// moves on only if the route's request may be repeated (resend).
+func capFallback(status int, mayHaveRun, resend bool) bool {
+	switch {
+	case status == 401, status == 402, status == 403, status == 429,
+		status == 408, status == 425, status >= 500:
+		return resend || !mayHaveRun
 	}
-	return status >= 500
+	return false
 }
 
 // capInput reads the capability's params from the query or a JSON body,
@@ -336,10 +342,17 @@ func (s *Server) serveCapability(w http.ResponseWriter, r *http.Request, c *stor
 	tried := []capAttempt{}
 	var last *cappedRecorder
 	var lastSvc string
+	// The caller's Idempotency-Key goes to each route, so a route's answer
+	// is replayed on a retry and a provider can match its own idempotency.
+	var hdr map[string]string
+	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" {
+		hdr = map[string]string{"Idempotency-Key": k}
+	}
 	for _, cand := range orderRoutes(c.Slug, c.Strategy, cands) {
 		p := plans[cand.idx]
-		ctx := context.WithValue(r.Context(), capGrantKey{}, cand.sv.Slug)
-		rec, err := s.proxyCapture(ctx, r, cand.sv.Slug, p.method, p.path, p.query, p.body, nil, capResultLimit)
+		rep := &proxyReport{}
+		ctx := withProxyReport(context.WithValue(r.Context(), capGrantKey{}, cand.sv.Slug), rep)
+		rec, err := s.proxyCapture(ctx, r, cand.sv.Slug, p.method, p.path, p.query, p.body, hdr, capResultLimit)
 		if err != nil {
 			tried = append(tried, capAttempt{Service: cand.sv.Slug, Error: err.Error()})
 			continue
@@ -355,7 +368,7 @@ func (s *Server) serveCapability(w http.ResponseWriter, r *http.Request, c *stor
 		}
 		tried = append(tried, at)
 		last, lastSvc = rec, cand.sv.Slug
-		if capFallback(rec.Code) {
+		if capFallback(rec.Code, rep.mayHaveRun, resendable(p.method, r.Header)) {
 			continue
 		}
 		s.writeCapResult(w, c, cand.sv, p.rt, rec, tried, raw)

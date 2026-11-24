@@ -111,7 +111,18 @@ func (s *Server) sharedAs(ctx context.Context, a *store.App, sv *store.Service) 
 // its request or budget limits. Otherwise the request holds a place under
 // the limits until release, which the caller runs after recording usage.
 func (s *Server) appLimited(w http.ResponseWriter, r *http.Request, a *store.App, est float64) (release func(), limited bool) {
-	hit, release := s.admitApp(r.Context(), a, est)
+	hit, release, err := s.admit(r.Context(), a, est)
+	if err != nil {
+		// Limits that cannot be read are not limits that do not exist: the
+		// request waits rather than spends past a budget nobody could check.
+		retry := int(limitsRetry.Seconds())
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
+		writeJSON(w, 503, map[string]any{
+			"error":           apiError{Code: "limits_unavailable", Message: "could not read this app's limits, retry shortly"},
+			"retry_after_sec": retry,
+		})
+		return nil, true
+	}
 	if hit == nil {
 		return release, false
 	}
@@ -136,15 +147,34 @@ type admission struct {
 
 func noRelease() {}
 
-// admitApp returns the limit the app has reached, or nil, and tells webhooks
-// about it. Usage is recorded only once a request is served, so a request
-// that passes reserves one request and est dollars until release: without
-// that, a burst of concurrent requests would all see the same usage and pass
-// a limit that had room for one.
+// limitsRetry is the Retry-After of a request refused because the app's
+// limits or usage could not be read.
+const limitsRetry = 5 * time.Second
+
+// admitApp returns the limit the app would break with this request, or nil,
+// and tells webhooks about it. When the limits or usage cannot be read it
+// fails closed, with the limit "limits_unavailable".
 func (s *Server) admitApp(ctx context.Context, a *store.App, est float64) (*store.LimitHit, func()) {
+	hit, release, err := s.admit(ctx, a, est)
+	if err != nil {
+		return &store.LimitHit{Limit: "limits_unavailable", ResetAt: time.Now().Add(limitsRetry)}, nil
+	}
+	return hit, release
+}
+
+// admit is admitApp that returns a read error instead. Usage is recorded
+// only once a request is served, so a request that passes reserves one
+// request and est dollars until release: without that, a burst of
+// concurrent requests would all see the same usage and pass a limit that
+// had room for one. The check counts the request itself (store.AdmitLimits),
+// so the last request under a budget cannot overshoot it by its own cost.
+func (s *Server) admit(ctx context.Context, a *store.App, est float64) (*store.LimitHit, func(), error) {
 	l, err := s.Store.GetAppLimits(ctx, a.ID)
-	if err != nil || !l.Any() {
-		return nil, noRelease
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !l.Any()) {
+		return nil, noRelease, nil
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	v, _ := s.admitted.LoadOrStore(a.ID, &admission{})
 	ad := v.(*admission)
@@ -153,13 +183,13 @@ func (s *Server) admitApp(ctx context.Context, a *store.App, est float64) (*stor
 	now := time.Now()
 	u, err := s.Store.GetAppUsage(ctx, a.ID, now)
 	if err != nil {
-		return nil, noRelease
+		return nil, nil, err
 	}
 	u.TodayRequests += ad.reqs
 	u.MonthRequests += ad.reqs
 	u.TodayCost += ad.cost
 	u.MonthCost += ad.cost
-	hit := store.CheckLimits(l, u, now)
+	hit := store.AdmitLimits(l, u, now, est)
 	if hit == nil {
 		ad.reqs++
 		ad.cost += est
@@ -171,23 +201,27 @@ func (s *Server) admitApp(ctx context.Context, a *store.App, est float64) (*stor
 				ad.cost -= est
 				ad.mu.Unlock()
 			})
-		}
+		}, nil
 	}
-	if hit != nil && s.Pool.Notify != nil {
+	if s.Pool.Notify != nil {
 		s.Pool.Notify.Emit(notify.Event{Type: notify.AppLimit, AppID: a.ID, App: a.Name,
 			Message: fmt.Sprintf("app %q reached its %s limit, it resets %s", a.Name, strings.ReplaceAll(hit.Limit, "_", " "), hit.ResetAt.Format(time.RFC3339)),
 			Data:    map[string]any{"limit": hit.Limit, "reset_at": hit.ResetAt}})
 	}
-	return hit, nil
+	return hit, nil, nil
 }
 
-// idempotencyKey scopes a client's Idempotency-Key to the app, target and request line.
-func idempotencyKey(r *http.Request, appID int64, slug, path string) string {
+// idempotencyKey scopes a client's Idempotency-Key to the app, the token it
+// authenticated with (the claimants of one share link share an app but not
+// a token), the target and the request line. The body is checked apart,
+// through the entry's fingerprint, so a reused key with another body is an
+// error rather than a new request.
+func idempotencyKey(r *http.Request, a *store.App, slug, path string) string {
 	k := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if k == "" || len(k) > 200 {
 		return ""
 	}
-	return fmt.Sprintf("%s%s|%s|%s?%s|%s", idempotencyPrefix(appID), slug, r.Method, path, cacheQuery(r), k)
+	return fmt.Sprintf("%st%d|%s|%s|%s?%s|%s", idempotencyPrefix(a.ID), a.TokenID, slug, r.Method, path, cacheQuery(r), k)
 }
 
 // idempotencyPrefix starts every idempotency entry of one app. The closing
@@ -276,12 +310,20 @@ func cacheTTL(sv *store.Service, prov *providers.Spec) time.Duration {
 // costPerRequest is the USD cost of one successful request: the service's
 // override, else the price of the provider offer that matches the request
 // (free offers cost 0), else quota.cost_per_request. A lease passes an empty
-// method and gets the provider wide price.
+// method and gets the provider wide price. Tokens are priced apart, once
+// the answer has said how many it used (tokenCost).
 func costPerRequest(sv *store.Service, prov *providers.Spec, method, path string) float64 {
+	c, _ := costKnown(sv, prov, method, path)
+	return c
+}
+
+// costKnown is costPerRequest and whether the price is known: a service
+// override, a deciding offer, or a quota.cost_per_request above 0.
+func costKnown(sv *store.Service, prov *providers.Spec, method, path string) (float64, bool) {
 	if sv.CostPerRequest != nil {
-		return *sv.CostPerRequest
+		return *sv.CostPerRequest, true
 	}
-	return prov.CostFor(method, path)
+	return prov.CostKnown(method, path)
 }
 
 func breakerSettings(prov *providers.Spec) breaker.Settings {

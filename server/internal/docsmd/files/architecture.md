@@ -90,8 +90,8 @@ file in the next section.
 | `internal/crypto` | The master key, AES-256-GCM encryption of secrets (`Box`), keyed fingerprints for duplicate detection, token hashing and secret scrubbing (`Scrub`). |
 | `internal/redact` | Keeps secrets out of everything that is not the key store: requests to Claude, agent steps, events, the audit log, webhook payloads and log lines. See [security](security.md#what-the-model-can-and-cannot-see). |
 | `internal/keyparse` | Pulls keys out of pasted or dropped text: JSON arrays, CSV with a header row, `.env` files and free form lists. |
-| `internal/breaker` | The per service circuit breaker that pauses traffic to a provider that keeps failing. |
-| `internal/respcache` | The in-memory response cache and idempotent replays: a byte bounded LRU with per entry expiry. |
+| `internal/breaker` | The per service circuit breaker that pauses traffic to a provider that keeps failing. Failures less than a second apart count as one strike, so one burst of concurrent failures is one strike. |
+| `internal/respcache` | The in-memory response cache and idempotent replays: a byte bounded LRU with per entry expiry, plus the claims that hold an `Idempotency-Key` while its first request runs. |
 | `internal/egress` | Routes upstream traffic through HTTP, HTTPS or SOCKS5 proxies, per key or per service. Upstream transports keep up to 256 idle connections per host and resume TLS sessions, so a burst to one provider reuses connections instead of redialing. |
 | `internal/notify` | Delivers pool and sharing events to webhooks: Slack, Discord, Telegram or signed JSON. |
 | `internal/worker` | The background loops. See [Background work](#background-work). |
@@ -438,7 +438,14 @@ leases hold a slot, and a wake channel per service for requests queued on a
 busy service. Acnologia runs as a single instance, and on boot it rebuilds
 lease slots from the open leases in the database (`RestoreLeases`). The
 response cache (`internal/respcache`) and the circuit breakers also live in
-memory and start empty.
+memory and start empty, as do the idempotency claims: while a request with
+an `Idempotency-Key` runs, a second one with the same key (same app, token,
+target and request line) gets 409 `idempotency_in_progress` with
+`Retry-After: 1`. Its answer is replayed for 10 minutes, unless it was a
+408, 425, 429 or 5xx, and only to a request with the same body; another
+body gets 422 `idempotency_key_reused`. A replay comes before the app's
+limits and records no usage. The key also pins the API key the pool picks,
+so a retry reaches the same vendor account.
 
 ## Boot sequence
 

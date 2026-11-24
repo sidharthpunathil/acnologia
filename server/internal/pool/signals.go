@@ -16,6 +16,19 @@ import (
 // maxBusyCooldown caps how long a busy key steps aside.
 const maxBusyCooldown = 5 * time.Minute
 
+// egressCooldown is how long a key steps aside after its own egress proxy
+// failed to carry a request.
+const egressCooldown = 30 * time.Second
+
+// EgressFailed parks a key briefly after the egress proxy set on the key
+// itself could not carry a request. The proxy is the key's, so neither the
+// service's breaker nor the key's backoff ladder hears about it, and other
+// keys keep serving.
+func (p *Pool) EgressFailed(ctx context.Context, k *store.Key, msg string) error {
+	until := time.Now().Add(egressCooldown)
+	return p.Store.ApplyEffect(ctx, k.ID, store.KeyEffect{CooldownUntil: &until, LastError: ptr("egress proxy failed: " + msg)})
+}
+
 // ErrBanned means the key's account is suspended; it is not health checked.
 var ErrBanned = errors.New("this key's account is suspended by the provider, reset it after the provider restores it")
 

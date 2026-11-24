@@ -3,7 +3,9 @@ package pool
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"hash/fnv"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -204,8 +206,17 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 	var earliest *time.Time
 	busy, slotBusy := false, false
 	var paceWait time.Duration
+	// pin is the key a pinned request belongs on, among every key the app
+	// may use here, whether or not it is free right now.
+	var pin *store.Key
 	for _, k := range keys {
-		if exclude[k.ID] || !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || (scoped != nil && !scoped[k.ID]) {
+		if !k.AllowsApp(appID) || (k.Hidden && !allowHidden) || (scoped != nil && !scoped[k.ID]) {
+			continue
+		}
+		if req.Pin != "" && (pin == nil || pinScore(req.Pin, k.ID) > pinScore(req.Pin, pin.ID)) {
+			pin = k
+		}
+		if exclude[k.ID] {
 			continue
 		}
 		if !k.Available(now) {
@@ -266,7 +277,10 @@ func (p *Pool) pick(ctx context.Context, svc *store.Service, appID int64, allowH
 			}
 		}
 	}
-	k := choose(svc.Strategy, set)
+	k := pinnedKey(pin, set)
+	if k == nil {
+		k = choose(svc.Strategy, set)
+	}
 	// Hand the key out with its stored usage, not the ordering adjustment.
 	k.UsageToday -= pending[k.ID]
 	p.picked.Store(k.ID, p.nextPick(time.Now().UnixNano()))
@@ -379,6 +393,32 @@ func (p *Pool) nextPick(now int64) int64 {
 			return n
 		}
 	}
+}
+
+// pinScore ranks keys for a pin (highest random weight hashing): each key
+// scores independently, so adding or removing a key moves only the pins
+// that belonged to it.
+func pinScore(pin string, keyID int64) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(pin))
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(keyID))
+	_, _ = h.Write(b[:])
+	return h.Sum64()
+}
+
+// pinnedKey is the pinned key when it can take the request now, else nil
+// and the strategy chooses as usual.
+func pinnedKey(pin *store.Key, set []*store.Key) *store.Key {
+	if pin == nil {
+		return nil
+	}
+	for _, k := range set {
+		if k.ID == pin.ID {
+			return k
+		}
+	}
+	return nil
 }
 
 func lastUsed(k *store.Key) int64 {

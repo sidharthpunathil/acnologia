@@ -16,6 +16,9 @@ type Entry struct {
 	Body    []byte
 	KeyID   int64
 	Expires time.Time
+	// Fingerprint identifies the request that made an idempotent entry (a
+	// hash of its body), so a reused key with another request is caught.
+	Fingerprint string
 }
 
 func (e *Entry) size() int64 {
@@ -52,6 +55,8 @@ type Cache struct {
 	hits     int64
 	misses   int64
 	now      func() time.Time
+	// claims are keys a request is filling right now (Claim).
+	claims map[string]struct{}
 }
 
 // New makes a cache holding at most maxBytes. maxBytes <= 0 disables it.
@@ -109,6 +114,33 @@ func (c *Cache) Set(key string, e *Entry, ttl time.Duration) {
 		}
 		c.removeLocked(back)
 	}
+}
+
+// Claim marks key as being filled by one request. It returns false when
+// another request holds the key; otherwise release must be called when the
+// request ends, whether or not it stored anything. Claims work even when
+// the cache is disabled, and they live only in this process.
+func (c *Cache) Claim(key string) (release func(), ok bool) {
+	if c == nil {
+		return func() {}, true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, held := c.claims[key]; held {
+		return nil, false
+	}
+	if c.claims == nil {
+		c.claims = map[string]struct{}{}
+	}
+	c.claims[key] = struct{}{}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			delete(c.claims, key)
+			c.mu.Unlock()
+		})
+	}, true
 }
 
 // PurgePrefix drops every entry whose key starts with prefix, for example
