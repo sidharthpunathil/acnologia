@@ -19,6 +19,7 @@ You need Go 1.26, Node 22 and pnpm 10.
 git clone https://github.com/sidharthpunathil/acnologia && cd acnologia
 make dev     # Go on :8080 and Vite on :5173 with hot reload
 make test    # server tests with the race detector, plus the Go SDK
+make check   # what CI runs: make lint, the server tests, and the dashboard type check and unit tests
 make build   # bin/acnologia with the dashboard embedded
 ```
 
@@ -32,12 +33,14 @@ test suites, the screenshot tests and building on every platform.
 2. Add or update tests. Server changes need a Go test; dashboard changes that
    alter what a page shows need the screenshot baselines refreshed
    (`make build && make test-screens UPDATE=1`, then look at the images).
-3. Run the checks:
-
-   ```sh
-   cd server && gofmt -l . && go vet ./... && go test ./...
-   cd web && npx tsc --noEmit
-   ```
+3. Run the checks with `make check` before you push. It runs `make lint`
+   (gofmt, `go vet` and golangci-lint with `server/.golangci.yml`), the server
+   tests, then `pnpm typecheck` and the vitest unit tests in `web/`, so it
+   needs `web/node_modules` (`cd web && pnpm install`). `make lint` alone is
+   the quick pass while you work. `make secrets` runs the gitleaks scan CI
+   runs, over the commits not yet on `origin/main` (set `SECRETS_RANGE` for
+   another range). The linter and gitleaks are fetched with `go run` the
+   first time, at the versions CI uses.
 
 4. Update the docs in `docs/` when behaviour, routes or settings change, then
    run `make llms` so the copies embedded in the binary match.
