@@ -10,6 +10,14 @@ const (
 	googleTokenURL     = "https://oauth2.googleapis.com/token"
 )
 
+// GoogleAdsAPIVersion is the Google Ads API version the built in examples
+// and guide use. Google ships a major version about every quarter and
+// sunsets each about a year later (developers.google.com/google-ads/api/docs/sunset-dates,
+// read 2026-11-25: v26 is the newest, v23 the oldest still served). To move
+// to a newer one, change it here: the paths below follow, and an install's
+// stored spec keeps its own paths until the provider is edited.
+const GoogleAdsAPIVersion = "v26"
+
 // googleOAuth is Google's sign in, asking for the scopes given plus openid
 // and email (which name the account). Google hands out a refresh token only
 // with access_type=offline, and again on a later sign in only with
@@ -123,17 +131,17 @@ func oauthBuiltins() []Builtin {
 				},
 				UseStandardRules: true,
 				Examples: []Example{
-					{Name: "Accessible customers", Method: "GET", Path: "/v22/customers:listAccessibleCustomers", Safe: true},
+					{Name: "Accessible customers", Method: "GET", Path: "/" + GoogleAdsAPIVersion + "/customers:listAccessibleCustomers", Safe: true},
 				},
 				Guide: &Guide{
 					Summary: "Google Ads reporting and management as a signed in Google account. The developer token and the optional manager account ID are stored with each connected account and sent for you.",
 					Endpoints: []GuideEndpoint{
-						{Name: "Accessible customers", Method: "GET", Path: "/v22/customers:listAccessibleCustomers", Description: "Customer accounts the signed in user can reach.", Response: "resourceNames[] like customers/1234567890."},
-						{Name: "Search (GAQL)", Method: "POST", Path: "/v22/customers/{customerId}/googleAds:search", Description: "Run a Google Ads Query Language query. customerId has no dashes.",
+						{Name: "Accessible customers", Method: "GET", Path: "/" + GoogleAdsAPIVersion + "/customers:listAccessibleCustomers", Description: "Customer accounts the signed in user can reach.", Response: "resourceNames[] like customers/1234567890."},
+						{Name: "Search (GAQL)", Method: "POST", Path: "/" + GoogleAdsAPIVersion + "/customers/{customerId}/googleAds:search", Description: "Run a Google Ads Query Language query. customerId has no dashes.",
 							Body: map[string]any{"query": "SELECT campaign.id, campaign.name, metrics.clicks FROM campaign WHERE segments.date DURING LAST_7_DAYS"}, Response: "results[] and nextPageToken."},
 					},
 					Notes: []string{
-						"Paths start with the API version. v22 is shown here; use the version Google currently supports (see the Google Ads API release notes).",
+						"Paths start with the API version. " + GoogleAdsAPIVersion + " is shown here, the newest when this release shipped; Google sunsets each version about a year after it ships, so check the Google Ads API sunset dates and use a supported one.",
 						"Set the manager account ID on the connection when the account reaches customers through a manager (MCC) account.",
 						"A test developer token reaches only test accounts.",
 					},
@@ -154,8 +162,9 @@ func oauthBuiltins() []Builtin {
 			Spec: Spec{
 				BaseURL: "https://graph.microsoft.com",
 				Auth: Auth{Type: AuthOAuth2, Name: "Authorization", OAuth: &OAuthConfig{
-					AuthorizeURL: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-					TokenURL:     "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+					AuthorizeURL: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+					TokenURL:     "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+					Tenant:       "common",
 					Scopes:       []string{"openid", "email", "offline_access", "User.Read"},
 					PKCE:         true,
 					AccountField: "preferred_username",
@@ -180,7 +189,7 @@ func oauthBuiltins() []Builtin {
 					Notes: []string{
 						"Throttled calls answer 429 with Retry-After; the pool waits that long before using the account again.",
 						"Add the delegated scopes you need (Mail.Read, Calendars.Read, Files.Read) on the service, then reconnect each account.",
-						"The provider uses the common tenant. For an app registered for one organization only, edit the provider and put your tenant ID in place of common.",
+						"Sign in goes through the common tenant (work, school and personal accounts) unless the service sets its own: organizations, consumers, or your tenant ID or domain for an app registered for one organization only. Set it with the OAuth client.",
 					},
 				},
 				Tests: []Fixture{

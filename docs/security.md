@@ -748,6 +748,12 @@ docs say so plainly.
   forever. Nothing in Acnologia can take it back. Request and budget limits
   cannot be enforced either, because the owner never sees the requests; the
   receiver's usage reports are cooperative.
+- **OAuth accounts are never handed over.** A key of an OAuth service is a
+  pointer to an access token and a refresh token stored on the owner. A
+  handed over refresh token would let the receiver mint access tokens until
+  the account owner revokes the grant, long past any lease, so a handover
+  share that includes an OAuth service is refused (`oauth_handover_refused`)
+  and delivery skips such a service. Share it in proxy mode instead.
 - **Why the lease exists.** A cooperating receiver deletes every handed over
   key whose lease (1h to 7d) ended without renewal, on its own clock and
   with no network: the worker checks every minute and zeroes the ciphertext

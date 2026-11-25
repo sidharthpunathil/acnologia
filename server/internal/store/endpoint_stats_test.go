@@ -109,6 +109,45 @@ func TestFoldEndpointStats(t *testing.T) {
 	}
 }
 
+// TestFoldCountsTransportFailures: a call the provider never answered (a
+// connection failure) counts against the provider on its endpoint; a call
+// that failed on this side (the caller left, a blocked address), an old
+// error event without the call in it, and other error events do not.
+func TestFoldCountsTransportFailures(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	sv, err := s.CreateService(ctx, &Service{Slug: "svc", Name: "Svc", Provider: "serpapi", BaseURL: "https://x.io", AuthType: "query", AuthName: "k", Strategy: "round_robin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	addProxyEvent(t, s, now, "proxy", sv.ID, 200, 100, "GET /v1/search")
+	addProxyEvent(t, s, now, "error", sv.ID, 0, 30, "upstream: GET /v1/search: dial tcp 10.0.0.1:443: connect: connection refused")
+	addProxyEvent(t, s, now, "error", sv.ID, 0, 9000, "upstream: GET /v1/search: context deadline exceeded (Client.Timeout exceeded)")
+	addProxyEvent(t, s, now, "error", sv.ID, 0, 5, "upstream: GET /v1/search: context canceled")
+	addProxyEvent(t, s, now, "error", sv.ID, 0, 5, "upstream: GET /v1/search: dial: refusing to connect to a link-local or metadata address")
+	addProxyEvent(t, s, now, "error", sv.ID, 0, 5, "upstream: dial tcp 10.0.0.1:443: connect: connection refused") // before the path was logged
+	addProxyEvent(t, s, now, "error", sv.ID, 0, 0, "egress: proxy down")
+	addProxyEvent(t, s, now, "error", sv.ID, 200, 5, "MCP search: response over the app's max result size")
+	addProxyEvent(t, s, now, "error", sv.ID, 0, 40, "MCP search (queued 200ms): could not connect: EOF")
+	if _, err := s.FoldEndpointStats(ctx, func(_ int64, _, p string) string { return p }, 100, 0); err != nil {
+		t.Fatal(err)
+	}
+	ev := s.Evidence(ctx)
+	st := ev.Endpoint(sv.ID, "GET", "/v1/search")
+	if st == nil || st.Calls != 3 || st.OK != 1 || st.Fail != 2 || st.LastFail == nil {
+		t.Fatalf("GET /v1/search stats %+v, want 3 calls, 1 ok, 2 failed", st)
+	}
+	if m := ev.Endpoint(sv.ID, "MCP", "search"); m == nil || m.Calls != 1 || m.Fail != 1 {
+		t.Fatalf("MCP stats %+v, want one failed call", m)
+	}
+	for _, d := range []string{"upstream: GET /v1/x", "upstream: DIAL tcp: x", "proxy: no key", "MCP : x"} {
+		if _, _, ok := ParseTransportFailure(d); ok {
+			t.Errorf("%q parsed as a transport failure", d)
+		}
+	}
+}
+
 func TestProxyVerdict(t *testing.T) {
 	cases := map[int][2]bool{200: {true, false}, 302: {true, false}, 400: {false, false}, 401: {false, false}, 404: {false, false},
 		405: {false, true}, 422: {false, false}, 429: {false, true}, 500: {false, true}, 503: {false, true}, 0: {false, false}}

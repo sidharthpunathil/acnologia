@@ -200,6 +200,9 @@ func (s *Server) applyShareInput(r *http.Request, in shareInput, sh *store.Share
 	if msg := applyShareModeInput(in, sh); msg != "" {
 		return msg
 	}
+	if msg := s.oauthHandoverProblem(r.Context(), sh); msg != "" {
+		return msg
+	}
 	if sh.Reusable && sh.Mode != store.ShareModeProxy {
 		return "a link anyone can open is proxy only: a forwarded link must never show raw keys"
 	}

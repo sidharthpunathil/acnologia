@@ -346,7 +346,8 @@ const baselineVersion = 1
 // writer inside the open transaction, so it uses db directly and never
 // begins another one. It does not need to be idempotent.
 var migrations = []migration{
-	{"oauth grant usage", migrateOAuthGrantUsage}, // version 2
+	{"oauth client tenant", migrateOAuthClientTenant}, // version 2
+	{"oauth grant usage", migrateOAuthGrantUsage},     // version 3
 }
 
 // LatestSchemaVersion is the schema version this binary brings a database

@@ -258,8 +258,9 @@ uses the table:
 
 ```go
 var migrations = []migration{
-	{"oauth grant usage", migrateOAuthGrantUsage},   // version 2
-	{"oauth device codes", migrateOAuthDeviceCodes}, // version 3, a new step
+	{"oauth client tenant", migrateOAuthClientTenant}, // version 2
+	{"oauth grant usage", migrateOAuthGrantUsage},     // version 3
+	{"oauth device codes", migrateOAuthDeviceCodes},   // version 4, a new step
 }
 ```
 

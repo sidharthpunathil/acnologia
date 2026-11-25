@@ -62,3 +62,35 @@ func TestBuiltinTokenPrices(t *testing.T) {
 		t.Fatalf("summary %q", got)
 	}
 }
+
+// TestOpenAITokenPricesCoverChatCompletions: OpenAI's offers match the
+// Responses API, and Chat Completions and the legacy Completions are
+// priced at the same per model rates. Other paths are not.
+func TestOpenAITokenPricesCoverChatCompletions(t *testing.T) {
+	var spec Spec
+	for _, b := range Builtins() {
+		if b.Slug == "openai" {
+			spec = b.Spec
+		}
+	}
+	want, ok := spec.TokenCost("POST", "/v1/responses", "gpt-6-astra", 2000, 1000)
+	if !ok || want == 0 {
+		t.Fatalf("responses cost %v %v", want, ok)
+	}
+	for _, p := range []string{"/v1/chat/completions", "v1/chat/completions/", "/v1/completions"} {
+		if got, ok := spec.TokenCost("POST", p, "gpt-6-astra-2026-11-01", 2000, 1000); !ok || math.Abs(got-want) > 1e-12 {
+			t.Errorf("%s: cost %v %v, want %v", p, got, ok, want)
+		}
+	}
+	if _, ok := spec.TokenCost("POST", "/v1/embeddings", "gpt-6-astra", 2000, 1000); ok {
+		t.Error("embeddings were priced at a chat model's rate")
+	}
+	if _, ok := spec.TokenCost("GET", "/v1/chat/completions", "gpt-6-astra", 2000, 1000); ok {
+		t.Error("a GET was priced")
+	}
+	// The alias is for token costs only: the offer still is not the
+	// request's specific offer.
+	if a := spec.OffersFor("POST", "/v1/chat/completions"); a.Specific != nil {
+		t.Errorf("chat completions got offer %q", a.Specific.Name)
+	}
+}

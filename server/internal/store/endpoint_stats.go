@@ -15,12 +15,13 @@ import (
 
 // Per endpoint evidence: proxied calls folded into counts per service,
 // method and path template and UTC day, so the catalog can rank tools and
-// routing can prefer the provider that answers. Only answers from the
-// provider count (events of kind proxy): Acnologia's own refusals (limits,
-// read-only, no key, an open breaker) write other kinds or nothing, and
-// cache hits and idempotent replays never reached the provider. A 4xx is
-// the caller's fault and does not count against the provider, except 405
-// and 429.
+// routing can prefer the provider that answers. Answers from the provider
+// count (events of kind proxy), and so do calls the provider never answered
+// (error events of a transport failure, ParseTransportFailure), which count
+// against it. Acnologia's own refusals (limits, read-only, no key, an open
+// breaker, a blocked address) write other kinds or nothing, and cache hits
+// and idempotent replays never reached the provider. A 4xx is the caller's
+// fault and does not count against the provider, except 405 and 429.
 //
 // The fold is incremental: a cursor on events.id in meta, a batch at a
 // time, on the worker's schedule. Latency is kept as a small histogram per
@@ -168,6 +169,41 @@ func ParseProxyDetail(detail string) (method, path string, ok bool) {
 	return strings.ToUpper(method), path, true
 }
 
+// transportGuards are error texts of a call that failed on this side, not
+// the provider's: the caller hung up, or the dialer's guard refused the
+// address (catalog.ErrMetadataAddr).
+var transportGuards = []string{"context canceled", "refusing to connect to a link-local or metadata address"}
+
+var httpMethods = map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true, "HEAD": true, "OPTIONS": true}
+
+// ParseTransportFailure reads the call out of an error event's detail when
+// the provider never answered it: the proxy's "upstream: GET /v1/x: <error>"
+// or an upstream MCP call's "MCP tool: <error>". A call that failed on this
+// side (transportGuards) reads as none, as does any other error event.
+func ParseTransportFailure(detail string) (method, path string, ok bool) {
+	rest, proxied := strings.CutPrefix(detail, "upstream: ")
+	if !proxied {
+		if !strings.HasPrefix(detail, "MCP ") {
+			return "", "", false
+		}
+		rest = detail
+	}
+	head, msg, found := strings.Cut(rest, ": ")
+	if !found {
+		return "", "", false
+	}
+	for _, g := range transportGuards {
+		if strings.Contains(msg, g) {
+			return "", "", false
+		}
+	}
+	method, path, ok = ParseProxyDetail(head)
+	if !ok || (proxied && (!httpMethods[method] || !strings.HasPrefix(path, "/"))) {
+		return "", "", false
+	}
+	return method, path, true
+}
+
 type statKey struct {
 	service      int64
 	method, path string
@@ -204,8 +240,8 @@ func (s *Store) FoldEndpointStats(ctx context.Context, tmpl EndpointTemplater, s
 		if maxID <= cursor {
 			break
 		}
-		rows, err := s.rd.QueryContext(ctx, `SELECT id, ts, COALESCE(service_id,0), status_code, latency_ms, detail FROM events
-			WHERE id>? AND id<=? AND kind='proxy' ORDER BY id LIMIT ?`, cursor, maxID, size)
+		rows, err := s.rd.QueryContext(ctx, `SELECT id, ts, kind, COALESCE(service_id,0), status_code, latency_ms, detail FROM events
+			WHERE id>? AND id<=? AND kind IN ('proxy','error') ORDER BY id LIMIT ?`, cursor, maxID, size)
 		if err != nil {
 			return read, err
 		}
@@ -215,14 +251,23 @@ func (s *Store) FoldEndpointStats(ctx context.Context, tmpl EndpointTemplater, s
 		for rows.Next() {
 			var id, ts, sid, lat int64
 			var status int
-			var detail string
-			if err := rows.Scan(&id, &ts, &sid, &status, &lat, &detail); err != nil {
+			var kind, detail string
+			if err := rows.Scan(&id, &ts, &kind, &sid, &status, &lat, &detail); err != nil {
 				rows.Close()
 				return read, err
 			}
 			n++
 			last = id
-			method, path, ok := ParseProxyDetail(detail)
+			var method, path string
+			var ok, unanswered bool
+			if kind == "error" {
+				// Only a call the provider never answered: an error event
+				// with a status is something else.
+				method, path, ok = ParseTransportFailure(detail)
+				ok, unanswered = ok && status == 0, true
+			} else {
+				method, path, ok = ParseProxyDetail(detail)
+			}
 			if !ok || sid == 0 {
 				continue
 			}
@@ -238,6 +283,9 @@ func (s *Store) FoldEndpointStats(ctx context.Context, tmpl EndpointTemplater, s
 			}
 			a.calls++
 			good, bad := ProxyVerdict(status)
+			if unanswered {
+				good, bad = false, true
+			}
 			switch {
 			case good:
 				a.ok++

@@ -16,7 +16,7 @@ import (
 
 const oauthUsage = `usage:
   %[1]s oauth status <service>       the OAuth client, redirect URI and connected accounts
-  %[1]s oauth setup <service> --client-id ID [--client-secret S] [--scopes a,b]
+  %[1]s oauth setup <service> --client-id ID [--client-secret S] [--scopes a,b] [--tenant T]
                                     set the OAuth app registered with the provider
   %[1]s oauth connect <service> [--field key=value ...] [--no-browser] [--no-wait]
                                     print and open a sign in link, then wait until it is used
@@ -39,6 +39,9 @@ type oauthSettings struct {
 	ClientID        string      `json:"client_id"`
 	HasClientSecret bool        `json:"has_client_secret"`
 	Scopes          []string    `json:"scopes"`
+	TakesTenant     bool        `json:"takes_tenant"`
+	Tenant          string      `json:"tenant"`
+	DefaultTenant   string      `json:"default_tenant"`
 	RedirectURI     string      `json:"redirect_uri"`
 	PublicURLSet    bool        `json:"public_url_set"`
 	Connections     []oauthConn `json:"connections"`
@@ -109,6 +112,13 @@ func (c *cli) oauthStatus(args []string) error {
 		}
 	}
 	fmt.Fprintf(c.out, "%s: OAuth client %s\nscopes: %s\nredirect URI to register: %s\n", clean(sv.Slug), client, clean(strings.Join(out.Scopes, " ")), clean(out.RedirectURI))
+	if out.TakesTenant {
+		t := out.Tenant
+		if t == "" {
+			t = out.DefaultTenant + " (the provider's default)"
+		}
+		fmt.Fprintf(c.out, "tenant: %s\n", clean(t))
+	}
 	if !out.PublicURLSet {
 		fmt.Fprintln(c.out, "note: ACNOLOGIA_PUBLIC_URL is not set, so the redirect URI comes from how you reached the server")
 	}
@@ -138,10 +148,13 @@ func (c *cli) oauthSetup(args []string) error {
 	id := fs.String("client-id", "", "OAuth client id")
 	secret := fs.String("client-secret", "", "OAuth client secret (asked for when left out)")
 	scopes := fs.String("scopes", "", "comma separated scopes; empty keeps them")
+	tenant := fs.String("tenant", "", "the tenant, for a provider whose OAuth URLs take one (Microsoft Graph): common, organizations, consumers, a tenant id or a domain; \"\" for the provider's default")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
 	}
+	tenantSet := false
+	fs.Visit(func(f *flag.Flag) { tenantSet = tenantSet || f.Name == "tenant" })
 	if len(pos) != 1 || *id == "" {
 		return usageErrorf(oauthUsage, c.name())
 	}
@@ -165,6 +178,9 @@ func (c *cli) oauthSetup(args []string) error {
 			}
 		}
 		body["scopes"] = list
+	}
+	if tenantSet {
+		body["tenant"] = strings.TrimSpace(*tenant)
 	}
 	var raw json.RawMessage
 	if err := c.call("PUT", fmt.Sprintf("/api/admin/services/%d/oauth", sv.ID), body, &raw); err != nil {

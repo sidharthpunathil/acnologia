@@ -44,6 +44,9 @@ export function OAuthConnectButton({ className, onClick }: { className?: string;
   );
 }
 
+/** The settings with the tenant, for a provider whose OAuth URLs take one (Microsoft Graph). */
+type TenantSettings = OAuthSettings & { takes_tenant?: boolean; tenant?: string; default_tenant?: string };
+
 function expiresIn(iso?: string): string {
   if (!iso) return "no expiry";
   const ms = new Date(iso).getTime() - Date.now();
@@ -53,11 +56,12 @@ function expiresIn(iso?: string): string {
 }
 
 export function OAuthAccountsPanel({ service, canManage, onChange }: { service: Service; canManage: boolean; onChange: () => void }) {
-  const [settings, setSettings] = useState<OAuthSettings | null>(null);
+  const [settings, setSettings] = useState<TenantSettings | null>(null);
   const [editing, setEditing] = useState(false);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [scopes, setScopes] = useState("");
+  const [tenant, setTenant] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<OAuthConnectState | null>(null);
@@ -67,10 +71,11 @@ export function OAuthAccountsPanel({ service, canManage, onChange }: { service: 
 
   const load = useCallback(async () => {
     try {
-      const s = await oauthApi.settings(service.id);
+      const s: TenantSettings = await oauthApi.settings(service.id);
       setSettings(s);
       setClientId(s.client_id);
       setScopes(s.scopes.join(" "));
+      setTenant(s.tenant ?? "");
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -162,13 +167,15 @@ export function OAuthAccountsPanel({ service, canManage, onChange }: { service: 
   const save = async () => {
     setSaving(true);
     try {
-      const body: { client_id: string; client_secret?: string; scopes: string[] } = {
+      const body: { client_id: string; client_secret?: string; scopes: string[]; tenant?: string } = {
         client_id: clientId.trim(),
         scopes: scopes.split(/[\s,]+/).filter(Boolean),
       };
       if (clientSecret.trim()) body.client_secret = clientSecret.trim();
-      const s = await oauthApi.setClient(service.id, body);
+      if (settings?.takes_tenant) body.tenant = tenant.trim();
+      const s: TenantSettings = await oauthApi.setClient(service.id, body);
       setSettings(s);
+      setTenant(s.tenant ?? "");
       setClientSecret("");
       setEditing(false);
       toast.success("OAuth client saved.");
@@ -241,6 +248,16 @@ export function OAuthAccountsPanel({ service, canManage, onChange }: { service: 
             autoComplete="off"
             hint={settings.default_scopes.length ? `Leave empty for the provider's defaults: ${settings.default_scopes.join(" ")}` : "Separate scopes with spaces."}
           />
+          {settings.takes_tenant && (
+            <Input
+              label="Tenant"
+              value={tenant}
+              onChange={setTenant}
+              autoComplete="off"
+              placeholder={settings.default_tenant}
+              hint={`Leave empty for ${settings.default_tenant || "the provider's default"}. Use organizations, consumers, or your tenant ID or domain for an app registered for one organization.`}
+            />
+          )}
           <div className="flex flex-wrap justify-end gap-2">
             {settings.configured && (
               <Button variant="ghost" size="small" onClick={() => setEditing(false)}>

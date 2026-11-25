@@ -67,14 +67,27 @@ func migrateOAuthCredentials(db *sql.DB) error {
 	return err
 }
 
+// migrateOAuthClientTenant adds the service's own tenant (Microsoft's
+// common, organizations or a tenant id), which fills {tenant} in its
+// provider's OAuth URLs. Empty uses the provider's default. addColumn skips
+// a column that is there already, so a database whose version number went
+// back (as the upgrade tests do) upgrades again.
+func migrateOAuthClientTenant(db *sql.DB) error {
+	_, err := addColumn(db, "service_oauth_clients", "tenant", "TEXT NOT NULL DEFAULT ''")
+	return err
+}
+
 // ServiceOAuthClient is the OAuth app a service signs in with.
 type ServiceOAuthClient struct {
 	ServiceID       int64
 	ClientID        string
 	ClientSecretEnc []byte
 	Scopes          []string
-	UpdatedBy       int64
-	UpdatedAt       time.Time
+	// Tenant fills {tenant} in the provider's OAuth URLs; empty uses the
+	// provider's default.
+	Tenant    string
+	UpdatedBy int64
+	UpdatedAt time.Time
 }
 
 // OAuth connect states.
@@ -150,8 +163,8 @@ func (s *Store) GetServiceOAuthClient(ctx context.Context, serviceID int64) (*Se
 	var c ServiceOAuthClient
 	var scopes string
 	var at int64
-	err := s.r.QueryRowContext(ctx, `SELECT service_id, client_id, client_secret_enc, scopes, updated_by, updated_at FROM service_oauth_clients WHERE service_id=?`, serviceID).
-		Scan(&c.ServiceID, &c.ClientID, &c.ClientSecretEnc, &scopes, &c.UpdatedBy, &at)
+	err := s.r.QueryRowContext(ctx, `SELECT service_id, client_id, client_secret_enc, scopes, tenant, updated_by, updated_at FROM service_oauth_clients WHERE service_id=?`, serviceID).
+		Scan(&c.ServiceID, &c.ClientID, &c.ClientSecretEnc, &scopes, &c.Tenant, &c.UpdatedBy, &at)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -162,11 +175,11 @@ func (s *Store) GetServiceOAuthClient(ctx context.Context, serviceID int64) (*Se
 // SetServiceOAuthClient saves a service's OAuth client. A nil ClientSecretEnc
 // keeps the stored secret.
 func (s *Store) SetServiceOAuthClient(ctx context.Context, c ServiceOAuthClient) error {
-	_, err := s.w.ExecContext(ctx, `INSERT INTO service_oauth_clients(service_id, client_id, client_secret_enc, scopes, updated_by, updated_at) VALUES(?,?,?,?,?,?)
+	_, err := s.w.ExecContext(ctx, `INSERT INTO service_oauth_clients(service_id, client_id, client_secret_enc, scopes, tenant, updated_by, updated_at) VALUES(?,?,?,?,?,?,?)
 		ON CONFLICT(service_id) DO UPDATE SET client_id=excluded.client_id,
 			client_secret_enc=COALESCE(excluded.client_secret_enc, service_oauth_clients.client_secret_enc),
-			scopes=excluded.scopes, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
-		c.ServiceID, c.ClientID, c.ClientSecretEnc, joinScopes(c.Scopes), c.UpdatedBy, now())
+			scopes=excluded.scopes, tenant=excluded.tenant, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+		c.ServiceID, c.ClientID, c.ClientSecretEnc, joinScopes(c.Scopes), c.Tenant, c.UpdatedBy, now())
 	if err == nil {
 		s.keysChanged()
 	}

@@ -947,6 +947,16 @@ No key is in this share's scope right now.
 
 What to do: Ask the owner to add keys to the share.
 
+### `oauth_handover_refused`
+
+HTTP 400. Retry: no, not without a change.
+
+A handover share cannot include a service whose keys are signed in OAuth accounts: handing them over would send their refresh tokens to the other server.
+
+What to do: Share that service in proxy mode, where the tokens stay on this server, or leave it out of the handover share.
+
+More in [/docs/oauth-credentials.md](/docs/oauth-credentials.md).
+
 ### `peer_error`
 
 HTTP 502. Retry: yes, after `retry_after_sec` when the error gives one.
