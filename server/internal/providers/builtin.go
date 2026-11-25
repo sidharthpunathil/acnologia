@@ -134,7 +134,7 @@ func Builtins() []Builtin {
 				},
 			},
 		},
-	}, append(append(append(append(append(append(append(searchBuiltins(), tinyfishBuiltins()...), llmBuiltins()...), labBuiltins()...), hostBuiltins()...), oauthBuiltins()...), peerBuiltin()), mcpBuiltin())...)
+	}, append(append(append(append(append(append(append(searchBuiltins(), tinyfishBuiltins()...), llmBuiltins()...), labBuiltins()...), hostBuiltins()...), append(oauthBuiltins(), oauthAppBuiltins()...)...), peerBuiltin()), mcpBuiltin())...)
 }
 
 func serpapiGuide() *Guide {
