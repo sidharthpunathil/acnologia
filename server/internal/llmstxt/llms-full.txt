@@ -1137,11 +1137,11 @@ Retry-After: 4210
 {"error": {"code": "app_limit_reached", "message": "this app reached its daily requests limit"}, "limit": "daily_requests", "reset_at": "2026-11-02T00:00:00Z", "retry_after_sec": 4210}
 ```
 
-A token can carry limits of its own inside the app's (or take the app's per-token default), so each agent or each person who claimed a share link has its own cap: over it, 429 `token_limit_reached` with `limit` such as `token_daily_requests`. The server may also have a daily spend ceiling for all apps together: 503 `server_spend_ceiling` with `reset_at` (midnight UTC).
+A token can carry limits of its own inside the app's (or take the app's per-token default), so each agent or each person who claimed a share link has its own cap. An MCP client signed in with OAuth gets the per-token default too, per sign in. Over it, 429 `token_limit_reached` with `limit` such as `token_daily_requests`. The server may also have a daily spend ceiling for all apps together: 503 `server_spend_ceiling` with `reset_at` (midnight UTC).
 
 ### Caller tags
 
-Send `X-Acnologia-Meta: customer=cust_A,workspace=w1` (up to 5 pairs; keys `a-z 0-9 _ - .`, values letters, digits and `_ - . : @ / +`) to record usage per tag value. The header never reaches the provider. An app can give each value of a key its own budget, such as $2 a day per customer: over it, 429 `tag_limit_reached` with `tag: "customer=cust_A"`. A token may be pinned to tag values: its calls always carry them, and sending another value for a pinned key answers 400 `tag_pinned`. A malformed header answers 400 `bad_meta`. `GET /api/v1/usage/tags?days=30` returns the app's own use per tag value.
+Send `X-Acnologia-Meta: customer=cust_A,workspace=w1` (up to 5 pairs; keys `a-z 0-9 _ - .`, values letters, digits and `_ - . : @ / +`) to record usage per tag value, on `/proxy`, the forward proxy, capabilities, leases and `/mcp` (where it tags every tool call of the request). The header never reaches the provider. An app can give each value of a key its own budget, such as $2 a day per customer: over it, 429 `tag_limit_reached` with `tag: "customer=cust_A"`. A token may be pinned to tag values: its calls always carry them, and sending another value for a pinned key answers 400 `tag_pinned` (over MCP, an `isError` tool result with that code). A malformed header answers 400 `bad_meta`. `GET /api/v1/usage/tags?days=30` returns the app's own use per tag value.
 
 ### Deny rules
 

@@ -34,7 +34,7 @@ In Claude Code, run `/mcp` and pick the server to start the sign in. Cursor show
 
 ## What a connection can do
 
-A connection acts as the app you chose, exactly like one of the app's tokens. The app's allowed services, mode, limits, MCP settings and budget all apply. With read only ticked, the client sees only read only tools: no raw keys and no tool that changes anything.
+A connection acts as the app you chose, exactly like one of the app's tokens. The app's allowed services, mode, limits, MCP settings and budget all apply. Each connection also gets the app's per-token default limits as a cap of its own, so one client cannot spend the whole app's budget. With read only ticked, the client sees only read only tools: no raw keys and no tool that changes anything.
 
 A connection stops working when:
 

@@ -125,7 +125,9 @@ an MCP tool is admitted against each limit it falls under, in one step:
 
 - the app's limits (`limits` on the app);
 - the token's limits: the token's own, with any field it leaves unset taken
-  from the app's per-token default (`PUT /api/admin/apps/{id}/token-limits`);
+  from the app's per-token default (`PUT /api/admin/apps/{id}/token-limits`).
+  An OAuth access token (`acno_`) has no app token, so its grant (one MCP
+  client's sign in) gets the per-token default as its own cap;
 - a tag budget for each caller tag value the request carries;
 - the server's daily spend ceiling (see
   [configuration](configuration.md#daily-spend-ceiling)).
@@ -137,15 +139,17 @@ concurrent requests cannot pass a cap that had room for fewer of them, and
 the request that would cross a budget is refused rather than let through.
 The hold is released however the request ends. The per-token default gives
 each token its own cap inside the app's: each person who claimed a reusable
-share link, or each agent that got its own token. OAuth access tokens
-(`acno_`) have no cap of their own: their calls count toward their app's
-limits and tag budgets.
+share link, or each agent that got its own token, or each MCP client signed
+in with OAuth. Over it, the answer is 429 `token_limit_reached`, the same as
+for an app token.
 
 **Caller tags.** A caller may label a request with
 `X-Acnologia-Meta: customer=cust_A,workspace=w1`: up to 5 pairs, keys of
 `a-z 0-9 _ - .` up to 32 characters (lowercased), values of letters, digits
 and `_ - . : @ / +` up to 64 characters. The header is read on `/proxy`, the
-forward proxy, capabilities and leases, and never reaches the provider.
+forward proxy, capabilities, leases and `/mcp`, and never reaches the
+provider. On `/mcp` the tags label every tool call of that request, so a
+proxied tool call counts under them and their tag budgets.
 Usage is recorded per tag value, so an app can bill its own customers.
 
 A tag budget caps each value of one key on its own: `{key: "customer",
@@ -155,7 +159,8 @@ without that key is not under
 the budget, so to make a caller unable to skip or change its tag, pin the
 token: a token with `pinned_tags: {"customer": "cust_A"}` carries that value
 on every call, MCP tool calls included, and a request that sends another
-value for a pinned key gets 400 `tag_pinned`.
+value for a pinned key gets 400 `tag_pinned` (on `/mcp`, a tool result with
+`isError` and the code `tag_pinned`).
 
 **Deny rules.** A rule blocks an app's matching requests with 403
 `denied_by_rule`, whatever its other access allows. A rule has a `method`
