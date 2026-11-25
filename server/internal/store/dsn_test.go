@@ -8,10 +8,13 @@ import (
 )
 
 func TestURIPath(t *testing.T) {
+	// The long path sits in its own group: gofmt's alignment of a group
+	// this uneven differs between amd64 and arm64.
 	cases := map[string]string{
 		`C:\Users\me\AppData\Local\Acnologia\acnologia.db`: `C:\Users\me\AppData\Local\Acnologia\acnologia.db`,
-		"/data/acnologia.db":                               "/data/acnologia.db",
-		`D:\keys #2\100%\a?.db`:                            `D:\keys %232\100%25\a%3f.db`,
+
+		"/data/acnologia.db":    "/data/acnologia.db",
+		`D:\keys #2\100%\a?.db`: `D:\keys %232\100%25\a%3f.db`,
 	}
 	for in, want := range cases {
 		if got := uriPath(in); got != want {
