@@ -77,6 +77,15 @@ export function SecuritySection({ isAdmin, isSuper, summary }: { isAdmin: boolea
         <SettingRow label="Trust proxy headers" description="Read the client IP from X-Forwarded-For. Only behind a proxy that overwrites it.">
           <EnvValue env={env("ACNOLOGIA_TRUST_PROXY_HEADERS")} format={onOff} />
         </SettingRow>
+        <SettingRow label="Proxies in front" description="How many proxies add to X-Forwarded-For. The client IP is read that many entries from the right.">
+          <EnvValue env={env("ACNOLOGIA_TRUSTED_PROXY_HOPS")} unsetLabel="Default: 1" />
+        </SettingRow>
+        <SettingRow label="Client IP header" description="One header the edge sets to the client IP, read instead of X-Forwarded-For.">
+          <EnvValue env={env("ACNOLOGIA_CLIENT_IP_HEADER")} unsetLabel="X-Forwarded-For is read" />
+        </SettingRow>
+        <SettingRow label="Bootstrap admin token" description="An admin API token the first superadmin gets on a fresh server, for CI and agents.">
+          <EnvValue env={env("ACNOLOGIA_BOOTSTRAP_TOKEN")} />
+        </SettingRow>
         <SettingRow label="Webhooks to private addresses" description="Let webhooks reach private and loopback addresses.">
           <EnvValue env={env("ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE")} format={onOff} />
         </SettingRow>
