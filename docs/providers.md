@@ -831,8 +831,12 @@ built in model offer also carries its `model` and a `price` in unit `token`
 (input, and `output_amount` for output) taken from the prices its `notes`
 state, so a metered answer's tokens are priced at the rate of the model the
 request names (see [Token cost](#offers)) and count toward app budgets. The
-offer covers only its own endpoint: OpenAI's model offers match
-`/v1/responses`, so Chat Completions calls are not token priced. Gemini's
+offer covers its own endpoint, with one exception for token costs: OpenAI
+bills the same per model rates on the Responses API, Chat Completions and
+the legacy Completions, so a token price on `POST /v1/responses` also prices
+`POST /v1/chat/completions` and `POST /v1/completions` (in any provider's
+spec). The offer's limits and its match still cover `/v1/responses` only.
+Gemini's
 offers are free tier offers (a free offer cannot carry a price) and
 Perplexity's Agent API bills per model plus tool fees, so neither has a
 token price. An install seeded by an older release gets these prices once

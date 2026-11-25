@@ -367,7 +367,9 @@ func (o *Offer) tokenPrice() *Price {
 // that apply to the request (by method and path, or provider wide) and
 // price tokens, the first whose model is the request's model wins, then the
 // first whose model it is a dated or routed form of (modelVariant), then the
-// first that names no model. ok is false when none prices them.
+// first that names no model. ok is false when none prices them. A token
+// price on the Responses API also prices Chat Completions and the legacy
+// Completions (tokenPathAliases).
 func (s *Spec) TokenCost(method, path, model string, in, out int64) (float64, bool) {
 	if len(s.Offers) == 0 || method == "" {
 		return 0, false
@@ -378,11 +380,12 @@ func (s *Spec) TokenCost(method, path, model string, in, out int64) (float64, bo
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	alias := tokenPathAliases[strings.TrimRight(path, "/")]
 	var exact, variant, anyModel *Price
 	for i := range s.Offers {
 		o := &s.Offers[i]
 		p := o.tokenPrice()
-		if p == nil || (!o.Wide() && !s.offerMatches(o, method, path)) {
+		if p == nil || (!o.Wide() && !s.offerMatches(o, method, path) && (alias == "" || !s.offerMatches(o, method, alias))) {
 			continue
 		}
 		switch {
@@ -402,6 +405,17 @@ func (s *Spec) TokenCost(method, path, model string, in, out int64) (float64, bo
 		}
 	}
 	return 0, false
+}
+
+// tokenPathAliases are request paths that bill the same per model token
+// rates as another path, so an offer that matches the other prices them
+// too. OpenAI publishes one rate per model for the Responses API, Chat
+// Completions and the legacy Completions, and its offers match
+// /v1/responses only. Token costs only: an offer's limits and per request
+// price still follow its own match.
+var tokenPathAliases = map[string]string{
+	"/v1/chat/completions": "/v1/responses",
+	"/v1/completions":      "/v1/responses",
 }
 
 func (p *Price) tokens(in, out int64) float64 {
