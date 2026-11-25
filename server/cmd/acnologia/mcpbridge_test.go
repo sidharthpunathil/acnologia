@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/mcpbridge"
@@ -46,10 +47,17 @@ func TestMCPOptions(t *testing.T) {
 }
 
 func TestMCPMain(t *testing.T) {
+	// The bridge may send more than one request at once (a notification
+	// stream next to the calls), so record the posts under a lock.
+	var mu sync.Mutex
 	var got http.Header
 	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got, path = r.Header.Clone(), r.URL.Path
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			got, path = r.Header.Clone(), r.URL.Path
+			mu.Unlock()
+		}
 		b, _ := io.ReadAll(r.Body)
 		_, _ = w.Write(bytes.Replace(b, []byte(`"method":"ping"`), []byte(`"result":{}`), 1))
 	}))

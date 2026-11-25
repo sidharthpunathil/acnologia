@@ -172,6 +172,8 @@ type checkSummary struct {
 }
 
 // checkKeys health checks keys four at a time and reports what it found.
+// Events and keys come out in the order the keys were given, whatever order
+// the checks finish in, so the activity feed reads the same every time.
 func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store.Key) checkSummary {
 	sum := checkSummary{Keys: []*store.Key{}}
 	spec := providers.Get(sv.Provider)
@@ -184,7 +186,9 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
-	for _, k := range keys {
+	events := make([]*store.NewEvent, len(keys))
+	checked := make([]*store.Key, len(keys))
+	for i, k := range keys {
 		if k.Status == store.StatusDisabled || k.Status == store.StatusBanned || (k.Hidden && !sv.TargetTrusted) {
 			mu.Lock()
 			sum.Skipped++
@@ -194,7 +198,7 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 		}
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(k *store.Key) {
+		go func(i int, k *store.Key) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			defer countKeys(ctx, 1)
@@ -210,8 +214,8 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 			// No event for a key deleted meanwhile (a hidden key's would
 			// outlive it), nor for the quiet check of keys just added.
 			if gerr == nil && ctx.Value(quietHealthKey{}) == nil {
-				s.Store.AddEvent(context.Background(), store.NewEvent{Kind: "health", ServiceID: sv.ID, KeyID: k.ID,
-					LatencyMS: latency, Detail: healthDetail(err, nk)})
+				events[i] = &store.NewEvent{Kind: "health", ServiceID: sv.ID, KeyID: k.ID,
+					LatencyMS: latency, Detail: healthDetail(err, nk)}
 			}
 			mu.Lock()
 			defer mu.Unlock()
@@ -227,11 +231,23 @@ func (s *Server) checkKeys(ctx context.Context, sv *store.Service, keys []*store
 				sum.Valid++
 			}
 			if gerr == nil {
-				sum.Keys = append(sum.Keys, nk)
+				checked[i] = nk
 			}
-		}(k)
+		}(i, k)
 	}
 	wg.Wait()
+	for i := range keys {
+		if ev := events[i]; ev != nil {
+			// A key deleted while the batch ran gets no event (a hidden
+			// key's would outlive it).
+			if _, err := s.Store.GetKey(context.Background(), ev.KeyID); err == nil {
+				s.Store.AddEvent(context.Background(), *ev)
+			}
+		}
+		if checked[i] != nil {
+			sum.Keys = append(sum.Keys, checked[i])
+		}
+	}
 	s.fillInFlight(sum.Keys...)
 	sum.Message = checkMessage(sum)
 	return sum
