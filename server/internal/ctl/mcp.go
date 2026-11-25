@@ -31,6 +31,9 @@ func (c *cli) mcp(args []string) error {
 	if len(args) > 0 && args[0] == "install" {
 		return c.mcpInstall(args[1:])
 	}
+	if len(args) > 0 && args[0] == "sync" {
+		return c.mcpSync(args[1:])
+	}
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(c.err)
 	name := fs.String("context", "", "saved server to use (default: the current one, see contexts)")

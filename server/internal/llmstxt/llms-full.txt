@@ -1301,6 +1301,8 @@ acn events --after 1234                        # only events after a cursor, old
 acn audit --via control_mcp --since 24h        # what agents changed today
 acn keys check --all --async                   # start a background check job
 acn jobs 12 --wait                             # wait for it and print the result
+acn peers sync lab --async                     # fetch a connected server's manifest as a job
+acn mcp sync github                            # refresh a service's upstream MCP tools
 acn limits billing --daily-budget 2            # every token of app billing gets $2 a day
 acn limits billing --token ci --pin customer=cust_A
 acn tags billing --budget customer --daily-budget 2

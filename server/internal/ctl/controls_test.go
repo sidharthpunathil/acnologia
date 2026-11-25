@@ -97,6 +97,9 @@ func newRecorder(t *testing.T) (*routeFake, func(args ...string) (int, string, s
 		"POST /api/admin/demo":                  `{"service":{"slug":"demo"},"app":{"id":4,"name":"Demo app"},"token":"acn_demo","try":{"curl":"curl x"}}`,
 		"DELETE /api/admin/demo":                `{"ok":true}`,
 		"POST /api/admin/services/7/try":        `{"status":200,"latency_ms":12,"body":"{\"ok\":true}","app":{"name":"Try it"}}`,
+		"GET /api/admin/peers":                  `{"peers":[{"id":2,"peer_name":"Lab","prefix":"lab","status":"active","mode":"proxy","services":{"openai":5}}]}`,
+		"POST /api/admin/peers/2/sync":          `{"id":2,"peer_name":"Lab","status":"active","services":{"openai":5,"serp":6}}`,
+		"POST /api/admin/services/7/mcp/sync":   `{"tool_count":4,"last_error":""}`,
 	}}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
@@ -242,5 +245,38 @@ func TestObserveCommands(t *testing.T) {
 	}
 	if b := f.body("POST /api/admin/services/7/try"); b["method"] != "POST" || b["body"] != `{"q":"tea"}` || b["path"] != "/search.json?q=x" {
 		t.Fatalf("try body: %v", b)
+	}
+}
+
+func TestSyncCommands(t *testing.T) {
+	f, run := newRecorder(t)
+	if code, out, _ := run("peers"); code != 0 || !strings.Contains(out, "Lab") || !strings.Contains(out, "never") {
+		t.Fatalf("peers: %d %s", code, out)
+	}
+	if code, out, _ := run("peers", "sync", "lab"); code != 0 || !strings.Contains(out, "Synced Lab: 2 services") || f.saw("POST /api/admin/peers/2/sync?") != "POST /api/admin/peers/2/sync?" {
+		t.Fatalf("peers sync: %d %s", code, out)
+	}
+	f.answers["POST /api/admin/peers/2/sync"] = `{"job_id":13,"status":"queued"}`
+	if code, out, _ := run("peers", "sync", "2", "--async"); code != 0 || !strings.Contains(out, "Started job 13") || f.saw("POST /api/admin/peers/2/sync?async=1") == "" {
+		t.Fatalf("peers sync --async: %d %s", code, out)
+	}
+	if code, out, _ := run("peers", "sync", "nope", "--json"); code != 4 || !strings.Contains(out, "not_found") {
+		t.Fatalf("unknown peer: %d %s", code, out)
+	}
+	if code, _, _ := run("peers", "sync"); code != 2 {
+		t.Fatalf("peers sync without a peer: %d", code)
+	}
+	if code, out, _ := run("mcp", "sync", "serpapi"); code != 0 || !strings.Contains(out, "Synced 4 MCP tools for serpapi") {
+		t.Fatalf("mcp sync: %d %s", code, out)
+	}
+	if code, out, _ := run("mcp", "sync", "serpapi", "--json"); code != 0 || !strings.Contains(out, `"tool_count"`) {
+		t.Fatalf("mcp sync --json: %d %s", code, out)
+	}
+	f.answers["POST /api/admin/services/7/mcp/sync"] = `{"job_id":14,"status":"queued"}`
+	if code, out, _ := run("mcp", "sync", "serpapi", "--async"); code != 0 || !strings.Contains(out, "Started job 14") || f.saw("POST /api/admin/services/7/mcp/sync?async=1") == "" {
+		t.Fatalf("mcp sync --async: %d %s", code, out)
+	}
+	if code, _, _ := run("mcp", "sync", "missing"); code != 4 {
+		t.Fatalf("mcp sync of an unknown service: %d", code)
 	}
 }

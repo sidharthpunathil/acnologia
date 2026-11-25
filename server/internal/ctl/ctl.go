@@ -56,6 +56,9 @@ Commands:
   jobs [--kind k] [--status s] [--mine]
                                  background jobs (checks and syncs)
   jobs <id> [--wait]             one job's status and result
+  peers                          servers this one is connected to
+  peers sync <peer> [--async]    fetch a connected server's manifest again (id or name)
+  mcp sync <service> [--async]   refresh a service's upstream MCP tool catalog
   breaker <service> [--reset]    circuit breaker state, or close it
   cache purge <service>          drop cached responses of a service
   usage <app-id>                 an app's requests, spend and limits
@@ -356,6 +359,8 @@ func (c *cli) run(args []string) error {
 		return c.try(args[1:])
 	case "oauth":
 		return c.oauth(args[1:])
+	case "peers":
+		return c.peers(args[1:])
 	}
 	return usageErrorf("unknown command %q; run %s help", args[0], c.name())
 }
