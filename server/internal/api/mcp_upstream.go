@@ -330,6 +330,13 @@ func (s *Server) doSyncServiceMCP(ctx context.Context, sv *store.Service, allowH
 		return fmt.Errorf("egress proxy error: %w", err)
 	}
 	res, syncErr := mcpclient.Sync(cctx, client, endpoint, mcpAuthFunc(sv, secret), mcpExtraHeaders(spec), s.Cfg.Version)
+	if syncErr != nil && picked != nil && res != nil && mcpUnauthorized(res.HTTPStatus, syncErr) {
+		// An OAuth key's access token was refused: refresh once and sync again.
+		if wire, ok := s.oauthFreshWire(cctx, sv, picked); ok {
+			secret, picked.Secret = wire, wire
+			res, syncErr = mcpclient.Sync(cctx, client, endpoint, mcpAuthFunc(sv, secret), mcpExtraHeaders(spec), s.Cfg.Version)
+		}
+	}
 	prev, _ := s.Store.GetServiceMCP(ctx, sv.ID)
 	if syncErr != nil {
 		msg := scrubMCPText(syncErr.Error(), secret)
@@ -503,6 +510,17 @@ func (s *Server) callUpstreamMCPTool(ctx context.Context, r *http.Request, a *st
 
 		start := time.Now()
 		callRes, callErr := s.execUpstreamCall(ctx, client, skey, endpoint, apply, extraHdrs, t.upstreamTool, args, limit)
+		if callRes != nil && mcpUnauthorized(callRes.HTTPStatus, callErr) {
+			// An OAuth access token may be revoked early: refresh once and
+			// call again on the same key, as the proxy does (oauth_tokens.go).
+			// The session was opened with the refused token, so it goes too.
+			if wire, ok := s.oauthFreshWire(ctx, sv, picked); ok {
+				s.mcpSessions.delete(skey)
+				picked.Secret = wire
+				apply = mcpAuthFunc(sv, wire)
+				callRes, callErr = s.execUpstreamCall(ctx, client, skey, endpoint, apply, extraHdrs, t.upstreamTool, args, limit)
+			}
+		}
 		latency := time.Since(start).Milliseconds()
 		picked.Release()
 
@@ -526,6 +544,11 @@ func (s *Server) callUpstreamMCPTool(ctx context.Context, r *http.Request, a *st
 		}
 
 		status := callRes.HTTPStatus
+		if status < 400 && mcpAuthRPCError(callErr) {
+			// HTTP 200 carrying a JSON-RPC error that refuses the credential:
+			// the key is judged as if the server had answered 401.
+			status = http.StatusUnauthorized
+		}
 		if status >= 400 {
 			cls := prov.Classify(status, callRes.Headers, callRes.RawBody)
 			cls.Message = scrubMCPText(cls.Message, picked.Secret)
@@ -608,4 +631,45 @@ func (s *Server) execUpstreamCall(ctx context.Context, client *http.Client, skey
 		res, err = mcpclient.CallTool(ctx, client, &sess, apply, extraHdrs, toolName, args, maxBytes)
 	}
 	return res, err
+}
+
+// mcpAuthMarkers are phrases a JSON-RPC error uses when the upstream MCP
+// server refused the credential itself. MCP has no JSON-RPC code for this
+// (servers should answer HTTP 401, and codes such as -32001 mean other
+// things in common SDKs), so only the message is read, and only these
+// well known phrases count.
+var mcpAuthMarkers = []string{
+	"unauthorized", "unauthenticated", "authentication required", "authentication failed",
+	"invalid api key", "invalid_api_key", "invalid access token", "invalid token", "invalid_token",
+	"token expired", "token has expired", "expired token", "token_expired", "token revoked", "token_revoked",
+	"invalid credentials", "invalid_auth",
+}
+
+// mcpAuthRPCError reports whether err is a JSON-RPC error that refuses the
+// credential. A message about permissions or scopes is the caller's
+// problem (the key works, it may not do this), so it does not count.
+func mcpAuthRPCError(err error) bool {
+	var re *mcpclient.RPCError
+	if !errors.As(err, &re) || re == nil {
+		return false
+	}
+	m := strings.ToLower(re.Message)
+	for _, not := range []string{"permission", "forbidden", "scope", "not allowed"} {
+		if strings.Contains(m, not) {
+			return false
+		}
+	}
+	for _, w := range mcpAuthMarkers {
+		if strings.Contains(m, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// mcpUnauthorized reports whether an upstream MCP call was refused for its
+// credential: HTTP 401, or HTTP 2xx with a JSON-RPC auth error. status 0
+// is a call that got no answer.
+func mcpUnauthorized(status int, err error) bool {
+	return status == http.StatusUnauthorized || (status > 0 && status < 400 && mcpAuthRPCError(err))
 }

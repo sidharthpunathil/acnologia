@@ -291,16 +291,10 @@ func (s *Server) oauthRetryUnauthorized(ctx context.Context, r *http.Request, sv
 	if sv.AuthType != providers.AuthOAuth2 || resp.StatusCode != http.StatusUnauthorized {
 		return resp
 	}
-	stored, err := s.Pool.Box.Decrypt(picked.Key.SecretEnc)
-	if err != nil {
+	wire, ok := s.oauthFreshWire(ctx, sv, picked)
+	if !ok {
 		return resp
 	}
-	stale := providers.OAuthWireParts(picked.Secret)["access_token"]
-	access, err := s.oauthAccess(ctx, sv, picked.Key, stale)
-	if err != nil || access == stale {
-		return resp
-	}
-	wire := providers.OAuthWireSecret(access, providers.OAuthFields(stored))
 	req, err := buildUpstream(ctx, r, sv, path, body, wire)
 	if err != nil {
 		return resp
@@ -313,6 +307,28 @@ func (s *Server) oauthRetryUnauthorized(ctx context.Context, r *http.Request, sv
 	resp.Body.Close()
 	picked.Secret = wire
 	return again
+}
+
+// oauthFreshWire is the refresh half of the 401 retry, shared by the proxy
+// and upstream MCP calls (mcp_upstream.go). The provider refused the access
+// token in picked.Secret: it refreshes the key's token once and returns the
+// new wire secret. ok is false for a key that is not an OAuth key, or when
+// no fresh token could be had; a refused refresh token (invalid_grant) has
+// then already marked the key invalid (oauthAccess).
+func (s *Server) oauthFreshWire(ctx context.Context, sv *store.Service, picked *pool.Picked) (string, bool) {
+	if sv.AuthType != providers.AuthOAuth2 || picked == nil || picked.Key == nil {
+		return "", false
+	}
+	stored, err := s.Pool.Box.Decrypt(picked.Key.SecretEnc)
+	if err != nil {
+		return "", false
+	}
+	stale := providers.OAuthWireParts(picked.Secret)["access_token"]
+	access, err := s.oauthAccess(ctx, sv, picked.Key, stale)
+	if err != nil || access == "" || access == stale {
+		return "", false
+	}
+	return providers.OAuthWireSecret(access, providers.OAuthFields(stored)), true
 }
 
 // idTokenClaim reads a claim from an id_token's payload. The token came
