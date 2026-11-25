@@ -18,6 +18,8 @@ export interface SnapOptions {
   mask?: Locator[];
   /** Screenshot the viewport only (for overlays such as menus and sheets). Default is the full page. */
   viewportOnly?: boolean;
+  /** Screenshot this element only, such as one card on a long page. */
+  target?: Locator;
 }
 
 // Text that changes with the wall clock. Any element whose own text matches
@@ -151,7 +153,9 @@ export const test = base.extend<Fixtures & { theme: Theme }>({
       // capture screenshot"), so a page taller than TILE is compared in
       // slices of that height: name-1.png, name-2.png and so on.
       const { width, height } = page.viewportSize()!;
-      if (height <= TILE) {
+      if (opts.target) {
+        await expect(opts.target).toHaveScreenshot(`${name}.png`);
+      } else if (height <= TILE) {
         await expect(page).toHaveScreenshot(`${name}.png`);
       } else {
         for (let i = 0, y = 0; y < height; i++, y += TILE) {

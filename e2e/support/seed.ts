@@ -3,9 +3,9 @@ import { ADMIN } from "./paths";
 // Deterministic demo data, created through the same HTTP API the dashboard
 // uses. Every secret is a fixed fake, so masked key suffixes never change.
 
-type Json = Record<string, unknown>;
+export type Json = Record<string, unknown>;
 
-class Client {
+export class Client {
   private cookie = "";
   constructor(private base: string) {}
 
@@ -33,17 +33,21 @@ class Client {
   patch(path: string, body: Json) {
     return this.call("PATCH", path, body);
   }
+
+  put(path: string, body: Json) {
+    return this.call("PUT", path, body);
+  }
 }
 
 /** Finds a numeric id in a create response, whatever the envelope looks like. */
-function idOf(res: Json): number {
+export function idOf(res: Json): number {
   const inner = (res.service ?? res) as Json;
   if (typeof inner.id !== "number") throw new Error(`seed: no id in ${JSON.stringify(res)}`);
   return inner.id;
 }
 
 /** Pulls a token string out of an app create response. */
-function tokenOf(res: Json): string {
+export function tokenOf(res: Json): string {
   const inner = (res.app ?? res) as Json;
   const tok = res.token ?? inner.token;
   if (typeof tok !== "string") throw new Error(`seed: no token in ${JSON.stringify(res)}`);
