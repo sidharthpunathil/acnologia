@@ -154,8 +154,9 @@ func oauthBuiltins() []Builtin {
 			Spec: Spec{
 				BaseURL: "https://graph.microsoft.com",
 				Auth: Auth{Type: AuthOAuth2, Name: "Authorization", OAuth: &OAuthConfig{
-					AuthorizeURL: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-					TokenURL:     "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+					AuthorizeURL: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+					TokenURL:     "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+					Tenant:       "common",
 					Scopes:       []string{"openid", "email", "offline_access", "User.Read"},
 					PKCE:         true,
 					AccountField: "preferred_username",
@@ -180,7 +181,7 @@ func oauthBuiltins() []Builtin {
 					Notes: []string{
 						"Throttled calls answer 429 with Retry-After; the pool waits that long before using the account again.",
 						"Add the delegated scopes you need (Mail.Read, Calendars.Read, Files.Read) on the service, then reconnect each account.",
-						"The provider uses the common tenant. For an app registered for one organization only, edit the provider and put your tenant ID in place of common.",
+						"Sign in goes through the common tenant (work, school and personal accounts) unless the service sets its own: organizations, consumers, or your tenant ID or domain for an app registered for one organization only. Set it with the OAuth client.",
 					},
 				},
 				Tests: []Fixture{

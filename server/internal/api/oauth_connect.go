@@ -109,21 +109,26 @@ type oauthConnectionView struct {
 }
 
 type oauthSettingsView struct {
-	ServiceID       int64                      `json:"service_id"`
-	Service         string                     `json:"service"`
-	Provider        string                     `json:"provider"`
-	Configured      bool                       `json:"configured"`
-	ClientID        string                     `json:"client_id"`
-	HasClientSecret bool                       `json:"has_client_secret"`
-	Scopes          []string                   `json:"scopes"`
-	DefaultScopes   []string                   `json:"default_scopes"`
-	AllowedScopes   []string                   `json:"allowed_scopes"`
-	RedirectURI     string                     `json:"redirect_uri"`
-	PublicURLSet    bool                       `json:"public_url_set"`
-	PKCE            bool                       `json:"pkce"`
-	AuthorizeURL    string                     `json:"authorize_url"`
-	Fields          []providers.CredentialPart `json:"fields"`
-	Connections     []oauthConnectionView      `json:"connections"`
+	ServiceID       int64    `json:"service_id"`
+	Service         string   `json:"service"`
+	Provider        string   `json:"provider"`
+	Configured      bool     `json:"configured"`
+	ClientID        string   `json:"client_id"`
+	HasClientSecret bool     `json:"has_client_secret"`
+	Scopes          []string `json:"scopes"`
+	DefaultScopes   []string `json:"default_scopes"`
+	AllowedScopes   []string `json:"allowed_scopes"`
+	RedirectURI     string   `json:"redirect_uri"`
+	PublicURLSet    bool     `json:"public_url_set"`
+	PKCE            bool     `json:"pkce"`
+	AuthorizeURL    string   `json:"authorize_url"`
+	// TakesTenant says the provider's URLs have {tenant} (Microsoft Graph):
+	// Tenant is the service's own, empty for DefaultTenant.
+	TakesTenant   bool                       `json:"takes_tenant"`
+	Tenant        string                     `json:"tenant"`
+	DefaultTenant string                     `json:"default_tenant,omitempty"`
+	Fields        []providers.CredentialPart `json:"fields"`
+	Connections   []oauthConnectionView      `json:"connections"`
 }
 
 func timePtr(t time.Time) *time.Time {
@@ -145,13 +150,19 @@ func (s *Server) getServiceOAuth(w http.ResponseWriter, r *http.Request) {
 	v := oauthSettingsView{
 		ServiceID: sv.ID, Service: sv.Slug, Provider: sv.Provider,
 		Scopes: cfg.Scopes, DefaultScopes: orEmpty(cfg.Scopes), AllowedScopes: orEmpty(cfg.AllowedScopes),
-		RedirectURI: s.oauthRedirectURI(r), PublicURLSet: s.Cfg.PublicURL != "", PKCE: cfg.PKCE, AuthorizeURL: cfg.AuthorizeURL,
-		Fields: spec.Auth.Parts(), Connections: []oauthConnectionView{},
+		RedirectURI: s.oauthRedirectURI(r), PublicURLSet: s.Cfg.PublicURL != "", PKCE: cfg.PKCE, AuthorizeURL: cfg.ForTenant("").AuthorizeURL,
+		TakesTenant: cfg.HasTenant(), Fields: spec.Auth.Parts(), Connections: []oauthConnectionView{},
+	}
+	if v.TakesTenant {
+		v.DefaultTenant = cfg.Tenant
 	}
 	if c, err := s.Store.GetServiceOAuthClient(r.Context(), sv.ID); err == nil {
 		v.Configured, v.ClientID, v.HasClientSecret = c.ClientID != "", c.ClientID, len(c.ClientSecretEnc) > 0
 		if len(c.Scopes) > 0 {
 			v.Scopes = c.Scopes
+		}
+		if v.TakesTenant {
+			v.Tenant, v.AuthorizeURL = c.Tenant, cfg.ForTenant(c.Tenant).AuthorizeURL
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		writeStoreErr(w, err)
@@ -197,6 +208,10 @@ type oauthClientInput struct {
 	ClientID     string    `json:"client_id"`
 	ClientSecret *string   `json:"client_secret"`
 	Scopes       *[]string `json:"scopes"`
+	// Tenant fills {tenant} in the provider's URLs (Microsoft's common,
+	// organizations, consumers, a tenant id or domain). "" uses the
+	// provider's default; leaving it out keeps the stored one.
+	Tenant *string `json:"tenant"`
 }
 
 // putServiceOAuth is PUT /api/admin/services/{id}/oauth: the OAuth client
@@ -224,7 +239,19 @@ func (s *Server) putServiceOAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if old != nil {
-		c.Scopes = old.Scopes
+		c.Scopes, c.Tenant = old.Scopes, old.Tenant
+	}
+	if in.Tenant != nil {
+		t := strings.TrimSpace(*in.Tenant)
+		switch {
+		case t != "" && !spec.Auth.OAuth.HasTenant():
+			writeErr(w, 400, "invalid_oauth_client", "tenant: this provider's OAuth URLs take no tenant")
+			return
+		case t != "" && !providers.ValidTenant(t):
+			writeErr(w, 400, "invalid_oauth_client", "tenant must be common, organizations, consumers, a tenant id or a domain name: letters, digits, dots and hyphens")
+			return
+		}
+		c.Tenant = t
 	}
 	if in.Scopes != nil {
 		scopes := []string{}
@@ -256,7 +283,11 @@ func (s *Server) putServiceOAuth(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	s.Store.AddAudit(r.Context(), userFrom(r), "service.oauth_client", sv.Slug, "client "+in.ClientID+", scopes "+strings.Join(c.Scopes, " "))
+	detail := "client " + in.ClientID + ", scopes " + strings.Join(c.Scopes, " ")
+	if c.Tenant != "" {
+		detail += ", tenant " + c.Tenant
+	}
+	s.Store.AddAudit(r.Context(), userFrom(r), "service.oauth_client", sv.Slug, detail)
 	s.getServiceOAuth(w, r)
 }
 
@@ -389,7 +420,7 @@ func (s *Server) beginOAuthConnect(w http.ResponseWriter, r *http.Request, sv *s
 		writeErr(w, 400, "invalid_oauth_fields", msg)
 		return
 	}
-	cfg := spec.Auth.OAuth
+	cfg := spec.Auth.OAuth.ForTenant(cl.Tenant)
 	scopes := cl.Scopes
 	if len(scopes) == 0 {
 		scopes = cfg.Scopes
@@ -539,12 +570,12 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		fail("the service no longer signs in with OAuth")
 		return
 	}
-	cfg := spec.Auth.OAuth
 	cl, err := s.loadOAuthClient(ctx, sv.ID)
 	if err != nil {
 		fail("the service's OAuth client is not set")
 		return
 	}
+	cfg := spec.Auth.OAuth.ForTenant(cl.Tenant)
 	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {c.RedirectURI}}
 	if cfg.PKCE {
 		verifier, err := s.Pool.Box.Decrypt(c.VerifierEnc)

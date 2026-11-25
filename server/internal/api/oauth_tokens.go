@@ -86,15 +86,17 @@ func (e *oauthTokenError) Error() string {
 }
 
 // invalidGrant reports whether the provider refused the grant itself: the
-// refresh token was revoked, expired or rotated away.
+// refresh token was revoked, expired or rotated away. Slack names it
+// invalid_refresh_token.
 func (e *oauthTokenError) invalidGrant() bool {
-	return e.Code == "invalid_grant" || (e.Code == "" && e.Status == http.StatusUnauthorized)
+	return e.Code == "invalid_grant" || e.Code == "invalid_refresh_token" || (e.Code == "" && e.Status == http.StatusUnauthorized)
 }
 
 // oauthClientSecret is the service's OAuth client with its secret.
 type oauthClientSecret struct {
 	ID, Secret string
 	Scopes     []string
+	Tenant     string
 }
 
 func (s *Server) loadOAuthClient(ctx context.Context, serviceID int64) (*oauthClientSecret, error) {
@@ -102,7 +104,7 @@ func (s *Server) loadOAuthClient(ctx context.Context, serviceID int64) (*oauthCl
 	if err != nil {
 		return nil, err
 	}
-	out := &oauthClientSecret{ID: c.ClientID, Scopes: c.Scopes}
+	out := &oauthClientSecret{ID: c.ClientID, Scopes: c.Scopes, Tenant: c.Tenant}
 	if len(c.ClientSecretEnc) > 0 {
 		if out.Secret, err = s.Pool.Box.Decrypt(c.ClientSecretEnc); err != nil {
 			return nil, errors.New("cannot decrypt the OAuth client secret, is ACNOLOGIA_MASTER_KEY correct?")
@@ -157,7 +159,7 @@ func (s *Server) oauthTokenCall(ctx context.Context, cfg *providers.OAuthConfig,
 				Error: v.Get("error"), ErrorDescription: v.Get("error_description")}
 		}
 	} else {
-		_ = json.Unmarshal(body, &t)
+		t = parseTokenAnswer(cfg, body)
 	}
 	if resp.StatusCode >= 400 || t.Error != "" || t.AccessToken == "" {
 		e := &oauthTokenError{Status: resp.StatusCode, Code: t.Error, Description: t.ErrorDescription}
@@ -169,6 +171,36 @@ func (s *Server) oauthTokenCall(ctx context.Context, cfg *providers.OAuthConfig,
 		return nil, e
 	}
 	return &t, nil
+}
+
+// parseTokenAnswer reads a JSON token answer. The error is read at the top
+// (Slack answers {"ok":false,"error":"invalid_code"}); the tokens are read
+// from the object the spec's token_path points into, so Slack's user token
+// under authed_user comes with its own refresh token and lifetime.
+func parseTokenAnswer(cfg *providers.OAuthConfig, body []byte) oauthTokens {
+	var m map[string]any
+	d := json.NewDecoder(strings.NewReader(string(body)))
+	d.UseNumber()
+	if d.Decode(&m) != nil {
+		return oauthTokens{}
+	}
+	str := func(o map[string]any, k string) string {
+		switch v := o[k].(type) {
+		case string:
+			return v
+		case json.Number:
+			return v.String()
+		}
+		return ""
+	}
+	t := oauthTokens{Error: str(m, "error"), ErrorDescription: str(m, "error_description")}
+	obj, name := cfg.TokenObject(m)
+	if obj == nil {
+		return t
+	}
+	t.AccessToken, t.RefreshToken, t.IDToken = str(obj, name), str(obj, "refresh_token"), str(obj, "id_token")
+	t.TokenType, t.Scope, t.ExpiresIn = str(obj, "token_type"), str(obj, "scope"), json.Number(str(obj, "expires_in"))
+	return t
 }
 
 // oauthLocks serialize the refresh of one key, so concurrent requests that
@@ -227,7 +259,7 @@ func (s *Server) oauthAccess(ctx context.Context, sv *store.Service, k *store.Ke
 		return "", fmt.Errorf("the service's OAuth client is not set: %w", err)
 	}
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}}
-	t, err := s.oauthTokenCall(ctx, spec.Auth.OAuth, cl, form)
+	t, err := s.oauthTokenCall(ctx, spec.Auth.OAuth.ForTenant(cl.Tenant), cl, form)
 	if err != nil {
 		var te *oauthTokenError
 		if errors.As(err, &te) && te.invalidGrant() {

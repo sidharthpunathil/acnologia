@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 )
 
@@ -53,6 +54,70 @@ type OAuthConfig struct {
 	// AccountField is the claim of the id_token or the field of the
 	// userinfo answer that names the account; email by default.
 	AccountField string `json:"account_field,omitempty"`
+	// TokenPath is where the access token sits in the token endpoint's
+	// answer, as a dotted path; access_token by default. The refresh token,
+	// expires_in, scope and id_token are read from the same object. Slack
+	// puts its bot token at the top (access_token) and the user token under
+	// authed_user (authed_user.access_token).
+	TokenPath string `json:"token_path,omitempty"`
+	// Tenant is the default for {tenant} in the authorize, token and
+	// userinfo URLs (Microsoft's common, say). A service may set its own
+	// tenant with its OAuth client.
+	Tenant string `json:"tenant,omitempty"`
+}
+
+// TenantPlaceholder is replaced by the tenant in an OAuth block's URLs.
+const TenantPlaceholder = "{tenant}"
+
+var tenantRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$`)
+
+// ValidTenant reports whether t can stand for {tenant}: letters, digits,
+// dots and hyphens, as tenant names (common, organizations), ids (GUIDs)
+// and domain names (contoso.onmicrosoft.com) are.
+func ValidTenant(t string) bool { return tenantRe.MatchString(t) && !strings.Contains(t, "..") }
+
+// HasTenant reports whether the block's URLs take a tenant.
+func (c *OAuthConfig) HasTenant() bool {
+	return c != nil && (strings.Contains(c.AuthorizeURL, TenantPlaceholder) || strings.Contains(c.TokenURL, TenantPlaceholder) ||
+		strings.Contains(c.UserinfoURL, TenantPlaceholder))
+}
+
+// ForTenant is the block with {tenant} in its URLs replaced by tenant, or
+// by the block's default when tenant is empty or not valid. A block
+// without the placeholder comes back as it is.
+func (c *OAuthConfig) ForTenant(tenant string) *OAuthConfig {
+	if !c.HasTenant() {
+		return c
+	}
+	if !ValidTenant(tenant) {
+		tenant = c.Tenant
+	}
+	out := *c
+	out.AuthorizeURL = strings.ReplaceAll(c.AuthorizeURL, TenantPlaceholder, tenant)
+	out.TokenURL = strings.ReplaceAll(c.TokenURL, TenantPlaceholder, tenant)
+	out.UserinfoURL = strings.ReplaceAll(c.UserinfoURL, TenantPlaceholder, tenant)
+	return &out
+}
+
+var tokenPathRe = regexp.MustCompile(`^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){0,3}$`)
+
+// TokenObject finds the object of a token answer that holds the access
+// token, and the access token's field name in it (TokenPath).
+func (c *OAuthConfig) TokenObject(answer map[string]any) (map[string]any, string) {
+	path := "access_token"
+	if c != nil && c.TokenPath != "" {
+		path = c.TokenPath
+	}
+	parts := strings.Split(path, ".")
+	obj := answer
+	for _, p := range parts[:len(parts)-1] {
+		next, ok := obj[p].(map[string]any)
+		if !ok {
+			return nil, ""
+		}
+		obj = next
+	}
+	return obj, parts[len(parts)-1]
 }
 
 // equalOAuth reports whether two OAuth blocks are the same.
@@ -105,7 +170,7 @@ func (c *OAuthConfig) ScopeProblem(scopes []string) string {
 }
 
 func validOAuthURL(raw string) bool {
-	u, err := url.Parse(raw)
+	u, err := url.Parse(strings.ReplaceAll(raw, TenantPlaceholder, "common"))
 	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.Fragment == ""
 }
 
@@ -129,6 +194,15 @@ func (a Auth) validateOAuth(add func(string, ...any)) {
 	case "", "body", "basic":
 	default:
 		add("auth.oauth.client_auth must be body or basic")
+	}
+	if c.TokenPath != "" && !tokenPathRe.MatchString(c.TokenPath) {
+		add("auth.oauth.token_path must be a dotted path of at most 4 names, such as authed_user.access_token")
+	}
+	switch {
+	case c.HasTenant() && !ValidTenant(c.Tenant):
+		add("auth.oauth.tenant is required when a URL has {tenant}: letters, digits, dots and hyphens, such as common")
+	case !c.HasTenant() && c.Tenant != "":
+		add("auth.oauth.tenant is set but no URL has {tenant}")
 	}
 	if msg := (&OAuthConfig{}).ScopeProblem(c.Scopes); msg != "" {
 		add("auth.oauth.scopes: %s", msg)

@@ -61,7 +61,7 @@ func TestEventIndexPlans(t *testing.T) {
 // Open leaves them alone.
 func TestLateIndexesMigrate(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openBaseline(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

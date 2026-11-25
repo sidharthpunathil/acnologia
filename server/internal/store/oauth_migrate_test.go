@@ -12,7 +12,7 @@ import (
 // keeps working, and a grant with no app can be stored after it.
 func TestMigrateOAuthControlKeepsConnections(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openBaseline(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
