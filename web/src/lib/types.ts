@@ -1335,6 +1335,23 @@ export interface OAuthConnectState {
   error?: string;
 }
 
+/** One Getting started step (GET /api/admin/checklist). */
+export interface ChecklistStep {
+  id: "service" | "app_token" | "agent" | "first_call" | (string & {});
+  title: string;
+  done: boolean;
+  /** How to do it: a control MCP tool, an acn command and the dashboard page. */
+  next: { tool?: string; command?: string; url?: string };
+}
+
+/** GET /api/admin/checklist: what is left to set up on this server. */
+export interface Checklist {
+  steps: ChecklistStep[];
+  done: number;
+  total: number;
+  complete: boolean;
+}
+
 /** What deleting a key, service or app answers. Items from another server skip the trash, so they have no restore_id. */
 export interface DeleteResult {
   ok?: boolean;

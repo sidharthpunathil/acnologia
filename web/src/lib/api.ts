@@ -1,4 +1,5 @@
 import type {
+  Checklist,
   DeleteResult,
   App,
   AppControls,
@@ -339,6 +340,9 @@ export const api = {
 
   // Audit
   listAudit: () => request<{ audit: AuditEntry[] }>("GET", "/api/admin/audit"),
+
+  /** The Getting started steps, as the control MCP's checklist tool and acn see them. */
+  checklist: () => request<Checklist>("GET", "/api/admin/checklist"),
 };
 
 export function errorMessage(err: unknown): string {
