@@ -325,7 +325,8 @@ const pruneBatch = 1000
 
 // Prune deletes expired sessions, leases older than a week and events older
 // than eventRetention (zero or less keeps events forever), expired
-// idempotency records and key affinities, then refreshes planner statistics.
+// idempotency records and key affinities, caller tag and token usage past
+// the longest window anything reads, then refreshes planner statistics.
 func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 	t := time.Now()
 	if _, err := s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at<?`, t.Unix()); err != nil {
@@ -349,6 +350,9 @@ func (s *Store) Prune(ctx context.Context, eventRetention time.Duration) error {
 		return err
 	}
 	if err := s.pruneExpiring(ctx, t); err != nil {
+		return err
+	}
+	if err := s.pruneTagUsage(ctx, t); err != nil {
 		return err
 	}
 	optimize(ctx, s.DB)
@@ -375,7 +379,7 @@ func (s *Store) warnLargeWAL(ctx context.Context) {
 
 // pruneBatched runs a DELETE of at most pruneBatch rows until one deletes
 // fewer.
-func (s *Store) pruneBatched(ctx context.Context, q string, before int64) error {
+func (s *Store) pruneBatched(ctx context.Context, q string, before any) error {
 	for {
 		res, err := s.w.ExecContext(ctx, q, before, pruneBatch)
 		if err != nil {

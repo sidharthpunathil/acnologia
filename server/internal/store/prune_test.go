@@ -86,3 +86,48 @@ func TestWarnLargeWALFindsFile(t *testing.T) {
 	}
 	s.warnLargeWAL(context.Background())
 }
+
+// Prune drops caller tag and token usage older than the longest window
+// anything reads, and keeps this month and the last 366 days.
+func TestPruneTagUsage(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	a, err := s.CreateApp(ctx, &App{Name: "a", Mode: "both", Active: true}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	days := map[string]bool{ // day -> kept
+		dayOf(now):                     true,
+		dayOf(now.AddDate(0, 0, -365)): true,
+		dayOf(now.AddDate(0, 0, -usageRetentionDays)):   true,
+		dayOf(now.AddDate(0, 0, -usageRetentionDays-1)): false,
+		dayOf(now.AddDate(-3, 0, 0)):                    false,
+	}
+	for d := range days {
+		if _, err := s.DB.Exec(`INSERT INTO tag_usage(app_id,tag_key,tag_value,day,requests,cost) VALUES(?,?,?,?,1,0.5)`, a.ID, "customer", "c1", d); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB.Exec(`INSERT INTO app_token_usage(token_id,app_id,day,requests,cost) VALUES(?,?,?,1,0.5)`, 7, a.ID, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Prune(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"tag_usage", "app_token_usage"} {
+		for d, kept := range days {
+			var n int
+			if err := s.DB.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE day=?`, d).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			if (n == 1) != kept {
+				t.Fatalf("%s %s: %d rows, kept=%v", table, d, n, kept)
+			}
+		}
+	}
+	rows, err := s.TagUsage(ctx, a.ID, 366, 10, now)
+	if err != nil || len(rows) != 1 || rows[0].Requests != 2 {
+		t.Fatalf("usage by tag after prune: %+v %v", rows, err)
+	}
+}

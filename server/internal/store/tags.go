@@ -335,6 +335,21 @@ func (s *Store) TagUsage(ctx context.Context, appID int64, days, limit int, at t
 	return out, rows.Err()
 }
 
+// usageRetentionDays is how many days of caller tag and token usage Prune
+// keeps: usage by tag reads at most 366 days back, which also covers the
+// current month every monthly budget counts, and one day spare.
+const usageRetentionDays = 367
+
+// pruneTagUsage deletes tag and token usage rows older than
+// usageRetentionDays.
+func (s *Store) pruneTagUsage(ctx context.Context, now time.Time) error {
+	cut := dayOf(now.AddDate(0, 0, -usageRetentionDays))
+	if err := s.pruneBatched(ctx, `DELETE FROM tag_usage WHERE rowid IN (SELECT rowid FROM tag_usage WHERE day<? LIMIT ?)`, cut); err != nil {
+		return err
+	}
+	return s.pruneBatched(ctx, `DELETE FROM app_token_usage WHERE rowid IN (SELECT rowid FROM app_token_usage WHERE day<? LIMIT ?)`, cut)
+}
+
 // GetTokenUsage is one app token's use today and this month.
 func (s *Store) GetTokenUsage(ctx context.Context, tokenID int64, at time.Time) (AppUsage, error) {
 	var u AppUsage
