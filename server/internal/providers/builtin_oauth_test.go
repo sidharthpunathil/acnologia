@@ -39,6 +39,13 @@ func TestOAuthBuiltins(t *testing.T) {
 		t.Fatalf("microsoft tenant: %+v", ms)
 	}
 
+	// Google Ads paths use the version set in one place.
+	for _, e := range specs["google-ads"].Examples {
+		if !strings.HasPrefix(e.Path, "/"+GoogleAdsAPIVersion+"/") {
+			t.Errorf("google ads example %s uses %s", e.Name, e.Path)
+		}
+	}
+
 	// Slack: comma separated scopes, the bot token at the top of the
 	// answer, and a refused token on HTTP 200 marks the key.
 	sl := specs["slack"]
