@@ -112,6 +112,12 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := store.WithAppToken(context.WithValue(r.Context(), appKey, a), a.TokenID)
+	// Caller tags on /mcp label every call it runs: proxied tool calls
+	// inherit them through the usage scope, and admission pins them.
+	r = r.WithContext(ctx)
+	if !readCallerTags(w, r) {
+		return
+	}
 	var req rpcReq
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		writeJSON(w, 200, map[string]any{"jsonrpc": "2.0", "id": nil, "error": rpcErr{-32700, "parse error"}})
@@ -253,6 +259,9 @@ func (s *Server) toolCallResult(ctx context.Context, r *http.Request, a *store.A
 	// Errors are shaped for the tool the client called: call_tool's, not
 	// the target's, since the client checks against the called tool.
 	called := *t
+	if err := s.mcpPinnedConflict(ctx, a); err != nil {
+		return toolErrorResult(err, called)
+	}
 	if t.Name == "call_tool" {
 		target, inner, err := s.resolveCallTool(ctx, a, st, args)
 		if err != nil {
@@ -273,6 +282,24 @@ func (s *Server) toolCallResult(ctx context.Context, r *http.Request, a *store.A
 	}
 	b, _ := json.Marshal(out)
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(b)}}, "structuredContent": out}
+}
+
+// mcpPinnedConflict is the tag_pinned error when the caller tags sent with
+// an MCP call give a pinned key of its token another value, checked before
+// the tool runs so the call fails the way a proxied one would.
+func (s *Server) mcpPinnedConflict(ctx context.Context, a *store.App) error {
+	tags := store.UsageTags(ctx)
+	if len(tags) == 0 || a.TokenID == 0 {
+		return nil
+	}
+	in, err := s.Store.GetAdmissionLimits(ctx, a.ID, a.TokenID)
+	if err != nil {
+		return nil // admission reads them again and fails closed
+	}
+	if _, hit := pinTags(tags, in.Pinned); hit != nil {
+		return toolErrf(limitTagPinned, "%s", pinnedMessage(hit.Tag))
+	}
+	return nil
 }
 
 // toolErrorResult is an isError result: the message and the registry's

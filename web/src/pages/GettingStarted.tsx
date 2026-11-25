@@ -1,9 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { RiAddLine, RiArrowRightLine, RiCheckLine, RiCloseLine } from "@remixicon/react";
-import { ops } from "../lib/ops";
-import { fetchUsage } from "../lib/usage";
-import type { Service } from "../lib/types";
-import { useApps } from "../stores/apps";
+import { api } from "../lib/api";
+import type { Checklist, Service } from "../lib/types";
 import { Button } from "@/components/base/buttons/button";
 import { CodeBlock } from "@/components/acn/code-block";
 import { RouterButtonLink } from "@/components/acn/button-link";
@@ -13,9 +11,6 @@ import { DemoData } from "./DemoData";
 
 /** Set once the person closes the card; it then stays closed in this browser. */
 const DISMISS_KEY = "acn.getting-started.dismissed";
-
-/** The app the control MCP makes for itself on first use. It is not one the person made. */
-const CONTROL_APP = "Control MCP";
 
 function readDismissed(): boolean {
   try {
@@ -31,22 +26,6 @@ function saveDismissed() {
   } catch {
     /* storage blocked: the card closes for this visit only */
   }
-}
-
-/** What the server says has happened so far, beyond the services the catalog already has. */
-interface Signals {
-  /** An admin API token (acn login, acn mcp) has been used. */
-  cliUsed: boolean;
-  /** Requests through the pool in the last 90 days. */
-  requests: number;
-}
-
-async function loadSignals(): Promise<Signals> {
-  const [tokens, usage] = await Promise.allSettled([ops.listTokens(), fetchUsage(90)]);
-  return {
-    cliUsed: tokens.status === "fulfilled" && (tokens.value.tokens ?? []).some((t) => !!t.last_used_at),
-    requests: usage.status === "fulfilled" ? (usage.value.totals?.range?.requests ?? 0) : 0,
-  };
 }
 
 interface Step {
@@ -77,43 +56,42 @@ function StepMark({ n, done, current }: { n: number; done: boolean; current: boo
 
 /**
  * The first run checklist at the top of the catalog: add a service, make an
- * app token, connect an agent, make a call. Each step reads the server's real
- * state. The card hides itself once every step is done, and stays hidden in
- * this browser once dismissed.
+ * app token, connect an agent, make a call. Which steps are done comes from
+ * GET /api/admin/checklist, the same answer the control MCP's checklist tool
+ * gives, so the dashboard and agents agree. The card hides itself once every
+ * step is done, and stays hidden in this browser once dismissed.
  */
 export function GettingStarted({ services, onAddService }: { services: Service[]; onAddService: () => void }) {
   const [dismissed, setDismissed] = useState(readDismissed);
-  const { apps, loaded: appsLoaded, fetch: fetchApps } = useApps();
-  const [signals, setSignals] = useState<Signals | null>(null);
+  const [checklist, setChecklist] = useState<Checklist | null>(null);
   // A step the person opened ahead of the next one to do.
   const [picked, setPicked] = useState<number | null>(null);
+  // Ask again when a service or its keys come or go, so the first step ticks at once.
+  const servicesKey = services.map((s) => `${s.id}:${s.key_counts.total}`).join(",");
 
   useEffect(() => {
     if (dismissed) return;
     let live = true;
-    fetchApps().catch(() => undefined);
-    loadSignals()
-      .then((s) => live && setSignals(s))
-      .catch(() => live && setSignals({ cliUsed: false, requests: 0 }));
+    api
+      .checklist()
+      .then((c) => live && setChecklist(c))
+      .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [dismissed, fetchApps]);
+  }, [dismissed, servicesKey]);
 
-  if (dismissed || !signals || !appsLoaded) return null;
+  if (dismissed || !checklist) return null;
 
   const origin = window.location.origin;
-  const withKeys = services.filter((s) => s.key_counts.total > 0);
-  const ownApps = apps.filter((a) => a.name !== CONTROL_APP);
-  const appUsed = ownApps.some((a) => !!a.last_used_at);
-  const requests = signals.requests + services.reduce((n, s) => n + (s.requests_24h ?? 0), 0);
-  const target = withKeys[0];
+  const target = services.find((s) => s.key_counts.total > 0);
+  const isDone = (id: string) => checklist.steps.find((s) => s.id === id)?.done ?? false;
 
   const steps: Step[] = [
     {
       title: "Add your first service and key",
       body: "Pick a provider and paste in a key from an account you own. Add more keys later and Acnologia rotates between them.",
-      done: withKeys.length > 0,
+      done: isDone("service"),
       action: (
         <Button variant="primary" size="small" leadingIcon={RiAddLine} onClick={onAddService}>
           Add service
@@ -123,7 +101,7 @@ export function GettingStarted({ services, onAddService }: { services: Service[]
     {
       title: "Create an app token",
       body: "Each agent or app gets its own token. It can call your services but never sees a key, and you can revoke it any time.",
-      done: ownApps.length > 0,
+      done: isDone("app_token"),
       action: (
         <RouterButtonLink href="/apps" variant="secondary" size="small" trailingIcon={RiArrowRightLine}>
           Open Apps
@@ -133,7 +111,7 @@ export function GettingStarted({ services, onAddService }: { services: Service[]
     {
       title: "Connect your agent",
       body: "Install the acn CLI, sign in, and add Acnologia to Claude Code, Cursor and Codex in one step. Or paste the app token into your agent yourself.",
-      done: signals.cliUsed || appUsed,
+      done: isDone("agent"),
       detail: (
         <div className="flex flex-col gap-3">
           <CodeBlock
@@ -155,7 +133,7 @@ export function GettingStarted({ services, onAddService }: { services: Service[]
     {
       title: "Make a first call",
       body: "Ask your agent to use a service, or call one through the proxy. The service's Integrate tab has snippets for every language.",
-      done: requests > 0,
+      done: isDone("first_call"),
       detail: (
         <CodeBlock label="curl" code={`curl "${origin}/proxy/${target?.slug ?? "<service>"}/<path>" \\\n  -H "Authorization: Bearer acn_..."`} />
       ),

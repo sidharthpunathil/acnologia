@@ -157,6 +157,9 @@ acn services --json | jq -r '.services[] | select(.key_counts.available == 0) | 
 | `acn audit [--via v] [--action a] [--client c] [--app a] [--token id] [--service s] [--since t] [--after id] [--limit n]` | Who changed what, with how it came in (`dashboard`, `api`, `cli`, `control_mcp`, `app_mcp`, `assistant`, `oauth`) and the client. Needs the superadmin role. |
 | `acn jobs [--kind k] [--status s] [--mine] [--limit n]` | Background [jobs](api.md#jobs): key checks, peer and MCP syncs, with status and progress. |
 | `acn jobs <id> [--wait]` | One job's status, progress and result. `--wait` polls until it is done or failed. |
+| `acn peers` | Servers this one is connected to: id, name, mode, status, service count and the last sync. Needs the admin role. |
+| `acn peers sync <peer> [--async]` | Fetch a connected server's manifest again, by id or name. `--async` starts a background job and prints its id instead of waiting. Needs the superadmin role. |
+| `acn mcp sync <service> [--async]` | Connect to a service's upstream MCP server and refresh its tool catalog. `--async` starts a background job. |
 | `acn breaker <service> [--reset]` | The service's circuit breaker, or close it. |
 | `acn cache purge <service>` | Drop the service's cached responses. |
 | `acn usage <app-id>` | An app's requests, spend and limits today and this month. |

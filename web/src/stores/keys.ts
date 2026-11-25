@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
-import type { Key, KeyPatch, NewKeyInput } from "../lib/types";
+import type { DeleteResult, Key, KeyPatch, NewKeyInput } from "../lib/types";
 import { useInsights } from "./insights";
 
 interface KeysStore {
@@ -11,7 +11,7 @@ interface KeysStore {
   fetch: (serviceId: number) => Promise<void>;
   add: (serviceId: number, keys: NewKeyInput[]) => Promise<number>;
   update: (key: Key, patch: KeyPatch) => Promise<Key>;
-  remove: (key: Key) => Promise<void>;
+  remove: (key: Key) => Promise<DeleteResult>;
   check: (key: Key) => Promise<Key>;
   reset: (key: Key) => Promise<Key>;
   reveal: (key: Key) => Promise<string>;
@@ -58,11 +58,12 @@ export const useKeys = create<KeysStore>((set, get) => {
     },
 
     remove: async (key) => {
-      await api.deleteKey(key.id);
+      const res = await api.deleteKey(key.id);
       const ins = useInsights.getState();
       useInsights.setState({ rows: ins.rows.filter((r) => r.id !== key.id) });
       const list = get().byService[key.service_id] ?? [];
       set({ byService: { ...get().byService, [key.service_id]: list.filter((x) => x.id !== key.id) } });
+      return res;
     },
 
     check: async (key) => {

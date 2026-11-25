@@ -229,6 +229,12 @@ export function AdvancedSection({ isAdmin, isSuper, summary }: { isAdmin: boolea
         <SettingRow label="Egress echo URL" description="Answers with the caller's IP when you test an egress proxy.">
           <EnvValue env={env("ACNOLOGIA_EGRESS_ECHO_URL")} format={(v) => <span dir="ltr">{v}</span>} unsetLabel="Default" />
         </SettingRow>
+        <SettingRow label="Daily spend ceiling" description="What all apps together may spend in a UTC day, unless a superadmin saved another.">
+          <EnvValue env={env("ACNOLOGIA_DAILY_SPEND_CEILING_USD")} format={(v) => (Number(v) > 0 ? `$${v}` : "None")} unsetLabel="None" />
+        </SettingRow>
+        <SettingRow label="Copy before a schema upgrade" description="Copy the database next to it before an upgrade changes its schema, keeping the last three.">
+          <EnvValue env={env("ACNOLOGIA_MIGRATION_BACKUP")} format={(v) => (v === "true" ? "On" : "Off")} unsetLabel="Default: on" />
+        </SettingRow>
       </SettingsCard>
       </>
     );

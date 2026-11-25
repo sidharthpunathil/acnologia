@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -285,6 +286,34 @@ func TestControlMCPRawRequest(t *testing.T) {
 		t.Fatalf("raw delete without confirm: %v", sc)
 	}
 	e.do(e.super, "GET", kp+"/insights", nil, 200, nil)
+	// A dry run DELETE needs no confirm and changes nothing.
+	if sc, text, isErr := c.tool("api_request", map[string]any{"method": "DELETE", "path": kp, "dry_run": true}); isErr || sc["dry_run"] != true {
+		t.Fatalf("raw dry run delete: %s", text)
+	}
+	e.do(e.super, "GET", kp+"/insights", nil, 200, nil)
+	// idempotency_key makes a retried create answer once.
+	create := map[string]any{"method": "POST", "path": "/api/admin/apps", "body": map[string]any{"name": "raw-idem"}, "idempotency_key": "raw-app-1"}
+	first, text, isErr := c.tool("api_request", create)
+	if isErr {
+		t.Fatalf("raw create: %s", text)
+	}
+	again, text, isErr := c.tool("api_request", create)
+	if isErr || fmt.Sprint(again) != fmt.Sprint(first) || len(first) == 0 {
+		t.Fatalf("retried create: %v then %v (%s)", first["id"], again["id"], text)
+	}
+	var apps struct {
+		Apps []map[string]any `json:"apps"`
+	}
+	e.do(e.super, "GET", "/api/admin/apps", nil, 200, &apps)
+	n := 0
+	for _, a := range apps.Apps {
+		if a["name"] == "raw-idem" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d apps named raw-idem, want 1", n)
+	}
 
 	// The route still refuses an API token on a session only route, even
 	// if a call got past the path check.

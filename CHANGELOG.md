@@ -25,7 +25,8 @@
   at 64 KB, list tools take `summary: true`, and errors keep their code.
 - `acn api`, `acn tool <name>` (every control tool), `acn apps`,
   `acn tokens`, `acn limits`, `acn deny`, `acn tags`, `acn ceiling`,
-  `acn events --follow`, `acn audit`, `acn jobs`, `acn demo`, `acn try`,
+  `acn events --follow`, `acn audit`, `acn jobs`, `acn peers sync`,
+  `acn mcp sync`, `acn demo`, `acn try`,
   `acn trash`, `acn backup`, `acn oauth`, `acn run -- <cmd>` (one command
   through the forward proxy) and `acn scan` (find keys in env and agent
   config files, preview, then import). With `--json` an error prints as
@@ -75,6 +76,10 @@
   proxy, the forward proxy, capabilities, rotation and upstream MCP tools.
 - `ACNOLOGIA_DAILY_SPEND_CEILING_USD` stops every app once the server's
   estimated spend for the day reaches it.
+- Each MCP client signed in with OAuth gets the app's per-token default as
+  a cap of its own, and `X-Acnologia-Meta` works on `/mcp` too, tagging
+  every tool call of the request.
+- Caller tag and token usage older than a year and a day is pruned.
 
 ### Provider sign in
 
@@ -86,9 +91,11 @@
 
 ### Safer admin changes
 
-- Admin writes take `Idempotency-Key` and `?dry_run=1`.
+- Admin writes take `Idempotency-Key` and `?dry_run=1`, the control MCP's
+  `api_request` included (`idempotency_key`, `dry_run`).
 - Deleting a key, service or app moves it to the trash for 7 days, from
-  where it can be restored (Settings, `acn trash`, control MCP).
+  where it can be restored (Settings, `acn trash`, control MCP). The
+  dashboard's delete dialogs say so, and the toast after a delete has Undo.
 - `GET /api/admin/version` and `POST /api/admin/backup`.
 - The database records a schema version. An older binary refuses to start
   on a database a newer one upgraded, and an upgrade that changes the schema

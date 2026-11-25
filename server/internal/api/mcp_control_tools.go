@@ -826,12 +826,14 @@ func buildCtlTools() []ctlTool {
 
 		// ---- raw ----
 		{Name: "api_request", Title: "Call the admin API", Group: "raw", Kind: ctlDestructive, Role: m, Method: "", Path: "",
-			Desc: "Call any /api/admin/... route not covered by another tool, as the signed in user. /api/admin/tokens and PATCH /api/admin/me are refused. DELETE needs confirm.",
+			Desc: "Call any /api/admin/... route not covered by another tool, as the signed in user. /api/admin/tokens and PATCH /api/admin/me are refused. DELETE needs confirm, unless it is a dry run. On a write, dry_run says what the call would do and idempotency_key (sent as the Idempotency-Key header) makes a retry return the first answer.",
 			Props: map[string]any{
-				"method": eProp("HTTP method", "GET", "POST", "PUT", "PATCH", "DELETE"),
-				"path":   sProp("Path starting with /api/admin/"),
-				"query":  map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Query parameters"},
-				"body":   map[string]any{"description": "JSON body for POST, PUT or PATCH"},
+				"method":          eProp("HTTP method", "GET", "POST", "PUT", "PATCH", "DELETE"),
+				"path":            sProp("Path starting with /api/admin/"),
+				"query":           map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Query parameters"},
+				"body":            map[string]any{"description": "JSON body for POST, PUT or PATCH"},
+				"dry_run":         bProp(dryRunArgDesc + ". Writes only"),
+				"idempotency_key": sProp(adminIdemDesc + ". Writes only"),
 			},
 			Required: []string{"method", "path"}, Run: ctlRawRequest,
 			Describe: func(c *ctlCtx, in map[string]any) (string, error) {

@@ -11,6 +11,7 @@ import { AppAccessPanel } from "./AppAccessPanel";
 import { useServices } from "../stores/services";
 import { useAuth } from "../stores/auth";
 import { toast } from "../stores/toast";
+import { deletedToast, restoreNote } from "../lib/trash";
 import { errorMessage } from "../lib/api";
 import { can } from "../lib/perms";
 import { compact, dateTime, plural, relTime } from "../lib/format";
@@ -603,10 +604,11 @@ export function AppsPage() {
                           variant="outline"
                           label="Delete app"
                           confirmLabel="Delete"
+                          description={`Its tokens stop working right away. ${restoreNote}`}
                           onConfirm={async () => {
                             try {
-                              await remove(a.id);
-                              toast.success(`Deleted ${a.name}`);
+                              const res = await remove(a.id);
+                              deletedToast(a.name, res, fetch);
                             } catch (e) {
                               toast.error(errorMessage(e));
                             }

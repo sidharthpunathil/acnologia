@@ -1080,8 +1080,8 @@ A service with `cache_ttl_sec` above 0 (search providers default to 3600) caches
 
 These apply to the admin API (`/api/admin`, with a dashboard session or an admin API token), the control MCP and `acn`.
 
-- Dry run: add `?dry_run=1` to any POST, PUT, PATCH or DELETE under `/api/admin`. The route's own permission checks run, the body is checked, the target is looked up, and the answer is `{dry_run: true, method, path, would}` with nothing changed. Errors are the ones the real call would give. Control MCP write tools take `dry_run: true`; `acn --dry-run <command>` prints `Dry run: would ...`.
-- Idempotency-Key on admin writes: the first 2xx or 4xx answer (not 408, 425 or 429) is kept 24 hours per user and token, encrypted, and replayed with `Idempotent-Replayed: true`. Same key with another method, path or body: 422 `idempotency_key_reused`. While the first runs: 409 `idempotency_in_progress` with `Retry-After`. Control MCP write tools take `idempotency_key`; `acn --idempotency-key <key>`. Key reveals and backups are never replayed.
+- Dry run: add `?dry_run=1` to any POST, PUT, PATCH or DELETE under `/api/admin`. The route's own permission checks run, the body is checked, the target is looked up, and the answer is `{dry_run: true, method, path, would}` with nothing changed. Errors are the ones the real call would give. Control MCP write tools, `api_request` included, take `dry_run: true`; `acn --dry-run <command>` prints `Dry run: would ...`.
+- Idempotency-Key on admin writes: the first 2xx or 4xx answer (not 408, 425 or 429) is kept 24 hours per user and token, encrypted, and replayed with `Idempotent-Replayed: true`. Same key with another method, path or body: 422 `idempotency_key_reused`. While the first runs: 409 `idempotency_in_progress` with `Retry-After`. Control MCP write tools, `api_request` included, take `idempotency_key`; `acn --idempotency-key <key>`. Key reveals and backups are never replayed.
 - Trash: deleting a key, service or app answers `{ok, restore_id, expires_at, trash}` and keeps the item 7 days, invisible to lists, the proxy, leases and MCP. `GET /api/admin/trash` lists (admin), `POST /api/admin/trash/{id}/restore` brings it back as it was (admin; 409 `restore_conflict` or `restore_blocked` with the reason), `DELETE /api/admin/trash/{id}` deletes it for good now (superadmin). Items with hidden keys are for superadmins only. Services and keys from another server skip the trash. Tools: `acnologia_list_trash`, `acnologia_restore_trash`, `acnologia_purge_trash`; `acn trash [restore|purge <id>]`.
 - Version: `GET /api/admin/version` gives `{current, latest, update_available, upgrade_command, schema_version}`; tool `acnologia_server_version`; `acn version --server`.
 - Backup (superadmin): `POST /api/admin/backup` streams `acnologia-backup-<time>.db`, a consistent copy without sessions; `acn backup [-o file]`. The tool `acnologia_backup_database` writes it on the server under `<data dir>/backups/` and returns `{path, file, bytes}`. Stored keys stay encrypted: the copy never holds `ACNOLOGIA_MASTER_KEY`, and restoring needs the same one.
@@ -1137,11 +1137,11 @@ Retry-After: 4210
 {"error": {"code": "app_limit_reached", "message": "this app reached its daily requests limit"}, "limit": "daily_requests", "reset_at": "2026-11-02T00:00:00Z", "retry_after_sec": 4210}
 ```
 
-A token can carry limits of its own inside the app's (or take the app's per-token default), so each agent or each person who claimed a share link has its own cap: over it, 429 `token_limit_reached` with `limit` such as `token_daily_requests`. The server may also have a daily spend ceiling for all apps together: 503 `server_spend_ceiling` with `reset_at` (midnight UTC).
+A token can carry limits of its own inside the app's (or take the app's per-token default), so each agent or each person who claimed a share link has its own cap. An MCP client signed in with OAuth gets the per-token default too, per sign in. Over it, 429 `token_limit_reached` with `limit` such as `token_daily_requests`. The server may also have a daily spend ceiling for all apps together: 503 `server_spend_ceiling` with `reset_at` (midnight UTC).
 
 ### Caller tags
 
-Send `X-Acnologia-Meta: customer=cust_A,workspace=w1` (up to 5 pairs; keys `a-z 0-9 _ - .`, values letters, digits and `_ - . : @ / +`) to record usage per tag value. The header never reaches the provider. An app can give each value of a key its own budget, such as $2 a day per customer: over it, 429 `tag_limit_reached` with `tag: "customer=cust_A"`. A token may be pinned to tag values: its calls always carry them, and sending another value for a pinned key answers 400 `tag_pinned`. A malformed header answers 400 `bad_meta`. `GET /api/v1/usage/tags?days=30` returns the app's own use per tag value.
+Send `X-Acnologia-Meta: customer=cust_A,workspace=w1` (up to 5 pairs; keys `a-z 0-9 _ - .`, values letters, digits and `_ - . : @ / +`) to record usage per tag value, on `/proxy`, the forward proxy, capabilities, leases and `/mcp` (where it tags every tool call of the request). The header never reaches the provider. An app can give each value of a key its own budget, such as $2 a day per customer: over it, 429 `tag_limit_reached` with `tag: "customer=cust_A"`. A token may be pinned to tag values: its calls always carry them, and sending another value for a pinned key answers 400 `tag_pinned` (over MCP, an `isError` tool result with that code). A malformed header answers 400 `bad_meta`. `GET /api/v1/usage/tags?days=30` returns the app's own use per tag value.
 
 ### Deny rules
 
@@ -1301,6 +1301,8 @@ acn events --after 1234                        # only events after a cursor, old
 acn audit --via control_mcp --since 24h        # what agents changed today
 acn keys check --all --async                   # start a background check job
 acn jobs 12 --wait                             # wait for it and print the result
+acn peers sync lab --async                     # fetch a connected server's manifest as a job
+acn mcp sync github                            # refresh a service's upstream MCP tools
 acn limits billing --daily-budget 2            # every token of app billing gets $2 a day
 acn limits billing --token ci --pin customer=cust_A
 acn tags billing --budget customer --daily-budget 2

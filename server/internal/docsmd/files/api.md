@@ -125,7 +125,9 @@ an MCP tool is admitted against each limit it falls under, in one step:
 
 - the app's limits (`limits` on the app);
 - the token's limits: the token's own, with any field it leaves unset taken
-  from the app's per-token default (`PUT /api/admin/apps/{id}/token-limits`);
+  from the app's per-token default (`PUT /api/admin/apps/{id}/token-limits`).
+  An OAuth access token (`acno_`) has no app token, so its grant (one MCP
+  client's sign in) gets the per-token default as its own cap;
 - a tag budget for each caller tag value the request carries;
 - the server's daily spend ceiling (see
   [configuration](configuration.md#daily-spend-ceiling)).
@@ -137,15 +139,17 @@ concurrent requests cannot pass a cap that had room for fewer of them, and
 the request that would cross a budget is refused rather than let through.
 The hold is released however the request ends. The per-token default gives
 each token its own cap inside the app's: each person who claimed a reusable
-share link, or each agent that got its own token. OAuth access tokens
-(`acno_`) have no cap of their own: their calls count toward their app's
-limits and tag budgets.
+share link, or each agent that got its own token, or each MCP client signed
+in with OAuth. Over it, the answer is 429 `token_limit_reached`, the same as
+for an app token.
 
 **Caller tags.** A caller may label a request with
 `X-Acnologia-Meta: customer=cust_A,workspace=w1`: up to 5 pairs, keys of
 `a-z 0-9 _ - .` up to 32 characters (lowercased), values of letters, digits
 and `_ - . : @ / +` up to 64 characters. The header is read on `/proxy`, the
-forward proxy, capabilities and leases, and never reaches the provider.
+forward proxy, capabilities, leases and `/mcp`, and never reaches the
+provider. On `/mcp` the tags label every tool call of that request, so a
+proxied tool call counts under them and their tag budgets.
 Usage is recorded per tag value, so an app can bill its own customers.
 
 A tag budget caps each value of one key on its own: `{key: "customer",
@@ -155,7 +159,8 @@ without that key is not under
 the budget, so to make a caller unable to skip or change its tag, pin the
 token: a token with `pinned_tags: {"customer": "cust_A"}` carries that value
 on every call, MCP tool calls included, and a request that sends another
-value for a pinned key gets 400 `tag_pinned`.
+value for a pinned key gets 400 `tag_pinned` (on `/mcp`, a tool result with
+`isError` and the code `tag_pinned`).
 
 **Deny rules.** A rule blocks an app's matching requests with 403
 `denied_by_rule`, whatever its other access allows. A rule has a `method`
@@ -368,7 +373,7 @@ lower of its owner's role and its scope.
 | `POST /providers/refresh/reviews/{id}/apply`, `.../dismiss` | s | Apply (publishes a version with source `refresh`, or saves Claude prices as overrides) or drop a proposal. 409 `stale` when the provider changed since, `not_pending` when already decided. Audited as `provider.refresh.apply` and `provider.refresh.dismiss`. |
 | `GET /health/settings` | a | Background key health checks: `{interval, interval_sec, source: saved\|env, saved, env, choices}`. `interval` is the one in effect (`off`, `15m`, `30m`, `1h`, `6h`, `12h`, `24h`, `7d`, or another duration from the environment); `source` says whether it was set on the Settings page or comes from `ACNOLOGIA_HEALTH_INTERVAL`. |
 | `PUT /health/settings` | s | `{interval}`: one of `choices`, or `""` to go back to `ACNOLOGIA_HEALTH_INTERVAL`. Saved on this server and read by the worker on every pass, so it applies within a minute without a restart. 400 `invalid` otherwise. Audited as `settings.health_interval`. |
-| `GET /settings` | a | The configuration only the environment sets, for the Settings page: `{version, access_gate_on, env: [{name, set, secret, value}]}`. `value` is the effective value (the default when the variable is unset). Secrets such as `ACNOLOGIA_MASTER_KEY` and `ANTHROPIC_API_KEY` report only `set`. |
+| `GET /settings` | a | The configuration only the environment sets, for the Settings page: `{version, access_gate_on, env: [{name, set, secret, value}]}`. `value` is the effective value (the default when the variable is unset). Secrets such as `ACNOLOGIA_MASTER_KEY`, `ACNOLOGIA_BOOTSTRAP_TOKEN` and `ANTHROPIC_API_KEY` report only `set`. |
 | `GET /ai/runs`, `GET /ai/runs/{id}?after=n` | m | Runs and their live steps. |
 | `POST /ai/runs` | a | Start a run: `{kind, provider_slug, context, urls, test_key, auto_publish, create_service}`. |
 | `POST /ai/runs/{id}/cancel`, `POST /ai/runs/{id}/publish` | a | Cancel; publish a run waiting for review. |
@@ -681,11 +686,13 @@ both are set:
 | `refresh` | `refresh_settings`, `update_refresh_settings`, `run_refresh`, `list_refresh_runs`, `get_refresh_run`, `list_refresh_reviews`, `apply_refresh_review`, `dismiss_refresh_review` |
 | `admin` (off by default) | `list_users`, `create_user`, `update_user`, `delete_user`, `list_audit` |
 | `secrets` (off by default) | `reveal_key` |
-| `raw` (off by default) | `api_request` `{method, path, query, body}` for any `/api/admin/...` route not covered above |
+| `raw` (off by default) | `api_request` `{method, path, query, body, dry_run, idempotency_key}` for any `/api/admin/...` route not covered above |
 
 `api_request` refuses paths outside `/api/admin/`, and also refuses
 `/api/admin/tokens`, `PATCH /api/admin/me` and the Assistant's chat routes,
-which have their own tools.
+which have their own tools. On a write it takes `dry_run` and
+`idempotency_key` like the other write tools: the key is sent as the
+`Idempotency-Key` header, and a dry run DELETE needs no `confirm`.
 
 Some of the tools in more detail:
 

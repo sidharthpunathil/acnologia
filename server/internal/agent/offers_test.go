@@ -127,3 +127,17 @@ func TestRefreshTaskListsOnlyTheProvidersOwnSources(t *testing.T) {
 		t.Fatalf("the provider's own pages are missing:\n%s", task)
 	}
 }
+
+// The builder's prompt describes the spec fields added since it was
+// written, with their real names, so built specs can use them.
+func TestBuilderPromptKnowsNewSpecFields(t *testing.T) {
+	for _, want := range []string{
+		"- affinity:", "create {method, path}", "follow [", "related",
+		"oauth2", "authorize_url", "token_url", "allowed_scopes", "client_auth: body | basic", "authorize_params", "pkce", "userinfo_url", "account_field",
+		"output_amount", "model (for a token price",
+	} {
+		if !strings.Contains(specGuide, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
+	}
+}

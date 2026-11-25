@@ -338,8 +338,11 @@ func (c *ctlCtx) callRaw(t *ctlTool, in map[string]any) map[string]any {
 		}
 	}
 	confirmStep := t.Kind == ctlDestructive && c.opts.confirm
-	if t.Name == "api_request" && !strings.EqualFold(argStr(in, "method"), http.MethodDelete) {
-		confirmStep = false
+	if t.Name == "api_request" {
+		// Only a raw DELETE is destructive, and a dry run changes nothing.
+		if dry, _ := in["dry_run"].(bool); dry || !strings.EqualFold(argStr(in, "method"), http.MethodDelete) {
+			confirmStep = false
+		}
 	}
 	if confirmStep {
 		if ok, _ := in["confirm"].(bool); !ok {
@@ -677,6 +680,20 @@ func ctlRawRequest(c *ctlCtx, in map[string]any) map[string]any {
 	var body any
 	if b, ok := in["body"]; ok && b != nil && method != http.MethodGet && method != http.MethodDelete {
 		body = b
+	}
+	// dry_run and idempotency_key reach the route the way ?dry_run=1 and
+	// an Idempotency-Key header would. They mean nothing to a read.
+	if isWriteMethod(method) {
+		ctx := c.r.Context()
+		if dry, _ := in["dry_run"].(bool); dry {
+			ctx = withDryRun(ctx)
+		}
+		if key := strings.TrimSpace(argStr(in, "idempotency_key")); key != "" {
+			ctx = withAdminIdemKey(ctx, key)
+		}
+		c2 := *c
+		c2.r = c.r.WithContext(ctx)
+		c = &c2
 	}
 	code, b, _ := c.api(method, p, body)
 	return ctlRouteResult(code, b)

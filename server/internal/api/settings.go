@@ -34,6 +34,8 @@ func (s *Server) settingsSummary(w http.ResponseWriter, r *http.Request) {
 
 	env := []envSetting{
 		plain("ACNOLOGIA_PUBLIC_URL", c.PublicURL),
+		plain("ACNOLOGIA_ADDR", c.Addr),
+		plain("ACNOLOGIA_DATA_DIR", c.DataDir),
 		secret("ACNOLOGIA_ACCESS_PASSWORD", isSet("ACNOLOGIA_ACCESS_PASSWORD")),
 		plain("ACNOLOGIA_REQUIRE_ACCESS_PASSWORD", b(c.RequireAccessPassword)),
 		plain("ACNOLOGIA_ACCESS_SIGNS_IN", b(c.AccessSignsIn)),
@@ -42,6 +44,13 @@ func (s *Server) settingsSummary(w http.ResponseWriter, r *http.Request) {
 		secret("ACNOLOGIA_MASTER_KEY", isSet("ACNOLOGIA_MASTER_KEY")),
 		plain("ACNOLOGIA_SECURE_COOKIES", b(c.SecureCookies)),
 		plain("ACNOLOGIA_TRUST_PROXY_HEADERS", b(c.TrustProxyHeaders)),
+		plain("ACNOLOGIA_TRUSTED_PROXY_HOPS", itoa(c.TrustedProxyHops)),
+		plain("ACNOLOGIA_CLIENT_IP_HEADER", c.ClientIPHeader),
+		// The first superadmin's sign in and admin API token: only whether
+		// they are set, never their values.
+		secret("ACNOLOGIA_BOOTSTRAP_EMAIL", isSet("ACNOLOGIA_BOOTSTRAP_EMAIL")),
+		secret("ACNOLOGIA_BOOTSTRAP_PASSWORD", isSet("ACNOLOGIA_BOOTSTRAP_PASSWORD")),
+		secret("ACNOLOGIA_BOOTSTRAP_TOKEN", isSet("ACNOLOGIA_BOOTSTRAP_TOKEN")),
 		plain("ACNOLOGIA_WEBHOOK_ALLOW_PRIVATE", b(c.WebhookAllowPrivate)),
 		plain("ACNOLOGIA_EGRESS_ECHO_URL", c.EgressEchoURL),
 		plain("ACNOLOGIA_EVENT_RETENTION_DAYS", itoa(c.EventRetentionDays)),
@@ -49,6 +58,10 @@ func (s *Server) settingsSummary(w http.ResponseWriter, r *http.Request) {
 		plain("ACNOLOGIA_MAX_BODY_MB", itoa(int(c.MaxBodyBytes>>20))),
 		plain("ACNOLOGIA_CACHE_MB", itoa(int(c.CacheBytes>>20))),
 		plain("ACNOLOGIA_DAILY_SPEND_CEILING_USD", strconv.FormatFloat(c.DailySpendCeilingUSD, 'f', -1, 64)),
+		plain("ACNOLOGIA_MIGRATION_BACKUP", b(c.MigrationBackup)),
+		plain("ACNOLOGIA_FORWARD_PROXY_ADDR", c.ForwardProxyAddr),
+		plain("ACNOLOGIA_FORWARD_PROXY_URL", c.ForwardProxyURL),
+		plain("ACNOLOGIA_FORWARD_PASSTHROUGH", b(c.ForwardPassthrough)),
 		secret("ANTHROPIC_API_KEY", os.Getenv("ANTHROPIC_API_KEY") != ""),
 		// The fallback model: the model saved on this page wins over it.
 		plain("ACNOLOGIA_AI_MODEL", cmp.Or(c.AIModel, agent.BuiltinModel)),

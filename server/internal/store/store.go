@@ -347,6 +347,7 @@ const baselineVersion = 1
 // begins another one. It does not need to be idempotent.
 var migrations = []migration{
 	{"oauth client tenant", migrateOAuthClientTenant}, // version 2
+	{"oauth grant usage", migrateOAuthGrantUsage},     // version 3
 }
 
 // LatestSchemaVersion is the schema version this binary brings a database

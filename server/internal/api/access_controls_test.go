@@ -47,8 +47,8 @@ func admissionsHeld(s *Server, appID int64) string {
 		ad := v.(*admission)
 		ad.mu.Lock()
 		defer ad.mu.Unlock()
-		if ad.reqs != 0 || len(ad.tok) != 0 || len(ad.tag) != 0 {
-			return fmt.Sprintf("app holds %d requests, %d tokens, %d tags", ad.reqs, len(ad.tok), len(ad.tag))
+		if ad.reqs != 0 || len(ad.tok) != 0 || len(ad.grant) != 0 || len(ad.tag) != 0 {
+			return fmt.Sprintf("app holds %d requests, %d tokens, %d grants, %d tags", ad.reqs, len(ad.tok), len(ad.grant), len(ad.tag))
 		}
 	}
 	if v, ok := s.admitted.Load(serverAdmitKey{}); ok {

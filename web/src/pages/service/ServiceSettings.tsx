@@ -7,6 +7,7 @@ import { can } from "../../lib/perms";
 import type { Service, ServiceInput, Strategy } from "../../lib/types";
 import { useServices } from "../../stores/services";
 import { toast } from "../../stores/toast";
+import { deletedToast, restoreNote } from "../../lib/trash";
 import { errorMessage } from "../../lib/api";
 import { STRATEGY_HELP, STRATEGY_LABEL, countdown, plural, relTime } from "../../lib/format";
 import { ops, usd, type BreakerReport, type EgressProxy } from "../../lib/ops";
@@ -576,7 +577,7 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         <Section
           tone="danger"
           title="Delete service"
-          description={`Removes the service and all its keys. Apps that call ${service.slug} start failing right away.`}
+          description={`Removes the service and all its keys. Apps that call ${service.slug} start failing right away. ${restoreNote}`}
           actions={
             <Button variant="danger" leadingIcon={RiDeleteBinLine} onClick={() => setDeleting(true)}>
               Delete service
@@ -589,13 +590,13 @@ export function ServiceSettings({ service, canManage }: { service: Service; canM
         isOpen={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${service.name}?`}
-        description={`This removes the service and all its keys. Apps that call ${service.slug} start failing right away. This cannot be undone.`}
-        confirmLabel="Delete forever"
+        description={`This removes the service and all its keys. Apps that call ${service.slug} start failing right away. ${restoreNote}`}
+        confirmLabel="Delete"
         pendingLabel="Deleting"
         onConfirm={async () => {
           try {
-            await remove(service.id);
-            toast.success(`${service.name} deleted`);
+            const res = await remove(service.id);
+            deletedToast(service.name, res, () => useServices.getState().fetch());
             navigate("/");
           } catch (e) {
             toast.error(errorMessage(e));

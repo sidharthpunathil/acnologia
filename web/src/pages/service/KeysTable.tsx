@@ -14,6 +14,7 @@ import type { App, Key, Strategy } from "../../lib/types";
 import { num } from "../../lib/format";
 import { useKeys } from "../../stores/keys";
 import { toast } from "../../stores/toast";
+import { deletedToast, restoreNote } from "../../lib/trash";
 import { ApiError, errorMessage } from "../../lib/api";
 import { StatusPill, isBusy } from "../../components/StatusPill";
 import { AccountLine, OnChange, QuotaMeter, TimeAgo, ValidityLine, quotaInfo } from "../../components/KeyBits";
@@ -110,8 +111,8 @@ function useKeyActions(k: Key) {
   };
   const del = async () => {
     try {
-      await remove(k);
-      toast.success(`Deleted ${k.label || k.hint}`);
+      const res = await remove(k);
+      deletedToast(k.label || k.hint, res, () => useKeys.getState().fetch(k.service_id));
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -239,7 +240,7 @@ function RowMenu({
         isOpen={confirming}
         onOpenChange={setConfirming}
         title={`Delete ${name}?`}
-        description="It leaves rotation right away. This cannot be undone."
+        description={`It leaves rotation right away. ${restoreNote}`}
         confirmLabel="Delete"
         pendingLabel="Deleting"
         onConfirm={del}
