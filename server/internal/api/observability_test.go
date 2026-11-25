@@ -258,9 +258,9 @@ func TestAdminEventStream(t *testing.T) {
 	e := newEnv(t)
 	stop := runNotifier(t, e)
 	ctx := context.Background()
-	oldKeep := eventStreamKeepalive
-	eventStreamKeepalive = 50 * time.Millisecond
-	t.Cleanup(func() { eventStreamKeepalive = oldKeep })
+	oldKeep := eventStreamKeepaliveNs.Load()
+	eventStreamKeepaliveNs.Store(int64(50 * time.Millisecond))
+	t.Cleanup(func() { eventStreamKeepaliveNs.Store(oldKeep) })
 
 	ch, resp := openStream(t, e, e.super, "/api/admin/events/stream")
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/event-stream" {

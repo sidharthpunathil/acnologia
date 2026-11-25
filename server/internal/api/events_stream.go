@@ -24,16 +24,22 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sidharthpunathil/acnologia/server/internal/notify"
 	"github.com/sidharthpunathil/acnologia/server/internal/store"
 )
 
+// eventStreamKeepaliveNs is the ping interval in nanoseconds. It is atomic
+// because tests shorten it while streams from an earlier test may still run.
+var eventStreamKeepaliveNs atomic.Int64
+
+func init() { eventStreamKeepaliveNs.Store(int64(25 * time.Second)) }
+
 var (
-	eventStreamKeepalive = 25 * time.Second
-	eventStreamPoll      = time.Second
-	eventStreamMaxAge    = time.Hour
+	eventStreamPoll   = time.Second
+	eventStreamMaxAge = time.Hour
 	// maxEventStreams caps the open streams on a server, and
 	// maxAppEventStreams those of one app (or one person).
 	maxEventStreams    = 64
@@ -210,7 +216,7 @@ func (s *Server) serveEventStream(w http.ResponseWriter, r *http.Request, owner 
 	if s.Pool != nil {
 		n = s.Pool.Notify
 	}
-	keep := time.NewTicker(eventStreamKeepalive)
+	keep := time.NewTicker(time.Duration(eventStreamKeepaliveNs.Load()))
 	defer keep.Stop()
 	poll := time.NewTicker(eventStreamPoll)
 	defer poll.Stop()
