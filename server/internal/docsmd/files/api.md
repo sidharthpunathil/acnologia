@@ -686,11 +686,13 @@ both are set:
 | `refresh` | `refresh_settings`, `update_refresh_settings`, `run_refresh`, `list_refresh_runs`, `get_refresh_run`, `list_refresh_reviews`, `apply_refresh_review`, `dismiss_refresh_review` |
 | `admin` (off by default) | `list_users`, `create_user`, `update_user`, `delete_user`, `list_audit` |
 | `secrets` (off by default) | `reveal_key` |
-| `raw` (off by default) | `api_request` `{method, path, query, body}` for any `/api/admin/...` route not covered above |
+| `raw` (off by default) | `api_request` `{method, path, query, body, dry_run, idempotency_key}` for any `/api/admin/...` route not covered above |
 
 `api_request` refuses paths outside `/api/admin/`, and also refuses
 `/api/admin/tokens`, `PATCH /api/admin/me` and the Assistant's chat routes,
-which have their own tools.
+which have their own tools. On a write it takes `dry_run` and
+`idempotency_key` like the other write tools: the key is sent as the
+`Idempotency-Key` header, and a dry run DELETE needs no `confirm`.
 
 Some of the tools in more detail:
 
