@@ -1335,6 +1335,13 @@ export interface OAuthConnectState {
   error?: string;
 }
 
+/** What deleting a key, service or app answers. Items from another server skip the trash, so they have no restore_id. */
+export interface DeleteResult {
+  ok?: boolean;
+  restore_id?: string;
+  expires_at?: string;
+}
+
 /** One deleted key, service or app in the trash (GET /api/admin/trash). Never a secret. */
 export interface TrashItem {
   id: string;

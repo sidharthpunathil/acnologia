@@ -1,4 +1,5 @@
 import type {
+  DeleteResult,
   App,
   AppControls,
   AppInput,
@@ -199,7 +200,7 @@ export const api = {
   createService: (body: ServiceInput) => request<Service>("POST", "/api/admin/services", body),
   updateService: (id: number, body: Partial<ServiceInput>) =>
     request<Service>("PATCH", `/api/admin/services/${id}`, body),
-  deleteService: (id: number) => request<unknown>("DELETE", `/api/admin/services/${id}`),
+  deleteService: (id: number) => request<DeleteResult>("DELETE", `/api/admin/services/${id}`),
   getServiceMcp: (id: number) => request<ServiceMCPView>("GET", `/api/admin/services/${id}/mcp`),
   syncServiceMcp: (id: number) => request<ServiceMCPView>("POST", `/api/admin/services/${id}/mcp/sync`, {}),
   setServiceMcpToolAccess: (id: number, name: string, access: ServiceMCPToolAccess) =>
@@ -259,7 +260,7 @@ export const api = {
   addKeys: (serviceId: number, keys: NewKeyInput[]) =>
     request<{ keys: Key[] }>("POST", `/api/admin/services/${serviceId}/keys`, { keys }),
   updateKey: (id: number, body: KeyPatch) => request<Key>("PATCH", `/api/admin/keys/${id}`, body),
-  deleteKey: (id: number) => request<unknown>("DELETE", `/api/admin/keys/${id}`),
+  deleteKey: (id: number) => request<DeleteResult>("DELETE", `/api/admin/keys/${id}`),
   revealKey: (id: number) => request<{ secret: string }>("POST", `/api/admin/keys/${id}/reveal`),
   checkKey: (id: number) => request<Key>("POST", `/api/admin/keys/${id}/check`),
   resetKey: (id: number) => request<Key>("POST", `/api/admin/keys/${id}/reset`),
@@ -273,7 +274,7 @@ export const api = {
   createApp: (body: AppInput) => request<AppWithToken>("POST", "/api/admin/apps", body),
   updateApp: (id: number, body: Partial<AppInput & { active: boolean }>) =>
     request<App>("PATCH", `/api/admin/apps/${id}`, body),
-  deleteApp: (id: number) => request<unknown>("DELETE", `/api/admin/apps/${id}`),
+  deleteApp: (id: number) => request<DeleteResult>("DELETE", `/api/admin/apps/${id}`),
   rotateAppToken: (id: number) => request<AppWithToken>("POST", `/api/admin/apps/${id}/rotate-token`),
   listAppTokens: (id: number) => request<{ tokens: AppToken[] }>("GET", `/api/admin/apps/${id}/tokens`),
   createAppToken: (

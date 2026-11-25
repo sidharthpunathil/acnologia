@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
-import type { LogoUpload, Service, ServiceFamily, ServiceInput } from "../lib/types";
+import type { DeleteResult, LogoUpload, Service, ServiceFamily, ServiceInput } from "../lib/types";
 import { bumpLogos } from "./providers";
 
 interface ServicesStore {
@@ -14,7 +14,7 @@ interface ServicesStore {
   fetchOne: (id: number) => Promise<Service>;
   create: (input: ServiceInput) => Promise<Service>;
   update: (id: number, patch: Partial<ServiceInput>) => Promise<Service>;
-  remove: (id: number) => Promise<void>;
+  remove: (id: number) => Promise<DeleteResult>;
   setLogo: (id: number, logo: LogoUpload) => Promise<void>;
   removeLogo: (id: number) => Promise<void>;
 }
@@ -66,8 +66,9 @@ export const useServices = create<ServicesStore>((set, get) => ({
   },
 
   remove: async (id) => {
-    await api.deleteService(id);
+    const res = await api.deleteService(id);
     set({ services: get().services.filter((s) => s.id !== id) });
+    return res;
   },
 
   setLogo: async (id, logo) => {

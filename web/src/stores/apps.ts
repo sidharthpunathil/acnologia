@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
-import type { App, AppInput, AppWithToken } from "../lib/types";
+import type { App, AppInput, AppWithToken, DeleteResult } from "../lib/types";
 
 interface AppsStore {
   apps: App[];
@@ -9,7 +9,7 @@ interface AppsStore {
   fetch: () => Promise<void>;
   create: (input: AppInput) => Promise<AppWithToken>;
   update: (id: number, patch: Partial<AppInput & { active: boolean }>) => Promise<App>;
-  remove: (id: number) => Promise<void>;
+  remove: (id: number) => Promise<DeleteResult>;
   rotate: (id: number) => Promise<AppWithToken>;
 }
 
@@ -48,8 +48,9 @@ export const useApps = create<AppsStore>((set, get) => {
     },
 
     remove: async (id) => {
-      await api.deleteApp(id);
+      const res = await api.deleteApp(id);
       set({ apps: get().apps.filter((a) => a.id !== id) });
+      return res;
     },
 
     rotate: async (id) => {
