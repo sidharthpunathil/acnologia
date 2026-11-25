@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -37,10 +38,15 @@ func mcpEnv(t *testing.T, url string) func(stdin string, args ...string) (error,
 }
 
 func TestMCPBridgesToControl(t *testing.T) {
+	// The bridge may send more than one request at once, so the handler
+	// records the last one under a lock.
+	var mu sync.Mutex
 	var got http.Header
 	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		got, path = r.Header.Clone(), r.URL.Path
+		mu.Unlock()
 		if r.Header.Get("Authorization") != "Bearer acnadm_saved" {
 			w.WriteHeader(401)
 			_, _ = io.WriteString(w, `{"error":{"code":"unauthenticated","message":"API token is invalid"}}`)
