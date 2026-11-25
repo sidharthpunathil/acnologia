@@ -166,7 +166,7 @@ func (s *Server) appLimited(w http.ResponseWriter, r *http.Request, a *store.App
 	}
 	if hit.Limit == limitTagPinned {
 		writeJSON(w, 400, map[string]any{
-			"error": apiError{Code: "tag_pinned", Message: "this token is pinned to its own " + hit.Tag + " value: send that value or leave " + hit.Tag + " out of " + metaHeader},
+			"error": apiError{Code: "tag_pinned", Message: pinnedMessage(hit.Tag)},
 			"tag":   hit.Tag,
 		})
 		return nil, true
@@ -205,6 +205,11 @@ const (
 	denyToolPathPrefix  = "/tools/"
 	denyRuleErrorPrefix = "denied_by_rule: "
 )
+
+// pinnedMessage is the tag_pinned message for the pinned key k.
+func pinnedMessage(k string) string {
+	return "this token is pinned to its own " + k + " value: send that value or leave " + k + " out of " + metaHeader
+}
 
 // limitWords is a limit in words: "daily budget", "token daily requests",
 // "tag daily budget for customer=cust_A".
@@ -262,7 +267,10 @@ type admission struct {
 	reqs int64
 	cost float64
 	tok  map[int64]*pending
-	tag  map[string]*pending
+	// grant is per OAuth grant, for requests made with an OAuth access
+	// token, which the app's per-token default caps like a token.
+	grant map[string]*pending
+	tag   map[string]*pending
 }
 
 // serverAdmitKey holds the server-wide admission in Server.admitted.
@@ -329,7 +337,8 @@ func pinTags(tags, pinned map[string]string) (map[string]string, *store.LimitHit
 //
 // Every limit a request falls under is checked and reserved in one step
 // under the app's lock: the app's, the token's (the token's own over the
-// app's per-token default), each caller tag value's, and last the server's
+// app's per-token default; for an OAuth access token, its grant's, which is
+// the per-token default), each caller tag value's, and last the server's
 // daily spend ceiling under the server's lock (always taken after an app's,
 // so the two cannot deadlock). Nothing is reserved unless all pass.
 func (s *Server) admit(ctx context.Context, a *store.App, est float64) (*store.LimitHit, func(), error) {
@@ -352,8 +361,17 @@ func (s *Server) admit(ctx context.Context, a *store.App, est float64) (*store.L
 		}
 	}
 	tokLimited := a.TokenID != 0 && in.Token.Any()
+	// An OAuth access token has no app token: its grant stands in for one
+	// and gets the app's per-token default.
+	grantID := ""
+	if a.TokenID == 0 && a.OAuthGrantID != "" {
+		store.SetUsageGrant(ctx, a.OAuthGrantID)
+		if in.TokenDefault.Any() {
+			grantID = a.OAuthGrantID
+		}
+	}
 	ceiling := s.spendCeiling(ctx)
-	if !in.App.Any() && !tokLimited && len(budgets) == 0 && ceiling <= 0 {
+	if !in.App.Any() && !tokLimited && grantID == "" && len(budgets) == 0 && ceiling <= 0 {
 		return nil, noRelease, nil
 	}
 	v, _ := s.admitted.LoadOrStore(a.ID, &admission{})
@@ -361,7 +379,7 @@ func (s *Server) admit(ctx context.Context, a *store.App, est float64) (*store.L
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
 	now := time.Now()
-	hit, err := s.checkLimits(ctx, ad, a, in, tokLimited, budgets, now, est)
+	hit, err := s.checkLimits(ctx, ad, a, in, tokLimited, grantID, budgets, now, est)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -399,6 +417,17 @@ func (s *Server) admit(ctx context.Context, a *store.App, est float64) (*store.L
 		}
 		held = append(held, p)
 	}
+	if grantID != "" {
+		if ad.grant == nil {
+			ad.grant = map[string]*pending{}
+		}
+		p := ad.grant[grantID]
+		if p == nil {
+			p = &pending{}
+			ad.grant[grantID] = p
+		}
+		held = append(held, p)
+	}
 	tagKeys := make([]string, 0, len(tags))
 	for k, v := range tags {
 		if ad.tag == nil {
@@ -433,6 +462,15 @@ func (s *Server) admit(ctx context.Context, a *store.App, est float64) (*store.L
 					}
 				}
 			}
+			if grantID != "" {
+				if p := ad.grant[grantID]; p != nil {
+					if p.reqs--; p.reqs <= 0 {
+						delete(ad.grant, grantID)
+					} else {
+						p.cost -= est
+					}
+				}
+			}
 			for _, tk := range tagKeys {
 				if p := ad.tag[tk]; p != nil {
 					if p.reqs--; p.reqs <= 0 {
@@ -453,10 +491,10 @@ func (s *Server) admit(ctx context.Context, a *store.App, est float64) (*store.L
 	}, nil
 }
 
-// checkLimits is the first limit of the app, the token or a tag value the
-// request would break, counting what is admitted and not yet recorded.
-// The caller holds ad.mu.
-func (s *Server) checkLimits(ctx context.Context, ad *admission, a *store.App, in store.AdmissionLimits, tokLimited bool, budgets []tagBudgetCheck, now time.Time, est float64) (*store.LimitHit, error) {
+// checkLimits is the first limit of the app, the token (or the OAuth grant
+// grantID, when not empty) or a tag value the request would break, counting
+// what is admitted and not yet recorded. The caller holds ad.mu.
+func (s *Server) checkLimits(ctx context.Context, ad *admission, a *store.App, in store.AdmissionLimits, tokLimited bool, grantID string, budgets []tagBudgetCheck, now time.Time, est float64) (*store.LimitHit, error) {
 	if in.App.Any() {
 		u, err := s.Store.GetAppUsage(ctx, a.ID, now)
 		if err != nil {
@@ -476,6 +514,16 @@ func (s *Server) checkLimits(ctx context.Context, ad *admission, a *store.App, i
 			return nil, err
 		}
 		if hit := store.AdmitLimits(in.Token, ad.tok[a.TokenID].onto(u), now, est); hit != nil {
+			hit.Limit = limitTokenPrefix + hit.Limit
+			return hit, nil
+		}
+	}
+	if grantID != "" {
+		u, err := s.Store.GetGrantUsage(ctx, grantID, now)
+		if err != nil {
+			return nil, err
+		}
+		if hit := store.AdmitLimits(in.TokenDefault, ad.grant[grantID].onto(u), now, est); hit != nil {
 			hit.Limit = limitTokenPrefix + hit.Limit
 			return hit, nil
 		}

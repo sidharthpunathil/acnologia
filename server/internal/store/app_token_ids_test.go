@@ -12,7 +12,7 @@ import (
 // never shows a deleted token's calls under a new one.
 func TestAppTokenIDsAreNotReused(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openBaseline(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -344,10 +344,41 @@ const usageRetentionDays = 367
 // usageRetentionDays.
 func (s *Store) pruneTagUsage(ctx context.Context, now time.Time) error {
 	cut := dayOf(now.AddDate(0, 0, -usageRetentionDays))
-	if err := s.pruneBatched(ctx, `DELETE FROM tag_usage WHERE rowid IN (SELECT rowid FROM tag_usage WHERE day<? LIMIT ?)`, cut); err != nil {
-		return err
+	for _, table := range []string{"tag_usage", "app_token_usage", "oauth_grant_usage"} {
+		if err := s.pruneBatched(ctx, `DELETE FROM `+table+` WHERE rowid IN (SELECT rowid FROM `+table+` WHERE day<? LIMIT ?)`, cut); err != nil {
+			return err
+		}
 	}
-	return s.pruneBatched(ctx, `DELETE FROM app_token_usage WHERE rowid IN (SELECT rowid FROM app_token_usage WHERE day<? LIMIT ?)`, cut)
+	return nil
+}
+
+// migrateOAuthGrantUsage adds per OAuth grant usage, so each grant (an MCP
+// client signed in with OAuth) is held to the app's per-token default like
+// an app token is.
+func migrateOAuthGrantUsage(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS oauth_grant_usage(
+  grant_id TEXT NOT NULL,
+  app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  day TEXT NOT NULL,
+  requests INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY(grant_id, day)
+);
+CREATE INDEX IF NOT EXISTS oauth_grant_usage_app ON oauth_grant_usage(app_id);`)
+	return err
+}
+
+// GetGrantUsage is one OAuth grant's use today and this month.
+func (s *Store) GetGrantUsage(ctx context.Context, grantID string, at time.Time) (AppUsage, error) {
+	var u AppUsage
+	today := dayOf(at)
+	err := s.r.QueryRowContext(ctx, `SELECT
+		COALESCE(SUM(CASE WHEN day=? THEN requests END),0), COALESCE(SUM(CASE WHEN day=? THEN cost END),0),
+		COALESCE(SUM(requests),0), COALESCE(SUM(cost),0)
+		FROM oauth_grant_usage WHERE grant_id=? AND day>=? AND day<=?`,
+		today, today, grantID, today[:7]+"-01", today).
+		Scan(&u.TodayRequests, &u.TodayCost, &u.MonthRequests, &u.MonthCost)
+	return u, err
 }
 
 // GetTokenUsage is one app token's use today and this month.
@@ -366,12 +397,14 @@ func (s *Store) GetTokenUsage(ctx context.Context, tokenID int64, at time.Time) 
 // AdmissionLimits is everything admission checks a request against, read
 // in one statement: the app's limits, the token's (its own fields over the
 // app's per-token default), the token's pinned tags and the app's tag
-// budgets.
+// budgets. TokenDefault is the per-token default alone, which an OAuth
+// grant gets as its own limits.
 type AdmissionLimits struct {
-	App        AppLimits
-	Token      AppLimits
-	Pinned     map[string]string
-	TagBudgets []TagBudget
+	App          AppLimits
+	Token        AppLimits
+	TokenDefault AppLimits
+	Pinned       map[string]string
+	TagBudgets   []TagBudget
 }
 
 // GetAdmissionLimits reads the limits a request of app appID made with
@@ -401,28 +434,29 @@ func (s *Store) GetAdmissionLimits(ctx context.Context, appID, tokenID int64) (A
 	if out.TagBudgets, err = decodeTagBudgets(budgets); err != nil {
 		return out, err
 	}
+	if out.TokenDefault, err = decodeLimits(tokDefault); err != nil {
+		return out, err
+	}
 	if tokenID == 0 {
 		return out, nil
-	}
-	def, err := decodeLimits(tokDefault)
-	if err != nil {
-		return out, err
 	}
 	own, err := decodeLimits(tokLimits)
 	if err != nil {
 		return out, err
 	}
-	out.Token = own.Over(def)
+	out.Token = own.Over(out.TokenDefault)
 	out.Pinned, err = decodeTags(pinned)
 	return out, err
 }
 
 // usageScope rides on a request's context from authentication to the
-// recording of its usage: the token it was made with and the caller tags
-// admission settled on.
+// recording of its usage: the token it was made with, the OAuth grant when
+// it came with an OAuth access token, and the caller tags admission settled
+// on.
 type usageScope struct {
 	tokenID int64
 	mu      sync.Mutex
+	grantID string
 	tags    map[string]string
 }
 
@@ -437,6 +471,16 @@ func SetUsageTags(ctx context.Context, tags map[string]string) {
 	if sc := scopeFrom(ctx); sc != nil {
 		sc.mu.Lock()
 		sc.tags = tags
+		sc.mu.Unlock()
+	}
+}
+
+// SetUsageGrant marks the request ctx belongs to as made with an OAuth
+// access token of grant grantID. Its usage then counts toward the grant.
+func SetUsageGrant(ctx context.Context, grantID string) {
+	if sc := scopeFrom(ctx); sc != nil {
+		sc.mu.Lock()
+		sc.grantID = grantID
 		sc.mu.Unlock()
 	}
 }
@@ -465,8 +509,13 @@ func scopeStmts(ctx context.Context, appID int64, day string, cost float64) []ws
 			[]any{sc.tokenID, appID, day, cost}})
 	}
 	sc.mu.Lock()
-	tags := sc.tags
+	tags, grantID := sc.tags, sc.grantID
 	sc.mu.Unlock()
+	if grantID != "" {
+		out = append(out, wstmt{`INSERT INTO oauth_grant_usage(grant_id, app_id, day, requests, cost) VALUES(?,?,?,1,?)
+			ON CONFLICT(grant_id, day) DO UPDATE SET requests=requests+1, cost=cost+excluded.cost`,
+			[]any{grantID, appID, day, cost}})
+	}
 	for k, v := range tags {
 		out = append(out, wstmt{`INSERT INTO tag_usage(app_id, tag_key, tag_value, day, requests, cost) VALUES(?,?,?,?,1,?)
 			ON CONFLICT(app_id, tag_key, tag_value, day) DO UPDATE SET requests=requests+1, cost=cost+excluded.cost`,

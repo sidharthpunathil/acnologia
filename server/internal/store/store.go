@@ -345,7 +345,9 @@ const baselineVersion = 1
 // the schema constant: they are the frozen baseline. A step runs on the
 // writer inside the open transaction, so it uses db directly and never
 // begins another one. It does not need to be idempotent.
-var migrations = []migration{}
+var migrations = []migration{
+	{"oauth grant usage", migrateOAuthGrantUsage}, // version 2
+}
 
 // LatestSchemaVersion is the schema version this binary brings a database
 // to, and the newest one it opens.

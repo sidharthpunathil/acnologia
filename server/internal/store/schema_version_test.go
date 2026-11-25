@@ -198,7 +198,7 @@ func TestNumberedStepRunsOnce(t *testing.T) {
 // A failing step rolls back the steps before it and leaves the version.
 func TestFailedStepRollsBack(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openBaseline(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,3 +302,8 @@ func TestUpgradeCopiesAreTakenAndPruned(t *testing.T) {
 		t.Fatalf("copy lacks the data: %q %v", slug, err)
 	}
 }
+
+// openBaseline opens dir with the baseline schema and no numbered steps: a
+// database as it was before the first numbered step, which tests change to
+// stand in for an older one before opening it with Open.
+func openBaseline(dir string) (*Store, error) { return open(dir, Options{}, nil) }

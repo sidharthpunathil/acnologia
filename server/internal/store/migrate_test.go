@@ -14,7 +14,7 @@ import (
 // as done and skipped the backfill, and the share was refused every service.
 func TestMigrateFailureRollsBackEverything(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openBaseline(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestMigrateFailureRollsBackEverything(t *testing.T) {
 // An upgrade from before multi token support keeps the app's token working.
 func TestMigrateLegacyAppToken(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openBaseline(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
