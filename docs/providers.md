@@ -669,7 +669,9 @@ becomes a key. The whole flow, the redirect URI and the agent tools are in
     "authorize_params": { "access_type": "offline", "prompt": "consent" },
     "pkce": true,                      // send an S256 code challenge
     "userinfo_url": "",                // optional: names the account when there is no id_token
-    "account_field": "email"           // the id_token claim or userinfo field that names it
+    "account_field": "email",          // the id_token claim or userinfo field that names it
+    "token_path": "access_token",      // optional: where the token answer holds the access token
+    "tenant": ""                       // the default for {tenant} in the URLs, required when they have it
   }
 }
 ```
@@ -678,6 +680,20 @@ The client id and secret are never in the spec: each server registers its
 own OAuth app and enters them on the service. A service may set its own
 scopes; with `allowed_scopes` set, only those are accepted. Extra fields are
 required unless marked `optional`, and are sent only when set.
+
+`token_path` is a dotted path to the access token in the token endpoint's
+answer, `access_token` by default. The refresh token, `expires_in`, `scope`
+and `id_token` are read from the same object, and an `error` at the top of
+the answer is a refusal. Slack puts its bot token at the top and a user
+token under `authed_user`, so a Slack provider that signs users in (with
+`authorize_params` `{"user_scope": "..."}`) sets `authed_user.access_token`.
+
+`{tenant}` in `authorize_url`, `token_url` or `userinfo_url` is replaced by
+the service's tenant, which is set with its OAuth client, or by `tenant`
+when the service sets none. Microsoft Graph ships with
+`https://login.microsoftonline.com/{tenant}/oauth2/v2.0/...` and `common`.
+A tenant is letters, digits, dots and hyphens: `common`, `organizations`,
+`consumers`, a tenant id or a domain such as `contoso.onmicrosoft.com`.
 
 
 - `slug`: lowercase letters, digits and hyphens.
@@ -751,7 +767,10 @@ Without one, a key's validity is learned from real traffic.
 | OpenRouter (`openrouter`) | LLM | `https://openrouter.ai/api` | `Authorization: Bearer` | `GET /v1/key` | credit limit and remaining, USD, for keys with a limit |
 | Google APIs (`google`) | Analytics | `https://www.googleapis.com`, with hosts for Search Console, GA4, YouTube and Sheets | OAuth, a signed in Google account | `GET /oauth2/v3/userinfo` | no |
 | Google Ads (`google-ads`) | Marketing | `https://googleads.googleapis.com` | OAuth, plus a developer token per account | none | no |
-| Microsoft Graph (`microsoft-graph`) | Productivity | `https://graph.microsoft.com` | OAuth, a signed in Microsoft account | `GET /v1.0/me` | no |
+| Microsoft Graph (`microsoft-graph`) | Productivity | `https://graph.microsoft.com` | OAuth, a signed in Microsoft account, through the service's tenant (`common` by default) | `GET /v1.0/me` | no |
+| Slack (`slack`) | Productivity | `https://slack.com/api` | OAuth, an app installed in a workspace (its bot token) | `GET /auth.test` (`{"ok":false,"error":"invalid_auth"}` is invalid) | no |
+| HubSpot (`hubspot`) | Marketing | `https://api.hubapi.com` | OAuth, a connected HubSpot account | `GET /account-info/v3/details` | no |
+| LinkedIn (`linkedin`) | Marketing | `https://api.linkedin.com` | OAuth, a signed in LinkedIn member | `GET /v2/userinfo` | no |
 | Custom API (`generic`) | Other | your API's | a header, a bearer token or a query parameter, set per service | none | no |
 
 Live quota comes from the health check's account endpoint. The exception is
