@@ -42,6 +42,28 @@ func leaseName(sec int) string {
 // budget limits.
 const errHandoverLimits = "request and budget limits cannot apply to a handover share: the other server calls the provider itself, so this server never sees the requests. Use a proxy share for limits; timers and the lease still apply"
 
+// errOAuthHandover starts the message that refuses a handover share of an
+// OAuth service (shareInputCode maps it to oauth_handover_refused).
+const errOAuthHandover = "a handover share cannot include an OAuth service"
+
+// oauthHandoverProblem refuses a handover share that includes a service
+// whose keys are signed in OAuth accounts. Such a key is only a pointer to
+// the tokens stored on this server: handing it over would mean sending the
+// refresh token, and with it the service's OAuth client secret, to the
+// other server, which could then mint access tokens forever and never give
+// them back. A proxy share keeps the tokens here and works the same.
+func (s *Server) oauthHandoverProblem(ctx context.Context, sh *store.Share) string {
+	if sh.Mode != store.ShareModeHandover {
+		return ""
+	}
+	for _, slug := range sh.Services {
+		if sv, err := s.Store.GetServiceBySlug(ctx, slug); err == nil && sv.AuthType == providers.AuthOAuth2 {
+			return errOAuthHandover + ": " + slug + " signs in with OAuth, and handing its accounts over would send their refresh tokens to the other server. Share it in proxy mode, or leave it out"
+		}
+	}
+	return ""
+}
+
 // applyShareModeInput validates mode, lease, end action and the private
 // network flag onto sh.
 func applyShareModeInput(in shareInput, sh *store.Share) string {
@@ -256,7 +278,8 @@ func (s *Server) handoverKeys(ctx context.Context, sh *store.Share) (peer.Handov
 	}
 	for _, slug := range sh.Services {
 		sv, err := s.Store.GetServiceBySlug(ctx, slug)
-		if err != nil || sv.Provider == providers.PeerSlug || sv.PeerLinkID != nil {
+		if err != nil || sv.Provider == providers.PeerSlug || sv.PeerLinkID != nil || sv.AuthType == providers.AuthOAuth2 {
+			// An OAuth key's tokens never leave this server (oauthHandoverProblem).
 			continue
 		}
 		var sc *store.KeyScope

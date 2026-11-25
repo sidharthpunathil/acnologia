@@ -346,6 +346,8 @@ var registry = map[string]Help{
 		"Ask the owner to add keys to the share."),
 	"no_revealable_keys": eh(400, false, areaSharing, "A reveal share needs keys that can be revealed, and none are in its scope.",
 		"Pick services with keys that are not hidden or handed over."),
+	"oauth_handover_refused": eh(400, false, areaSharing, "A handover share cannot include a service whose keys are signed in OAuth accounts: handing them over would send their refresh tokens to the other server.",
+		"Share that service in proxy mode, where the tokens stay on this server, or leave it out of the handover share.").doc("/docs/oauth-credentials.md"),
 	"peer_unreachable": eh(502, true, areaSharing, "The other server could not be reached.",
 		"Check its URL and that it is up, then retry."),
 	"peer_error": eh(502, true, areaSharing, "The other server answered with an error.",

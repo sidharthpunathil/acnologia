@@ -72,6 +72,7 @@ If the token endpoint is down, the key steps out of rotation for 30 seconds and 
 - Proxy mode is the way to use OAuth accounts: the token never reaches the caller, and it is scrubbed from responses like a key.
 - A lease of an OAuth key returns the current access token, never the refresh token. With extra fields the lease's `secret` is a JSON object of `access_token` and the fields. An access token usually lasts an hour, so lease again when it stops working rather than reporting the key invalid.
 - Revealing an OAuth key shows its connection id and its extra fields, never a token. The refresh token never leaves the server.
+- A handover share (keys sealed to another server, which then calls the provider itself) cannot include an OAuth service. The key is only a pointer to tokens stored here, so handing it over would mean sending the refresh token, which lets the other server mint access tokens until the account owner revokes it, and a lease or a revoke could never take it back. Such a share is refused with `oauth_handover_refused`. Share the service in proxy mode instead: the other server's calls go through this one and the tokens stay here.
 - Every token and the client secret are known to the redactor, so they are scrubbed from events, logs, the audit log and anything sent to Claude.
 
 ## Provider notes

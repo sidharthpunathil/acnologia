@@ -36,6 +36,9 @@ func shareInputCode(msg string) string {
 	if msg == errNoRevealable {
 		return "no_revealable_keys"
 	}
+	if strings.HasPrefix(msg, errOAuthHandover) {
+		return "oauth_handover_refused"
+	}
 	return "invalid"
 }
 
