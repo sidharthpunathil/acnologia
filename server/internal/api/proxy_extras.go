@@ -768,7 +768,13 @@ func (e *serviceDownError) Error() string {
 // upstreamClient returns the client for a key: through its egress proxy, or
 // its service's, or direct.
 func (s *Server) upstreamClient(ctx context.Context, sv *store.Service, k *store.Key) (*http.Client, error) {
-	id := egress.Pick(k.EgressID, sv.EgressID)
+	// k is nil when an upstream MCP sync runs without a key (an open server):
+	// only the service's own egress applies then.
+	var keyEgress *int64
+	if k != nil {
+		keyEgress = k.EgressID
+	}
+	id := egress.Pick(keyEgress, sv.EgressID)
 	if id == nil || s.Pool.Egress == nil {
 		if sv.PublicOnly() {
 			// The owner of the share controls this host's DNS: check the

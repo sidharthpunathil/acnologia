@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -452,5 +453,32 @@ func TestUpstreamMCPServiceEndToEndAndReadOnly(t *testing.T) {
 	}
 	if !has(fullAfterRO, "scrapebox_list_jobs") || !has(fullAfterRO, "list_keys") {
 		t.Fatalf("app-level read_only should still show read-only tools: %v", fullAfterRO)
+	}
+}
+
+// A service with no keys still syncs against its upstream (open MCP servers
+// need none). It used to crash the request on the missing key.
+func TestUpstreamMCPSyncWithoutKeys(t *testing.T) {
+	e := newEnv(t)
+	var useSSE atomic.Bool
+	upstream := newMockMCPServer(t, "good-token-for-sync-0000000000", "limited", "bad", &useSSE)
+	defer upstream.Close()
+	var svc map[string]any
+	e.do(e.super, "POST", "/api/admin/services", map[string]any{
+		"provider": "mcp", "slug": "openmcp", "name": "Open MCP", "mcp_url": upstream.URL + "/mcp/",
+	}, 201, &svc)
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/admin/services/%d/mcp/sync", e.srv.URL, int(svc["id"].(float64))), strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := e.super.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 500 && resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("sync with no keys: %d %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), `"code"`) {
+		t.Fatalf("sync with no keys gave no error code: %d %s", resp.StatusCode, b)
 	}
 }

@@ -191,8 +191,8 @@ export function OAuthConsentPage() {
             <p className="-mt-2 text-caption-1-regular text-text-secondary">{SCOPE_HELP[scope]}</p>
             <Callout tone={scope === "read" ? "info" : "warning"}>{CONTROL_RISK[scope]}</Callout>
             <p className="text-caption-1-regular text-text-secondary">
-              It can never do more than your own role, and stops if your role drops below this scope. Revoke it any time under API tokens on your
-              account page.
+              It can never do more than your own role, and stops if your role drops below this scope. Revoke it any time under Control MCP sign ins on
+              your account page.
             </p>
           </div>
         ) : control ? (
