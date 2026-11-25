@@ -51,10 +51,86 @@ function secretOf(req: http.IncomingMessage): string {
   return m ? m[0] : "";
 }
 
+// A Streamable HTTP MCP server at /mcp with two tools, one marked read-only,
+// for services whose provider is mcp.
+const MCP_TOOLS = [
+  {
+    name: "search_docs",
+    title: "Search docs",
+    description: "Finds pages in the product docs that match a query.",
+    inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "create_page",
+    title: "Create page",
+    description: "Adds a new page to the docs.",
+    inputSchema: { type: "object", properties: { title: { type: "string" }, body: { type: "string" } }, required: ["title"] },
+    annotations: { readOnlyHint: false },
+  },
+];
+
+function mcpReply(raw: string): { status: number; body?: unknown } {
+  let msg: { id?: number | string; method?: string };
+  try {
+    msg = JSON.parse(raw) as typeof msg;
+  } catch {
+    return { status: 400, body: { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } } };
+  }
+  if (msg.id === undefined) return { status: 202 };
+  if (msg.method === "initialize")
+    return {
+      status: 200,
+      body: {
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "docs-mcp", version: "1.0.0" } },
+      },
+    };
+  if (msg.method === "tools/list") return { status: 200, body: { jsonrpc: "2.0", id: msg.id, result: { tools: MCP_TOOLS } } };
+  return { status: 200, body: { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } } };
+}
+
+/** An unsigned id token, so the OAuth sign in names the account. */
+function idToken(email: string): string {
+  const enc = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
+  return `${enc({ alg: "none" })}.${enc({ email })}.sig`;
+}
+
+/**
+ * A provider's OAuth token endpoint at /oauth/token: any code is good. The
+ * tokens carry no lifetime, so the account shows "no expiry" whatever the
+ * clock says.
+ */
+function oauthReply(path: string): Reply {
+  if (path === "/oauth/token")
+    return {
+      status: 200,
+      body: { access_token: "fake-oauth-access-0001", refresh_token: "fake-oauth-refresh-0001", token_type: "Bearer", id_token: idToken("ana@example.com") },
+    };
+  return { status: 404, body: { error: "not_found" } };
+}
+
 export async function startUpstream(now: number): Promise<{ origin: string; close: () => void }> {
   const srv = http.createServer((req, res) => {
-    req.resume();
     const path = new URL(req.url ?? "/", "http://x").pathname;
+    if (path.startsWith("/mcp") || path.startsWith("/oauth/")) {
+      let raw = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk: string) => (raw += chunk));
+      req.on("end", () => {
+        const { status, body } = path.startsWith("/mcp") ? mcpReply(raw) : oauthReply(path);
+        if (body === undefined) {
+          res.writeHead(status);
+          res.end();
+          return;
+        }
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(body));
+      });
+      return;
+    }
+    req.resume();
     const { status, body } = reply(path, secretOf(req), now);
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body));
