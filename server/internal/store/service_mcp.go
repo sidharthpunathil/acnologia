@@ -117,24 +117,64 @@ func (s *Store) ListServiceMCP(ctx context.Context) (map[int64]*ServiceMCP, erro
 	return out, rows.Err()
 }
 
-// SaveServiceMCP upserts the upstream MCP sync state for a service.
+// storedToolAccess reads, inside tx, the access override of every tool the
+// service has stored, by tool name. A tool with no override maps to "".
+func storedToolAccess(ctx context.Context, tx *sql.Tx, serviceID int64) (map[string]string, error) {
+	var raw string
+	err := tx.QueryRowContext(ctx, `SELECT tools_json FROM service_mcp WHERE service_id=?`, serviceID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tools []ServiceMCPTool
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &tools); err != nil {
+			return nil, err
+		}
+	}
+	out := make(map[string]string, len(tools))
+	for _, t := range tools {
+		out[t.Name] = t.Access
+	}
+	return out, nil
+}
+
+// SaveServiceMCP upserts the upstream MCP sync state for a service. An
+// admin's access override is never lost to it: for every tool the service
+// already has stored, the stored override wins over m's, read and written
+// in one transaction. So a sync that read the tools before an override
+// changed, and saves after, keeps the new override. A tool new to the
+// service keeps m's Access.
 func (s *Store) SaveServiceMCP(ctx context.Context, m *ServiceMCP) error {
 	if err := s.mcpSchema(ctx); err != nil {
 		return err
 	}
-	tools := m.Tools
-	if tools == nil {
-		tools = []ServiceMCPTool{}
+	tools := append([]ServiceMCPTool{}, m.Tools...)
+	var synced any
+	if m.SyncedAt != nil {
+		synced = m.SyncedAt.Unix()
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	stored, err := storedToolAccess(ctx, tx, m.ServiceID)
+	if err != nil {
+		return err
+	}
+	for i := range tools {
+		if a, ok := stored[tools[i].Name]; ok {
+			tools[i].Access = a
+		}
 	}
 	raw, err := json.Marshal(tools)
 	if err != nil {
 		return err
 	}
-	var synced any
-	if m.SyncedAt != nil {
-		synced = m.SyncedAt.Unix()
-	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO service_mcp(
+	if _, err := tx.ExecContext(ctx, `INSERT INTO service_mcp(
 		service_id, server_name, server_version, protocol_version, instructions, tools_json, tool_count, synced_at, last_error
 	) VALUES(?,?,?,?,?,?,?,?,?)
 	ON CONFLICT(service_id) DO UPDATE SET
@@ -146,8 +186,10 @@ func (s *Store) SaveServiceMCP(ctx context.Context, m *ServiceMCP) error {
 		tool_count=excluded.tool_count,
 		synced_at=excluded.synced_at,
 		last_error=excluded.last_error`,
-		m.ServiceID, m.ServerName, m.ServerVersion, m.ProtocolVersion, m.Instructions, string(raw), len(tools), synced, m.LastError)
-	return err
+		m.ServiceID, m.ServerName, m.ServerVersion, m.ProtocolVersion, m.Instructions, string(raw), len(tools), synced, m.LastError); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteServiceMCP removes stored upstream MCP state for a service.
@@ -161,34 +203,57 @@ func (s *Store) DeleteServiceMCP(ctx context.Context, serviceID int64) error {
 
 // SetServiceMCPToolAccess sets the access override of one synced upstream
 // tool. It returns ErrNotFound when the service has no tool by that name.
+// The tools are read and written in one transaction, so a sync that saves
+// at the same moment either comes first (and the override lands on its
+// tools) or after (and keeps the override, see SaveServiceMCP).
 func (s *Store) SetServiceMCPToolAccess(ctx context.Context, serviceID int64, name, access string) error {
 	switch access {
 	case MCPToolAccessUpstream, MCPToolAccessRead, MCPToolAccessWrite:
 	default:
 		return errors.New("access must be empty, read or write")
 	}
-	m, err := s.GetServiceMCP(ctx, serviceID)
+	if err := s.mcpSchema(ctx); err != nil {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
+	var raw string
+	err = tx.QueryRowContext(ctx, `SELECT tools_json FROM service_mcp WHERE service_id=?`, serviceID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var tools []ServiceMCPTool
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &tools); err != nil {
+			return err
+		}
+	}
 	found := false
-	for i := range m.Tools {
-		if m.Tools[i].Name == name {
-			m.Tools[i].Access = access
+	for i := range tools {
+		if tools[i].Name == name {
+			tools[i].Access = access
 			found = true
 		}
 	}
 	if !found {
 		return ErrNotFound
 	}
-	raw, err := json.Marshal(m.Tools)
+	out, err := json.Marshal(tools)
 	if err != nil {
 		return err
 	}
-	// Only the tools change, so a sync that finished meanwhile keeps its
-	// server details.
-	_, err = s.DB.ExecContext(ctx, `UPDATE service_mcp SET tools_json=? WHERE service_id=?`, string(raw), serviceID)
-	return err
+	// Only the tools change, so the server details stay as the last sync
+	// left them.
+	if _, err := tx.ExecContext(ctx, `UPDATE service_mcp SET tools_json=? WHERE service_id=?`, string(out), serviceID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // KeysRestingUntil gives, per service, when its first cooling key is free
