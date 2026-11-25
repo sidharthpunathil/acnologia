@@ -500,7 +500,7 @@ func (s *Server) proxyService(w http.ResponseWriter, r *http.Request, a *store.A
 			cancel()
 			picked.Release()
 			msg := keyscrub.Text(err.Error(), picked.Secret)
-			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + msg})
+			s.Store.AddEvent(r.Context(), store.NewEvent{Kind: "error", ServiceID: sv.ID, KeyID: k.ID, AppID: a.ID, LatencyMS: latency, Detail: "upstream: " + r.Method + " /" + path + ": " + msg})
 			blocked := strings.Contains(msg, catalog.ErrMetadataAddr)
 			// Once the headers were written the upstream may have acted on
 			// the request; before that it saw nothing.

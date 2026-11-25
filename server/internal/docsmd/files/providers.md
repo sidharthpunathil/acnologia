@@ -373,10 +373,14 @@ tool's name.
 
 - A 2xx or 3xx is a success.
 - A 5xx, 405 or 429 counts against the provider.
+- A connection failure (the provider could not be reached, or did not
+  answer in time) counts against the provider too. Its error event names
+  the call (`upstream: GET /v1/search: ...`, or `MCP <tool>: ...` for an
+  upstream MCP tool), which places it on the endpoint.
 - Any other 4xx is the caller's fault and counts for neither side.
 - Acnologia's own refusals (app limits, read-only tokens, no key free, an
-  open breaker), cache hits and idempotent replays never reach the provider
-  and are not counted. Neither are connection failures, which carry no path.
+  open breaker, an address the network guard blocks), calls the caller
+  gave up on, cache hits and idempotent replays are not counted.
 
 The fold reads from a cursor on the events table, so each pass reads only
 new rows; on a first start it begins at the window rather than at the first
