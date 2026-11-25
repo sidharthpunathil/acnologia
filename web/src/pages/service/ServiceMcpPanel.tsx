@@ -56,7 +56,7 @@ function ToolRow({
 
   return (
     <li className="px-4 py-3.5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="break-all font-mono text-body-2-medium text-text-primary">{shown}</span>
