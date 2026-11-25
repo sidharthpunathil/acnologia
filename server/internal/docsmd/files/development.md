@@ -258,7 +258,8 @@ uses the table:
 
 ```go
 var migrations = []migration{
-	{"oauth device codes", migrateOAuthDeviceCodes}, // version 2
+	{"oauth grant usage", migrateOAuthGrantUsage},   // version 2
+	{"oauth device codes", migrateOAuthDeviceCodes}, // version 3, a new step
 }
 ```
 
@@ -268,7 +269,9 @@ each. A failure anywhere rolls all of it back. The step runs on the single
 writer connection inside that transaction, so it uses `db` directly and
 never begins another transaction. It does not need to be idempotent. Never
 edit, reorder or remove a step that has shipped: fix a mistake with a new
-step.
+step. A test that stands in for an older database (drops a table, then opens
+the directory again) starts from `openBaseline`, which opens it with the
+baseline and no numbered steps, so the next `Open` runs them.
 
 A binary refuses to start on a database with a newer version than it knows,
 and says which versions and what to do. Before a step changes an existing
